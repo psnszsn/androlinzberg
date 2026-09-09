@@ -21,6 +21,7 @@
         <activity android:name=".AccessibilityFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".WindowRegistryFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".InputRoutingFixtureActivity" android:resizeableActivity="true" />
+        <activity android:name=".AudioFocusFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".DialogFixtureActivity" android:resizeableActivity="true"
             android:enableOnBackInvokedCallback="true" />
         <activity android:name=".InspectionFixtureActivity" android:resizeableActivity="true" />

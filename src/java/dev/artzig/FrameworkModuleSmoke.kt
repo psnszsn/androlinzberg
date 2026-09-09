@@ -243,7 +243,7 @@ internal object FrameworkModuleSmoke {
         StockFenceSmoke.run()
         StockPerfettoSmoke.run()
         testSplashScreenLifecycle()
-        testStockWindowContexts()
+        testSystemUiContextCaching()
         testHealthPermissionContracts()
         testAconfigManifestFlags()
         testContentCaptureContracts()
@@ -1036,7 +1036,9 @@ internal object FrameworkModuleSmoke {
         android.app.ActivityManager.getMyMemoryState(process)
         check(process.pid == android.os.Process.myPid())
         check(process.uid == android.os.Process.myUid())
-        check(process.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND)
+        // Binding this process does not create a visible activity or service.
+        check(process.processState == ActivityManager.PROCESS_STATE_CACHED_EMPTY)
+        check(process.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_CACHED)
         check(manager.getHistoricalProcessExitReasons(null, Int.MAX_VALUE, 1).isEmpty())
         val task = android.app.ActivityManager.TaskDescription.Builder()
             .setLabel("Stock task").setPrimaryColor(android.graphics.Color.BLUE)
@@ -2662,12 +2664,15 @@ internal object FrameworkModuleSmoke {
             check(dm === context.getSystemService(Context.DISPLAY_SERVICE)) { "display manager not cached" }
             check(dm.displays.size == 1) { "expected one display" }
             val display = checkNotNull(dm.getDisplay(android.view.Display.DEFAULT_DISPLAY))
-            // Stock Display uses the context's configured maximum bounds. Resize both
-            // the display service and resources through the production host entry point.
-            HostContexts.configureDisplay(800, 600, 120)
+            // Query the session-owned display. Per-task resize must not rewrite
+            // this registry; actual resize/configuration is covered by APK gates.
+            val info = checkNotNull(android.hardware.display.DisplayManagerGlobal.getInstance()
+                .getDisplayInfo(android.view.Display.DEFAULT_DISPLAY))
             val size = android.graphics.Point()
-            checkNotNull(dm.getDisplay(android.view.Display.DEFAULT_DISPLAY)).getRealSize(size)
-            check(size.x == 800 && size.y == 600) { "display size $size after configure" }
+            display.getRealSize(size)
+            check(size.x == info.logicalWidth && size.y == info.logicalHeight) {
+                "display size $size differs from session registry ${info.logicalWidth}x${info.logicalHeight}"
+            }
             check(display.displayId == android.view.Display.DEFAULT_DISPLAY)
             val im = checkNotNull(context.getSystemService(android.hardware.input.InputManager::class.java))
             check(im.inputDeviceIds.contentEquals(intArrayOf(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD))) {
@@ -2721,9 +2726,13 @@ internal object FrameworkModuleSmoke {
             .exceptionOrNull() is SecurityException)
         check(runCatching { activityTaskService.getTaskBounds(Int.MAX_VALUE) }
             .exceptionOrNull() is SecurityException)
+        // Stock ATMS validates the package/UID before resolving an activity.
+        val fixture = checkNotNull(permissionsFixtureApk) { "permission fixture APK argument missing" }
+        val fixtureInstaller = checkNotNull(dev.artzig.HostedServiceClient.installerOrNull())
+        check(fixtureInstaller.installPackage(fixture, null) == "org.example.permissions")
         check(activityTaskService.startActivity(
             null,
-            null,
+            "org.example.permissions",
             null,
             Intent().setComponent(ComponentName("org.example.missing", "MissingActivity")),
             null,
@@ -2788,11 +2797,8 @@ internal object FrameworkModuleSmoke {
         )
         check(incidentDenied.await(5, java.util.concurrent.TimeUnit.SECONDS))
 
-        // Bind this JVM to the installed fixture before exercising clients that authenticate the
-        // context package against the Binder caller UID (clipboard, PendingIntent, and peers).
-        val fixture = checkNotNull(permissionsFixtureApk) { "permission fixture APK argument missing" }
-        val fixtureInstaller = checkNotNull(dev.artzig.HostedServiceClient.installerOrNull())
-        check(fixtureInstaller.installPackage(fixture, null) == "org.example.permissions")
+        // Bind this JVM to the installed fixture before exercising clients that
+        // authenticate the context package against the Binder caller UID.
         val fixtureApplication = dev.artzig.HostedServiceClient.attachApplication("org.example.permissions")
         val appContext = packageIdentityContext(context, "org.example.permissions")
 
@@ -2802,9 +2808,12 @@ internal object FrameworkModuleSmoke {
             Handler(appContext.mainLooper),
         )
         clipboardManager.setPrimaryClip(android.content.ClipData.newPlainText("smoke", "hosted-clip"))
-        check(clipboardManager.hasPrimaryClip())
-        check(clipboardManager.text == "hosted-clip")
-        checkNotNull(clipboardManager.primaryClipDescription)
+        // ClipboardService requires focus for an ordinary app's reads. This
+        // bound, windowless fixture must remain unable to read even its own clip;
+        // foreground round trips run through the actual APK clipboard gate.
+        check(!clipboardManager.hasPrimaryClip())
+        check(clipboardManager.text == null)
+        check(clipboardManager.primaryClipDescription == null)
 
 
         val notificationBuilder = Notification.Builder(context, "smoke")
@@ -2822,15 +2831,14 @@ internal object FrameworkModuleSmoke {
         // manager (above), as AOSP delivers package configuration to attached processes.
         val uiModeManager = checkNotNull(context.getSystemService(UiModeManager::class.java))
         check(uiModeManager === context.getSystemService(Context.UI_MODE_SERVICE))
-        // The hosted IUiModeManager delivers the package's night mode as a configuration
-        // transaction on the main looper (AOSP: ActivityTaskManager's package configuration
-        // update), so the queue is drained before the configuration is inspected.
-        // The transaction arrives on a binder thread (IApplicationThread is oneway) and is
-        // posted to the main looper, so drain the queue until the configuration reflects it.
+        // WindowProcessController.dispatchConfiguration defers delivery while
+        // this windowless process is cached. Its caller-specific configuration
+        // getter still exposes the override; real APK tests cover resource and
+        // lifecycle delivery when an activity is visible.
         fun nightBitsBecome(expected: Int): Boolean {
             repeat(250) {
                 drainMainQueue()
-                if (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == expected) return true
+                if (ActivityManager.getService().configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == expected) return true
                 Thread.sleep(20)
             }
             return false
@@ -2866,7 +2874,7 @@ internal object FrameworkModuleSmoke {
         fun grammaticalGenderBecomes(expected: Int): Boolean {
             repeat(250) {
                 drainMainQueue()
-                if (grammaticalInflectionManager.applicationGrammaticalGender == expected) return true
+                if (ActivityManager.getService().configuration.grammaticalGender == expected) return true
                 Thread.sleep(20)
             }
             return false
@@ -4437,8 +4445,8 @@ internal object FrameworkModuleSmoke {
         }
     }
 
-    private fun testStockWindowContexts() {
-        val base = HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 320, 240, 120, 0)
+    private fun testSystemUiContextCaching() {
+        HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 320, 240, 120, 0)
         val thread = android.app.ActivityThread.currentActivityThread()
         val systemUi = thread.getSystemUiContext(Display.DEFAULT_DISPLAY)
         check(systemUi !== thread.systemContext)
@@ -4449,83 +4457,6 @@ internal object FrameworkModuleSmoke {
         isolatedUi.destroy()
         drainMainQueue()
         check(thread.systemUiContextNoCreate === systemUi)
-        val context = base.createWindowContext(
-            android.view.ArtzigDisplay.get(), WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null,
-        ) as android.window.WindowContext
-        val token = context.windowContextToken as android.window.WindowTokenClient
-        val controller = android.window.WindowTokenClientController.getInstance()
-        val callbacks = ArrayList<Configuration>()
-        context.registerComponentCallbacks(object : android.content.ComponentCallbacks {
-            override fun onConfigurationChanged(config: Configuration) {
-                check(context.resources.configuration.fontScale == config.fontScale)
-                check(context.resources.configuration.screenWidthDp == config.screenWidthDp)
-                callbacks.add(Configuration(config))
-            }
-            override fun onLowMemory() {}
-        })
-        try {
-            check(controller.getWindowContext(token) === context)
-            check(runCatching { token.attachContext(context) }.exceptionOrNull() is IllegalStateException)
-            check(runCatching { context.attachToDisplayArea() }.exceptionOrNull() is IllegalStateException)
-            val wm = context.getSystemService(WindowManager::class.java)
-            check(wm === context.getSystemService(WindowManager::class.java))
-            val originalMetrics = wm.currentWindowMetrics
-            check(originalMetrics.bounds == android.graphics.Rect(0, 0, 320, 240))
-            check(originalMetrics.density == 1f)
-            check(runCatching {
-                wm.addView(View(context), WindowManager.LayoutParams().apply { type = WindowManager.LayoutParams.TYPE_APPLICATION })
-            }.exceptionOrNull() is IllegalArgumentException)
-
-            val config = Configuration(context.resources.configuration).apply { fontScale = 1.3f }
-            val item = android.app.servertransaction.WindowContextInfoChangeItem(token, config, Display.DEFAULT_DISPLAY)
-            config.fontScale = 2f
-            val parcel = Parcel.obtain()
-            val restored = try {
-                item.writeToParcel(parcel, 0)
-                parcel.setDataPosition(0)
-                android.app.servertransaction.WindowContextInfoChangeItem.CREATOR.createFromParcel(parcel)
-            } finally { parcel.recycle() }
-            check(item == restored && item.hashCode() == restored.hashCode())
-            restored.execute(ActivityThread.currentActivityThread(), android.app.servertransaction.PendingTransactionActions())
-            check(callbacks.single().fontScale == 1.3f)
-
-            HostContexts.configureDisplay(480, 240, 120)
-            drainMainQueue()
-            check(callbacks.size == 2 && callbacks.last().screenWidthDp == 480)
-            check(wm.currentWindowMetrics.bounds == android.graphics.Rect(0, 0, 480, 240))
-            check(wm.maximumWindowMetrics.bounds == wm.currentWindowMetrics.bounds)
-            check(wm.currentWindowMetrics.windowInsets.getInsets(android.view.WindowInsets.Type.systemBars()) == android.graphics.Insets.NONE)
-            check(originalMetrics.bounds == android.graphics.Rect(0, 0, 320, 240)) {
-                "a window metrics snapshot changed after a resource configuration update"
-            }
-            HostContexts.configureDisplay(480, 240, 120)
-            drainMainQueue()
-            check(callbacks.size == 2) { "unchanged window configuration was delivered twice" }
-
-            HostContexts.configureDisplay(411, 731, 180)
-            drainMainQueue()
-            check(wm.currentWindowMetrics.bounds == Rect(0, 0, 411, 731))
-            check(wm.currentWindowMetrics.density == 1.5f)
-            check(wm.maximumWindowMetrics.bounds == Rect(0, 0, 411, 731))
-            check(callbacks.size == 3)
-
-            val removal = android.app.servertransaction.WindowContextWindowRemovalItem(token)
-            val removalParcel = Parcel.obtain()
-            val restoredRemoval = try {
-                removal.writeToParcel(removalParcel, 0)
-                removalParcel.setDataPosition(0)
-                android.app.servertransaction.WindowContextWindowRemovalItem.CREATOR.createFromParcel(removalParcel)
-            } finally { removalParcel.recycle() }
-            check(removal == restoredRemoval)
-            restoredRemoval.execute(ActivityThread.currentActivityThread(), android.app.servertransaction.PendingTransactionActions())
-            check(token.context == null && controller.getWindowContext(token) == null)
-            context.dispatchConfigurationChanged(Configuration())
-            check(callbacks.size == 3) { "destroyed window context retained its callbacks" }
-        } finally {
-            context.release()
-            HostContexts.configureDisplay(320, 240, 120)
-            drainMainQueue()
-        }
     }
 
     private fun testHealthPermissionContracts() {

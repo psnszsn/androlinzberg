@@ -59,7 +59,11 @@ object SurfaceBufferSmoke {
         check(foreignBinderThread(callback)) { "Binder retained an attachment on an external native thread" }
 
         if (Looper.myLooper() == null) Looper.prepareMainLooper()
-        HostContexts.systemContext(System.getenv("ARTZIG_FRAMEWORK_RES"), 640, 480, 120, 0)
+        // This isolated native gate owns SF and the production display/input
+        // bootstrap, without starting ATMS/WMS or a second input dispatcher.
+        val stockServices = if (taskOutputsOnly) dev.artzig.system.StockWindowServices.prepare() else null
+        val context = HostContexts.systemContext(System.getenv("ARTZIG_FRAMEWORK_RES"), 640, 480, 120, 0)
+        stockServices?.attachContext(context)
         if (taskOutputsOnly) {
             check(android.os.Process.myUid() == android.os.Process.SYSTEM_UID)
             val died = java.util.concurrent.CountDownLatch(1)

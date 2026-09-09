@@ -70,6 +70,10 @@ class HostedSessionDisplayService(private val context: Context, private val hand
         accessUids[displayId]?.indexOf(uid)?.let { it >= 0 } ?: false
     }
     override fun getStableDisplaySize(): Point = display.getStableDisplaySize()
+    // DisplayManagerService.getWifiDisplayStatusInternal returns this default
+    // when no WifiDisplayAdapter exists. This host discovers only its SF display.
+    override fun getWifiDisplayStatus(): android.hardware.display.WifiDisplayStatus =
+        android.hardware.display.WifiDisplayStatus()
     override fun getPreferredWideGamutColorSpaceId(): Int = wideColorSpaceId
     override fun getRefreshRateSwitchingType(): Int = android.hardware.display.DisplayManager.SWITCHING_TYPE_NONE
     override fun getOverlaySupport(): OverlayProperties = overlays

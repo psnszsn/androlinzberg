@@ -1150,6 +1150,7 @@ pub fn build(b: *std.Build) void {
     task_output.addPrefixedFileArg("--probe-file-arg=", buffer_jni_test.getEmittedBin());
     task_output.addArg("--probe-arg=--task-outputs");
     task_output.setEnvironment("AZK_TEST_CLASS", "dev.artzig.SurfaceBufferSmoke");
+    task_output.setEnvironment("AZK_WINDOW_BACKEND", "stock");
     task_output.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
     task_output.addArg("--output");
     const task_output_results = task_output.addOutputDirectoryArg("task-output-jvm");
@@ -1369,6 +1370,7 @@ pub fn build(b: *std.Build) void {
         "dev.artzig.FrameworkModuleSmoke",
     );
     framework_module_smoke.setEnvironment("AZK_BINDER_PACKAGE", "org.example.permissions");
+    framework_module_smoke.setEnvironment("AZK_WINDOW_BACKEND", "stock");
     // Fixture APKs (installed server-side by the permission-grant test).
     framework_module_smoke.addFileArg(java.fixtures.permissions);
     framework_module_smoke.addFileArg(java.fixtures.example);

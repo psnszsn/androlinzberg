@@ -36,7 +36,38 @@ class WindowRegistryFixtureActivity : Activity() {
         })
     }
 
+    private fun verifyWindowContext() {
+        // ContextImpl.createWindowContext and WindowTokenClientController attach
+        // a real registered process to WMS's display area before exposing it.
+        val context = createWindowContext(checkNotNull(display),
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null) as android.window.WindowContext
+        val token = context.windowContextToken as android.window.WindowTokenClient
+        val controller = android.window.WindowTokenClientController.getInstance()
+        try {
+            check(controller.getWindowContext(token) === context)
+            check(runCatching { token.attachContext(context) }.exceptionOrNull() is IllegalStateException)
+            check(runCatching { context.attachToDisplayArea() }.exceptionOrNull() is IllegalStateException)
+            val wm = context.getSystemService(WindowManager::class.java)
+            check(wm === context.getSystemService(WindowManager::class.java))
+            val metrics = wm.currentWindowMetrics
+            val bounds = Rect(metrics.bounds)
+            check(bounds.width() > 0 && bounds.height() > 0)
+            check(metrics.density == context.resources.displayMetrics.density)
+            check(wm.maximumWindowMetrics.bounds.contains(bounds))
+            check(runCatching {
+                wm.addView(View(context), WindowManager.LayoutParams().apply {
+                    type = WindowManager.LayoutParams.TYPE_APPLICATION
+                })
+            }.exceptionOrNull() is IllegalArgumentException)
+            check(metrics.bounds == bounds)
+        } finally { context.release() }
+        check(controller.getWindowContext(token) == null)
+        context.release()
+        Log.i("WindowRegistryFixture", "registered window context: attach, type enforcement, metrics and idempotent release verified")
+    }
+
     private fun verifyRegistry() {
+        verifyWindowContext()
         val global = WindowManagerGlobal.getInstance()
         val parent = window.decorView
         val parentRoot = checkNotNull(parent.viewRootImpl)

@@ -53,6 +53,16 @@ class WindowFixtureTest {
     }
 
     @Test
+    fun visibleActivityReceivesAudioFocusCallbacks() = app.run {
+        click(text = "SHOW AUDIO FOCUS")
+        expectVisible(text = "Audio focus ready")
+        click(text = "CHECK AUDIO FOCUS")
+        expectVisible(text = "Audio focus callbacks verified")
+        assertLog("AudioFocusFixture", "visible task: granted, transient loss, regain, abandonment; main-thread callback order verified")
+        assertColorArea(screenshot("audio-focus.png"), 0xff00ffff.toInt(), 5_000)
+    }
+
+    @Test
     fun recreationRestoresSavedCounter() = app.run {
         click(text = "INCREMENT COUNTER")
         click(text = "RECREATE ACTIVITY")
@@ -173,6 +183,7 @@ class WindowFixtureTest {
         click(text = "CHECK WINDOW REGISTRY")
         expectVisible(text = "Window registry verified")
         assertLog("WindowRegistryFixture", "listener deduplication, snapshots, token and name lookup, layout preservation, deferred close and panel retention verified")
+        assertLog("WindowRegistryFixture", "registered window context: attach, type enforcement, metrics and idempotent release verified")
         assertColorArea(screenshot("window-registry.png"), 0xff00ffff.toInt(), 5_000)
     }
 

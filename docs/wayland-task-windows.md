@@ -11,6 +11,34 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Stock-service framework and APK contracts (2026-09-09)
+
+The general framework suite now runs against the production stock services.
+Its windowless process is registered as cached: it must be denied clipboard
+reads and target-35 audio focus, and package configuration is queried through
+the caller-specific ATMS configuration until delivery is allowed. Display checks
+use the session registry. Tests no longer assume fake global display resizes or
+foreground privileges merely because the process has bound an application.
+
+Window-context attachment, type enforcement, metrics snapshots and idempotent
+release now run in the registered window APK. A new visible-activity case checks
+real AudioManager Binder grants and main-thread transient-loss/regain callbacks.
+It also initializes MediaRouter and verifies the unavailable Wi-Fi display state.
+This exposed a missing production display-service method: the host now follows
+DisplayManagerService.getWifiDisplayStatusInternal's no-WifiDisplayAdapter branch
+and returns the stock default WifiDisplayStatus. The isolated graphics JVM gate
+bootstraps the production display/input services before creating its Context.
+
+Negative 620 records IDisplayManager.getWifiDisplayStatus in the structured APK
+journal. Positive 622 passes both interaction steps and the rendered result;
+623 passes the full stock-service JVM suite and source audits. Regression 624
+passes all 27 APK cases with 86 clean steps and the 21-step foreground clipboard gate. The earlier 621 invocation omitted the task-presenter setting and
+entered an incompatible legacy launch path; it is retained as an invocation
+failure, not counted as validation. Artifacts: `/tmp/wayland-window-context-614-artifacts/`,
+`/tmp/wayland-wifi-display-negative-620-artifacts/`,
+`/tmp/wayland-wifi-display-622-artifacts/` and
+`/tmp/wayland-stock-services-624-artifacts/`.
+
 ## Binder re-export wire ordering (2026-09-09)
 
 Export accounting and its containing request/reply now share the writer lock
