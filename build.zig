@@ -760,6 +760,9 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    const window_options = b.addOptions();
+    window_options.addOption(bool, "stock_clients", java.stock_window_clients);
+    exe.root_module.addOptions("window_options", window_options);
     if (host_libc) |root| exe.root_module.addRPath(b.graph.cwdRelativePath(b.fmt("{s}/lib", .{root})));
     exe.root_module.linkSystemLibrary("wayland-client", .{ .needed = true });
     exe.root_module.linkSystemLibrary("xkbcommon", .{ .needed = true });

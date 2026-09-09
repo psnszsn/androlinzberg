@@ -73,7 +73,7 @@ pub const Set = struct {
 };
 
 pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
-    const stock_window_clients = b.option(bool, "stock-window-clients", "Compile the stock ViewRootImpl and SurfaceView client path") orelse false;
+    const stock_window_clients = b.option(bool, "stock-window-clients", "Compile the stock ViewRootImpl and SurfaceView client path") orelse true;
     var framework = StaticCollector.init(b);
     const fb = SourceFiles.Root.dependency(b, aosp, "frameworks/base");
     const modules_utils = SourceFiles.Root.dependency(b, aosp, "frameworks/libs/modules-utils");

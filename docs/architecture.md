@@ -1,7 +1,9 @@
 # Architecture
 
-androlinzberg runs one Android application in a Linux process. It does not start
-a complete Android device or a system server.
+androlinzberg runs Android applications in a shared desktop session. The launcher
+supervises a Binder broker, SurfaceFlinger, a hosted system process and a Wayland
+task presenter. ATMS starts separate ART application processes. This is a host
+adaptation of selected Android services, without booting an Android device.
 
 ## Main components
 
@@ -27,14 +29,12 @@ replacements. The application context core is real as well: `Context`,
 `Uri`, `Intent`, and `BroadcastReceiver` are the verbatim AOSP classes, so
 receivers, service connections and provider connections are the AOSP
 `LoadedApk` dispatchers talking to the session's activity manager over the
-real `IActivityManager`/`IApplicationThread` AIDL. The hosted seams in
-`android.app` are `ActivityThread` (the AOSP instance surface — package
-cache, provider connections, service handlers, bind-application ordering,
-system context — with the activity lifecycle still driven in-process by
-`HostedActivityRuntime`), `SystemServiceRegistry` (the AOSP static API over
-the managers this host backs), `Instrumentation` (the application half), and
-`Activity` (real `Activity`/`ActivityThread` are the activity-core
-milestone).
+real `IActivityManager`/`IApplicationThread` AIDL. Activity, ActivityThread,
+Instrumentation and the client-transaction lifecycle
+use the pinned AOSP implementation. Stock ActivityTaskManagerService and
+WindowManagerService own task/window state, lifecycle scheduling and resource
+configuration; host adapters supply process startup, package lookup, display,
+input and desktop policy collaborators.
 
 A process is bound to its package the way `handleBindApplication` does it:
 the package's `LoadedApk` builds the class loader (`ApplicationLoaders` →
@@ -46,8 +46,9 @@ Every package has the AOSP data layout (`Environment.getDataUserCePackage
 Directory`, created at install), and each Activity gets its own
 `ContextImpl.createActivityContext` base context. `dev.artzig.HostContexts`
 is the host bootstrap that replaces the zygote/SystemServer handshake: system
-assets, the "android" ApplicationInfo, the font map, and the desktop window as
-the default display whose metrics the `ResourcesManager` derives.
+assets, the "android" ApplicationInfo and the font map. The session display
+registry supplies display metrics; each task receives its own configuration and
+synthetic bounds without becoming another Android display.
 
 The launcher owns the session's Android data root and exports it to every
 process it starts: `ARTZIG_DATA_DIR` (default `$XDG_DATA_HOME/artzig`, else
@@ -60,16 +61,33 @@ precedence. `Build` values are session properties the broker seeds
 
 ### Graphics and windows
 
-The application uses AOSP HWUI, Skia, and Minikin. The platform layer gives
-HWUI an EGL surface on a Wayland `xdg_toplevel`.
+APK presentation uses stock ViewRootImpl, SurfaceView, HWUI, BLAST and
+BufferQueue. The host GBM allocator/mapper supplies DMA-BUF storage to libui;
+HWUI draws through the stock ANativeWindow queue. SurfaceFlinger composes the
+Android layers. A task organizer owns each task leash and a private SF output;
+the Zig presenter imports its buffers into one Wayland xdg_toplevel per task.
+Activities in the same task share that toplevel. Task-local dialogs, popups,
+SurfaceView and video remain Android layers.
 
-Video can use a Wayland subsurface. The direct path can pass a DMA-BUF from
-FFmpeg to the compositor when the graphics stack supports that path.
+The primary compositor output supplies the session's Android display. Independent
+task bounds occupy synthetic coordinates; compositor geometry, fractional scale
+and output changes flow through task configurations and synchronized surface
+transactions. GPU completion, queue release and compositor presentation remain
+distinct events. Retired generations cannot supply input or replace new frames.
+
+The mapper caps each process at 1,024 registered handles and 2 GiB of charged
+storage, with a 256 MiB per-buffer ceiling. Imports consume their own charges;
+freeing returns capacity after GBM destruction. These estimates bound mapper
+retention rather than total physical VRAM. Task imports, Binder traffic and
+Wayland transfer streams have separate limits.
 
 ### Input
 
-The Wayland layer converts pointer, keyboard, touch, tablet, and scroll events
-to Android input events.
+Wayland pointer, keyboard, touch, tablet and scroll events enter the stock native
+InputDispatcher and InputChannel path. The task shell translates synthetic
+coordinates and owns focus/capture generations; WMS supplies Android input-window
+metadata. App input reaches stock ViewRootImpl input stages. IME, clipboard,
+drag-and-drop and accessibility cross host adapters with task/window identity.
 
 ### Media
 

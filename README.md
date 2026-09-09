@@ -40,7 +40,7 @@ Linux facilities through focused host adapters.
 - The APK must contain x86_64 native libraries.
 - The native-library bridge loads compatible Android libraries from the APK.
 - Apps can use mouse, keyboard, touch, tablet, and scroll input.
-- HWUI and Skia render through EGL to a Wayland surface.
+- HWUI and Skia render through stock Android buffer queues; SurfaceFlinger composes task outputs for Wayland.
 - FFmpeg supplies audio and video codecs.
 - PipeWire supplies audio output.
 - Fontconfig supplies the Android font configuration.
@@ -82,15 +82,14 @@ Use an absolute path for the APK file:
 zig build -j10 run -- /absolute/path/to/app.apk
 ```
 
-Press `F11` to enter or leave fullscreen mode. Use `--fullscreen` to start in
-fullscreen mode:
-
-```sh
-zig build -j10 run -- --fullscreen /absolute/path/to/app.apk
-```
+APK launches use stock Android window services and one Wayland toplevel per task
+by default; no migration flags are needed. Press `F11` to enter or leave
+fullscreen mode. Applications can also request fullscreen through their Android
+window attributes. The former `--fullscreen`, `--frames` and `--java` presentation
+options are unavailable on the task path.
 
 Every launch runs inside a hosted Binder session: the launcher starts an
-`azk-binder-broker` router and a headless system process, and prints the
+`azk-binder-broker` router, SurfaceFlinger, system process and task presenter, and prints the
 session directory. Add a second app to the same session with `--join`:
 
 ```sh

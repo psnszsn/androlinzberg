@@ -2,14 +2,41 @@
 
 Status: stock WMS/ATMS cold and warm launch, HWUI/BLAST rendering, two-task
 Cage/labwc presentation, native input-channel routing and compositor keyboard-map
-publication pass. Stock window clients are selectable for development. The
-production launcher cutover, complete desktop input, configuration/output policy
-and desktop interoperability remain in progress through M11.
+publication pass. Stock clients, services and task presentation are now the
+default. The remaining M11 work removes superseded window/rendering sources
+and patches, then validates the final source and acceptance matrix.
 Code baseline: `2a2d199`, the
 hosted libbinder facade merged into main. This document expands the original
 “Wayland task windows with synthetic Android coordinates” proposal into a
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
+
+## Default task-window launch (2026-09-09)
+
+Stock ViewRootImpl/SurfaceView compilation is now the default. SystemServer
+selects the services matching the compiled clients, and ordinary APK launches
+start the task presenter without migration environment variables. Headless JVM
+probes remain headless unless explicitly configured to use a presenter. A staged
+APK selection that mixes client, service and presentation backends is rejected
+before starting the session.
+
+Regression 629 launches NewPipe to its home screen with no stock-client build
+option and both AZK_WINDOW_BACKEND/AZK_TASK_WINDOWS removed. Its interaction step
+is clean and the log confirms DesktopLauncher-to-ATMS launch in a separate app
+process. Regression 630 passes the default JVM/native/build/source gates;
+631 exposed three video failures because native codec selection still depended
+on an explicit environment setting. The launcher now publishes the compiled
+backend before native/ART initialization in every process role. Positive 633
+passes NewPipe video fullscreen with six clean steps; 634 passes all 27 APK cases (86 clean steps), the 21-step clipboard gate,
+and the default JVM/native/source checks.
+Rejected-selection check 632 confirms a mixed stack fails before session startup. Artifacts: `/tmp/wayland-default-launch-629-artifacts/` and
+`/tmp/wayland-default-matrix-634-artifacts/`.
+
+The architecture documentation now describes the shared Binder/SF/system/task
+session, stock lifecycle, synthetic task configurations and native input path.
+F11 and app window attributes provide fullscreen; the old --java, --frames and
+--fullscreen presentation options are unavailable on this task path. Removal of
+unused legacy sources and superseded native patches remains the next gate.
 
 ## Graphics allocation/import admission (2026-09-09)
 

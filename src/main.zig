@@ -31,7 +31,6 @@ const usage =
     \\  --join <session-dir>   add this app to a running session (see session.json)
     \\Every launch runs inside a hosted Binder session (broker + system process);
     \\`--system-server` is the launcher's own headless system-process entry.
-    \\       androlinzberg --java            (AZK_DRAW_CLASS entry, default ViewHost)
     \\       androlinzberg --codec-selftest | --codec-make-mp3 | --codec-make-m4v | --javatest
     \\
     \\Paths are resolved relative to the executable's install tree (zig-out/):
@@ -156,6 +155,13 @@ pub fn main(init: std.process.Init) !void {
     // a service. exec failure becomes EOF on the child's readiness pipe.
     if (args.len >= 3 and std.mem.eql(u8, args[1], "--service-exec"))
         return std.process.replace(init.io, .{ .argv = args[2..] });
+    // Publish one selection before ART or native media initialization. Every
+    // launcher role does this, including independently spawned app processes;
+    // the codec's native surface/VPP path consumes the same environment value.
+    if (init.minimal.environ.getPosix("AZK_WINDOW_BACKEND") == null) {
+        if (setenv("AZK_WINDOW_BACKEND", if (@import("window_options").stock_clients) "stock" else "legacy", 1) != 0)
+            return error.WindowBackendEnvironmentFailed;
+    }
     try configureDataRoot(init);
 
     var frames_limit: ?u32 = null;
@@ -208,7 +214,7 @@ pub fn main(init: std.process.Init) !void {
             else
                 try std.fs.path.join(init.arena.allocator(), &.{ init.minimal.environ.getPosix("PWD") orelse ".", app_apk });
             _ = setenv("ARTZIG_APK", try init.arena.allocator().dupeSentinel(u8, apk_abs, 0), 1);
-            try ensureSession(init, &binder, join_dir);
+            try ensureSession(init, &binder, join_dir, try taskPresentation(init.minimal.environ, false));
             // Windowless, but with the bionic loader and the APK's native
             // libraries configured, so an auto-spawned service that loads an
             // NDK library works exactly as it does in the UI process.
@@ -236,7 +242,7 @@ pub fn main(init: std.process.Init) !void {
             std.debug.print("codec selftest: {d} samples decoded ({s})\n", .{ n, if (n > 0) "PASS" else "FAIL" });
             return;
         } else if (std.mem.eql(u8, args[i], "--javatest")) {
-            try ensureSession(init, &binder, join_dir);
+            try ensureSession(init, &binder, join_dir, try taskPresentation(init.minimal.environ, false));
             const test_apk = init.minimal.environ.getPosix("AZK_TEST_APK");
             if (test_apk) |fixture_apk| {
                 if (!std.fs.path.isAbsolute(fixture_apk)) return error.TestApkPathMustBeAbsolute;
@@ -262,8 +268,10 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print(usage, .{});
         return;
     }
-    try ensureSession(init, &binder, join_dir);
-    if (apk != null and std.mem.eql(u8, init.minimal.environ.getPosix("AZK_TASK_WINDOWS") orelse "", "1")) {
+    const present_tasks = try taskPresentation(init.minimal.environ, apk != null);
+    if (apk == null and @import("window_options").stock_clients) return error.TaskPresentationRequiresApk;
+    try ensureSession(init, &binder, join_dir, present_tasks);
+    if (apk != null and present_tasks) {
         if (frames_limit != null or fullscreen) return error.TaskWindowPresentationOptionsUnavailable;
         const test_address = init.minimal.environ.getPosix("AZK_TEST_SOCKET");
         if (test_address != null and binder == null) return error.TaskWindowTestControllerRequiresSessionOwner;
@@ -302,10 +310,30 @@ pub fn main(init: std.process.Init) !void {
     return javaMain(init, frames_limit, apk, fullscreen, if (binder) |*session| session else null);
 }
 
+// Keep staged service/client/presentation selection coherent. Headless JVM
+// probes need no Wayland connection unless they explicitly request a presenter.
+fn taskPresentation(environ: std.process.Environ, apk_launch: bool) !bool {
+    const stock_clients = @import("window_options").stock_clients;
+    const stock_services = if (environ.getPosix("AZK_WINDOW_BACKEND")) |mode| blk: {
+        if (std.mem.eql(u8, mode, "stock")) break :blk true;
+        if (std.mem.eql(u8, mode, "legacy")) break :blk false;
+        return error.InvalidWindowBackend;
+    } else stock_clients;
+    const present = if (environ.getPosix("AZK_TASK_WINDOWS")) |mode| blk: {
+        if (std.mem.eql(u8, mode, "1")) break :blk true;
+        if (std.mem.eql(u8, mode, "0")) break :blk false;
+        return error.InvalidTaskWindowSelection;
+    } else apk_launch and stock_services;
+    if (apk_launch and (stock_services != stock_clients or present != stock_services))
+        return error.IncompatibleWindowBackendSelection;
+    if (present and (!stock_services or !stock_clients)) return error.TaskWindowsRequireStockClientsAndServices;
+    return present;
+}
+
 /// Starts this launch's session (broker, compositor, system process) unless one is
 /// inherited (`AZK_BINDER_SOCKET` set) or joined with `--join`, and exports
 /// the socket and app cookie so every child process joins the same session.
-fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_dir: ?[]const u8) !void {
+fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_dir: ?[]const u8, present_tasks: bool) !void {
     const arena = init.arena.allocator();
     if (join_dir) |dir| {
         const info = try joinSession(init, dir);
@@ -323,7 +351,7 @@ fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_
         .broker_exe = broker_exe,
         .launcher_exe = launcher_exe,
         .surfaceflinger_exe = try std.fs.path.join(arena, &.{ tree, "bin", "azk-surfaceflinger" }),
-        .task_presenter_exe = if (std.mem.eql(u8, init.minimal.environ.getPosix("AZK_TASK_WINDOWS") orelse "", "1"))
+        .task_presenter_exe = if (present_tasks)
             try std.fs.path.join(arena, &.{ tree, "bin", "azk-task-presenter" })
         else
             null,
