@@ -28,6 +28,31 @@ class WindowFixtureTest {
     }
 
     @Test
+    fun dialogLifecycleRestoresStateAndPreservesCallbackOrder() = app.run {
+        click(text = "SHOW DIALOG CONTRACTS")
+        expectVisible(text = "Dialog contracts ready")
+        click(text = "CHECK DIALOG LIFECYCLE")
+        expectVisible(text = "Dialog lifecycle and saved state verified")
+        assertLog("DialogFixture", "create/start/stop; asynchronous show/dismiss; reshow; cancel before dismiss")
+        assertColorArea(screenshot("dialog-lifecycle.png"), 0xff00ffff.toInt(), 5_000)
+    }
+
+    @Test
+    fun sharedBackCallbackRemainsScopedToEachDialogWindow() = app.run {
+        click(text = "SHOW DIALOG CONTRACTS")
+        click(text = "SHOW SHARED BACK DIALOGS")
+        expectVisible(text = "Upper Back dialog")
+        key(value = "Back", text = "Upper Back dialog")
+        waitFor(text = "Upper Back dialog", absent = true)
+        expectVisible(text = "Lower Back dialog")
+        assertLog("DialogFixture", "shared Back callback dismissed upper window only")
+        key(value = "Back", text = "Lower Back dialog")
+        waitFor(text = "Lower Back dialog", absent = true)
+        expectVisible(text = "Window-scoped Back callbacks verified")
+        assertColorArea(screenshot("dialog-back.png"), 0xff00ffff.toInt(), 5_000)
+    }
+
+    @Test
     fun recreationRestoresSavedCounter() = app.run {
         click(text = "INCREMENT COUNTER")
         click(text = "RECREATE ACTIVITY")

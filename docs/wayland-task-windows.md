@@ -11,6 +11,22 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Dialog contracts through stock APK windows (2026-09-09)
+
+The Kotlin window APK now checks the pinned Dialog lifecycle through real WMS
+windows: asynchronous show/dismiss listeners, create-once reshow, cancel before
+dismiss, saved text and showing-state restoration, floating default theme and
+WindowDecorActionBar creation. A second case registers one Back callback on two
+dialog windows and sends physical Back twice, requiring each focused window to
+close independently. Existing NewPipe coverage retains non-cancelable physical
+Back behavior. The superseded 278-line legacy-root test/helper block is removed.
+
+Regressions 605 and 606 pass with six clean interaction steps and verified cyan
+screenshots; 607 passes the full stock-client JVM suite and source audits.
+Artifacts: `/tmp/wayland-dialog-605-artifacts/` and
+`/tmp/wayland-dialog-606-artifacts/`. Six direct legacy-root test families and
+legacy activity fixtures remain pending removal with their implementations.
+
 ## Reference cleanup and runtime request limits (2026-09-09)
 
 Object-release and object-death notifications now retain reserved delivery

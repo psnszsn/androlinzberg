@@ -25,6 +25,7 @@ pub fn build(b: *std.Build, aosp: *std.Build.Dependency, framework: @import("jav
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/ColdProcessFixture.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/ClipboardFileProvider.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/DragFixtureActivity.kt"));
+    kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/DialogFixtureActivity.kt"));
     const d8 = b.addSystemCommand(&.{ "java", "-Xmx512M", "-cp" });
     d8.addFileArg(aosp.path("prebuilts/r8/r8.jar"));
     d8.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", "35", "--lib" });
