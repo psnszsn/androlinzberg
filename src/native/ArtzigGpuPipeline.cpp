@@ -2,6 +2,7 @@
 #include <azk/graphics_egl.h>
 
 #include "HardwareBufferRender.h"
+#include "src/core/SkCanvasPriv.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -58,6 +59,18 @@ SharedGpuContext& sharedGpuContext() {
     return *context;
 }
 bool gTraceFramePacing = false;
+thread_local const void* gWindowRootDevice = nullptr;
+
+class WindowRootScope {
+public:
+    explicit WindowRootScope(SkSurface* window)
+        : mPrevious(gWindowRootDevice) {
+        gWindowRootDevice = window ? SkCanvasPriv::TopDevice(window->getCanvas()) : nullptr;
+    }
+    ~WindowRootScope() { gWindowRootDevice = mPrevious; }
+private:
+    const void* mPrevious;
+};
 
 EGLDisplay hostEglDisplay() {
     auto getPlatformDisplay = reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
@@ -79,6 +92,10 @@ GrGLFuncPtr getEglProc(void *, const char name[]) {
 // functors can share EGLImages with the stock Android buffer pipeline.
 extern "C" void* azk_hwui_default_egl_display() {
     return hostEglDisplay();
+}
+
+bool ArtzigGpuPipeline::isDrawingToWindowRoot(const SkCanvas* canvas) {
+    return gWindowRootDevice && gWindowRootDevice == SkCanvasPriv::TopDevice(canvas);
 }
 
 ArtzigGpuPipeline::ArtzigGpuPipeline(renderthread::RenderThread &thread)
@@ -411,8 +428,11 @@ IRenderPipeline::DrawResult ArtzigGpuPipeline::draw(
   localGeometry.center.x = lightCenter.fX;
   localGeometry.center.y = lightCenter.fY;
   LightingInfo::updateLighting(localGeometry, lightInfo);
-  renderFrame(*layerUpdateQueue, dirty, renderNodes, opaque, contentDrawBounds,
-              target, preTransform);
+  {
+    WindowRootScope root(mAndroidWindow && !mHardwareBuffer ? target.get() : nullptr);
+    renderFrame(*layerUpdateQueue, dirty, renderNodes, opaque, contentDrawBounds,
+                target, preTransform);
+  }
   mContext->flushAndSubmit(target.get(), GrSyncCpu::kNo);
   layerUpdateQueue->clear();
   return {true, IRenderPipeline::DrawResult::kUnknownTime,

@@ -241,6 +241,37 @@ structured issues, and the playing/paused screenshots were inspected. Both
 capture-mode runs intentionally fail the same pixel-preservation assertion,
 with three issue-free steps each; they are retained as counterexamples.
 
+### Native WebView window-root contract (2026-09-09)
+
+The host GL drawable now distinguishes the actual window device from a saved
+layer even though both use nonzero FBOs. Origin conversion retains full window
+coordinates, previously drawn content and transparent openings. The original
+HWUI functor can therefore enable SurfaceControl underlays on window roots and
+disable them on offscreen layers. HardwareBuffer snapshots remain offscreen.
+
+A native fixture uses the original functor callbacks and NDK transactions on
+two independent task outputs (80×40 and 64×48). It checks translated/clipped
+coordinates, background and foreground pixels, an underlay visible through a
+transparent opening, root/layer/root transitions, the original prepare callback
+and destruction without retained buffers. Real WebView encoded playback and
+pause also pass. This establishes the HWUI contract; actual Chromium overlay
+promotion and the previously recorded capture-stream failures remain open.
+
+The framework archive is SHA-256
+`8e33f59148b902ae5808cfef11122bc14a2f167c1f63a355251e0dbb6f5fc5f6`, pinned to
+`N-V-__8AAG6q8U64rXRsjwHzc7-94mEVWrKnPxp2T38mpbLg`. The isolated checkout was
+restored by packaging. ART is unchanged. No Java client source or stub inventory
+changed in this checkpoint; the remaining modified static client count is 12.
+
+Validation passed: Surface queues and task-output tests, native/source/graph
+audits, full JVM and APK integration, WebView smoke/UI, desktop launcher,
+graphics budgets, surface fences and SurfaceFlinger composition. All 28 fresh
+APK cases contain 88 steps with zero structured issues; WebView has three and
+the desktop launcher 16 issue-free steps. WebView pause, desktop modal and
+NewPipe fullscreen screenshots were inspected. The isolated task-output fixture
+still logs the stock renderer's caught scheduler warning because it deliberately
+starts without AMS; the end-to-end APK tests have no such missing service.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

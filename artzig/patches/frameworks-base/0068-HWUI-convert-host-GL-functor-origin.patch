@@ -1,17 +1,19 @@
 From: artzig <artzig@localhost>
-Subject: [PATCH] HWUI: preserve GL functor origin on imported host buffers
+Subject: [PATCH] HWUI: preserve GL functor window identity and buffer origin
 
-Follow GLFunctorDrawable::onDraw offscreen composition when the host
-DMA-BUF canvas has top-left origin. DrawGlInfo expects bottom-left GL
-coordinates; Skia converts the intermediate image on composition.
+Follow GLFunctorDrawable::onDraw's offscreen composition for top-left host
+DMA-BUF targets. A scoped native window-device identity distinguishes roots
+from saved layers. Preserve full window coordinates, prior content and alpha
+holes when converting the root's origin so stock SurfaceControl underlays work.
 
 --- a/libs/hwui/pipeline/skia/GLFunctorDrawable.cpp
 +++ b/libs/hwui/pipeline/skia/GLFunctorDrawable.cpp
-@@ -35,6 +35,11 @@
+@@ -35,6 +35,12 @@
  #include "SkRect.h"
  #include "renderthread/CanvasContext.h"
  #include "utils/GLUtils.h"
 +#ifdef ARTZIG_HOST_GRAPHICS
++#include "ArtzigGpuPipeline.h"
 +#include "src/core/SkCanvasPriv.h"
 +#include "src/gpu/ganesh/Device.h"
 +#include "src/gpu/ganesh/SurfaceDrawContext.h"
@@ -19,7 +21,7 @@ coordinates; Skia converts the intermediate image on composition.
  
  namespace android {
  namespace uirenderer {
-@@ -96,8 +101,16 @@
+@@ -96,14 +102,41 @@
      canvas->temporary_internal_getRgnClip(&clipRegion);
  
      sk_sp<SkSurface> tmpSurface;
@@ -29,12 +31,77 @@ coordinates; Skia converts the intermediate image on composition.
 +    // canvases use top-left storage; draw through the existing offscreen path
 +    // so Skia converts the origin when compositing the functor result.
 +    bool convertOrigin = false;
++    bool windowRoot = false;
 +#ifdef ARTZIG_HOST_GRAPHICS
 +    auto* device = static_cast<skgpu::ganesh::Device*>(SkCanvasPriv::TopDevice(canvas));
 +    convertOrigin = device->surfaceDrawContext()->origin() == kTopLeft_GrSurfaceOrigin;
++    windowRoot = ArtzigGpuPipeline::isDrawingToWindowRoot(canvas);
 +#endif
 +    // Unclipped saveLayers also need an intermediate surface.
 +    if (convertOrigin || (fboID != 0 && !surfaceBounds.contains(clipBounds))) {
          // create an offscreen layer and clear it
          SkImageInfo surfaceInfo =
-                 canvas->imageInfo().makeWH(clipBounds.width(), clipBounds.height());
+-                canvas->imageInfo().makeWH(clipBounds.width(), clipBounds.height());
++                canvas->imageInfo().makeWH(windowRoot ? fboSize.width() : clipBounds.width(),
++                                           windowRoot ? fboSize.height() : clipBounds.height());
+         tmpSurface =
+                 SkSurfaces::RenderTarget(directContext, skgpu::Budgeted::kYes, surfaceInfo);
+         tmpSurface->getCanvas()->clear(SK_ColorTRANSPARENT);
++        if (windowRoot) {
++            // The host FBO is the window target, not a saveLayer. Keep window
++            // coordinates for SurfaceControl and preserve content drawn before
++            // the functor. The final Src copy also preserves transparent holes
++            // through which stock WebView underlays must remain visible.
++            SkSurface* root = canvas->getSurface();
++            sk_sp<SkImage> previous = root ? root->makeImageSnapshot() : nullptr;
++            if (!previous) {
++                ALOGW("Unable to snapshot window root for GLFunctor");
++                return;
++            }
++            SkPaint copy;
++            copy.setBlendMode(SkBlendMode::kSrc);
++            tmpSurface->getCanvas()->drawImage(previous, 0, 0, SkSamplingOptions(), &copy);
++            directContext->flushAndSubmit();
++        }
+ 
+         GrGLFramebufferInfo fboInfo;
+         if (!GrBackendRenderTargets::GetGLFramebufferInfo(
+@@ -119,9 +152,11 @@
+ 
+         // update the matrix and clip that we pass to the WebView to match the coordinates of
+         // the offscreen layer
+-        mat4.preTranslate(-clipBounds.fLeft, -clipBounds.fTop);
+-        clipBounds.offsetTo(0, 0);
+-        clipRegion.translate(-surfaceBounds.fLeft, -surfaceBounds.fTop);
++        if (!windowRoot) {
++            mat4.preTranslate(-clipBounds.fLeft, -clipBounds.fTop);
++            clipBounds.offsetTo(0, 0);
++            clipRegion.translate(-surfaceBounds.fLeft, -surfaceBounds.fTop);
++        }
+ 
+     } else if (fboID != 0) {
+         // we are drawing into a (clipped) offscreen layer so we must update the clip and matrix
+@@ -135,7 +170,7 @@
+     info.clipTop = clipBounds.fTop;
+     info.clipRight = clipBounds.fRight;
+     info.clipBottom = clipBounds.fBottom;
+-    info.isLayer = fboID != 0;
++    info.isLayer = fboID != 0 && !windowRoot;
+     info.width = fboSize.width();
+     info.height = fboSize.height();
+     mat4.getColMajor(&info.transform[0]);
+@@ -223,7 +258,13 @@
+         canvas->concat(invertedMatrix);
+ 
+         const SkIRect deviceBounds = canvas->getDeviceClipBounds();
+-        tmpSurface->draw(canvas, deviceBounds.fLeft, deviceBounds.fTop);
++        if (windowRoot) {
++            SkPaint copy;
++            copy.setBlendMode(SkBlendMode::kSrc);
++            tmpSurface->draw(canvas, 0, 0, SkSamplingOptions(), &copy);
++        } else {
++            tmpSurface->draw(canvas, deviceBounds.fLeft, deviceBounds.fTop);
++        }
+     }
+ }
+ 

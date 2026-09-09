@@ -16,6 +16,10 @@ object SurfaceBufferSmoke {
     @JvmStatic private external fun ndkPaint(layer: Long, buffer: android.hardware.HardwareBuffer, color: Int): Long
     @JvmStatic private external fun ndkHide(transaction: android.view.SurfaceControl.Transaction, layer: Long)
     @JvmStatic private external fun ndkDestroyLayer(layer: Long)
+    @JvmStatic private external fun createFunctor(): Long
+    @JvmStatic private external fun configureFunctor(handle: Long, layer: Boolean): Int
+    @JvmStatic private external fun destroyFunctor(handle: Long)
+    @JvmStatic private external fun pixelAt(reader: Long, x: Float, y: Float): Int
     @JvmStatic private external fun liveBuffers(): Long
     @JvmStatic private external fun nativeBinderUid(): Int
     @JvmStatic private external fun foreignBinderThread(binder: android.os.IBinder): Boolean
@@ -251,6 +255,68 @@ object SurfaceBufferSmoke {
                     }
                 }
             }
+            fun functorFrames() {
+                val queue = android.graphics.BLASTBufferQueue("functor-contract", true)
+                queue.update(content, bounds.width, bounds.height, android.graphics.PixelFormat.RGBA_8888)
+                val producer = queue.createSurfaceWithHandle()
+                val prepares = java.util.concurrent.atomic.AtomicInteger()
+                val renderer = object : android.graphics.HardwareRenderer() {
+                    init {
+                        setPrepareSurfaceControlForWebviewCallback {
+                            android.view.SurfaceControl.Transaction().use { it.setOpaque(content, false).apply() }
+                            prepares.incrementAndGet()
+                        }
+                    }
+                }
+                val node = android.graphics.RenderNode("functor-contract")
+                val functor = createFunctor()
+                try {
+                    renderer.setName("functor-contract")
+                    renderer.isOpaque = false
+                    renderer.setSurface(producer)
+                    renderer.setSurfaceControl(content, queue)
+                    node.setPosition(0, 0, bounds.width, bounds.height)
+                    renderer.setContentRoot(node)
+                    for (layer in listOf(false, true, false)) {
+                        val id = configureFunctor(functor, layer)
+                        val canvas = node.beginRecording(bounds.width, bounds.height)
+                        canvas.drawColor(android.graphics.Color.WHITE)
+                        canvas.save()
+                        if (layer) canvas.saveLayerAlpha(0f, 0f, bounds.width.toFloat(), bounds.height.toFloat(), 128)
+                        canvas.translate(7f, 5f)
+                        canvas.clipRect(0, 0, bounds.width - 14, bounds.height - 10)
+                        canvas.drawWebViewFunctor(id)
+                        if (layer) canvas.restore()
+                        canvas.restore()
+                        node.endRecording()
+                        val before = callbacks
+                        val result = renderer.createRenderRequest().setWaitForPresent(true).syncAndDraw()
+                        check(result and (android.graphics.HardwareRenderer.SYNC_LOST_SURFACE_REWARD_IF_FOUND or
+                            android.graphics.HardwareRenderer.SYNC_CONTEXT_IS_STOPPED) == 0)
+                        await("functor root/layer composition, layer=$layer") {
+                            if (callbacks <= before) false else {
+                                activateReader(reader)
+                                texture.updateTexImage()
+                                val left = pixelAt(reader, .125f, .5f)
+                                val blue = pixelAt(reader, .375f, .5f)
+                                val hole = pixelAt(reader, .625f, .5f)
+                                if (layer) blue == 0xff7f7fff.toInt() && hole == blue
+                                else left == android.graphics.Color.WHITE && blue == android.graphics.Color.BLUE &&
+                                    hole == 0xffcc3399.toInt()
+                            }
+                        }
+                    }
+                    check(prepares.get() >= 1) { "original HWUI overlay prepare callback did not run" }
+                    println("WebViewFunctor: ${bounds.width}x${bounds.height} root/layer/root pixels, coordinates and underlay teardown passed")
+                } finally {
+                    renderer.setContentRoot(null)
+                    renderer.destroy()
+                    node.discardDisplayList()
+                    destroyFunctor(functor)
+                    producer.release()
+                    queue.destroy()
+                }
+            }
             override fun close() {
                 ndkDestroyLayer(ndkLayer)
                 output.close()
@@ -279,6 +345,8 @@ object SurfaceBufferSmoke {
                 activateReader(second.reader)
                 check(pixel(second.reader) == 0xff00ff00.toInt()) { "Resizing a task changed its peer" }
                 check(com.android.server.display.DisplayControl.getPhysicalDisplayIds().contentEquals(physical))
+                first.functorFrames()
+                second.functorFrames()
             } finally { second.close() }
             first.color(0xffffff00.toInt())
         } finally { first.close() }

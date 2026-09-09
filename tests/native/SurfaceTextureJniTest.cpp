@@ -40,8 +40,8 @@ struct TextureReader {
     const char *fragment =
         "#version 300 es\n"
         "#extension GL_OES_EGL_image_external_essl3 : require\n"
-        "precision highp float; uniform samplerExternalOES source;"
-        "out vec4 color; void main() { color = texture(source, vec2(0.5)); }";
+        "precision highp float; uniform samplerExternalOES source; uniform vec2 coordinate;"
+        "out vec4 color; void main() { color = texture(source, coordinate); }";
     auto shader = [](GLenum type, const char *source) {
       GLuint s = glCreateShader(type);
       glShaderSource(s, 1, &source, nullptr);
@@ -75,13 +75,14 @@ struct TextureReader {
   void activate() {
     assert(eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, eglContext));
   }
-  jint pixel() {
+  jint pixel(float x = .5f, float y = .5f) {
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glViewport(0, 0, 1, 1);
     glUseProgram(program);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_EXTERNAL_OES, texture);
     glUniform1i(glGetUniformLocation(program, "source"), 0);
+    glUniform2f(glGetUniformLocation(program, "coordinate"), x, y);
     glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     uint8_t rgba[4]{};
@@ -194,4 +195,9 @@ Java_dev_artzig_HostInputDispatcherSmoke_startInputPublication(JNIEnv *,
   assert(defaultServiceManager()->addService(String16("window"),
                                              sp<BBinder>::make()) == OK);
   assert(SurfaceComposerClient::bootFinished() == OK);
+}
+
+extern "C" JNIEXPORT jint JNICALL Java_dev_artzig_SurfaceBufferSmoke_pixelAt(
+        JNIEnv*, jclass, jlong ptr, jfloat x, jfloat y) {
+    return reinterpret_cast<TextureReader*>(ptr)->pixel(x, y);
 }
