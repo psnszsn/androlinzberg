@@ -22,7 +22,8 @@ import java.util.concurrent.Executor
  * its committed listener releases the old synthetic reservation. No display is
  * added to DisplayManager and no buffer child receives a synthetic transform.
  */
-internal class StockTaskOrganizer(private val handler: Handler) :
+internal class StockTaskOrganizer(private val handler: Handler,
+    private val immersive: (IBinder) -> Boolean = com.android.server.wm.HostedTaskPresentation::isImmersive) :
     WaylandTaskShell.Android<IBinder, SurfaceControl> {
     interface SurfaceWindow : WaylandTaskShell.Window {
         val surface: Surface
@@ -111,7 +112,7 @@ internal class StockTaskOrganizer(private val handler: Handler) :
             info.displayId == Display.DEFAULT_DISPLAY &&
                 info.activityType == WindowConfiguration.ACTIVITY_TYPE_STANDARD && appId.isNotEmpty(),
             bounds.left, bounds.top,
-            com.android.server.wm.HostedTaskPresentation.isImmersive(info.token.asBinder()))
+            immersive(info.token.asBinder()))
     }
 
     override fun configure(token: IBinder, leash: SurfaceControl, window: WaylandTaskShell.Window,

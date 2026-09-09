@@ -35,20 +35,8 @@ pub fn main(init: std.process.Init) !void {
     const identity_b = args[7];
     const surfaceflinger_exe = args[8];
 
-    var random: [8]u8 = undefined;
-    io.random(&random);
-    const dir = try std.fmt.allocPrint(arena, "/tmp/azk-system-test-{x}", .{&random});
-    try Io.Dir.createDirAbsolute(io, dir, @fromBackingInt(@intCast(0o700)));
-    defer Io.Dir.cwd().deleteTree(io, dir) catch {};
-    const socket_path = try std.fs.path.join(arena, &.{ dir, "binder.sock" });
-    const prop_area_path = try std.fs.path.join(arena, &.{ dir, "props" });
-
     var env = try init.minimal.environ.createMap(gpa);
     defer env.deinit();
-    try env.put("AZK_BINDER_SOCKET", socket_path);
-    try env.put("AZK_BINDER_COOKIE", "system-test");
-    try env.put("AZK_BINDER_SYSTEM_COOKIE", "system-test-system");
-    try env.put("AZK_PROP_AREA", prop_area_path);
     // The peers install their packages from build-time fixture APKs.
     try env.put("AZK_FIXTURE_APK_A", fixture_a);
     try env.put("AZK_FIXTURE_APK_B", fixture_b);
@@ -59,55 +47,26 @@ pub fn main(init: std.process.Init) !void {
     // to wayland-0; parallel test sessions would cross-talk through it).
     try env.put("WAYLAND_DISPLAY", "azk-hermetic-none");
 
-    var broker = try std.process.spawn(io, .{
-        .argv = &.{ broker_exe, "--socket", socket_path, "--prop-area", prop_area_path },
-        .environ_map = &env,
-        .stdin = .pipe,
-        .stdout = .pipe,
-        .stderr = .inherit,
+    // The test entry enables the caller API flag in the stock system process.
+    // Everything else uses production session metadata, cold starts, output
+    // drains, service ownership and bounded shutdown.
+    try env.put("AZK_TEST_CLASS", "dev.artzig.systemtest.SystemTestServer");
+    const session_env: std.process.Environ = .{ .block = try env.createPosixBlock(gpa, .{}) };
+    defer session_env.block.deinit(gpa);
+    const session_module = @import("session.zig");
+    var session = try session_module.Session.start(gpa, io, .{
+        .launcher_exe = launcher,
+        .broker_exe = broker_exe,
+        .surfaceflinger_exe = surfaceflinger_exe,
+        .system_args = &.{"--javatest"},
+        .environ = session_env,
     });
-    var broker_checked = false;
-    defer if (!broker_checked) {
-        if (broker.stdin) |stdin| stdin.close(io);
-        broker.stdin = null;
-        _ = broker.wait(io) catch {};
-    };
-    try awaitReady(io, &broker, "broker");
-
-    var system_env = try env.clone(gpa);
-    defer system_env.deinit();
-    try @import("session.zig").configureSystemData(gpa, io, &system_env, dir);
-    // Stock SurfaceSyncGroup submits its completed transaction through libgui,
-    // including empty transactions. Supply the same compositor as a real session.
-    var surfaceflinger = try std.process.spawn(io, .{
-        .argv = &.{surfaceflinger_exe},
-        .environ_map = &env,
-        .stdin = .pipe,
-        .stdout = .pipe,
-        .stderr = .inherit,
-    });
-    var surfaceflinger_checked = false;
-    defer if (!surfaceflinger_checked) {
-        if (surfaceflinger.stdin) |stdin| stdin.close(io);
-        surfaceflinger.stdin = null;
-        _ = surfaceflinger.wait(io) catch {};
-    };
-    try awaitReady(io, &surfaceflinger, "SurfaceFlinger");
-
-    var system = try std.process.spawn(io, .{
-        .argv = &.{ launcher, "--system-server" },
-        .environ_map = &system_env,
-        .stdin = .pipe,
-        .stdout = .pipe,
-        .stderr = .inherit,
-    });
-    var system_checked = false;
-    defer if (!system_checked) {
-        if (system.stdin) |stdin| stdin.close(io);
-        system.stdin = null;
-        _ = system.wait(io) catch {};
-    };
-    try awaitReady(io, &system, "system process");
+    defer session.stop();
+    try session.awaitSystemReady();
+    try env.put(session_module.socket_env, session.socket_path);
+    try env.put(session_module.cookie_env, session.cookie);
+    try env.put(session_module.system_cookie_env, session.system_cookie);
+    try env.put(session_module.prop_area_env, session.prop_area_path);
 
     var watchdog: Io.Group = .init;
     var expired = std.atomic.Value(bool).init(false);
@@ -135,9 +94,16 @@ pub fn main(init: std.process.Init) !void {
     var failed = false;
     failed = !expectExit(io, &client, "client") or failed;
     peer_pids[1].store(0, .release);
-    failed = !expectExit(io, &ndkc, "ndk system client") or failed;
+    if (failed) {
+        // A failed client cannot send the service host's normal completion
+        // signals. Retire owned peers now instead of waiting for fixture timeouts.
+        ndkc.kill(io);
+        host.kill(io);
+    } else {
+        failed = !expectExit(io, &ndkc, "ndk system client") or failed;
+        failed = !expectExit(io, &host, "service host") or failed;
+    }
     peer_pids[2].store(0, .release);
-    failed = !expectExit(io, &host, "service host") or failed;
     peer_pids[0].store(0, .release);
     if (!failed) {
         var crashing = try spawnPeer(io, &env, launcher, "dev.artzig.systemtest.RuntimeCrashSystemSmoke", "dev.artzig.test.a");
@@ -164,8 +130,12 @@ pub fn main(init: std.process.Init) !void {
         peer_pids[0].store(identity_host.id.?, .release);
         var identity_client = try spawnPeer(io, &env, launcher, "dev.artzig.systemtest.CallerIdentitySystemSmoke", "dev.artzig.identity.a");
         peer_pids[1].store(identity_client.id.?, .release);
+        var identity_launcher = try spawnPeer(io, &env, launcher, "dev.artzig.systemtest.IdentityLaunchSystemSmoke", "android");
+        peer_pids[2].store(identity_launcher.id.?, .release);
         failed = !expectExit(io, &identity_client, "caller identity client") or failed;
         peer_pids[1].store(0, .release);
+        failed = !expectExit(io, &identity_launcher, "caller identity launcher") or failed;
+        peer_pids[2].store(0, .release);
         failed = !expectExit(io, &identity_host, "caller identity host") or failed;
         peer_pids[0].store(0, .release);
     }
@@ -173,20 +143,8 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("system-test: timed out after {d}s\n", .{timeout_seconds});
         failed = true;
     }
-    system.stdin.?.close(io);
-    system.stdin = null;
-    system_checked = true;
-    failed = !expectExit(io, &system, "system process") or failed;
-    if (surfaceflinger.stdin) |stdin| stdin.close(io);
-    surfaceflinger.stdin = null;
-    surfaceflinger_checked = true;
-    failed = !expectExit(io, &surfaceflinger, "SurfaceFlinger") or failed;
-    broker.stdin.?.close(io);
-    broker.stdin = null;
-    broker_checked = true;
-    failed = !expectExit(io, &broker, "broker") or failed;
     if (failed) return error.SystemTestFailed;
-    std.debug.print("system-test: all processes exited cleanly\n", .{});
+    std.debug.print("system-test: all test peers exited cleanly\n", .{});
 }
 
 /// Use the production session supervisor, including its stdout drain and app
@@ -220,21 +178,6 @@ fn coldWindow(init: std.process.Init, args: []const []const u8) !void {
     });
     defer client.kill(io);
     if (!expectExit(io, &client, "stock cold launch")) return error.ColdLaunchFailed;
-}
-
-fn awaitReady(io: Io, child: *std.process.Child, name: []const u8) !void {
-    var line: [64]u8 = undefined;
-    var got: usize = 0;
-    while (got < line.len) {
-        const n = try child.stdout.?.readStreaming(io, &.{line[got..]});
-        if (n == 0) break;
-        got += n;
-        if (std.mem.indexOfScalar(u8, line[0..got], '\n') != null) break;
-    }
-    if (!std.mem.startsWith(u8, line[0..got], "ready")) {
-        std.debug.print("system-test: {s} not ready\n", .{name});
-        return error.NotReady;
-    }
 }
 
 fn spawnPeer(

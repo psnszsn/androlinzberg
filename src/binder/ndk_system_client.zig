@@ -29,6 +29,7 @@ extern fn AIBinder_transact(binder: *AIBinder, code: u32, in: *?*AParcel, out: *
 extern fn AIBinder_decStrong(binder: *AIBinder) callconv(.c) void;
 extern fn AIBinder_isRemote(binder: *const AIBinder) callconv(.c) bool;
 extern fn AServiceManager_waitForService(instance: [*:0]const u8) callconv(.c) ?*AIBinder;
+extern fn AIBinder_ping(binder: ?*AIBinder) callconv(.c) i32;
 extern fn AParcel_writeInt32(parcel: *AParcel, value: i32) callconv(.c) i32;
 extern fn AParcel_readInt32(parcel: *const AParcel, value: *i32) callconv(.c) i32;
 extern fn AParcel_writeString(parcel: *AParcel, string: ?[*]const u8, length: i32) callconv(.c) i32;
@@ -90,6 +91,7 @@ pub fn main() !void {
     };
     defer AIBinder_decStrong(svc);
     check(AIBinder_isRemote(svc), "Java-registered service resolves to a remote proxy", &failures);
+    check(AIBinder_ping(svc) == 0, "remote NDK ping reaches the Java Binder control transaction", &failures);
 
     // Associate the interface class so prepareTransaction writes the descriptor
     // token the Java stub's enforceInterface checks.

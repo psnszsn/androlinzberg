@@ -245,6 +245,8 @@ internal object ActivityUriGrantSystemSmoke {
                         putBoolean("live", activities.containsKey(id))
                         putInt("taskId", activities[id]?.taskId ?: -1)
                         putBoolean("taskRoot", activities[id]?.isTaskRoot == true)
+                        putBoolean("focused", activities[id]?.hasWindowFocus() == true)
+                        putInt("uiMode", activities[id]?.resources?.configuration?.uiMode ?: 0)
                         putInt("uid", Process.myUid())
                     }
                 }
@@ -262,7 +264,7 @@ internal object ActivityUriGrantSystemSmoke {
         })
     }
 
-    private fun setCallerApis(enabled: Boolean) {
+    fun setCallerApis(enabled: Boolean) {
         val field = android.security.Flags::class.java.getDeclaredField("FEATURE_FLAGS")
         field.isAccessible = true
         if (!enabled) {
@@ -405,6 +407,21 @@ internal object ActivityUriGrantSystemSmoke {
             "recreation, new intents, shared owners, results, persistence and task removal")
     }
 
+    /** Keep the service client visible for clipboard/configuration contracts.
+     * Stock services intentionally deny or defer these for cached processes. */
+    fun showServiceClient() {
+        start(-1, activityIntent(A, 200).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        awaitServiceClientFocus()
+    }
+
+    fun serviceClientGeneration(): Int = call(A, STATUS, args(200)).getInt("creates")
+
+    fun awaitServiceClientFocus(night: Int? = null, afterGeneration: Int? = null) {
+        awaitState(A, 200) { it.getBoolean("resumed") && it.getBoolean("focused") &&
+            (afterGeneration == null || it.getInt("creates") > afterGeneration) &&
+            (night == null || it.getInt("uiMode") and android.content.res.Configuration.UI_MODE_NIGHT_MASK == night) }
+    }
+
     private fun verifyTaskReuse() {
         val separateTask = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK
         start(-1, activityIntent(A, 80).addFlags(separateTask))
@@ -535,7 +552,9 @@ internal object ActivityUriGrantSystemSmoke {
         val targetUid = call(target, STATUS).getInt("uid")
         check(sourceUid != targetUid && sourceUid != Process.SYSTEM_UID && targetUid != Process.SYSTEM_UID)
         try {
-            launch(source, -1, source, 101, flags = Intent.FLAG_ACTIVITY_NEW_TASK)
+            ServiceManager.addService("$source.caller-ready", Binder())
+            awaitState(source, 100) { it.getBoolean("resumed") }
+            launch(source, 100, source, 101)
             awaitState(source, 101) { it.getBoolean("resumed") }
             expected(identity(source, 101), sourceUid, source)
             check(identity(source, 101).getString("callingPackage") == null)

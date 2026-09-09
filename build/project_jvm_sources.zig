@@ -16,7 +16,6 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/HostedAAudio.kt",
     "src/java/dev/artzig/StockAAudioSmoke.kt",
     "src/java/dev/artzig/StockHidlTransportSmoke.kt",
-    "src/java/dev/artzig/HostedRenderer.kt",
     "src/java/dev/artzig/HostedHardwareSnapshot.kt",
     "src/java/dev/artzig/StockRendererSmoke.kt",
     "src/java/dev/artzig/StockSplashScreenSmoke.kt",
@@ -359,6 +358,8 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/systemtest/StockAppOpsSystemSmoke.kt",
     "src/java/dev/artzig/systemtest/StockPermissionCheckerSystemSmoke.kt",
     "src/java/dev/artzig/systemtest/SystemTestHostB.kt",
+    "src/java/dev/artzig/systemtest/SystemTestServer.kt",
+    "src/java/com/android/server/pm/HostedKnownPackages.kt",
     "src/java/dev/artzig/systemtest/TestJobServices.kt",
     "src/java/dev/artzig/systemtest/TestProvider.kt",
 };

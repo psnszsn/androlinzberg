@@ -7,7 +7,6 @@ import android.content.pm.PackageManager
 import android.media.*
 import android.os.IHwBinder
 import android.os.PersistableBundle
-import dev.artzig.window.WindowBackend
 import android.view.Surface
 import java.lang.ref.WeakReference
 import java.nio.ByteBuffer
@@ -34,7 +33,6 @@ internal object HostedMediaCodecBackend {
     @JvmStatic fun linearBlockOperation(member: String): Unit = throw ArtzigTestDiagnostics.unsupported(
         "android.media.MediaCodec.LinearBlock", member, "The existing decoder has no block-model buffer pool")
     private enum class Phase { INITIALIZED, CONFIGURED, EXECUTING, FLUSHED, RELEASED }
-    private class PendingFrame(val handle: Long) { var task: ScheduledFuture<*>? = null }
     private class Codec(owner: MediaCodec, val name: String, val engine: String) {
         val owner = WeakReference(owner)
         var phase = Phase.INITIALIZED
@@ -53,8 +51,6 @@ internal object HostedMediaCodecBackend {
         val meta = IntArray(4)
         val pts = LongArray(1)
         val frame = LongArray(1)
-        val pendingFrames = LinkedHashMap<Long, PendingFrame>()
-        var nextFrame = 0L
         var formatReported = false
         var pendingOutput = -1
         var inputEos = false
@@ -95,10 +91,6 @@ internal object HostedMediaCodecBackend {
         value.pump?.cancel(false); value.pump = null
     }
     private fun discardBuffers(value: Codec) {
-        for (frame in value.pendingFrames.values) {
-            frame.task?.cancel(false); HostedVideoOutput.releaseHardware(frame.handle)
-        }
-        value.pendingFrames.clear()
         for (i in value.hardware.indices) {
             HostedVideoOutput.releaseHardware(value.hardware[i]); value.hardware[i] = 0
         }
@@ -249,7 +241,7 @@ internal object HostedMediaCodecBackend {
             return index
         }
         if (value.outputEos) return -1
-        if (value.video && value.outputOwned.count { it } + value.pendingFrames.size >= value.output.size) return -1
+        if (value.video && value.outputOwned.count { it } >= value.output.size) return -1
         val index = value.output.indices.firstOrNull { !value.outputOwned[it] } ?: return -1
         val buffer = value.output[index]
         buffer.clear()
@@ -303,28 +295,10 @@ internal object HostedMediaCodecBackend {
         if (frame != 0L) {
             val surface = it.surface
             if (render && surface != null) {
-                val now = System.nanoTime()
-                val delay = if (timed && timestamp > now) timestamp - now else 0L
                 val pts = it.outputInfos[index].presentationTimeUs
                 val requested = if (timed) timestamp else pts * 1000
-                if (WindowBackend.stock || delay == 0L) {
-                    val status = it.videoOutput.queue(frame, requested, pts)
-                    if (status != 0) { it.outputOwned[index] = false; failed("Surface video queue failed: $status") }
-                }
-                else {
-                    // The host surface accepts a frame immediately; retain ownership here
-                    // until the requested monotonic timestamp. These count against output
-                    // capacity, as frames queued to Android's finite BufferQueue would.
-                    val token = ++it.nextFrame
-                    val pending = PendingFrame(frame)
-                    val value = it
-                    value.pendingFrames[token] = pending
-                    pending.task = worker.schedule({
-                        synchronized(value) {
-                            if (value.pendingFrames.remove(token) != null) value.videoOutput.queue(frame, requested, pts)
-                        }
-                    }, delay, TimeUnit.NANOSECONDS)
-                }
+                val status = it.videoOutput.queue(frame, requested, pts)
+                if (status != 0) { it.outputOwned[index] = false; failed("Surface video queue failed: $status") }
             } else HostedVideoOutput.releaseHardware(frame)
         }
         it.outputOwned[index] = false
@@ -342,7 +316,7 @@ internal object HostedMediaCodecBackend {
                         if (index == -2) events.add(Triple(4, 0, formatMap(value.formats.outputFormat())))
                         else if (index >= 0) events.add(Triple(2, index, info)) else break
                     }
-                    var budget = if (value.video) (value.output.indices.count { !value.outputOwned[it] } - value.pendingFrames.size).coerceAtLeast(0) else 8
+                    var budget = if (value.video) (value.output.indices.count { !value.outputOwned[it] }).coerceAtLeast(0) else 8
                     while (budget-- > 0) {
                         val index = input(value)
                         if (index < 0) break
@@ -392,10 +366,6 @@ internal object HostedMediaCodecBackend {
     @JvmStatic fun setSurface(id: Long, surface: Surface?) = withCodec(id) {
         check(it.phase != Phase.INITIALIZED && it.video); requireNotNull(surface)
         it.videoOutput.setSurface(surface) // A failed connection retains the previous output.
-        for (frame in it.pendingFrames.values) {
-            frame.task?.cancel(false); HostedVideoOutput.releaseHardware(frame.handle)
-        }
-        it.pendingFrames.clear()
         it.surface = surface
     }
     @JvmStatic fun setVideoScalingMode(id: Long, mode: Int) = withCodec(id) {

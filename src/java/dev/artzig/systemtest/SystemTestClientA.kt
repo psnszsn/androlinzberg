@@ -262,6 +262,7 @@ internal object SystemTestClientA {
         SurfaceSyncSystemSmoke.verify()
         ActivityRecreationSystemSmoke.verify(context)
         ActivityUriGrantSystemSmoke.verify()
+        ActivityUriGrantSystemSmoke.showServiceClient()
         testCompanionAssociations(context)
         val networkScores = context.getSystemService(android.net.NetworkScoreManager::class.java)
         check(networkScores != null && networkScores === context.getSystemService(android.content.Context.NETWORK_SCORE_SERVICE),
@@ -1293,6 +1294,7 @@ internal object SystemTestClientA {
         val uiMode = checkNotNull(context.getSystemService(android.app.UiModeManager::class.java))
         check(uiMode.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_NORMAL, "ui mode type normal")
         check(uiMode.nightMode == android.app.UiModeManager.MODE_NIGHT_NO, "night mode follows config_defaultNightMode")
+        val beforeNight = ActivityUriGrantSystemSmoke.serviceClientGeneration()
         uiMode.setApplicationNightMode(android.app.UiModeManager.MODE_NIGHT_YES)
         var nightApplied = false
         for (i in 0 until 50) {
@@ -1300,7 +1302,10 @@ internal object SystemTestClientA {
             Thread.sleep(100)
         }
         check(nightApplied, "application night mode reaches this process's configuration")
+        ActivityUriGrantSystemSmoke.awaitServiceClientFocus(android.content.res.Configuration.UI_MODE_NIGHT_YES, beforeNight)
+        val beforeRestore = ActivityUriGrantSystemSmoke.serviceClientGeneration()
         uiMode.setApplicationNightMode(android.app.UiModeManager.MODE_NIGHT_NO)
+        ActivityUriGrantSystemSmoke.awaitServiceClientFocus(android.content.res.Configuration.UI_MODE_NIGHT_NO, beforeRestore)
         check(runCatching { uiMode.setApplicationNightMode(Int.MIN_VALUE) }.exceptionOrNull() is IllegalArgumentException, "invalid night mode rejected")
         val appWidgets = checkNotNull(android.appwidget.AppWidgetManager.getInstance(context))
         check(appWidgets.installedProviders.isEmpty(), "no app widget providers")
@@ -1695,11 +1700,21 @@ internal object SystemTestClientA {
             dead = true
         }
         check(dead, "calls after host death throw DeadObjectException")
-        // The provider record died with its host; re-acquisition finds no
-        // process and (with no launcher in this harness) yields null.
-        check(
-            resolver.query(providerUri, null, null, null, null) == null,
-            "provider gone after host death",
-        )
+        // Production can cold-start a replacement provider. The old transport
+        // object must remain dead; reacquisition gets a new Binder with the
+        // same installed package identity and its ordinary query behavior.
+        check(!providerHolder.provider.asBinder().pingBinder(), "old provider Binder remains dead")
+        check(!providerHolder.provider.asBinder().isBinderAlive, "failed ping caches provider death without a subscription")
+        val restarted = checkNotNull(providerManager.getContentProvider(
+            dev.artzig.HostedServiceClient.applicationThread(), context.packageName,
+            providerUri.authority, 0, false))
+        try {
+            check(restarted.provider.asBinder() != providerHolder.provider.asBinder() &&
+                restarted.info.applicationInfo.uid == providerHolder.info.applicationInfo.uid,
+                "restarted provider has a new Binder and stable package UID")
+            resolver.query(providerUri, null, null, null, null).use {
+                check(it != null && it.count == 2, "provider reacquisition cold-starts a working host")
+            }
+        } finally { providerManager.removeContentProvider(checkNotNull(restarted.connection), false) }
     }
 }

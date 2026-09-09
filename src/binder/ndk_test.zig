@@ -30,6 +30,7 @@ extern fn AIBinder_prepareTransaction(binder: *AIBinder, in: *?*AParcel) callcon
 extern fn AIBinder_transact(binder: *AIBinder, code: u32, in: *?*AParcel, out: *?*AParcel, flags: u32) callconv(.c) i32;
 extern fn AIBinder_decStrong(binder: *AIBinder) callconv(.c) void;
 extern fn AIBinder_isRemote(binder: *const AIBinder) callconv(.c) bool;
+extern fn AIBinder_ping(binder: ?*AIBinder) callconv(.c) i32;
 extern fn AServiceManager_addService(binder: *AIBinder, instance: [*:0]const u8) callconv(.c) i32;
 extern fn AServiceManager_waitForService(instance: [*:0]const u8) callconv(.c) ?*AIBinder;
 extern fn AParcel_writeInt32(parcel: *AParcel, value: i32) callconv(.c) i32;
@@ -183,6 +184,8 @@ pub fn main(init: std.process.Init) !void {
 
     const class = AIBinder_Class_define("dev.artzig.ndk.ITest", null, null, onTransact);
     const service = AIBinder_new(class, null);
+    check(AIBinder_ping(service) == 0, "local ping bypasses the user transaction handler", &failures);
+    check(AIBinder_ping(null) == std.math.minInt(i32) + 8, "null ping returns STATUS_UNEXPECTED_NULL", &failures);
     const add_rc = AServiceManager_addService(service, "dev.artzig.ndk.test");
     check(add_rc == 0, "addService accepted", &failures);
     if (add_rc != 0) {

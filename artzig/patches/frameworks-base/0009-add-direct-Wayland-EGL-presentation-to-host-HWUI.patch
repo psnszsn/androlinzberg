@@ -1,36 +1,10 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Codex <codex@openai.com>
-Date: Mon, 24 Aug 2026 17:35:00 +0200
-Subject: [PATCH 09/14] add direct Wayland EGL presentation to host HWUI
+Subject: [PATCH] HWUI: select the host Ganesh pipeline and GPU bitmap support
 
-Add a host-only RenderProxy/CanvasContext surface seam so Artzig can bind
-its wl_display and wl_surface directly. The Ganesh pipeline now owns a
-Wayland EGL window surface and presents with eglSwapBuffers, eliminating
-the per-frame GPU readback, Java Bitmap copy, and wl_shm upload.
-
-Also provide real GPU-backed host hardware bitmaps, render-thread uploads
-and readback, initialize DeviceInfo from the live Ganesh context, and make
-the optional ActivityManager RenderThread scheduling notification tolerate
-host runtimes without a system server.
-
-Report the actual nested resource chunk type in LoadedArsc diagnostics so
-host resource-table incompatibilities can be identified accurately.
----
- .../android/graphics/HardwareRenderer.java    |  6 +-
- libs/androidfw/LoadedArsc.cpp                 |  9 +-
- libs/hwui/hwui/Bitmap.cpp                     | 86 +++++++++++++------
- libs/hwui/hwui/Bitmap.h                       | 68 ++++++++-------
- libs/hwui/jni/Bitmap.cpp                      | 41 +++++++++
- .../jni/android_graphics_HardwareRenderer.cpp |  8 +-
- libs/hwui/platform/host/Readback.cpp          | 57 +++++++++++-
- .../host/renderthread/RenderThread.cpp        | 21 ++++-
- libs/hwui/renderthread/CanvasContext.cpp      | 61 ++++++++++---
- libs/hwui/renderthread/CanvasContext.h        | 14 ++-
- libs/hwui/renderthread/IRenderPipeline.h      |  6 ++
- libs/hwui/renderthread/RenderProxy.cpp        | 34 ++++++--
- libs/hwui/renderthread/RenderProxy.h          |  6 ++
- libs/hwui/renderthread/RenderThread.h         |  6 ++
- 14 files changed, 331 insertions(+), 92 deletions(-)
+Select ArtzigGpuPipeline for host OpenGL rendering through stock Android
+surfaces and HardwareBuffer targets. Keep GPU-backed hardware bitmap allocation,
+render-thread uploads/readback and live Ganesh DeviceInfo initialization.
+The session presenter owns Wayland; no RenderProxy or CanvasContext host-surface
+entry point is needed. Report concrete resource chunk types in LoadedArsc.
 
 diff --git a/graphics/java/android/graphics/HardwareRenderer.java b/graphics/java/android/graphics/HardwareRenderer.java
 index 3444f84c2..e2a4f2032 100644
@@ -751,41 +725,6 @@ index d5ac99389..2a2f4591f 100644
      int bufferCount = min_undequeued_buffers + 2;
      native_window_set_buffer_count(window, bufferCount);
  }
-@@ -234,6 +243,25 @@ sp<SurfaceControl> CanvasContext::getSurfaceControl() const {
- }
- #endif
- 
-+#ifdef ARTZIG_HOST_GPU
-+void CanvasContext::setHostSurface(void* nativeDisplay, void* nativeSurface, int32_t width,
-+                                   int32_t height) {
-+    ATRACE_CALL();
-+    startHintSession();
-+    mNativeSurface = nullptr;
-+    const bool hasSurface =
-+            mRenderPipeline->setHostSurface(nativeDisplay, nativeSurface, width, height);
-+    mFrameNumber = 0;
-+    if (hasSurface) {
-+        mHaveNewSurface = true;
-+        mSwapHistory.clear();
-+    } else {
-+        mRenderThread.removeFrameCallback(this);
-+        mGenerationID++;
-+    }
-+}
-+#endif
-+
- void CanvasContext::setSurfaceControl(sp<SurfaceControl> surfaceControl) {
- #ifdef __ANDROID__
-     if (surfaceControl == mSurfaceControl) return;
-@@ -526,7 +554,7 @@ void CanvasContext::prepareTree(TreeInfo& info, int64_t* uiFrameInfo, int64_t sy
-         info.out.skippedFrameReason = SkippedFrameReason::NothingToDraw;
-     }
- 
--    if (!info.out.skippedFrameReason) {
-+    if (!info.out.skippedFrameReason && mNativeSurface) {
-         int err = mNativeSurface->reserveNext();
-         if (err != OK) {
-             info.out.skippedFrameReason = SkippedFrameReason::NoBuffer;
 @@ -679,8 +707,8 @@ void CanvasContext::draw(bool solelyTextureViewUpdates) {
              const auto inputEventId =
                      static_cast<int32_t>(mCurrentFrameInfo->get(FrameInfoIndex::InputEventId));
@@ -797,21 +736,6 @@ index d5ac99389..2a2f4591f 100644
              const ANativeWindowFrameTimelineInfo ftl = {
                      .frameNumber = frameCompleteNr,
                      .frameTimelineVsyncId = vsyncId,
-@@ -758,6 +786,14 @@ void CanvasContext::draw(bool solelyTextureViewUpdates) {
-     } else {
-         mCurrentFrameInfo->set(FrameInfoIndex::DequeueBufferDuration) = 0;
-         mCurrentFrameInfo->set(FrameInfoIndex::QueueBufferDuration) = 0;
-+#ifdef ARTZIG_HOST_GPU
-+        // The host pipeline swaps its EGL window directly and therefore has no
-+        // ReliableSurface bookkeeping to perform.
-+        if (didSwap) {
-+            didDraw = true;
-+            mHaveNewSurface = false;
-+        }
-+#endif
-     }
- 
-     mCurrentFrameInfo->markSwapBuffersCompleted();
 @@ -796,8 +832,8 @@ void CanvasContext::draw(bool solelyTextureViewUpdates) {
              }  // release lock
          } else {
@@ -859,28 +783,6 @@ diff --git a/libs/hwui/renderthread/CanvasContext.h b/libs/hwui/renderthread/Can
 index 655aebada..c1675774a 100644
 --- a/libs/hwui/renderthread/CanvasContext.h
 +++ b/libs/hwui/renderthread/CanvasContext.h
-@@ -134,11 +134,20 @@ public:
- 
-     void setHardwareBuffer(AHardwareBuffer* buffer);
-     void setSurface(ANativeWindow* window, bool enableTimeout = true);
-+#ifdef ARTZIG_HOST_GPU
-+    void setHostSurface(void* nativeDisplay, void* nativeSurface, int32_t width, int32_t height);
-+#endif
-     void setSurfaceControl(sp<SurfaceControl> surfaceControl);
-     bool pauseSurface();
-     void setStopped(bool stopped);
-     bool isStopped() { return mStopped || !hasOutputTarget(); }
--    bool hasOutputTarget() const { return mNativeSurface.get() || mHardwareBuffer; }
-+    bool hasOutputTarget() const {
-+#ifdef ARTZIG_HOST_GPU
-+        return mNativeSurface.get() || mHardwareBuffer || mRenderPipeline->isSurfaceReady();
-+#else
-+        return mNativeSurface.get() || mHardwareBuffer;
-+#endif
-+    }
-     void allocateBuffers();
- 
-     void setLightAlpha(uint8_t ambientShadowAlpha, uint8_t spotShadowAlpha);
 @@ -343,8 +352,7 @@ private:
  
      // List of data of frames that are awaiting GPU completion reporting. Used to compute frame
@@ -891,28 +793,11 @@ index 655aebada..c1675774a 100644
      std::mutex mLastFrameMetricsInfosMutex;
  
      std::string mName;
-diff --git a/libs/hwui/renderthread/IRenderPipeline.h b/libs/hwui/renderthread/IRenderPipeline.h
-index ee1d1f878..76889edbc 100644
---- a/libs/hwui/renderthread/IRenderPipeline.h
-+++ b/libs/hwui/renderthread/IRenderPipeline.h
-@@ -76,6 +76,12 @@ public:
-     virtual void setHardwareBuffer(AHardwareBuffer* hardwareBuffer) = 0;
-     virtual bool hasHardwareBuffer() = 0;
-     virtual bool setSurface(ANativeWindow* window, SwapBehavior swapBehavior) = 0;
-+#ifdef ARTZIG_HOST_GPU
-+    virtual bool setHostSurface(void* nativeDisplay, void* nativeSurface, int32_t width,
-+                                int32_t height) {
-+        return false;
-+    }
-+#endif
-     virtual void onStop() = 0;
-     virtual bool isSurfaceReady() = 0;
-     virtual bool isContextReady() = 0;
 diff --git a/libs/hwui/renderthread/RenderProxy.cpp b/libs/hwui/renderthread/RenderProxy.cpp
 index e4be5fa8d..3441bd5ce 100644
 --- a/libs/hwui/renderthread/RenderProxy.cpp
 +++ b/libs/hwui/renderthread/RenderProxy.cpp
-@@ -113,13 +113,26 @@ void RenderProxy::setHardwareBuffer(AHardwareBuffer* buffer) {
+@@ -113,13 +113,17 @@ void RenderProxy::setHardwareBuffer(AHardwareBuffer* buffer) {
  }
  
  void RenderProxy::setSurface(ANativeWindow* window, bool enableTimeout) {
@@ -929,15 +814,6 @@ index e4be5fa8d..3441bd5ce 100644
      });
  }
  
-+#ifdef ARTZIG_HOST_GPU
-+void RenderProxy::setHostSurface(void* nativeDisplay, void* nativeSurface, int32_t width,
-+                                 int32_t height) {
-+    mRenderThread.queue().post([this, nativeDisplay, nativeSurface, width, height]() {
-+        mContext->setHostSurface(nativeDisplay, nativeSurface, width, height);
-+    });
-+}
-+#endif
-+
  void RenderProxy::setSurfaceControl(sp<SurfaceControl> surfaceControl) {
  #ifdef __ANDROID__
      mRenderThread.queue().post([this, control = std::move(surfaceControl)]() mutable {
@@ -976,16 +852,6 @@ diff --git a/libs/hwui/renderthread/RenderProxy.h b/libs/hwui/renderthread/Rende
 index 23b3ebd4b..77ab29d84 100644
 --- a/libs/hwui/renderthread/RenderProxy.h
 +++ b/libs/hwui/renderthread/RenderProxy.h
-@@ -80,6 +80,9 @@ public:
-     void setName(const char* name);
-     void setHardwareBuffer(AHardwareBuffer* buffer);
-     void setSurface(ANativeWindow* window, bool enableTimeout = true);
-+#ifdef ARTZIG_HOST_GPU
-+    void setHostSurface(void* nativeDisplay, void* nativeSurface, int32_t width, int32_t height);
-+#endif
-     void setSurfaceControl(sp<SurfaceControl> surfaceControl);
-     void allocateBuffers();
-     bool pause();
 @@ -150,6 +153,9 @@ public:
  
      static int copyHWBitmapInto(Bitmap* hwBitmap, SkBitmap* bitmap);

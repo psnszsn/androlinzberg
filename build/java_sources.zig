@@ -48,7 +48,6 @@ const StaticCollector = struct {
 };
 
 pub const Set = struct {
-    stock_window_clients: bool,
     java: SourceFiles.Files,
     kotlin: SourceFiles.Files,
     annotations: SourceFiles.Files,
@@ -87,14 +86,12 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
     framework.addRoot("SD", SourceFiles.Root.dependency(b, aosp, "packages/modules/StatsD"));
     framework.addRoot("TS", tagsoup);
     collectStatic(&framework) catch |err| std.debug.panic("unable to collect framework JVM sources: {t}", .{err});
-    if (stock_window_clients) {
-        for ([_][]const u8{
-            "core/java/android/view/ViewRootImpl.java",
-            "core/java/android/view/SurfaceView.java",
-            "core/java/android/view/AccessibilityInteractionController.java",
-            "core/java/com/android/internal/policy/PhoneFallbackEventHandler.java",
-        }) |path| framework.files.addFile(fb, path);
-    }
+    for ([_][]const u8{
+        "core/java/android/view/ViewRootImpl.java",
+        "core/java/android/view/SurfaceView.java",
+        "core/java/android/view/AccessibilityInteractionController.java",
+        "core/java/com/android/internal/policy/PhoneFallbackEventHandler.java",
+    }) |path| framework.files.addFile(fb, path);
     const project_root = SourceFiles.Root.project(b, "");
     for (project_sources.framework) |path| {
         framework.files.addFile(project_root, path);
@@ -125,7 +122,6 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
     const kotlin = framework.files.select(".kt");
     const annotation_files = annotations.select(".java");
     return .{
-        .stock_window_clients = stock_window_clients,
         .java = java,
         .protobuf_lite = protobuf.files.select(".java"),
         .cronet_preload = cronet.files.select(".java"),

@@ -22,7 +22,10 @@ internal object StockTaskShellSmoke {
                 return Window(task, events, handler).also { windows.add(it) }
             }
         }
-        val shell = WaylandTaskShell(StockTaskOrganizer(handler), presenter)
+        // This client exercises remote TaskOrganizer and SF against a plain
+        // fixture. Production reads immersive window attributes inside WMS;
+        // compositor fullscreen regressions exercise that local metadata path.
+        val shell = WaylandTaskShell(StockTaskOrganizer(handler, immersive = { false }), presenter)
         try {
             shell.start()
             try {

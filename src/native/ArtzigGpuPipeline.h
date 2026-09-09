@@ -7,15 +7,12 @@
 
 #include "pipeline/skia/SkiaPipeline.h"
 
-struct wl_egl_window;
-
 namespace android::uirenderer::skiapipeline {
 
 // Ganesh/OpenGL host seam. Android surfaces use stock ANativeWindow queues and
-// the shared DMA-BUF mapper; the legacy Wayland target remains during cutover.
+// the shared DMA-BUF mapper. The session presenter alone owns Wayland surfaces.
 class ArtzigGpuPipeline final : public SkiaPipeline {
 public:
-  static void bindHostDisplay(void* display);
   explicit ArtzigGpuPipeline(renderthread::RenderThread &thread);
   ~ArtzigGpuPipeline() override;
 
@@ -50,14 +47,12 @@ public:
   DeferredLayerUpdater *createTextureLayer() override;
   bool setSurface(ANativeWindow *surface,
                   renderthread::SwapBehavior swapBehavior) override;
-  bool setHostSurface(void *nativeDisplay, void *nativeSurface, int32_t width,
-                      int32_t height) override;
   [[nodiscard]] android::base::unique_fd flush() override;
   void onStop() override {}
-  bool isSurfaceReady() override {
-    return mAndroidWindow != nullptr || mSurface != nullptr ||
-           mHardwareBuffer != nullptr;
-  }
+  // Pinned SkiaOpenGLPipeline reports its native window here. CanvasContext's
+  // doFrame uses this for autonomous RT animation; HardwareBuffer snapshots
+  // remain explicitly submitted through the separate hasHardwareBuffer path.
+  bool isSurfaceReady() override { return mAndroidWindow != nullptr; }
   bool isContextReady() override { return mContext != nullptr; }
 
   const SkM44 &getPixelSnapMatrix() const override {
@@ -72,20 +67,14 @@ private:
   void destroyContext();
   void clearAndroidWindow();
   void cancelWindowBuffer();
-  sk_sp<SkSurface> makeWindowSurface(int width, int height);
   sk_sp<SkSurface> makeLayerSurface(int width, int height);
 
-  void *mNativeDisplay = nullptr;
-  void *mNativeSurface = nullptr;
   EGLDisplay mDisplay = EGL_NO_DISPLAY;
   EGLConfig mConfig = nullptr;
   EGLContext mEglContext = EGL_NO_CONTEXT;
   EGLSurface mEglSurface = EGL_NO_SURFACE;
-  bool mUsingGbmDisplay = false;
   bool mSurfaceless = false;
-  wl_egl_window *mWaylandWindow = nullptr;
   sk_sp<GrDirectContext> mContext;
-  sk_sp<SkSurface> mSurface;
   ANativeWindow *mAndroidWindow = nullptr;
   ANativeWindowBuffer *mDequeuedBuffer = nullptr;
   sk_sp<SkSurface> mWindowBufferSurface;

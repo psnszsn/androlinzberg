@@ -83,9 +83,7 @@ void nativeRelease(JNIEnv* env, jclass, jlong hardware) {
 }
 
 extern "C" int azk_video_surface_available() {
-    const char* backend = std::getenv("AZK_WINDOW_BACKEND");
-    return backend && std::strcmp(backend, "stock") == 0 &&
-            azk_graphics_supported(16, 16, 2, 1, GRALLOC_USAGE_HW_TEXTURE) == 1;
+    return azk_graphics_supported(16, 16, 2, 1, GRALLOC_USAGE_HW_TEXTURE) == 1;
 }
 
 int register_dev_artzig_HostedVideoOutput(JNIEnv* env) {

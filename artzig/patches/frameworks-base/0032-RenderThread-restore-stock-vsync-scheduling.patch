@@ -257,20 +257,3 @@ and SF timing, retaining callback deduplication, cancellation and phase ordering
  
  sk_sp<Bitmap> RenderThread::allocateHardwareBitmap(SkBitmap& skBitmap) {
      if (!mGrContext) return nullptr;
-
---- a/libs/hwui/renderthread/CanvasContext.cpp
-+++ b/libs/hwui/renderthread/CanvasContext.cpp
-@@ -988,6 +988,13 @@
- 
- // Called by choreographer to do an RT-driven animation
- void CanvasContext::doFrame() {
-+#ifdef ARTZIG_HOST_GPU
-+    // The legacy Wayland target is a synchronized child: only its UI owner can
-+    // commit the parent. Autonomous RT draws can exhaust Mesa's buffers while
-+    // that owner waits in syncAndDraw. HardwareBuffer jobs are also explicitly
-+    // submitted. Native Surface/BLAST targets retain stock RT scheduling.
-+    if (!mNativeSurface) return;
-+#endif
-     if (!mRenderPipeline->isSurfaceReady()) return;
-     mIdleDuration =
-             systemTime(SYSTEM_TIME_MONOTONIC) - mRenderThread.timeLord().computeFrameTimeNanos();

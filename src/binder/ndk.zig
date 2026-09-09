@@ -1501,7 +1501,11 @@ const Runtime = struct {
         // Oneway waits only for admission, not handler completion. The broker
         // reports an exhausted recipient with the same FAILED_TRANSACTION status
         // as pinned IPCThreadState.waitForResponse's BR_FAILED_REPLY path.
-        return r.awaitReply(call, out);
+        const status = r.awaitReply(call, out);
+        // Pinned BpBinder::transact caches DEAD_OBJECT even without a death
+        // subscription. A subsequent isBinderAlive must reflect the failed call.
+        if (status == STATUS_DEAD_OBJECT) target.dead.store(true, .monotonic);
+        return status;
     }
 
     /// In-process dispatch to a local object (self-call short-circuit). Needs no
@@ -2499,9 +2503,16 @@ export fn AIBinder_transact(binder: *AIBinder, code: u32, in: *?*AParcel, out: *
     out.* = reply;
     return rc;
 }
-export fn AIBinder_ping(binder: *AIBinder) callconv(.c) i32 {
-    _ = binder;
-    return STATUS_OK;
+export fn AIBinder_ping(binder_opt: ?*AIBinder) callconv(.c) i32 {
+    const binder = binder_opt orelse return STATUS_UNEXPECTED_NULL;
+    // Pinned AIBinder_ping -> BBinder/BpBinder::pingBinder. Local objects are
+    // alive without a broker; remote ping sends the reserved control transaction.
+    if (binder.kind == .local) return STATUS_OK;
+    const input = AParcel.create();
+    defer input.destroy();
+    const reply = AParcel.create();
+    defer reply.destroy();
+    return Runtime.get().transact(binder, PING_TRANSACTION, input, reply, 0);
 }
 export fn AIBinder_getCallingUid() callconv(.c) i32 {
     // Inside an onTransact callback, the incoming caller's uid; otherwise this
@@ -3903,7 +3914,7 @@ inline fn proxyData(env: JNIEnvPtr, this: jni.jobject) ?*BinderProxyNativeData {
 
 fn bpPingBinder(env: JNIEnvPtr, this: jni.jobject) callconv(.c) jni.jboolean {
     const nd = proxyData(env, this) orelse return jni.JNI_FALSE;
-    return if (nd.aibinder.dead.load(.monotonic)) jni.JNI_FALSE else jni.JNI_TRUE;
+    return if (AIBinder_ping(nd.aibinder) == STATUS_OK) jni.JNI_TRUE else jni.JNI_FALSE;
 }
 fn bpIsBinderAlive(env: JNIEnvPtr, this: jni.jobject) callconv(.c) jni.jboolean {
     const nd = proxyData(env, this) orelse return jni.JNI_FALSE;
@@ -3919,18 +3930,18 @@ const INTERFACE_TRANSACTION: u32 = ('_' << 24) | ('N' << 16) | ('T' << 8) | 'F';
 /// IBinder.PING_TRANSACTION ('_PNG'): answered with an empty OK reply.
 const PING_TRANSACTION: u32 = ('_' << 24) | ('P' << 16) | ('N' << 8) | 'G';
 
-/// The control transactions BBinder::onTransact answers for every native
-/// object (a Java Binder handles them in execTransact instead). Returns true
-/// when `code` was answered into `out`.
+/// Pinned BBinder::transact answers ping before onTransact, including for
+/// JavaBBinder. Native objects also answer interface descriptors here; Java
+/// supplies its descriptor through execTransact. Returns true when answered.
 fn answerBinderControl(target: *AIBinder, code: u32, out: *AParcel) bool {
     const class = target.class orelse return false;
+    if (code == PING_TRANSACTION) return true;
     if (class == &g_java_forward_class) return false;
     switch (code) {
         INTERFACE_TRANSACTION => {
             out.writeString(class.descriptor, @intCast(class.descriptor.len));
             return true;
         },
-        PING_TRANSACTION => return true,
         else => return false,
     }
 }

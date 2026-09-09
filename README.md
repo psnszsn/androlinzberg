@@ -30,14 +30,15 @@ hardware.
 Waydroid takes the other broad approach: it boots a complete Android system in
 a Linux container and integrates that system with a Wayland desktop.
 androlinzberg shares the direct Wayland presentation goal, but does not start an
-Android system image, `init`, `system_server`, or the rest of Android's service
-stack. Each APK is instead hosted by the compatibility runtime and connected to
-Linux facilities through focused host adapters.
+Android system image or `init`. A hosted system process runs selected stock
+services, including Android's window and activity task managers. APK processes
+connect to those services and Linux facilities through the compatibility runtime
+and focused host adapters.
 
 ## Current support
 
 - The host system must use x86_64 Linux and Wayland.
-- The APK must contain x86_64 native libraries.
+- APK native libraries, when present, must support x86_64.
 - The native-library bridge loads compatible Android libraries from the APK.
 - Apps can use mouse, keyboard, touch, tablet, and scroll input.
 - HWUI and Skia render through stock Android buffer queues; SurfaceFlinger composes task outputs for Wayland.
@@ -45,6 +46,9 @@ Linux facilities through focused host adapters.
 - PipeWire supplies audio output.
 - Fontconfig supplies the Android font configuration.
 - Conscrypt uses the host certificate-authority bundle.
+
+See [desktop behavior and limits](docs/desktop.md) for task windows, input,
+media, desktop integration and recovery.
 
 androlinzberg does not provide a complete Android system. An app can fail when
 it needs an Android service that the host does not implement.

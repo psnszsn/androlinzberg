@@ -115,7 +115,15 @@ class NewPipeDesktopTest {
         click(description = "Play video, duration:", settle = WaitKind.FRAME_PRESENTED)
         revealPlayerControls()
         enterPlayerFullscreen()
-        assertFullscreenVideoVisible(screenshot("fullscreen-video.png"))
+        // Live footage may legitimately be almost black. Assert the fullscreen
+        // player geometry here; stock-video-test verifies known decoded colors
+        // through SurfaceView, TextureView and resize without a content heuristic.
+        val bounds = expectVisible(description = "Play video, duration:")
+            .getAsJsonObject("observation").getAsJsonArray("matches").single()
+            .asJsonObject.getAsJsonObject("bounds")
+        assertEquals(listOf(0, 0, 1600, 900),
+            listOf("left", "top", "right", "bottom").map { bounds.get(it).asInt })
+        assertScreenshotSize(screenshot("fullscreen-video.png"), 1600, 900)
         tapPlayerSurface()
         assertFullscreenRemains(true, durationMillis = 2_000)
         waitFor(description = "Toggle screen orientation")
@@ -185,27 +193,6 @@ private fun assertScreenshotSize(screenshot: Path, width: Int, height: Int) {
         ?: throw AssertionError("could not decode compositor screenshot: $screenshot")
     assertEquals(width, image.width, "unexpected compositor screenshot width: $screenshot")
     assertEquals(height, image.height, "unexpected compositor screenshot height: $screenshot")
-}
-
-private fun assertFullscreenVideoVisible(screenshot: Path) {
-    val image = ImageIO.read(screenshot.toFile())
-        ?: throw AssertionError("could not decode compositor screenshot: $screenshot")
-    var visiblePixels = 0
-    var sampledPixels = 0
-    for (y in image.height / 4 until image.height * 3 / 4 step 3) {
-        for (x in image.width / 8 until image.width * 7 / 8 step 3) {
-            val pixel = image.getRGB(x, y)
-            val red = pixel ushr 16 and 0xff
-            val green = pixel ushr 8 and 0xff
-            val blue = pixel and 0xff
-            if (red + green + blue > 48) visiblePixels++
-            sampledPixels++
-        }
-    }
-    assertTrue(
-        visiblePixels.toDouble() / sampledPixels > 0.05,
-        "fullscreen video remained black: $screenshot",
-    )
 }
 
 /** DrawerLayout hides its content child from accessibility while its drawer is

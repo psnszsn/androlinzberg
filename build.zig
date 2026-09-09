@@ -755,17 +755,11 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .link_libc = true,
             .imports = &.{
-                .{ .name = "wayland", .module = wayland_mod },
                 .{ .name = "art", .module = art_mod },
             },
         }),
     });
-    const window_options = b.addOptions();
-    window_options.addOption(bool, "stock_clients", java.stock_window_clients);
-    exe.root_module.addOptions("window_options", window_options);
     if (host_libc) |root| exe.root_module.addRPath(b.graph.cwdRelativePath(b.fmt("{s}/lib", .{root})));
-    exe.root_module.linkSystemLibrary("wayland-client", .{ .needed = true });
-    exe.root_module.linkSystemLibrary("xkbcommon", .{ .needed = true });
     exe.root_module.linkSystemLibrary("fontconfig", .{ .needed = true }); // platform/fonts.zig
 
     // --- azk_codec: MediaCodec backend over system FFmpeg. The system build
@@ -837,14 +831,13 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.addImport("event_fd", event_fd_mod);
     surface_queue_mod.addImport("event_fd", event_fd_mod);
-    const host_renderer_mod = b.createModule(.{
-        .root_source_file = b.path("src/platform/host_renderer.zig"),
+    const hardware_snapshot_mod = b.createModule(.{
+        .root_source_file = b.path("src/platform/hardware_snapshot.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
         .imports = &.{
             .{ .name = "art", .module = art_mod },
-            .{ .name = "event_fd", .module = event_fd_mod },
         },
     });
     const message_queue_mod = b.createModule(.{
@@ -867,7 +860,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "art", .module = art_mod },
             .{ .name = "audio", .module = audio_mod },
             .{ .name = "codec_jni", .module = codec_jni_mod },
-            .{ .name = "host_renderer", .module = host_renderer_mod },
+            .{ .name = "hardware_snapshot", .module = hardware_snapshot_mod },
             .{ .name = "message_queue", .module = message_queue_mod },
         },
     });
@@ -902,7 +895,7 @@ pub fn build(b: *std.Build) void {
     b.step("data-transfer-test", "Test bounded Wayland offer streams, deadlines and cancellation")
         .dependOn(&b.addRunArtifact(data_transfer_tests).step);
     const codec_jni_check = b.addTest(.{ .root_module = codec_jni_mod });
-    const host_renderer_check = b.addTest(.{ .root_module = host_renderer_mod });
+    const hardware_snapshot_check = b.addTest(.{ .root_module = hardware_snapshot_mod });
     const apk_optimizer_check = b.addTest(.{ .root_module = apk_optimizer_mod });
     const run_apk_optimizer_tests = b.addRunArtifact(apk_optimizer_check);
     const dexopt_transaction_test = b.addSystemCommand(&.{ "bash", "tools/test-dexopt-apk.sh" });
@@ -1103,7 +1096,7 @@ pub fn build(b: *std.Build) void {
     native_test_step.dependOn(&run_audio_tests.step);
     native_test_step.dependOn(&run_wayland_tests.step);
     native_test_step.dependOn(&codec_jni_check.step);
-    native_test_step.dependOn(&host_renderer_check.step);
+    native_test_step.dependOn(&hardware_snapshot_check.step);
     native_test_step.dependOn(&run_apk_optimizer_tests.step);
     native_test_step.dependOn(&dexopt_transaction_test.step);
     native_test_step.dependOn(&run_test_control.step);

@@ -62,6 +62,9 @@ class PackageManagerInternalProcessor : LocalServiceAdapterProcessor() {
             // itself is enforced by the stock UriGrantsManagerService.
             name == "grantImplicitAccess" -> "return;"
             name == "getPackage" && params == listOf("java.lang.String") -> "return packages.getPackage(p0);"
+            name == "getPackage" && params == listOf("int") -> "return packages.getPackage(p0);"
+            name == "getKnownPackageNames" && params == listOf("int", "int") ->
+                "return com.android.server.pm.HostedKnownPackages.resolve(packages, p0, p1);"
             name == "getPackageStateInternal" && params == listOf("java.lang.String") -> "return packages.getPackageStateInternal(p0);"
             name == "isSystemPackage" -> "var state = packages.getPackageStateInternal(p0); return state != null && state.isSystem();"
             name == "setExternalSourcesPolicy" -> "packages.setExternalSourcesPolicy(p0);"

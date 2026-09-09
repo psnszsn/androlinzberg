@@ -6,6 +6,9 @@
     android:versionCode="1"
     android:versionName="1">
     <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="35" />
+    <!-- This platform-signed headless client exercises real activity lifecycle
+         and URI grants. Stock ATMS requires explicit background-start authority. -->
+    <uses-permission android:name="android.permission.START_ACTIVITIES_FROM_BACKGROUND" />
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
     <!-- Exercise the native SF permission controller and task FPS registration. -->
     <uses-permission android:name="android.permission.READ_FRAME_BUFFER" />

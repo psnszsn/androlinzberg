@@ -65,6 +65,9 @@ pub const Session = struct {
         broker_exe: []const u8,
         /// The launcher itself, re-executed as `--system-server`.
         launcher_exe: []const u8,
+        /// Alternative framework entry for system-process fixtures. Session
+        /// identity, metadata and supervision remain identical to production.
+        system_args: []const []const u8 = &.{"--system-server"},
         /// Omitted by transport-only fixtures; normal application sessions supply SF.
         surfaceflinger_exe: ?[]const u8 = null,
         task_presenter_exe: ?[]const u8 = null,
@@ -217,8 +220,12 @@ pub const Session = struct {
         try configureSystemData(s.gpa, io, &child_env, s.dir);
         try child_env.put("AZK_LAUNCHER_EXE", options.launcher_exe);
         if (options.task_presenter_exe != null) try child_env.put("AZK_TASK_WINDOWS", "1");
+        const argv = try s.gpa.alloc([]const u8, options.system_args.len + 1);
+        defer s.gpa.free(argv);
+        argv[0] = options.launcher_exe;
+        @memcpy(argv[1..], options.system_args);
         s.system = try spawnService(s.gpa, io, .{
-            .argv = &.{ options.launcher_exe, "--system-server" },
+            .argv = argv,
             .environ_map = &child_env,
             .stdin = .pipe,
             .stdout = .pipe,

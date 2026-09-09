@@ -1,5 +1,5 @@
 //! Wayland client window: xdg_toplevel + direct EGL UI + input + vsync.
-//! Video frames are imported as DMA-BUF-backed subsurfaces.
+//! Stock SurfaceFlinger task outputs arrive as DMA-BUF-backed surfaces.
 const std = @import("std");
 const linux = std.os.linux;
 const wayland = @import("wayland");
@@ -39,7 +39,7 @@ fn selectDmabufImportModifier(formats: []const DmabufFormat, format: u32, modifi
     return null;
 }
 
-/// One owned decoded frame at the video-transport seam. Ownership transfers
+/// One owned frame at the task-output transport seam. Ownership transfers
 /// to pushDmabuf and is returned through release_fn after wl_buffer.release.
 pub const DmabufFrame = struct {
     frame_number: u64 = 0,
@@ -439,28 +439,6 @@ pub const OrderedEvents = struct {
         self.pending.deinit(gpa);
         self.delivered.deinit(gpa);
     }
-};
-
-pub const WakeSources = struct {
-    video: ?std.posix.fd_t = null,
-    looper: ?std.posix.fd_t = null,
-    renderer: ?std.posix.fd_t = null,
-    optimizer: ?std.posix.fd_t = null,
-    control_listener: ?std.posix.fd_t = null,
-    control_client: ?std.posix.fd_t = null,
-    control_client_write: bool = false,
-    /// Delay until the next Android MessageQueue item, or -1 when none is scheduled.
-    timeout_ms: i32 = -1,
-};
-
-pub const WaitResult = struct {
-    events: []const Event,
-    video_ready: bool = false,
-    looper_ready: bool = false,
-    renderer_ready: bool = false,
-    optimizer_ready: bool = false,
-    control_ready: bool = false,
-    timed_out: bool = false,
 };
 
 pub const TouchAction = enum(u8) { down, up, move, update };
@@ -883,7 +861,7 @@ pub const Session = struct {
         }
     };
 
-    /// Shared importer for decoded video and stock BufferQueue task output.
+    /// Shared importer for stock BufferQueue task and drag-icon output.
     /// The caller must complete its acquire fence off the Wayland event thread
     /// before transfer. Only wl_buffer.release permits normal queue reuse.
     fn importDmabuf(self: *Session, frame: DmabufFrame, pending: *std.ArrayList(*ImportedDmabuf)) !*wl.Buffer {
@@ -1887,14 +1865,9 @@ pub const Window = struct {
         }
         self.updateWindowGeometry();
 
-        // Host adaptation of AOSP SurfaceView.performSurfaceTransaction():
-        // SurfaceFlinger/SurfaceControl are unavailable here, so represent
-        // their application-window and SurfaceView sibling layers with Wayland
-        // subsurfaces. Keep the xdg_toplevel surface as an opaque base and
-        // render Android's alpha-capable window above the video layers. Some
-        // compositors flatten a fullscreen toplevel as opaque before
-        // considering a child below it, which turns the valid SurfaceView hole
-        // black.
+        // The toplevel owns an opaque base; its synchronized child receives the
+        // already-composited Android task output. SurfaceFlinger owns all Android
+        // window and SurfaceView layering within that output.
         self.base_buffer = try self.createBaseBuffer();
         errdefer self.base_buffer.destroy();
         self.surface.attach(self.base_buffer, 0, 0);
@@ -1905,7 +1878,7 @@ pub const Window = struct {
 
         // Some compositors refine the configured logical size only after a
         // client attaches its first buffer. A roundtrip observes that optional
-        // second configure before the EGL child is sized.
+        // second configure before the task-output child is sized.
         if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 
         self.ui_surface = try self.session.compositor.?.createSurface();
@@ -1928,23 +1901,6 @@ pub const Window = struct {
         self.surface.commit();
         self.presentation_dirty = false;
         return self;
-    }
-
-    pub fn supportsVideoDmabuf(self: *Window, format: u32, modifier: u64) bool {
-        return selectDmabufImportModifier(self.session.dmabuf_formats.items, format, modifier) != null;
-    }
-
-    fn videoDmabufImportModifier(self: *Window, format: u32, modifier: u64) ?u64 {
-        return selectDmabufImportModifier(self.session.dmabuf_formats.items, format, modifier);
-    }
-
-    pub fn hasVideoDmabuf(self: *Window) bool {
-        if (self.session.dmabuf == null) return false;
-        for (self.session.dmabuf_formats.items) |supported| {
-            if (supported.format == drm_format_nv12 or supported.format == drm_format_p010)
-                return true;
-        }
-        return false;
     }
 
     fn publishConfiguration(self: *Window) void {
@@ -2837,96 +2793,6 @@ pub const Window = struct {
         self.presentation_dirty = true;
     }
 
-    /// Block until Wayland, Android's main queue, RenderThread, or video work is ready. The
-    /// prepare/read sequence follows libwayland's required ordering when polling other fds.
-    pub fn waitEvents(self: *Window, sources: WakeSources) !WaitResult {
-        self.events.clearRetainingCapacity();
-        while (self.events.items.len == 0) {
-            if (self.session.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
-            if (self.session.output_failure) |failure| return failure;
-            _ = self.emitKeyRepeatIfDue();
-            if (self.events.items.len != 0) break;
-
-            while (!self.session.display.prepareRead()) {
-                if (self.session.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
-                if (self.session.output_failure) |failure| return failure;
-                if (self.events.items.len != 0) return .{ .events = self.events.items };
-            }
-            var wait_for_write = false;
-            while (true) {
-                switch (self.session.display.flush()) {
-                    .SUCCESS => break,
-                    .AGAIN => {
-                        wait_for_write = true;
-                        break;
-                    },
-                    .INTR => continue,
-                    else => {
-                        self.session.display.cancelRead();
-                        return error.FlushFailed;
-                    },
-                }
-            }
-
-            var poll_fds = [_]std.posix.pollfd{
-                .{
-                    .fd = self.session.display.getFd(),
-                    .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP |
-                        @as(i16, if (wait_for_write) std.posix.POLL.OUT else 0),
-                    .revents = 0,
-                },
-                .{ .fd = sources.video orelse -1, .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP, .revents = 0 },
-                .{ .fd = sources.looper orelse -1, .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP, .revents = 0 },
-                .{ .fd = sources.renderer orelse -1, .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP, .revents = 0 },
-                .{ .fd = sources.optimizer orelse -1, .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP, .revents = 0 },
-                .{ .fd = sources.control_listener orelse -1, .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP, .revents = 0 },
-                .{ .fd = sources.control_client orelse -1, .events = controlClientPollEvents(sources.control_client_write), .revents = 0 },
-            };
-            const key_timeout = self.keyRepeatTimeoutMs();
-            const timeout = if (key_timeout < 0)
-                sources.timeout_ms
-            else if (sources.timeout_ms < 0)
-                key_timeout
-            else
-                @min(key_timeout, sources.timeout_ms);
-            const ready_count = try std.posix.poll(&poll_fds, timeout);
-
-            const wayland_readable = poll_fds[0].revents &
-                (std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP) != 0;
-            const video_ready = sources.video != null and poll_fds[1].revents != 0;
-            const looper_ready = sources.looper != null and poll_fds[2].revents != 0;
-            const renderer_ready = sources.renderer != null and poll_fds[3].revents != 0;
-            const optimizer_ready = sources.optimizer != null and poll_fds[4].revents != 0;
-            const control_ready = (sources.control_listener != null and poll_fds[5].revents != 0) or
-                (sources.control_client != null and poll_fds[6].revents != 0);
-            if (wayland_readable) {
-                if (self.session.display.readEvents() != .SUCCESS) return error.DispatchFailed;
-                if (self.session.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
-                if (self.session.output_failure) |failure| return failure;
-            } else {
-                self.session.display.cancelRead();
-            }
-            _ = self.emitKeyRepeatIfDue();
-            if (video_ready or looper_ready or renderer_ready or optimizer_ready or control_ready or ready_count == 0) {
-                return .{
-                    .events = self.events.items,
-                    .video_ready = video_ready,
-                    .looper_ready = looper_ready,
-                    .renderer_ready = renderer_ready,
-                    .optimizer_ready = optimizer_ready,
-                    .control_ready = control_ready,
-                    .timed_out = ready_count == 0,
-                };
-            }
-        }
-        return .{ .events = self.events.items };
-    }
-
-    fn controlClientPollEvents(wants_write: bool) i16 {
-        return std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP |
-            @as(i16, if (wants_write) std.posix.POLL.OUT else 0);
-    }
-
     /// Return this window's events without clearing notifications belonging to
     /// peers. The returned slice is valid until the next takeEvents or deinit.
     pub fn takeEvents(self: *Window) []const Event {
@@ -2950,7 +2816,7 @@ pub const Window = struct {
     }
 
     /// Release all client-side resources before the process disconnects from
-    /// the compositor. Video layers must be destroyed before calling this.
+    /// the compositor.
     pub fn deinit(self: *Window) void {
         self.presentation_feedback.deinit();
         self.clearCursorImage();
@@ -2981,155 +2847,6 @@ pub const Window = struct {
         const owns_session = self.owns_session;
         self.gpa.destroy(self);
         if (owns_session) session.deinit();
-    }
-
-    // ---------------------------------------------------------------------
-    // Video layers: wl_subsurfaces between the toplevel base and Android UI,
-    // scaled by the compositor via wp_viewport. The UI punches a transparent
-    // hole where the SurfaceView sits, so the video shows through.
-    pub const VideoLayer = struct {
-        win: *Window,
-        surface: *wl.Surface,
-        subsurface: *wl.Subsurface,
-        viewport: *wp.Viewport,
-        src_w: i32 = 0,
-        src_h: i32 = 0,
-        dst_x: i32 = 0,
-        dst_y: i32 = 0,
-        dst_w: i32 = 0,
-        dst_h: i32 = 0,
-        crop_x: i32 = 0,
-        crop_y: i32 = 0,
-        crop_w: i32 = 0,
-        crop_h: i32 = 0,
-        full_w: i32 = 0,
-        full_h: i32 = 0,
-        geometry_visible: bool = false,
-        dmabuf_buffers: std.ArrayList(*Session.ImportedDmabuf) = .empty,
-
-        fn configureViewport(self: *VideoLayer) void {
-            const vp = self.viewport;
-            if (!self.geometry_visible) {
-                if (self.src_w > 0 and self.src_h > 0) {
-                    vp.setSource(
-                        wl.Fixed.fromDouble(0),
-                        wl.Fixed.fromDouble(0),
-                        wl.Fixed.fromDouble(@floatFromInt(self.src_w)),
-                        wl.Fixed.fromDouble(@floatFromInt(self.src_h)),
-                    );
-                }
-                vp.setDestination(1, 1);
-                return;
-            }
-            if (self.src_w > 0 and self.src_h > 0 and self.full_w > 0 and self.full_h > 0) {
-                const source_x = @as(f64, @floatFromInt(self.src_w)) * @as(f64, @floatFromInt(self.crop_x)) / @as(f64, @floatFromInt(self.full_w));
-                const source_y = @as(f64, @floatFromInt(self.src_h)) * @as(f64, @floatFromInt(self.crop_y)) / @as(f64, @floatFromInt(self.full_h));
-                const source_w = @as(f64, @floatFromInt(self.src_w)) * @as(f64, @floatFromInt(self.crop_w)) / @as(f64, @floatFromInt(self.full_w));
-                const source_h = @as(f64, @floatFromInt(self.src_h)) * @as(f64, @floatFromInt(self.crop_h)) / @as(f64, @floatFromInt(self.full_h));
-                vp.setSource(
-                    wl.Fixed.fromDouble(source_x),
-                    wl.Fixed.fromDouble(source_y),
-                    wl.Fixed.fromDouble(source_w),
-                    wl.Fixed.fromDouble(source_h),
-                );
-            }
-            vp.setDestination(self.dst_w, self.dst_h);
-        }
-
-        pub fn setGeometry(
-            self: *VideoLayer,
-            x: i32,
-            y: i32,
-            w: i32,
-            h: i32,
-            crop_x: i32,
-            crop_y: i32,
-            crop_w: i32,
-            crop_h: i32,
-            full_w: i32,
-            full_h: i32,
-        ) void {
-            self.dst_x = x;
-            self.dst_y = y;
-            self.dst_w = w;
-            self.dst_h = h;
-            self.crop_x = crop_x;
-            self.crop_y = crop_y;
-            self.crop_w = crop_w;
-            self.crop_h = crop_h;
-            self.full_w = full_w;
-            self.full_h = full_h;
-            self.geometry_visible = w > 0 and h > 0 and crop_w > 0 and crop_h > 0 and full_w > 0 and full_h > 0;
-            self.subsurface.setPosition(
-                if (self.geometry_visible) x else -32768,
-                if (self.geometry_visible) y else -32768,
-            );
-            self.configureViewport();
-            self.surface.commit();
-            self.win.presentation_dirty = true;
-        }
-
-        fn damageDestination(self: *VideoLayer, fallback_w: i32, fallback_h: i32) void {
-            // wl_surface.damage uses surface-local coordinates.  A viewport
-            // can make those dimensions differ substantially from the source
-            // buffer dimensions (notably for fullscreen fractional scaling).
-            // Damaging only the source-sized rectangle leaves the rest of the
-            // scaled destination displaying pixels from an older frame.
-            const width = if (self.dst_w > 0) self.dst_w else fallback_w;
-            const height = if (self.dst_h > 0) self.dst_h else fallback_h;
-            self.surface.damage(0, 0, width, height);
-        }
-
-        /// Import and present an owned decoded DMA-BUF frame. The frame remains
-        /// alive until the compositor sends wl_buffer.release.
-        pub fn pushDmabuf(self: *VideoLayer, frame: DmabufFrame) !void {
-            const wl_buffer = try self.win.session.importDmabuf(frame, &self.dmabuf_buffers);
-
-            self.src_w = frame.width;
-            self.src_h = frame.height;
-            self.surface.attach(wl_buffer, 0, 0);
-            self.configureViewport();
-            self.damageDestination(frame.width, frame.height);
-            self.surface.commit();
-            self.win.presentation_dirty = true;
-        }
-
-        pub fn destroy(self: *VideoLayer) void {
-            for (self.dmabuf_buffers.items) |state| {
-                state.wl_buffer.destroy();
-                state.frame.abandon();
-                self.win.gpa.destroy(state);
-            }
-            self.dmabuf_buffers.deinit(self.win.gpa);
-            self.viewport.destroy();
-            self.subsurface.destroy();
-            self.surface.destroy();
-            self.win.presentation_dirty = true;
-            self.win.gpa.destroy(self);
-        }
-    };
-
-    pub fn createVideoLayer(self: *Window) !*VideoLayer {
-        const sub = self.session.subcompositor orelse return error.NoSubcompositor;
-        const vsurf = try self.session.compositor.?.createSurface();
-        vsurf.setListener(*Window, childSurfaceListener, self);
-        const subsurf = try sub.getSubsurface(vsurf, self.surface);
-        // State the complete parent < video < UI ordering explicitly. This is
-        // the host equivalent of SurfaceView's SurfaceControl relative-layer
-        // transaction. With only place_below(UI), Hyprland rendered a newly
-        // synchronized video child behind the opaque parent after subsequent
-        // invalidation-driven UI commits.
-        subsurf.placeAbove(self.surface);
-        self.ui_subsurface.placeAbove(vsurf);
-        self.presentation_dirty = true;
-        // input falls through to the main surface
-        const region = try self.session.compositor.?.createRegion();
-        vsurf.setInputRegion(region);
-        region.destroy();
-        const vp = try self.session.viewporter.?.getViewport(vsurf);
-        const layer = try self.gpa.create(VideoLayer);
-        layer.* = .{ .win = self, .surface = vsurf, .subsurface = subsurf, .viewport = vp };
-        return layer;
     }
 };
 
@@ -3289,14 +3006,6 @@ test "pointer axis frame prefers high resolution detents and Android direction" 
     try std.testing.expectEqual(@as(f64, 0.5), PointerAxisFrame.androidValue(-15, null, -60));
     try std.testing.expectEqual(@as(f64, -2), PointerAxisFrame.androidValue(30, 2, null));
     try std.testing.expectEqual(@as(f64, -1.5), PointerAxisFrame.androidValue(15, null, null));
-}
-
-test "control client polls writable only while output is pending" {
-    const idle = Window.controlClientPollEvents(false);
-    const pending = Window.controlClientPollEvents(true);
-    try std.testing.expect(idle & std.posix.POLL.OUT == 0);
-    try std.testing.expect(pending & std.posix.POLL.OUT != 0);
-    try std.testing.expect(pending & std.posix.POLL.IN != 0);
 }
 
 test "pointer capture rejects missing capability and snapshots acknowledgement sequences" {

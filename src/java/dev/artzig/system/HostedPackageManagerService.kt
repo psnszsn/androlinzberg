@@ -449,6 +449,13 @@ class HostedPackageManagerService(desktopWindows: Boolean = false,
     override fun getPackage(packageName: String): AndroidPackage? =
         synchronized(lock) { packages[packageName]?.pkg }
 
+    // Pinned ComputerEngine.getPackage(int) returns the first installed package
+    // for the UID using system visibility. The hosted registry owns UID assignment;
+    // stock PMS/ComputerEngine require the unavailable persistent settings stack.
+    fun getPackage(uid: Int): AndroidPackage? = synchronized(lock) {
+        getPackagesForUid(uid)?.firstNotNullOfOrNull { packages[it]?.pkg }
+    }
+
     override fun getPackageStateInternal(packageName: String): PackageStateInternal? =
         synchronized(lock) { packages[packageName] }
 

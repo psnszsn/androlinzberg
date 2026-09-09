@@ -51,7 +51,7 @@ zig build -j10 cpp-audit
   with their original bitmap and shared JNI helpers.
 - `src/platform/egl_support.zig` supplies the Android EGL library's display
   boundary. Both direct and dynamic `eglGetDisplay` lookup select HWUI's existing
-  Wayland/GBM EGL display; other operations use the host EGL implementation.
+  GBM EGL display; other operations use the host EGL implementation.
   HWUI requests the pinned EglManager's OpenGL ES context and wraps the actual
   RGBA8 framebuffer. Chromium's texture EGLImages can consequently be consumed
   by HWUI on the same display. No Wayland presentation backend is added.
@@ -130,7 +130,9 @@ zig build -j10 cpp-audit
   as Java clients. No new decoding or audio presentation backend is introduced.
   MediaDescrambler JNI uses the original CAS protocols and service discovery;
   the host does not supply a CAS hardware service.
-- `src/platform/host_renderer.zig` manages the Wayland render target.
+- `src/platform/hardware_snapshot.zig` registers HardwareRenderer snapshot JNI
+  through HardwareBufferRenderer. `RenderNodeReferenceBridge.cpp` transfers
+  native RenderNode ownership to the adopted Java wrapper; it owns no window.
 - `src/platform/graphics_buffer.zig` owns GBM allocation/import, metadata,
   mapping and DMA-BUF descriptors. Stock libui and AHardwareBuffer use it.
   Per-process mapper admission caps registered handles at 1,024 and charged
@@ -337,7 +339,8 @@ macros and callback code that Zig cannot import directly.
 - `graphics/SurfaceFlingerHost.cpp` initializes and publishes the pinned
   SurfaceFlinger legacy/AIDL services before entering the stock main loop.
 
-- `ArtzigGpuPipeline.cpp` connects HWUI to EGL and Wayland.
+- `ArtzigGpuPipeline.cpp` connects HWUI to stock ANativeWindow queues and shared
+  GBM/Ganesh rendering. The task presenter owns every Wayland surface.
 - `GraphicsEnvironmentBackend.cpp` connects stock GraphicsEnvironment JNI and
   GraphicsEnv to the hosted library loader. Class loaders have no associated
   Android linker namespace; namespace lookup returns null, and requested
@@ -404,7 +407,7 @@ GPU pixels and sync fences, queue pressure, callbacks, resize and peer death.
 `surface-wayland-test` uses the existing Cage harness to verify that GPU frames
 from a separate stock Surface producer appear in a compositor screenshot.
 `build/graphics.zig` separates libui storage from the libgui window closure;
-HWUI uses real GraphicBuffer/Fence types while its GUI cutover remains pending.
+HWUI uses real GraphicBuffer/Fence types and stock BufferQueue/BLAST clients.
 
 These files can use HWUI, Skia, and AOSP C++ types. Put new platform behavior in
 Zig behind a small C interface. Update this document and the build audit when
@@ -443,7 +446,8 @@ compositor workers. The runner requires successful service and broker shutdown,
 except for explicitly requested crash tests, and inherits live Mesa paths.
 The normal launcher now supervises broker, SF and system-server startup in that
 order, with exact readiness and bounded shutdown. `session-test` covers failure
-and resource cleanup. Task-to-Wayland binding remains pending.
+and resource cleanup. The session also supervises the task presenter, which
+imports private SF task outputs and owns xdg-shell lifecycle, placement and input.
 
 `build/input.zig` builds the pinned input transport closure. `input-channel-test`
 reuses ten AOSP channel tests; `input-channel-broker-test` transfers the stock
@@ -468,10 +472,9 @@ InputEventSender JNI. The former Zig MessageQueue implementation is replaced
 by a borrowed poll-state adapter (`src/platform/message_queue.zig` and
 `src/native/HostLooper.cpp`). Stock libutils Looper owns descriptors, callback
 registration, wake draining and native delayed messages; stock MessageQueue
-owns callback exception propagation. The Wayland owner combines the native
-message deadline with the Java deadline before waiting, and fetches the current
-epoll descriptor each iteration because stock Looper can rebuild it. The
-libutils patch adds no object state and transfers no descriptor ownership.
+owns callback exception propagation. APK processes run stock Looper.loop;
+Wayland runs in the separate task presenter. The borrowed poll-state adapter
+remains for native/Java integration tests and transfers no descriptor ownership.
 Two native tests, run with `input-channel-test`, verify delayed work, cross-thread
 wakeups, fd callbacks and callback unregistration through the borrowed epoll.
 `input-channel-jvm-test` also passes stock key/motion delivery, deferred motion
@@ -486,8 +489,8 @@ helpers are registered in the application island. A test-only JNI library in
 application/channel/window token identity, exact frame and disjoint touch
 regions, mutable metadata updates, clearing stale token/region/focus-transfer
 state, and SF-supplied content dimensions/transforms/alpha. It is not installed
-in the application tree. Java SurfaceControl crop handles still await the stock
-SurfaceControl client cutover; these tests do not claim WMS/ATMS boot. The
+in the application tree. Stock Java SurfaceControl and native crop handles now
+share the same Binder objects; these isolated tests do not claim WMS/ATMS boot. The
 follow-up JVM, build audits and full 14-test APK suite pass with 41 recorded
 steps and zero runtime issues (`/tmp/input-handle-full-regression-1.log`).
 `build/input_dispatcher.zig` builds stock InputDispatcher with the generated
@@ -498,7 +501,7 @@ HMAC tampering. The OpenSSL header adaptation retains stock verification.
 The facade's UTF-8 string-vector API uses UTF-16 wire framing over Zig Parcel,
 including nullable strings/vectors and stock failure mutation. Binder tests
 exercise this framing across AZKB. Production input-service/window-info wiring
-and WMS/ATMS boot remain pending. `input-surfaceflinger-test` independently
+and WMS/ATMS boot are covered by the stock task and APK gates. `input-surfaceflinger-test` independently
 verifies the cross-process SF window-info/focus boundary using explicit native
 test collaborators. It covers container transforms, overlap, visibility versus
 removal, cancellation and SF death; it does not substitute for WMS/ATMS boot.
@@ -519,7 +522,7 @@ render thread. Native Choreographer, DisplayManagerGlobal JNI and stock
 Looper-driven ThreadBase restore pinned RenderThread callback scheduling.
 `surface-buffer-jvm-test` verifies pixels, resize, two independent consumers,
 abandonment recovery, BLAST commits and zero retained allocations. The legacy
-direct Wayland target remains until the stock window service/client cutover.
+direct Wayland target and its RenderProxy/CanvasContext extensions are removed.
 
 ### Java policy over the stock input dispatcher
 
@@ -529,13 +532,15 @@ actual window metadata through a registered listener; the inputflinger Binder
 endpoint forwards focus and channel operations using the same Zig Binder
 runtime. Native threads attach to ART for callbacks. Shutdown removes listeners,
 stops dispatch, rejects reentrant close and makes late Binder callbacks fail
-without retaining the closed dispatcher. This adapter does not own Android task
-or window policy and is not yet connected to the production Wayland input path.
+without retaining the closed dispatcher. Stock WMS/ATMS own Android task/window
+policy. The task presenter routes Wayland events through this production input
+boundary with task identity and the current coordinate transform.
 
 The Java/SF gate exercises focused keys, transformed overlap, hidden-window
 gesture completion, removal cancellation, pointer capture acknowledgement,
 channel death and shutdown. The WMS lifetime token and policy in that gate are
-fixtures; successful dispatch is not evidence of stock WMS boot.
+fixtures. Separate stock WMS boot, cold-launch, desktop task and APK gates verify
+production registration, overlap, focus, transformed motion and window removal.
 
 Stock ImageReader/ImageWriter JNI uses the same GraphicBuffer/BufferQueue
 implementation. Its host build enables the real gralloc and HardwareBuffer

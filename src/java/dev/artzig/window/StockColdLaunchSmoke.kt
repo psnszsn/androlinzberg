@@ -311,7 +311,15 @@ object StockColdLaunchSmoke {
         check(process.getInt("uid") == uid && process.getString("package") == packageName && process.getBoolean("ready"))
         val generation = process.getLong("generation")
         check(generation > 0)
-        check(runCatching { registry.observe(pid, generation + 1, 0, 0, 0) }.exceptionOrNull() is IllegalStateException)
+        val retired = registry.observe(pid, generation + 1, 0, 0, 0)
+        check(retired.getBoolean("gone") && !retired.containsKey("snapshot")) {
+            "A stale process generation must report retirement without application state"
+        }
+        check(runCatching {
+            registry.perform(pid, generation + 1, 0, 1, 1, -1, 4, null)
+        }.exceptionOrNull() is IllegalStateException) {
+            "A stale generation must not receive an inspection action"
+        }
         var before = registry.observe(pid, generation, 0, 0, 0)
         var tree = org.json.JSONObject(checkNotNull(before.getString("snapshot")))
         fun target(tree: org.json.JSONObject): org.json.JSONObject {
@@ -326,7 +334,16 @@ object StockColdLaunchSmoke {
             .getTasks(128, false, true, android.view.Display.DEFAULT_DISPLAY).any {
                 it.taskId == taskId && it.baseActivity?.packageName == packageName
             })
-        check(registry.validateInputTarget(pid, generation, tree.getLong("revision"), windowId, null) == taskId)
+        val inputDeadline = SystemClock.uptimeMillis() + 5_000
+        while (registry.validateInputTarget(pid, generation, tree.getLong("revision"), windowId, null) != taskId) {
+            check(SystemClock.uptimeMillis() < inputDeadline) { "Inspection input target never stabilized" }
+            SystemClock.sleep(5)
+            before = registry.observe(pid, generation, 0, 0, 0)
+            tree = org.json.JSONObject(checkNotNull(before.getString("snapshot")))
+            text = target(tree)
+            windowId = text.getLong("window_id")
+            check(checkNotNull(before.getBundle("window_tasks")).getInt(windowId.toString(), -1) == taskId)
+        }
         check(registry.validateInputTarget(pid, generation, tree.getLong("revision"), Long.MAX_VALUE, null) == -1)
         check(!before.containsKey("window_tokens")) { "Raw app window tokens escaped the system inspection boundary" }
         check(!text.getBoolean("selected"))

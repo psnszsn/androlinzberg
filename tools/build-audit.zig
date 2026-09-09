@@ -266,7 +266,7 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
         "src/native/HostInputDispatcher.cpp",
         "src/native/HostLooper.cpp",
         "src/native/HostedVideoOutput.cpp",
-        "src/native/HwuiRenderProxyBridge.cpp",
+        "src/native/RenderNodeReferenceBridge.cpp",
         "src/native/binder/Binder.cpp",
         "src/native/binder/Parcel.cpp",
         "src/native/graphics/HostComposer.cpp",

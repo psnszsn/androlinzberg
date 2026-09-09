@@ -1,15 +1,128 @@
 # Stock graphics and Wayland task windows: implementation plan
 
-Status: stock WMS/ATMS cold and warm launch, HWUI/BLAST rendering, two-task
-Cage/labwc presentation, native input-channel routing and compositor keyboard-map
-publication pass. Stock clients, services and task presentation are now the
-default. The remaining M11 work removes superseded window/rendering sources
-and patches, then validates the final source and acceptance matrix.
+Status: M0–M11 are implemented. Stock clients, WMS/ATMS, SurfaceFlinger and
+Wayland task presentation are the default. The superseded JVM/native window and
+rendering paths and their HWUI patch sections are removed. Final acceptance is
+recorded below; desktop capability limits are documented in [desktop.md](desktop.md).
 Code baseline: `2a2d199`, the
 hosted libbinder facade merged into main. This document expands the original
 “Wayland task windows with synthetic Android coordinates” proposal into a
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
+
+## Final acceptance (2026-09-09)
+
+The default stack passes the required acceptance gates. Broad run 660 validated
+the final production sources across the native, JVM, graphics, desktop and
+recovery matrix. It found two fixture failures: a clipboard check raced a
+night-mode activity replacement, and a live-video check assumed bright footage.
+Only test code changed afterward. Run 661 passes the corrected system-service
+and fullscreen tests plus deterministic video pixels. Run 662 passes the complete
+28-case APK suite with 88 successful steps, no structured runtime issues and
+fresh artifacts for every case. Run 663 also passes the standalone desktop
+launcher gate. Build/source audits pass. No GPU gate was skipped.
+
+| Area | Final evidence |
+| --- | --- |
+| Binder | Zig, C++, NDK and Java checks; ownership, re-export, callbacks, status/FD transport, bounded queues and ping/death semantics (659/660) |
+| Graphics | Stock BufferQueue, mapper allocation/import limits, RenderEngine/SF composition and outputs, fences, pacing, pressure and producer/consumer death (660) |
+| Tasks/windows/configuration | Cold launch, synchronized bounds, two tasks/grouped activities, dialogs, input, saved-state relaunch and PendingIntents (660/661/662) |
+| Desktop/output/input | Actual Cage and labwc sessions; fullscreen, mixed output scale/unplug, protocol fallbacks, suspension, tablet and pointer capture (660/662) |
+| Video | Known decoded colors through SurfaceView, TextureView and resize (660/661); NewPipe fullscreen/control transitions and retained compositor images (662) |
+| Desktop bridges | IME 22 clean steps, clipboard 21, drag 41; WebView rendering/input with a checked screenshot (660) |
+| Pressure/recovery | 16 drag-pressure rounds, 116 clean steps; broker, compositor, SF, presenter and system loss leave no live descendants or session directory (660) |
+| APK regression | All 28 tests and 88 steps pass; expected UI state and runtime issue checks retained per case (662) |
+
+Artifacts are retained at `/tmp/wayland-final-matrix-660-artifacts/`,
+`/tmp/wayland-final-fixture-fixes-661-artifacts/` and
+`/tmp/wayland-final-apk-662-artifacts/` and
+`/tmp/wayland-desktop-launcher-663-artifacts/`. The broad run's log and status record
+preserve its two failed fixtures rather than relabeling that run a success.
+Native manifests include executable/library hashes. Final APK artifacts are
+fresh, have no failure.json, and were checked independently of the test exit code.
+These compositor tests run headlessly on the real Cage/labwc implementations;
+they do not claim coverage of every compositor or a manual desktop session.
+
+Reproduce the complete gate set with the pinned APK and development environment:
+
+```sh
+nix develop ./artzig -c env -u AZK_WINDOW_BACKEND -u AZK_TASK_WINDOWS \
+  AZK_APK_NEWPIPE_0_29_1=/absolute/path/to/NewPipe_v0.29.1.apk \
+  zig build -j6 \
+  install integration-test jvm-test native-test system-test \
+  binder-test binder-broker-test binder-cpp-test ndk-test gui-test graphics-buffer-test \
+  graphics-budget-test renderengine-test surfaceflinger-service-test \
+  surfaceflinger-output-test surfaceflinger-composition-test \
+  input-dispatcher-test input-surfaceflinger-test surface-wayland-test \
+  surface-fence-test surface-pacing-test surface-drag-icon-test wayland-output-test wayland-unit-test \
+  stock-window-boot-test stock-cold-launch-test stock-task-wayland-test \
+  stock-desktop-launcher-test stock-task-desktop-test stock-task-output-test \
+  stock-task-desktop-legacy-test stock-task-desktop-suspension-test stock-task-tablet-test \
+  stock-video-test stock-ime-test stock-clipboard-test stock-drag-test stock-drag-pressure-test \
+  stock-session-loss-test webview-test webview-ui-test build-tools-test cpp-audit graph-audit
+```
+
+Use the host Mesa EGL/GBM/VAAPI paths when required. The desktop targets use
+`tools/shot.sh` with GLES2. `stock-task-desktop-legacy-test` exercises the older
+xdg-shell protocol version, not a legacy Android window backend.
+
+## Native graphics cleanup (2026-09-09)
+
+The process-wide renderer, direct Wayland EGL window path, video subsurfaces and
+legacy JNI surface/input hooks are removed. HWUI now renders through Android
+native windows or explicit HardwareBuffer jobs on the shared GBM/Ganesh context.
+Hardware bitmap snapshots retain only RenderNode ownership and use the existing
+HardwareBufferRenderer adapter. The task presenter owns Wayland presentation.
+Native codec frames always enter stock Android surfaces; the legacy timer queue
+and direct decoder-pool export are removed. Legacy backend selection is rejected.
+
+AOSP archive 97 removes the superseded HWUI interface and CanvasContext patch
+sections. Its extracted package hash is
+`N-V-__8AAPwM7k7C3lf_tsjnO7aGYqL37cE5nZCVKR6_5sa5`; archive SHA-256 is
+`f6612bfa11e91583e5adc132535e73a13f98f3a7b7621a37471a4012c9ff6fec`.
+Comparing archives 96 and 97 confirms only five HWUI source files changed.
+The isolated packaging checkout was restored to its clean pinned state; the
+other session's main worktree was not modified.
+
+Regression 647 passes gui-test, jvm-test, native-test and source/build audits.
+Regression 648 passes NewPipe compositor fullscreen video with six clean steps
+and the JVM/audit gates. The final broader matrix exposed a stale inspection
+assertion, an undeclared background-launch permission in the platform-signed
+lifecycle fixture, and an unimplemented PackageManagerInternal UID lookup used
+by stock activity caller identity. Subsequent checkpoints below record the
+corrections; neither failed matrix 649 nor 650 is a completion result.
+
+## Final cross-process integration corrections (2026-09-09)
+
+Stock ActivityClientController now receives package-by-UID information from the
+hosted package registry. PackageManagerInternal's known-package queries delegate
+to the already compiled AOSP KnownPackages and DefaultAppProvider, with the
+host's installed permission controller and role registry.
+
+Java BinderProxy.pingBinder and NDK AIBinder_ping now perform the reserved ping
+transaction. BBinder answers it before Java/native application dispatch, and a
+DEAD_OBJECT transaction reply marks the proxy dead even without a death
+subscription. Local ping succeeds without connecting to the broker; null NDK
+ping returns STATUS_UNEXPECTED_NULL. The provider-death regression checks the
+old Binder remains dead, its cached liveness changes after ping, and reacquiring
+the provider starts a new Binder with the same package UID and working queries.
+
+The general service harness now uses the production Session supervisor for
+metadata, cold process starts, output draining and bounded cleanup. Its test-only
+system entry enables the same caller API flag as the app fixtures. Platform-signed
+headless launch fixtures declare background-launch authority; independently signed
+caller fixtures enter through a system-launched activity and then use ordinary
+app launch policy. Clipboard/configuration checks keep a visible activity and
+wait for restored focus after night-mode relaunch. No production policy bypass
+was added. The in-memory task-shell adapter keeps real remote organizer/SF work
+while explicitly supplying metadata for its non-immersive fixture.
+
+Regression 659 passes system-test, binder-test, binder-cpp-test, ndk-test,
+native-test and source/build audits. It includes caller URI snapshots,
+independently signed caller identity, activity recreation/task reuse, provider
+restart and the expected fatal-runtime crash probe. Evidence is retained in
+`/tmp/wayland-binder-ping-659-artifacts/build.log`. The complete default-stack
+acceptance matrix follows this focused result.
 
 ## Legacy JVM window removal (2026-09-09)
 
@@ -31,8 +144,8 @@ Regression 640 passes all 28 APK tests (88 clean steps), the JVM/native suites a
 source/build audits. Artifacts: `/tmp/wayland-pending-intent-639-artifacts/` and
 `/tmp/wayland-legacy-jvm-640-artifacts/`.
 
-The process-wide native renderer, direct Wayland video layers and superseded
-HWUI patch sections remain to be removed before the final acceptance run.
+The native cleanup and final acceptance checkpoints above complete removal of
+the remaining renderer and video paths.
 
 ## Default task-window launch (2026-09-09)
 

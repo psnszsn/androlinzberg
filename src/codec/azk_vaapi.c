@@ -23,11 +23,6 @@ struct AzkVaapiVpp {
     int height;
 };
 
-static int stock_surface_output(void) {
-    const char *backend = getenv("AZK_WINDOW_BACKEND");
-    return backend && strcmp(backend, "stock") == 0;
-}
-
 // Pinned ColorUtils::setDefaultCodecColorAspectsIfNeeded. This C VA-API
 // adapter cannot call stagefright's codec stack; keep its size defaults here.
 static int default_primaries(const AVFrame *source) {
@@ -54,8 +49,7 @@ static enum AVPixelFormat choose_vaapi_format(AVCodecContext *context,
 int azk_vaapi_prepare(AVCodecContext *context, AVBufferRef **device_ref) {
     typedef int (*DmabufAvailableFn)(void);
     DmabufAvailableFn dmabuf_available =
-        (DmabufAvailableFn)dlsym(RTLD_DEFAULT, stock_surface_output()
-                ? "azk_video_surface_available" : "azk_video_dmabuf_available");
+        (DmabufAvailableFn)dlsym(RTLD_DEFAULT, "azk_video_surface_available");
     if (!dmabuf_available || !dmabuf_available()) {
         fprintf(stderr,
                 "azk: hardware video unavailable: compositor has no compatible DMA-BUF path\n");
@@ -155,7 +149,7 @@ static const char *descriptor_rejection(
     if (descriptor->num_objects > AZK_DMABUF_MAX_PLANES)
         return "exported surface has too many objects";
     if (!compositor_supports(descriptor))
-        return "compositor did not advertise the exported format/modifier";
+        return "exported buffer is not a supported single-plane RGBX surface";
     return NULL;
 }
 
@@ -209,27 +203,11 @@ static int prepare_vpp(AzkVaapiVpp **slot, VADisplay display,
 }
 
 static int compositor_supports(const VADRMPRIMESurfaceDescriptor *descriptor) {
-    if (stock_surface_output()) {
-        // Single-plane RGBX from a separate VPP allocation; the actual modifier
-        // is validated by GBM import, not a fabricated Wayland capability list.
-        return descriptor->num_objects == 1 &&
-                descriptor->layers[0].num_planes == 1 &&
-                descriptor->layers[0].object_index[0] == 0 &&
-                descriptor->layers[0].drm_format == 0x34324258; // DRM_FORMAT_XBGR8888
-    }
-    typedef int (*DmabufSupportsFn)(uint32_t, int, const uint64_t *);
-    DmabufSupportsFn supports =
-        (DmabufSupportsFn)dlsym(RTLD_DEFAULT, "azk_video_dmabuf_supports");
-    if (!supports) return 0;
-
-    uint64_t modifiers[AZK_DMABUF_MAX_PLANES];
-    for (uint32_t index = 0; index < descriptor->layers[0].num_planes; ++index) {
-        const uint32_t object = descriptor->layers[0].object_index[index];
-        if (object >= descriptor->num_objects) return 0;
-        modifiers[index] = descriptor->objects[object].drm_format_modifier;
-    }
-    return supports(descriptor->layers[0].drm_format,
-                    descriptor->layers[0].num_planes, modifiers);
+    // Single-plane RGBX from a separate VPP allocation. GBM import validates
+    // the real modifier; the session presenter owns compositor negotiation.
+    return descriptor->num_objects == 1 && descriptor->layers[0].num_planes == 1 &&
+            descriptor->layers[0].object_index[0] == 0 &&
+            descriptor->layers[0].drm_format == 0x34324258; // DRM_FORMAT_XBGR8888
 }
 
 static AzkHardwareFrame *take_descriptor(
@@ -326,7 +304,7 @@ static AzkHardwareFrame *export_vpp_rgb(
         .flags = VA_SURFACE_ATTRIB_SETTABLE,
         .value = {
             .type = VAGenericValueTypeInteger,
-            .value = { .i = stock_surface_output() ? VA_FOURCC_RGBX : VA_FOURCC_BGRX },
+            .value = { .i = VA_FOURCC_RGBX },
         },
     };
     VAStatus status = vaCreateSurfaces(display, VA_RT_FORMAT_RGB32,
@@ -410,7 +388,7 @@ static AzkHardwareFrame *export_vpp_rgb(
                                &descriptor, &export_success_logged);
     AzkHardwareFrame *frame = take_descriptor(source, &descriptor, target_width,
                                               target_height, display, output);
-    if (frame && stock_surface_output()) {
+    if (frame) {
         // Pinned android_dataspace bit fields. RGB output retains SDR primaries
         // and transfer; VPP expands the YUV input range to full-range RGB.
         const int standard = source->color_primaries == AVCOL_PRI_BT709 ? 1 :
@@ -435,63 +413,30 @@ AzkHardwareFrame *azk_vaapi_export(const AVFrame *source, int target_width,
     AVVAAPIDeviceContext *device =
         (AVVAAPIDeviceContext *)frames->device_ctx->hwctx;
     VASurfaceID surface = (VASurfaceID)(uintptr_t)source->data[3];
-    if (stock_surface_output()) {
-        // Never export a reusable decoder-pool allocation into a queue that may
-        // outlive MediaCodec. Unsupported color conversion must fail visibly.
-        if (((source->colorspace == AVCOL_SPC_UNSPECIFIED ||
-              source->color_primaries == AVCOL_PRI_UNSPECIFIED) &&
-              default_primaries(source) == AVCOL_PRI_BT2020) ||
-            (source->colorspace != AVCOL_SPC_UNSPECIFIED &&
-             source->colorspace != AVCOL_SPC_BT709 &&
-             source->colorspace != AVCOL_SPC_BT470BG &&
-             source->colorspace != AVCOL_SPC_SMPTE170M) ||
-            (source->color_primaries != AVCOL_PRI_UNSPECIFIED &&
-             source->color_primaries != AVCOL_PRI_BT709 &&
-             source->color_primaries != AVCOL_PRI_BT470BG &&
-             source->color_primaries != AVCOL_PRI_SMPTE170M) ||
-            (source->color_trc != AVCOL_TRC_UNSPECIFIED &&
-             source->color_trc != AVCOL_TRC_BT709 &&
-             source->color_trc != AVCOL_TRC_SMPTE170M &&
-             source->color_trc != AVCOL_TRC_IEC61966_2_1 &&
-             source->color_trc != AVCOL_TRC_GAMMA22)) {
-            fprintf(stderr, "azk: Surface video color conversion unsupported: matrix=%d primaries=%d transfer=%d\n",
-                    source->colorspace, source->color_primaries, source->color_trc);
-            return NULL;
-        }
-        return export_vpp_rgb(source, device->display, surface,
-                               target_width, target_height, vpp_slot);
+    // Never export a reusable decoder-pool allocation into a queue that may
+    // outlive MediaCodec. Unsupported color conversion must fail visibly.
+    if (((source->colorspace == AVCOL_SPC_UNSPECIFIED ||
+          source->color_primaries == AVCOL_PRI_UNSPECIFIED) &&
+          default_primaries(source) == AVCOL_PRI_BT2020) ||
+        (source->colorspace != AVCOL_SPC_UNSPECIFIED &&
+         source->colorspace != AVCOL_SPC_BT709 &&
+         source->colorspace != AVCOL_SPC_BT470BG &&
+         source->colorspace != AVCOL_SPC_SMPTE170M) ||
+        (source->color_primaries != AVCOL_PRI_UNSPECIFIED &&
+         source->color_primaries != AVCOL_PRI_BT709 &&
+         source->color_primaries != AVCOL_PRI_BT470BG &&
+         source->color_primaries != AVCOL_PRI_SMPTE170M) ||
+        (source->color_trc != AVCOL_TRC_UNSPECIFIED &&
+         source->color_trc != AVCOL_TRC_BT709 &&
+         source->color_trc != AVCOL_TRC_SMPTE170M &&
+         source->color_trc != AVCOL_TRC_IEC61966_2_1 &&
+         source->color_trc != AVCOL_TRC_GAMMA22)) {
+        fprintf(stderr, "azk: Surface video color conversion unsupported: matrix=%d primaries=%d transfer=%d\n",
+                source->colorspace, source->color_primaries, source->color_trc);
+        return NULL;
     }
-    // A direct DMA-BUF export has no representation for the decoder crop in
-    // the legacy presenter. Apply it on the GPU before exporting that path too.
-    if (source->crop_left || source->crop_top || source->crop_right || source->crop_bottom)
-        return export_vpp_rgb(source, device->display, surface,
-                              target_width, target_height, vpp_slot);
-    VADRMPRIMESurfaceDescriptor descriptor;
-    memset(&descriptor, 0, sizeof(descriptor));
-
-    VAStatus status = vaExportSurfaceHandle(
-        device->display, surface, VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2,
-        VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_COMPOSED_LAYERS,
-        &descriptor);
-    if (status == VA_STATUS_SUCCESS) {
-        const char *rejection = descriptor_rejection(&descriptor);
-        if (!rejection) {
-            log_export_descriptor_once("confirmed", "direct zero-copy path active",
-                                       &descriptor, &export_success_logged);
-            return take_descriptor(source, &descriptor, source->width,
-                                   source->height, device->display,
-                                   VA_INVALID_SURFACE);
-        }
-        log_export_descriptor_once("rejected", rejection, &descriptor,
-                                   &export_failure_logged);
-        close_descriptor(&descriptor);
-    } else if (!atomic_flag_test_and_set(&export_failure_logged)) {
-        fprintf(stderr, "azk: direct DMA-BUF export failed: %s (%d); trying RGB VPP\n",
-                vaErrorStr(status), status);
-    }
-
     return export_vpp_rgb(source, device->display, surface,
-                          target_width, target_height, vpp_slot);
+                           target_width, target_height, vpp_slot);
 }
 
 void azk_hardware_frame_release(AzkHardwareFrame *frame) {

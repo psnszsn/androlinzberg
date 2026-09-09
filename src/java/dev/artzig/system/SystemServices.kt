@@ -132,7 +132,7 @@ internal object SystemServices {
     private val spawnedProcesses = java.util.concurrent.CopyOnWriteArrayList<Process>()
 
     @JvmStatic
-    fun start(context: Context, stockWindows: StockWindowServices?, onBootComplete: () -> Unit) {
+    fun start(context: Context, stockWindows: StockWindowServices, onBootComplete: () -> Unit) {
         com.android.server.HostedBootTasks.start()
         // Auto-spawned service hosts must not outlive the session. Each host
         // also exits on broker disconnect (HostedBinderRuntime), but destroy
@@ -169,7 +169,7 @@ internal object SystemServices {
         // starts the package manager before the activity manager). The
         // platform package "android" is framework-res.apk parsed by the real
         // AOSP parser — its manifest is the session's permission source.
-        val packageManager = HostedPackageManagerService(desktopWindows = stockWindows != null,
+        val packageManager = HostedPackageManagerService(desktopWindows = true,
             reservePackageUid = dev.artzig.BinderSession::reservePackageUid)
         android.os.ServiceManager.addService("package", packageManager)
         val permissionPolicy = HostedWindowPermissionPolicy(context, packageManager)
@@ -229,12 +229,12 @@ internal object SystemServices {
         val imageApps = java.io.File(java.io.File(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES"))).parentFile.parentFile, "apps")
         imageApps.listFiles()?.filter { it.isFile && it.extension == "apk" }
             ?.sortedBy { it.name }?.forEach { packageManager.installSystemPackage(it.canonicalPath) }
-        checkNotNull(stockWindows).startTasks(manager)
+        stockWindows.startTasks(manager)
         android.os.ServiceManager.addService("hosted_installer", HostedInstallerService(packageManager, activityManager))
         if (dev.artzig.testing.ProcessInspection.enabled) {
             android.os.ServiceManager.addService(dev.artzig.testing.ProcessInspection.SERVICE,
-                HostedInspectionRegistry(activityManager, { sequence -> stockWindows?.testInputIdle(sequence) == true }) { token, uid, pid ->
-                    stockWindows?.taskForObservedWindow(token, uid, pid)
+                HostedInspectionRegistry(activityManager, { sequence -> stockWindows.testInputIdle(sequence) == true }) { token, uid, pid ->
+                    stockWindows.taskForObservedWindow(token, uid, pid)
                 })
         }
         // Observer registry and the settings provider, registered before any
@@ -301,19 +301,14 @@ internal object SystemServices {
         jobs.startNetworkTracking(checkNotNull(context.getSystemService(android.net.ConnectivityManager::class.java)))
         android.os.ServiceManager.addService(Context.NETWORK_STATS_SERVICE, HostedNetworkStatsService(context = context))
         android.os.ServiceManager.addService(Context.NETWORK_POLICY_SERVICE, HostedNetworkPolicyService(context))
-        val usageStats = HostedUsageStatsService(stockActivities = stockWindows != null)
+        val usageStats = HostedUsageStatsService(stockActivities = true)
         usageStats.packageService = packageManager
-        if (stockWindows == null) activityManager.processObserver = { packageName, _, foreground ->
-            usageStats.reportProcessState(packageName, foreground)
-        }
         android.os.ServiceManager.addService(Context.USAGE_STATS_SERVICE, usageStats)
-        if (stockWindows != null) {
-            val usageLocal = Class.forName("android.app.usage.HostedUsageStatsManagerInternal")
-                .getConstructor(HostedUsageStatsService::class.java)
-                .newInstance(usageStats) as android.app.usage.UsageStatsManagerInternal
-            LocalServices.addService(android.app.usage.UsageStatsManagerInternal::class.java, usageLocal)
-            stockWindows.setUsageStats(usageLocal)
-        }
+        val usageLocal = Class.forName("android.app.usage.HostedUsageStatsManagerInternal")
+            .getConstructor(HostedUsageStatsService::class.java)
+            .newInstance(usageStats) as android.app.usage.UsageStatsManagerInternal
+        LocalServices.addService(android.app.usage.UsageStatsManagerInternal::class.java, usageLocal)
+        stockWindows.setUsageStats(usageLocal)
         val storageStats = HostedStorageStatsService()
         storageStats.packageService = packageManager
         android.os.ServiceManager.addService(Context.STORAGE_STATS_SERVICE, storageStats)
@@ -344,13 +339,9 @@ internal object SystemServices {
         location.packageService = packageManager
         android.os.ServiceManager.addService(Context.LOCATION_SERVICE, location)
         android.os.ServiceManager.addService(Context.LIGHTS_SERVICE, HostedLightsService())
-        if (stockWindows != null) {
-            // ActivityRecord attaches its per-app color transform to this stock
-            // local service; Binder and LocalServices must share its controller.
-            manager.startService(com.android.server.display.color.ColorDisplayService::class.java)
-        } else {
-            android.os.ServiceManager.addService(Context.COLOR_DISPLAY_SERVICE, HostedColorDisplayService())
-        }
+        // ActivityRecord attaches its per-app color transform to this stock
+        // local service; Binder and LocalServices must share its controller.
+        manager.startService(com.android.server.display.color.ColorDisplayService::class.java)
         // Phase 5: telephony and telecom for a device without a radio (no SIM, no modem,
         // no subscriptions, no dialer). The phone count is TelephonyManager's active modem
         // count, exactly as TelephonyRegistry and SubscriptionManagerService compute it.
@@ -366,18 +357,10 @@ internal object SystemServices {
         // search, dropbox, overlays, domain verification, wallpaper, credentials, shortcuts,
         // launcher apps, app widgets) for a device with no launcher, lock screen or providers.
         val hostedPermissions = HostedPermissions(packageManager)
-        if (stockWindows != null) {
-            manager.startService(com.android.server.dreams.DreamManagerService::class.java)
-            manager.startService("com.android.server.UiModeManagerService")
-            // ATMS owns package overrides, configuration delivery and persistence.
-            manager.startService(com.android.server.grammaticalinflection.GrammaticalInflectionService::class.java)
-        } else {
-            android.os.ServiceManager.addService(Context.UI_MODE_SERVICE, HostedUiModeManagerService(context, activityManager, hostedPermissions))
-            val grammaticalInflection = HostedGrammaticalInflectionService(activityManager, hostedPermissions)
-            android.os.ServiceManager.addService(Context.GRAMMATICAL_INFLECTION_SERVICE, grammaticalInflection)
-            LocalServices.addService(com.android.server.grammaticalinflection.GrammaticalInflectionManagerInternal::class.java,
-                grammaticalInflection.localService)
-        }
+        manager.startService(com.android.server.dreams.DreamManagerService::class.java)
+        manager.startService("com.android.server.UiModeManagerService")
+        // ATMS owns package overrides, configuration delivery and persistence.
+        manager.startService(com.android.server.grammaticalinflection.GrammaticalInflectionService::class.java)
         android.os.ServiceManager.addService(Context.TRUST_SERVICE, HostedTrustManagerService(hostedPermissions))
         android.os.ServiceManager.addService("lock_settings", HostedLockSettingsService(hostedPermissions))
         android.os.ServiceManager.addService(Context.SEARCH_SERVICE, HostedSearchManagerService(context, packageManager))
@@ -391,9 +374,9 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.LAUNCHER_APPS_SERVICE, launcherApps)
         LocalServices.addService(HostedLauncherAppsService::class.java, launcherApps)
         android.os.ServiceManager.addService(Context.APPWIDGET_SERVICE, HostedAppWidgetService(context, hostedPermissions))
-        stockWindows?.startWindows(manager, activityManager)
+        stockWindows.startWindows(manager, activityManager)
         // Reused AOSP clipboard service (publishes "clipboard" itself).
-        if (stockWindows != null) HostedClipboardMonitor.enable()
+        HostedClipboardMonitor.enable()
         manager.startService(com.android.server.clipboard.ClipboardService::class.java)
         manager.startService(com.android.server.NetworkScoreService.Lifecycle::class.java)
         manager.startService(com.android.server.texttospeech.TextToSpeechManagerService::class.java)
@@ -407,7 +390,7 @@ internal object SystemServices {
         LocalServices.getService(com.android.server.uri.UriGrantsManagerInternal::class.java).onSystemReady()
         // Pinned AMS.systemReady marks its state before the phase callback.
         activityManagerAccess.setSystemReady()
-        stockWindows?.systemReady()
+        stockWindows.systemReady()
         manager.startBootPhase(trace, SystemService.PHASE_ACTIVITY_MANAGER_READY)
         com.android.server.webkit.HostedWebViewUpdateService(context, hostedPermissions).start()
         manager.startBootPhase(trace, SystemService.PHASE_THIRD_PARTY_APPS_CAN_START)
@@ -427,18 +410,17 @@ internal object SystemServices {
                 // Pinned AMS.ensureBootCompleted sets these flags before asking
                 // ATMS to enable screen/input. Host boot has no initial home
                 // activity whose idle callback would otherwise perform this step.
-                stockWindows?.enableScreenAfterBoot(activityManager.booted)
+                stockWindows.enableScreenAfterBoot(activityManager.booted)
                 manager.startBootPhase(trace, SystemService.PHASE_BOOT_COMPLETED)
                 // BatteryService publishes its sticky broadcast once the broadcast queue is up.
                 battery.start()
-                stockWindows?.verifyStartup()
+                stockWindows.verifyStartup()
                 android.os.SystemProperties.set("sys.azk.boot_completed", "1")
                 Log.i(TAG, "system services started for " + context.packageName)
                 onBootComplete()
             })
         }
-        if (stockWindows != null) stockWindows.bootCompleted()
-        else activityManager.bootAnimationComplete() // Legacy presentation has no boot animation.
+        stockWindows.bootCompleted()
     }
 
     /**
