@@ -33,6 +33,10 @@ pub fn build(b: *std.Build) void {
     @import("build/command.zig").addTests(b, build_tools_test);
     const aosp_closure_tests = b.addSystemCommand(&.{ "python3", "-B", "tools/test_aosp_closure.py" });
     build_tools_test.dependOn(&aosp_closure_tests.step);
+    const aosp_packaging_tests = b.addSystemCommand(&.{ "python3", "-B" });
+    aosp_packaging_tests.addFileArg(b.path("tools/test_aosp_packaging.py"));
+    aosp_packaging_tests.addFileInput(b.path("aosp/package-artzig-aosp.py"));
+    build_tools_test.dependOn(&aosp_packaging_tests.step);
     const doc_header_tests = b.addSystemCommand(&.{ "python3", "-B", "tools/test_javadoc_headers.py" });
     build_tools_test.dependOn(&doc_header_tests.step);
     const native_runner_tests = b.addSystemCommand(&.{ "python3", "-B" });

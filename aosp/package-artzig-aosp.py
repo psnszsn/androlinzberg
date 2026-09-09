@@ -297,7 +297,7 @@ def normalized_tar_info(name: str, mode: int, entry_type: bytes) -> tarfile.TarI
     return info
 
 
-def write_archive(destination: Path, archive_root: str, paths: list[str]) -> None:
+def write_archive(destination: Path, paths: list[str]) -> None:
     with destination.open("wb") as raw_output:
         with gzip.GzipFile(
             filename="",
@@ -312,28 +312,29 @@ def write_archive(destination: Path, archive_root: str, paths: list[str]) -> Non
                 format=tarfile.GNU_FORMAT,
                 dereference=False,
             ) as archive:
-                archive.addfile(
-                    normalized_tar_info(archive_root, 0o755, tarfile.DIRTYPE)
-                )
+                # Zig's file: fetch keeps archive paths. Package consumers use
+                # dependency.path("frameworks/..."), so there must be no release
+                # directory above the source roots (nor a cache-only flattening).
                 for directory in directory_entries(paths):
                     archive.addfile(
                         normalized_tar_info(
-                            f"{archive_root}/{directory}", 0o755, tarfile.DIRTYPE
+                            directory, 0o755, tarfile.DIRTYPE
                         )
                     )
                 for relative in paths:
                     source = AOSP_ROOT / relative
                     metadata = source.lstat()
-                    name = f"{archive_root}/{relative}"
+                    name = relative
                     if stat.S_ISLNK(metadata.st_mode):
                         info = normalized_tar_info(
-                            name, stat.S_IMODE(metadata.st_mode), tarfile.SYMTYPE
+                            name, 0o777, tarfile.SYMTYPE
                         )
                         info.linkname = os.readlink(source)
                         archive.addfile(info)
                     else:
                         info = normalized_tar_info(
-                            name, stat.S_IMODE(metadata.st_mode), tarfile.REGTYPE
+                            name, 0o755 if metadata.st_mode & stat.S_IXUSR else 0o644,
+                            tarfile.REGTYPE
                         )
                         info.size = metadata.st_size
                         with source.open("rb") as input_file:
@@ -416,7 +417,7 @@ def main() -> int:
         try:
             apply_patches(patch_series, applied)
             regular_bytes, symlink_count = validate_archive_inputs(paths)
-            write_archive(temporary_path, archive_root, paths)
+            write_archive(temporary_path, paths)
         except BaseException as error:
             build_error = error
 

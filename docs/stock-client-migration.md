@@ -1,5 +1,10 @@
 # Stock client migration: bulk instructions
 
+Current continuation: [Post-Wayland stock-client completion](stock-client-completion.md)
+records the 2026-09-09 baseline, remaining source differences, implementation
+batches and acceptance gates. Use it for new work; the milestones below retain
+their historical status and do not describe the current window stack.
+
 Goal: every class an application process runs on is the verbatim AOSP class,
 except the seam that talks to PipeWire, Wayland, FFmpeg and EGL. That seam
 stays exactly as it is until everything else is stock. The hosted services in

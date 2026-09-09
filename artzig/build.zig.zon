@@ -34,7 +34,7 @@
     .dependencies = .{
         .aosp = .{
             .url = "file:../aosp/artzig-aosp-android-16.0.0_r1.tar.gz",
-            .hash = "N-V-__8AAJ5Pbgldok9RkOZtk30hPG96EbbSuvMybX0hy1Z_",
+            .hash = "N-V-__8AAJ5Pbgk8FWG4jwLV-PcsGpnyDsw9oKy82vZa1JQO",
         },
         // See `zig fetch --save <url>` for a command-line interface for adding dependencies.
         //.example = .{

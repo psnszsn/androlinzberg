@@ -124,6 +124,12 @@ python3 aosp/package-artzig-aosp.py
 python3 aosp/package-androlinzberg-aosp.py
 ```
 
+Archives contain source roots such as `frameworks/` directly, without an enclosing
+release directory. Zig's local `file:` fetch must produce the paths consumed by
+`dependency.path()` without manually flattening its cache. File permissions are
+normalized to 0644 or 0755 according to the executable bit, independently of the
+checkout's umask. `build-tools-test` checks these archive contracts.
+
 From a worktree without its own Repo checkout, point the Artzig packager at the
 shared pinned checkout with `ARTZIG_AOSP_ROOT=/absolute/path/to/aosp`.
 
