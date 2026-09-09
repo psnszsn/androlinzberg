@@ -132,6 +132,17 @@ pub fn build(b: *std.Build) void {
         .icu_libraries = &.{ icu_native.common, icu_native.i18n, icu_native.stable, icu_native.android, icu_jni },
     });
     b.addNamedLazyPath("art-runtime", runtime);
+    const certificate_test = b.addExecutable(.{ .name = "system-certificates-test", .root_module = b.createModule(.{
+        .root_source_file = b.path("src/system_certificates_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    }) });
+    certificate_test.root_module.addImport("jni_c", jni_mod);
+    b.addNamedLazyPath("system-certificates-test-bin", certificate_test.getEmittedBin());
+    const run_certificates = b.addRunArtifact(certificate_test);
+    run_certificates.addDirectoryArg(runtime);
+    b.step("system-certificates-test", "Verify native certificate installation and stock standalone ART trust").dependOn(&run_certificates.step);
 
     // --- example
     const exe = b.addExecutable(.{

@@ -8,6 +8,24 @@ pub fn discover(b: *std.Build) Result {
     return .{ .libcap_include_roots = pkgIncludeRoots(b, "libcap") };
 }
 
+/// Zig's shared-library link does not supply the host C++ DSO finalizers.
+/// Use the host compiler's matching CRT objects so dlclose runs destructors
+/// against this library's __dso_handle, before its code is unmapped.
+pub fn addSharedLibraryCrt(b: *std.Build, lib: *std.Build.Step.Compile) void {
+    for ([_][]const u8{ "crtbeginS.o", "crtendS.o" }) |name| {
+        var exit_code: u8 = 0;
+        const stdout = b.runAllowFail(
+            &.{ "cc", b.fmt("-print-file-name={s}", .{name}) },
+            &exit_code,
+            .ignore,
+        ) catch std.debug.panic("cannot locate host {s}", .{name});
+        const path = std.mem.trim(u8, stdout, " \r\n\t");
+        if (exit_code != 0 or !std.fs.path.isAbsolute(path))
+            std.debug.panic("host compiler did not locate {s}: {s}", .{ name, path });
+        lib.root_module.addObjectFile(b.graph.cwdRelativePath(path));
+    }
+}
+
 fn pkgIncludeRoots(b: *std.Build, package: []const u8) []const std.Build.LazyPath {
     var exit_code: u8 = 0;
     const stdout = b.runAllowFail(

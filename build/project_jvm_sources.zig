@@ -224,7 +224,6 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/GraphicsSmoke.kt",
     "src/java/dev/artzig/HostContexts.kt",
     "src/java/dev/artzig/HostedActivityProcess.kt",
-    "src/java/dev/artzig/HostedSystemCertificates.kt",
     "src/java/dev/artzig/HostedServiceClient.kt",
     "src/java/dev/artzig/BoundedLooper.kt",
     "src/java/dev/artzig/StockLooperSmoke.kt",

@@ -135,6 +135,11 @@ pub fn build(b: *std.Build) void {
     const aosp = aosp_dep.path("");
     const artzig_dep = b.dependency("artzig", .{ .target = target, .optimize = optimize });
     const art_mod = artzig_dep.module("art");
+    const certificate_tests = b.addSystemCommand(&.{"env"});
+    certificate_tests.addFileArg(artzig_dep.namedLazyPath("system-certificates-test-bin"));
+    certificate_tests.addDirectoryArg(artzig_dep.namedLazyPath("art-runtime"));
+    b.step("system-certificates-test", "Verify stock standalone ART trust and native certificate installation").dependOn(&certificate_tests.step);
+
     const build_audit = b.addExecutable(.{
         .name = "build-audit",
         .root_module = b.createModule(.{

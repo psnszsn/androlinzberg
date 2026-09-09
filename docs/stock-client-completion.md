@@ -391,6 +391,41 @@ WebView's three and the desktop launcher's 16 steps also contain zero issues.
 All five session-loss scenarios passed. WebView pause, desktop modal and NewPipe
 fullscreen screenshots were inspected.
 
+### Stock trust store and runtime cleanup (2026-09-09)
+
+Conscrypt's Platform and java.lang.Runtime now match their pinned originals.
+Native ART startup parses the configured host PEM bundle through pinned
+BoringSSL and writes real DER certificates into a private Android system CA
+directory before creating the VM. Subject-hash collisions retain distinct
+numbered files; malformed or empty bundles fail startup and remove the private
+overlay. Removed the patched Conscrypt bundle parser and the framework's
+HostedSystemCertificates bootstrap. Standalone ART gets the same stock trust
+store by default, without framework initialization.
+
+The new standalone regression exposed an ICU unload defect: C++ destructors
+were registered with a null DSO handle and ran after the library was unmapped.
+ICU shared libraries now link the host compiler's matching CRT objects, giving
+each library its own destructor identity and dlclose finalizer. The regression
+destroys the VM, verifies overlay cleanup and exits successfully.
+
+Tests independently decode certificate bytes, exercise collisions and partial
+installation failures, load the original AndroidCAStore, and compare stock
+Conscrypt and framework trust anchors against the host PEM bundle. Existing
+application-anchor and pinning checks remain covered. The full `-j10 install
+system-certificates-test build-tools-test cpp-audit graph-audit jvm-test
+system-test integration-test webview-test webview-ui-test
+stock-desktop-launcher-test stock-session-loss-test` gate passed. All 28 APK
+cases contain 88 steps with zero structured issues; WebView and desktop frames
+were inspected alongside NewPipe fullscreen playback.
+
+ART is SHA-256
+`179620281b0a8e286eff770b4332b3bc943cccb8d3d97625215e8662cc9f6923`, pinned to
+`N-V-__8AACSaSw07iGpqry7sLHdyDqVk-GAVw4jHKzFMhkxm`. Packaging restored the
+isolated checkout. The framework archive remains at the ICU checkpoint above;
+both local archives and the installed runtime are current. Seven modified
+static client files and five stubs remain; java.io.File's virtual-library
+adaptation is still open with the runtime/path batch.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

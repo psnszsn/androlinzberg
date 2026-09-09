@@ -29,10 +29,6 @@ MANIFEST_REPOSITORY = AOSP_ROOT / ".repo" / "manifests"
 # Androlinzberg patches do not belong in the Artzig source package.
 PATCH_SERIES = (
     ("art", PROJECT_ROOT / "artzig" / "patches" / "art"),
-    (
-        "external/conscrypt",
-        PROJECT_ROOT / "artzig" / "patches" / "external" / "conscrypt",
-    ),
     ("libcore", PROJECT_ROOT / "artzig" / "patches" / "libcore"),
     (
         "system/libbase",

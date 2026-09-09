@@ -19,6 +19,7 @@ pub const Error = error{
     RuntimeTreeNotFound,
     HostCaBundleNotFound,
     SystemRootCreationFailed,
+    SystemCertificateInstallationFailed,
     LibartLoadFailed,
     SymbolNotFound,
     VmCreationFailed,
@@ -241,8 +242,9 @@ pub const Options = struct {
     /// `locateTree` is used.
     root: ?[]const u8 = null,
     /// Private writable ANDROID_ROOT layout for Android framework system CA files.
-    /// The framework bootstrap must populate etc/security/cacerts before app binding.
-    system_root_overlay: bool = false,
+    /// Populated from ca_bundle before VM creation. Disable only when root already
+    /// supplies the desired Android system certificate directory.
+    system_root_overlay: bool = true,
     /// Optional libart.so overlay. Other runtime libraries and data continue
     /// to resolve from `root`.
     libart_path: ?[]const u8 = null,
@@ -251,8 +253,8 @@ pub const Options = struct {
     /// ANDROID_DATA: where dalvik-cache/ lives. Default: $XDG_CACHE_HOME/artzig.
     data_dir: ?[]const u8 = null,
     /// Host PEM CA bundle. If null, environment overrides and standard Linux
-    /// locations are searched. Conscrypt reads it directly; a framework system
-    /// overlay materializes the certificates in Android's hashed directory layout.
+    /// locations are searched. Native startup materializes the certificates in
+    /// Android's hashed directory layout for the original Conscrypt trust store.
     ca_bundle: ?[]const u8 = null,
     /// -Djava.class.path
     classpath: []const []const u8 = &.{},
@@ -276,6 +278,7 @@ pub const Runtime = struct {
     arena: std.heap.ArenaAllocator,
     io: std.Io,
     system_root_overlay: ?[]const u8,
+    certificate_library: ?@import("system_certificates.zig").Library,
 
     const CreateFn = *const fn (**JavaVM, *?*anyopaque, *anyopaque) callconv(.c) jint;
 
@@ -302,9 +305,22 @@ pub const Runtime = struct {
         const cache = try std.fs.path.join(a, &.{ data_dir, "dalvik-cache", isa });
         std.Io.Dir.cwd().createDirPath(io, cache) catch {};
 
+        var certificate_library: ?@import("system_certificates.zig").Library = null;
+        errdefer if (certificate_library) |crypto| crypto.close();
+        if (system_root_overlay) |overlay| {
+            certificate_library = @import("system_certificates.zig").Library.open(a, root) catch |err| {
+                std.log.err("unable to load system certificate decoder: {t}", .{err});
+                return Error.SystemCertificateInstallationFailed;
+            };
+            const certificates = try std.fs.path.join(a, &.{ overlay, "etc/security/cacerts" });
+            _ = certificate_library.?.install(a, io, ca_bundle, certificates) catch |err| {
+                std.log.err("unable to install system certificates from {s}: {t}", .{ ca_bundle, err });
+                return Error.SystemCertificateInstallationFailed;
+            };
+        }
+
         var options: std.ArrayList([*:0]const u8) = .empty;
         if (system_root_overlay != null) {
-            try options.append(a, "-Dartzig.system.root.overlay=true");
             try options.append(a, "-Dsystem.certs.enabled=true");
         }
         var bcp: std.ArrayList(u8) = .empty;
@@ -378,6 +394,7 @@ pub const Runtime = struct {
             .arena = arena,
             .io = io,
             .system_root_overlay = system_root_overlay,
+            .certificate_library = certificate_library,
         };
     }
 
@@ -385,6 +402,7 @@ pub const Runtime = struct {
         _ = self.vm.*.*.DetachCurrentThread.?(self.vm);
         _ = self.vm.*.*.DestroyJavaVM.?(self.vm);
         self.lib.close();
+        if (self.certificate_library) |crypto| crypto.close();
         if (self.system_root_overlay) |path| std.Io.Dir.cwd().deleteTree(self.io, path) catch {};
         self.arena.deinit();
     }

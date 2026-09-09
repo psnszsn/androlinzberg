@@ -1,16 +1,13 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Vlad Panazan <git@praznet.com>
 Date: Sun, 23 Aug 2026 19:16:27 +0200
-Subject: [PATCH] libcore: host-embedding tweaks (no loadLibrary logE; virtual
- /system/lib* files)
+Subject: [PATCH] libcore: virtual system libraries on the hosted runtime
 
-Ported from art_standalone 1c5b26e4 and 5bda8706. Runtime.load/loadLibrary(String,
-ClassLoader) are what an embedding host uses deliberately, so drop the logE. File.exists()
-reports the bionic system libraries the host provides virtually as present.
+File.exists() reports libraries supplied by bionic_translation as present.
+This remaining adaptation will move below File with the runtime path batch.
 ---
- ojluni/src/main/java/java/io/File.java      | 17 +++++++++++++++++
- ojluni/src/main/java/java/lang/Runtime.java |  6 ++----
- 2 files changed, 19 insertions(+), 4 deletions(-)
+ ojluni/src/main/java/java/io/File.java | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
 
 diff --git a/ojluni/src/main/java/java/io/File.java b/ojluni/src/main/java/java/io/File.java
 index 3b921a3..1e2ac2c 100644
@@ -47,27 +44,3 @@ index 3b921a3..1e2ac2c 100644
  
          // Android-changed: b/25878034 work around SELinux stat64 denial.
          return fs.checkAccess(this, FileSystem.ACCESS_OK);
-diff --git a/ojluni/src/main/java/java/lang/Runtime.java b/ojluni/src/main/java/java/lang/Runtime.java
-index 90a0656..4d6c57e 100644
---- a/ojluni/src/main/java/java/lang/Runtime.java
-+++ b/ojluni/src/main/java/java/lang/Runtime.java
-@@ -906,8 +906,7 @@ public class Runtime {
-     void load(String absolutePath, ClassLoader loader) {
-         checkTargetSdkVersionForLoad("java.lang.Runtime#load(String, ClassLoader)");
- 
--        java.lang.System.logE("java.lang.Runtime#load(String, ClassLoader)" +
--                              " is private and will be removed in a future Android release");
-+        // artzig: hosts embedding the runtime call this on purpose; don't spam logE.
-         if (absolutePath == null) {
-             throw new NullPointerException("absolutePath == null");
-         }
-@@ -1024,8 +1023,7 @@ public class Runtime {
-      */
-     public void loadLibrary(String libname, ClassLoader classLoader) {
-         checkTargetSdkVersionForLoad("java.lang.Runtime#loadLibrary(String, ClassLoader)");
--        java.lang.System.logE("java.lang.Runtime#loadLibrary(String, ClassLoader)" +
--                              " is private and will be removed in a future Android release");
-+        // artzig: hosts embedding the runtime call this on purpose; don't spam logE.
-         // Pass null for callerClass, we don't know it at this point. Passing null preserved
-         // the behavior when we used to not pass the class.
-         loadLibrary0(classLoader, null, libname);

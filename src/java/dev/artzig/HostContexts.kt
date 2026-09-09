@@ -40,7 +40,6 @@ object HostContexts {
     @JvmStatic
     fun prepareApplicationEnvironment(frameworkRes: String) {
         // UI hosts enter through JNI init rather than RuntimeBootstrap.main.
-        HostedSystemCertificates.install()
         AssetManager.createSystemAssetsInZygoteLocked(false, frameworkRes)
         // ZygoteInit preloads the system font map before any process draws text.
         android.graphics.Typeface.loadPreinstalledSystemFontMap()

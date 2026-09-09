@@ -22,6 +22,7 @@ fn library(b: *std.Build, vendor: Sources.Root, target: std.Build.ResolvedTarget
         .sanitize_c = .off,
     }) });
     lib.each_lib_rpath = false;
+    @import("host_toolchain.zig").addSharedLibraryCrt(b, lib);
     lib.root_module.addRPathSpecial("$ORIGIN");
     for ([_][]const u8{ "icu4c/source/common", "icu4c/source/i18n", "android_icu4c/include", "libandroidicuinit/include" }) |path|
         lib.root_module.addIncludePath(vendor.path.path(b, b.fmt("external/icu/{s}", .{path})));

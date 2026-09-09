@@ -2242,13 +2242,29 @@ internal object FrameworkModuleSmoke {
         check(runCatching { Pin.getDigestLength("MD5") }.exceptionOrNull() is
             IllegalArgumentException)
 
-        // Compare stock directory lookup against the existing Conscrypt host-bundle parser.
-        // This catches missing files, PEM labels and subject-hash collision suffixes without
-        // depending on any external HTTPS endpoint or hard-coded distribution certificate.
+        // Parse the configured PEM bundle independently through stock Java APIs;
+        // native startup supplies the directory through the pinned BoringSSL APIs.
+        val certificateFactory = java.security.cert.CertificateFactory.getInstance("X.509")
+        val reference = LinkedHashSet<java.security.cert.X509Certificate>()
+        var block: StringBuilder? = null
+        File(checkNotNull(System.getProperty("artzig.ca.bundle"))).forEachLine(Charsets.US_ASCII) { line ->
+            if (line == "-----BEGIN CERTIFICATE-----") {
+                check(block == null)
+                block = StringBuilder()
+            }
+            block?.let { pem ->
+                pem.append(line).append('\n')
+                if (line == "-----END CERTIFICATE-----") {
+                    reference += certificateFactory.generateCertificate(pem.toString().byteInputStream()) as
+                        java.security.cert.X509Certificate
+                    block = null
+                }
+            }
+        }
+        check(block == null && reference.isNotEmpty())
         val referenceFactory = javax.net.ssl.TrustManagerFactory.getInstance("PKIX", "HarmonyJSSE")
         referenceFactory.init(null as java.security.KeyStore?)
-        val reference = (referenceFactory.trustManagers.single() as X509TrustManager).acceptedIssuers.toSet()
-        check(reference.isNotEmpty())
+        check((referenceFactory.trustManagers.single() as X509TrustManager).acceptedIssuers.toSet() == reference)
         val systemSource = SystemCertificateSource.getInstance()
         check(systemSource.certificates == reference) { "Stock system CA source differs from host trust bundle" }
         for (certificate in reference) {
