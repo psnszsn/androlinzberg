@@ -35,8 +35,8 @@ pub const Message = struct {
         /// `transact`: when non-zero, the peer request id whose waiting
         /// thread must execute this nested call.
         request_id: u64 = 0,
-        /// `transact`/`property_changed`: id echoed in `reply` (sync only),
-        /// then `delivery_done` after the handler and input cleanup finish.
+        /// Deliveries: echoed in `reply` for synchronous transact, then in
+        /// `delivery_done` after transaction/property/reference handlers finish.
         routing_id: u64 = 0,
     };
 
@@ -65,7 +65,7 @@ pub const Message = struct {
         /// No body. The broker is going away.
         shutdown,
         /// Body is the UTF-8 name of a property that changed in the session's
-        /// property area. Not acknowledged; drives
+        /// property area. Completed with delivery_done after callbacks; drives
         /// `SystemProperties.addChangeCallback` (the `SYSPROPS_TRANSACTION`
         /// analogue).
         property_changed,
@@ -253,14 +253,14 @@ pub fn serveReply(s: *const Server, options: ReplyOptions) Writer.Error!void {
     try s.out.flush();
 }
 
-pub fn serveObjectRefMessage(s: *const Server, tag: OutMessage.Tag, object: ObjectRef) Writer.Error!void {
-    try s.serveMessageHeader(.{ .tag = tag, .bytes_len = @sizeOf(ObjectRef) });
+pub fn serveObjectRefMessage(s: *const Server, tag: OutMessage.Tag, object: ObjectRef, routing_id: u64) Writer.Error!void {
+    try s.serveMessageHeader(.{ .tag = tag, .bytes_len = @sizeOf(ObjectRef), .routing_id = routing_id });
     try s.out.writeStruct(object, .little);
     try s.out.flush();
 }
 
-pub fn serveObjectReleased(s: *const Server, object: ObjectRef, uses: u64) Writer.Error!void {
-    try s.serveMessageHeader(.{ .tag = .object_released, .bytes_len = @sizeOf(OutMessage.ObjectReleased) });
+pub fn serveObjectReleased(s: *const Server, object: ObjectRef, uses: u64, routing_id: u64) Writer.Error!void {
+    try s.serveMessageHeader(.{ .tag = .object_released, .bytes_len = @sizeOf(OutMessage.ObjectReleased), .routing_id = routing_id });
     try s.out.writeStruct(OutMessage.ObjectReleased{ .object = object, .uses = uses }, .little);
     try s.out.flush();
 }

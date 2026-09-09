@@ -17,6 +17,12 @@ zig build -j10 cpp-audit
 
 ## Zig-owned code
 
+- The hosted Binder runtime owns request and callback admission in Zig. Protocol
+  delivery credit follows C++ destructor/death-callback lifetime through the
+  existing worker boundary; C++ does not implement a second queue or quota map.
+  The native facade regression verifies blocked destructors, unresolved service
+  requests and the pinned NDK death-recipient unlink contract through public APIs.
+
 - `src/binder/native_properties.zig` supplies seven bionic-loader property hooks.
   Opaque native handles point to stable slots in the same broker-owned property
   area used by Java `SystemProperties`. Callback reads copy a value and its serial

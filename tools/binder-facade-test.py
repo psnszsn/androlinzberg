@@ -20,6 +20,7 @@ p.add_argument('--server', type=Path, help='Use a production service executable 
 p.add_argument('--broker', type=Path, required=True)
 p.add_argument('--library', type=Path, action='append', default=[])
 p.add_argument('--producer-crash', action='store_true')
+p.add_argument('--release-pressure', action='store_true')
 p.add_argument('--standalone', action='store_true', help='Run one native test with an authenticated broker session')
 p.add_argument('--system-client', action='store_true', help='Authenticate a host service client using the session system cookie')
 p.add_argument('--probe-arg', action='append', default=[], help='Explicit client argv (default: client)')
@@ -99,6 +100,31 @@ try:
         env['AZK_BINDER_PACKAGE'] = 'dev.artzig.facade.v2.client'
         if not a.system_client:
             env.pop('AZK_BINDER_SYSTEM_COOKIE', None)  # Ordinary native clients have an app UID.
+        if a.release_pressure:
+            log = (d / 'release-pressure-server.log').open('w')
+            logs.append(log)
+            pressure_env = env.copy()
+            pressure_env['AZK_BINDER_PACKAGE'] = 'dev.artzig.facade.v2'
+            pressure_server = subprocess.Popen(
+                [str(a.probe.resolve()), 'server-pressure'], env=pressure_env, cwd=r,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True,
+            )
+            children.append(pressure_server)
+            assert line(pressure_server).startswith('ready')
+            log = (d / 'release-pressure.log').open('w')
+            logs.append(log)
+            pressure = subprocess.Popen(
+                [str(a.probe.resolve()), 'release-pressure'], env=env, cwd=r,
+                stdout=subprocess.PIPE, stderr=log, text=True,
+            )
+            children.append(pressure)
+            lines.append(pressure.communicate(timeout=60)[0])
+            result['release_pressure_exit'] = pressure.returncode
+            pressure_server.stdin.close()
+            pressure_server.wait(timeout=5)
+            result['release_pressure_server_exit'] = pressure_server.returncode
+            if pressure.returncode != 0:
+                raise RuntimeError(f'release pressure probe failed: {pressure.returncode}')
         if a.producer_crash:
             log = (d / 'producer-crash.log').open('w')
             logs.append(log)

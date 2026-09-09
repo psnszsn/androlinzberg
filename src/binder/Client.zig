@@ -154,8 +154,8 @@ pub const Message = struct {
         /// Body is a package name. Trusted system peers reserve its uid before
         /// launching a process; answered with `package_uid_result`.
         reserve_package_uid,
-        /// Empty body. Return routing credit after a transaction or property
-        /// callback and its input cleanup finish. Sync calls must reply first.
+        /// Empty body. Return routing credit after transaction, property,
+        /// release or death callbacks and cleanup. Sync calls must reply first.
         delivery_done,
         _,
     };

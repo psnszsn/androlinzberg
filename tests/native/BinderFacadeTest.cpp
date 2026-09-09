@@ -25,7 +25,7 @@ using namespace std::chrono_literals;
 constexpr uint32_t EXCHANGE = 1, NESTED = 2, GRAPHICS = 3;
 constexpr uint32_t HOLD_WORKER = 8, MONITOR_POOL = 9, BLOB_ROUND_TRIP = 10;
 constexpr uint32_t RETAIN_RELEASE_TARGET = 12, DROP_RELEASE_TARGET = 13;
-constexpr uint32_t QUOTA_ONEWAY = 14, QUOTA_PROGRESS = 15;
+constexpr uint32_t QUOTA_ONEWAY = 14, QUOTA_PROGRESS = 15, PREPARE_WAITERS = 16;
 constexpr int POOL_WORKERS = 32;
 static void pass(const char *s) { std::cout << "PASS " << s << std::endl; }
 struct Listener final : gui::BnFpsListener {
@@ -106,6 +106,22 @@ struct Service final : BBinder {
   }
   status_t onTransact(uint32_t code, const Parcel &in, Parcel *out,
                       uint32_t flags) override {
+    if (code == PREPARE_WAITERS) {
+      const int gate = dup(in.readFileDescriptor());
+      assert(gate >= 0);
+      std::thread([gate] {
+        pollfd ready{gate, POLLIN, 0};
+        assert(poll(&ready, 1, 10000) == 1);
+        char byte;
+        assert(read(gate, &byte, 1) == 1);
+        close(gate);
+        auto object = sp<BBinder>::make();
+        auto *native = AIBinder_fromPlatformBinder(object);
+        assert(AServiceManager_addService(native, "dev.artzig.facade.v2.waiters") == OK);
+        AIBinder_decStrong(native);
+      }).detach();
+      return OK;
+    }
     if (code == QUOTA_ONEWAY) {
       assert(flags & IBinder::FLAG_ONEWAY);
       const int sequence = in.readInt32();
@@ -421,17 +437,144 @@ static void onewayQuotaTest(const sp<IBinder>& server) {
   pass("oneway admission bounded until handler completion; synchronous progress and FIFO retry");
 }
 
+static void serviceRequestQuotaTest(const sp<IBinder>& server) {
+  int gate[2];
+  assert(pipe2(gate, O_CLOEXEC) == 0);
+  {
+    Parcel input, output;
+    assert(input.writeFileDescriptor(gate[0], false) == OK);
+    assert(server->transact(PREPARE_WAITERS, input, &output) == OK);
+  }
+  close(gate[0]);
+  std::mutex mutex;
+  std::condition_variable changed;
+  int failed = 0, succeeded = 0;
+  std::vector<std::thread> callers;
+  for (int i = 0; i < 129; ++i) callers.emplace_back([&] {
+    auto *binder = AServiceManager_waitForService("dev.artzig.facade.v2.waiters");
+    if (binder) AIBinder_decStrong(binder);
+    std::lock_guard lock(mutex);
+    if (binder) ++succeeded; else ++failed;
+    changed.notify_all();
+  });
+  bool bounded;
+  {
+    std::unique_lock lock(mutex);
+    bounded = changed.wait_for(lock, 2s, [&] { return failed > 0; });
+    assert(succeeded == 0);
+  }
+  // The server publishes from its independently signalled thread. Always
+  // release and join the callers before asserting the negative old-runtime case.
+  assert(write(gate[1], "x", 1) == 1);
+  close(gate[1]);
+  for (auto &caller : callers) caller.join();
+  assert(bounded && failed > 0 && succeeded > 0 && succeeded + failed == 129);
+  auto *retry = AServiceManager_checkService("dev.artzig.facade.v2.waiters");
+  assert(retry);
+  AIBinder_decStrong(retry);
+  pass("outstanding service requests are bounded and completed waits return capacity");
+}
+
+static void deathLinkQuotaTest(const sp<IBinder>& server) {
+  auto *native = AIBinder_fromPlatformBinder(server);
+  assert(native);
+  std::atomic<int> unlinked = 0;
+  auto onDied = +[](void *) { assert(false && "live service unexpectedly died"); };
+  auto onUnlinked = +[](void *cookie) { ++*static_cast<std::atomic<int> *>(cookie); };
+  auto *recipient = AIBinder_DeathRecipient_new(onDied);
+  AIBinder_DeathRecipient_setOnUnlinked(recipient, onUnlinked);
+  int accepted = 0;
+  status_t result = OK;
+  for (; accepted < 16384; ++accepted) {
+    result = AIBinder_linkToDeath(native, recipient, &unlinked);
+    if (result != OK) break;
+  }
+  assert(accepted > 0 && accepted < 16384 && result == NO_MEMORY);
+  // A failed registration still invokes the pinned onUnlinked contract.
+  assert(unlinked == 1);
+  AIBinder_DeathRecipient_delete(recipient);
+  assert(unlinked == accepted + 1);
+  recipient = AIBinder_DeathRecipient_new(onDied);
+  AIBinder_DeathRecipient_setOnUnlinked(recipient, onUnlinked);
+  assert(AIBinder_linkToDeath(native, recipient, &unlinked) == OK);
+  assert(AIBinder_unlinkToDeath(native, recipient, &unlinked) == OK);
+  assert(unlinked == accepted + 2);
+  AIBinder_DeathRecipient_delete(recipient);
+  AIBinder_decStrong(native);
+  pass("death subscription quota, failed onUnlinked ordering and released capacity");
+}
+
+struct ReleasePressureState {
+  std::mutex gate;
+  std::atomic<int> destroyed = 0;
+};
+struct ReleasePressureObject final : BBinder {
+  std::shared_ptr<ReleasePressureState> state;
+  explicit ReleasePressureObject(std::shared_ptr<ReleasePressureState> value) : state(std::move(value)) {}
+  ~ReleasePressureObject() override {
+    std::lock_guard lock(state->gate);
+    ++state->destroyed;
+  }
+};
+static void releasePressureTest() {
+  auto server = IBinder::fromNative(AServiceManager_waitForService("dev.artzig.facade.v2.pressure"));
+  assert(server);
+  auto state = std::make_shared<ReleasePressureState>();
+  std::unique_lock gate(state->gate);
+  int created = 0;
+  bool retired = false;
+  for (; created < 8192;) {
+    {
+      auto target = sp<ReleasePressureObject>::make(state);
+      ++created;
+      Parcel input, output;
+      assert(input.writeStrongBinder(target) == OK);
+      const status_t result = server->transact(RETAIN_RELEASE_TARGET, input, &output);
+      if (result == DEAD_OBJECT) {
+        retired = true;
+        gate.unlock();
+      } else assert(result == OK);
+    }
+    if (retired) break;
+    // Only the remote holder remains before it drops this export. Therefore
+    // its eventual destructor runs on a Binder cleanup worker, never here.
+    Parcel input, output;
+    const status_t result = server->transact(DROP_RELEASE_TARGET, input, &output);
+    if (result == DEAD_OBJECT) {
+      retired = true;
+      break;
+    }
+    assert(result == OK);
+    if (!server->isBinderAlive()) {
+      retired = true;
+      break;
+    }
+  }
+  // Drain before asserting, including on the old unbounded implementation.
+  if (gate.owns_lock()) gate.unlock();
+  for (int i = 0; i < 1000 && state->destroyed != created; ++i)
+    std::this_thread::sleep_for(10ms);
+  assert(state->destroyed == created);
+  assert(retired && created < 8192);
+  pass("blocked export destructors have bounded retained work and clean session retirement");
+}
+
 int main(int argc, char **argv) {
-  if (argc > 1 && std::string(argv[1]) == "server") {
+  if (argc > 1 && (std::string(argv[1]) == "server" || std::string(argv[1]) == "server-pressure")) {
     assert(ABinderProcess_setThreadPoolMaxThreadCount(POOL_WORKERS - 1));
     auto service = sp<Service>::make();
     auto *n = service->acquireNative();
-    assert(AServiceManager_addService(n, "dev.artzig.facade.v2") == OK);
+    const char *name = std::string(argv[1]) == "server-pressure" ? "dev.artzig.facade.v2.pressure" : "dev.artzig.facade.v2";
+    assert(AServiceManager_addService(n, name) == OK);
     AIBinder_decStrong(n);
     std::cout << "ready" << std::endl;
     char c;
     while (std::cin.get(c)) {
     }
+    return 0;
+  }
+  if (argc > 1 && std::string(argv[1]) == "release-pressure") {
+    releasePressureTest();
     return 0;
   }
   parcelTests();
@@ -495,6 +638,8 @@ int main(int argc, char **argv) {
   releaseReaderProgressTest(server);
   poolMonitorTest(server);
   onewayQuotaTest(server);
+  deathLinkQuotaTest(server);
+  serviceRequestQuotaTest(server);
   {
     const std::optional<std::vector<std::optional<std::string>>> values{
         std::vector<std::optional<std::string>>{std::nullopt, std::string{},

@@ -112,6 +112,7 @@ const Call = struct {
     target: u32,
     parent: u64,
     asynchronous: bool,
+    async_budget: bool,
     replied: bool = false,
     cost: DeliveryBudget.Usage,
 };
@@ -867,20 +868,41 @@ fn deliveryCost(payload: Client.Payload, fd_count: u16) DeliveryBudget.Usage {
 }
 
 fn beginDelivery(b: *Broker, target: *Peer, caller: u32, request: u64, parent: u64, asynchronous: bool, cost: DeliveryBudget.Usage) !?u64 {
-    if (!target.deliveries.fits(cost, asynchronous, b.delivery_limits) or
-        !b.deliveries.fits(cost, asynchronous, DeliveryBudget.global_limits)) return null;
+    return b.beginDeliveryCharged(target, caller, request, parent, asynchronous, asynchronous, cost);
+}
+
+fn beginDeliveryCharged(b: *Broker, target: *Peer, caller: u32, request: u64, parent: u64, asynchronous: bool, async_budget: bool, cost: DeliveryBudget.Usage) Allocator.Error!?u64 {
+    if (!target.deliveries.fits(cost, async_budget, b.delivery_limits) or
+        !b.deliveries.fits(cost, async_budget, DeliveryBudget.global_limits)) return null;
     const id = b.next_routing_id;
     b.next_routing_id += 1;
-    try b.calls.put(b.gpa, id, .{ .caller = caller, .caller_request = request, .target = target.id, .parent = parent, .asynchronous = asynchronous, .cost = cost });
-    target.deliveries.add(cost, asynchronous);
-    b.deliveries.add(cost, asynchronous);
+    try b.calls.put(b.gpa, id, .{ .caller = caller, .caller_request = request, .target = target.id, .parent = parent, .asynchronous = asynchronous, .async_budget = async_budget, .cost = cost });
+    target.deliveries.add(cost, async_budget);
+    b.deliveries.add(cost, async_budget);
     return id;
+}
+
+/// Reference control may use the space reserved from asynchronous work, but
+/// remains charged until its destructor/death callbacks finish on the receiver.
+fn beginControlDelivery(b: *Broker, target: *Peer) Allocator.Error!?u64 {
+    const id = try b.beginDeliveryCharged(target, 0, 0, 0, true, false, .{ .bytes = 128, .count = 1 });
+    if (id == null) {
+        log.warn("peer {d} exhausted retained reference callbacks; disconnecting", .{target.id});
+        target.requestClose();
+    }
+    return id;
+}
+
+fn notifyObjectDead(b: *Broker, target: *Peer, ref: ObjectRef) Allocator.Error!void {
+    const routing_id = (try b.beginControlDelivery(target)) orelse return;
+    errdefer b.finishDelivery(routing_id);
+    target.enqueue(try b.encode(Server.serveObjectRefMessage, .{ .object_dead, ref, routing_id }));
 }
 
 fn finishDelivery(b: *Broker, id: u64) void {
     const call = b.calls.fetchRemove(id).?.value;
-    if (b.peers.get(call.target)) |target| target.deliveries.subtract(call.cost, call.asynchronous);
-    b.deliveries.subtract(call.cost, call.asynchronous);
+    if (b.peers.get(call.target)) |target| target.deliveries.subtract(call.cost, call.async_budget);
+    b.deliveries.subtract(call.cost, call.async_budget);
 }
 
 fn handleDeliveryDone(peer: *Peer, header: Client.Message.Header, body: []const u8) ServeError!void {
@@ -1084,7 +1106,9 @@ fn maybeReleaseObject(b: *Broker, object: *Object) Allocator.Error!void {
     // Keep the object and its local index until the owner acknowledges, so a
     // re-export racing with this notification revives the same global id.
     object.releasing = true;
-    owner.enqueue(try b.encode(Server.serveObjectReleased, .{ ObjectRef.local(object.local_id), object.uses }));
+    const routing_id = (try b.beginControlDelivery(owner)) orelse return;
+    errdefer b.finishDelivery(routing_id);
+    owner.enqueue(try b.encode(Server.serveObjectReleased, .{ ObjectRef.local(object.local_id), object.uses, routing_id }));
 }
 
 /// Requires `b.mutex`.
@@ -1119,13 +1143,13 @@ fn handleLink(peer: *Peer, header: Client.Message.Header, body: []const u8, link
     defer b.mutex.unlock(io);
     const object = b.objects.get(ref.value) orelse {
         // Unknown or already reclaimed: treat as dead.
-        if (link) peer.enqueue(try b.encode(Server.serveObjectRefMessage, .{ .object_dead, ref }));
+        if (link) try b.notifyObjectDead(peer, ref);
         return;
     };
     if (!peer.holdings.contains(object.id) and object.owner != peer.id) return protocolError(peer, "death link on an object the peer does not hold");
     if (link) {
         if (object.dead) {
-            peer.enqueue(try b.encode(Server.serveObjectRefMessage, .{ .object_dead, ref }));
+            try b.notifyObjectDead(peer, ref);
             return;
         }
         try object.links.put(b.gpa, peer.id, {});
@@ -1857,7 +1881,7 @@ fn removePeer(b: *Broker, peer: *Peer) void {
             var links = object.links.keyIterator();
             while (links.next()) |linked_id| {
                 if (b.peers.get(linked_id.*)) |linked| {
-                    if (linked.alive) linked.enqueue(b.encode(Server.serveObjectRefMessage, .{ .object_dead, ObjectRef.remote(object.id) }) catch continue);
+                    if (linked.alive) b.notifyObjectDead(linked, ObjectRef.remote(object.id)) catch continue;
                 }
             }
             object.links.clearRetainingCapacity();

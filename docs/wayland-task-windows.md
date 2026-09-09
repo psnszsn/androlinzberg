@@ -11,6 +11,28 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Reference cleanup and runtime request limits (2026-09-09)
+
+Object-release and object-death notifications now retain reserved delivery
+credit until the receiver finishes destructor or callback cleanup. A release
+acknowledgement cannot recycle unfinished work. Runtime admission covers all
+128 outstanding requests through response consumption, including unresolved
+service lookups, and reserves capacity before exporting a new service. Death
+links remain charged against an 8,192-link cap until their final unlink callback;
+failed registration preserves the pinned NDK callback ordering.
+
+Negative regressions 598 and 601 reproduce unbounded blocked destructors and
+129 unresolved service requests in the previous runtime. Regression 602 passes
+the corresponding bounded-work checks, reference/death-credit recovery, NDK
+unlink semantics, C++, Java Binder, system-service and GUI tests and source
+audits. Regression 603 passes the full stock-client JVM suite. Regression 604
+passes all 24 stock APK cases (78 clean steps), 16 drag-pressure rounds (116 clean
+steps), and all five service/compositor-loss cases with no surviving descendants
+or session directories. Service loss retires in 114 ms; compositor loss in 567 ms.
+Artifacts: `/tmp/wayland-control-quota-602-native-artifacts/` and
+`/tmp/wayland-control-quota-604-artifacts/`. Graphics/import limits, remaining
+legacy-window retirement and production default cutover remain open.
+
 ## Broker storage and metadata limits (2026-09-09)
 
 The broker now bounds session-wide outbox bytes, frames and descriptors through

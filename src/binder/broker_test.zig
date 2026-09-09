@@ -140,6 +140,7 @@ fn expectReleased(peer: *Peer, local_id: u64, uses: u64) !void {
     try testing.expectEqual(local_id, released.object.value);
     try testing.expectEqual(uses, released.uses);
     try peer.client.serveObjectRefMessage(.release_ack, ObjectRef.local(local_id));
+    try peer.client.serveDeliveryDone(msg.header.routing_id);
 }
 
 fn expectAdmission(peer: *Peer, id: u64, status: Client.Message.Reply.Status) !void {
@@ -310,6 +311,7 @@ test "registry, transaction routing, nesting, oneway, release and death" {
         const msg = try client.next();
         defer gpa.free(msg.fds);
         try testing.expectEqual(Server.Message.Tag.object_released, msg.header.tag);
+        try client.client.serveDeliveryDone(msg.header.routing_id);
         const released = try fixedStruct(Server.Message.ObjectReleased, msg.body);
         try testing.expectEqual(@as(u64, 42), released.object.value);
         try testing.expectEqual(@as(u64, 1), released.uses);
@@ -344,6 +346,7 @@ test "registry, transaction routing, nesting, oneway, release and death" {
         const msg = try client.next();
         defer gpa.free(msg.fds);
         try testing.expectEqual(Server.Message.Tag.object_released, msg.header.tag);
+        try client.client.serveDeliveryDone(msg.header.routing_id);
         try testing.expectEqual(@as(u64, 2), (try fixedStruct(Server.Message.ObjectReleased, msg.body)).uses);
     }
     try client.client.serveObjectRefMessage(.release_ack, ObjectRef.local(42));
@@ -364,6 +367,7 @@ test "registry, transaction routing, nesting, oneway, release and death" {
         defer gpa.free(msg.fds);
         switch (msg.header.tag) {
             .object_dead => {
+                try client.client.serveDeliveryDone(msg.header.routing_id);
                 saw_dead = true;
                 try testing.expectEqual(svc_gid, (try fixedStruct(ObjectRef, msg.body)).value);
             },
@@ -1487,4 +1491,69 @@ test "a blocked socket cannot consume the outbox frame allowance reserved for re
     try testing.expect(dead);
     try waitPeerCount(h, 1);
     try barrier(&caller);
+}
+
+test "reference acknowledgements cannot recycle unfinished release or death callback work" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    for ([_]bool{ false, true }) |release| {
+        const h = try Harness.startWithLimits(gpa, io, .{
+            .total = .{ .bytes = 65536, .fds = 64, .count = 3 },
+            .asynchronous = .{ .bytes = 32768, .fds = 32, .count = 1 },
+        });
+        defer h.stop(gpa, io);
+        var slow: Peer = undefined;
+        try slow.connect(io, h.path, cookie);
+        defer slow.close();
+        try slow.expectWelcome();
+        var healthy: Peer = undefined;
+        try healthy.connect(io, h.path, cookie);
+        defer healthy.close();
+        try healthy.expectWelcome();
+        var first_route: u64 = 0;
+        for (0..4) |i| {
+            if (release) {
+                // A denied registry entry still announces a local export. The
+                // release ACK retires that object, but not its held destructor.
+                try slow.client.serveRegisterService(i + 1, ObjectRef.local(i + 1), "forbidden");
+                try expectServiceStatus(&slow, i + 1, .denied);
+            } else {
+                // An already-dead reference still dispatches death callbacks.
+                try slow.client.serveObjectRefMessage(.link_death, ObjectRef.remote(i + 10000));
+            }
+            const notification = try slow.next();
+            defer gpa.free(notification.fds);
+            try testing.expectEqual(if (release) Server.Message.Tag.object_released else Server.Message.Tag.object_dead, notification.header.tag);
+            if (i == 0) first_route = notification.header.routing_id;
+            if (release) try slow.client.serveObjectRefMessage(.release_ack, ObjectRef.local(i + 1));
+            try barrier(&slow);
+            if (i == 2) {
+                // Three control deliveries fit even though async is capped at
+                // one. Completion, not socket reading or ACK, returns capacity.
+                h.broker.mutex.lockUncancelable(io);
+                const held = h.broker.deliveries;
+                h.broker.mutex.unlock(io);
+                try testing.expectEqual(@as(usize, 3), held.total.count);
+                try testing.expectEqual(@as(usize, 0), held.asynchronous.count);
+                try slow.client.serveDeliveryDone(first_route);
+                try barrier(&slow);
+            }
+        }
+        if (release) {
+            try slow.client.serveRegisterService(5, ObjectRef.local(5), "forbidden");
+            try expectServiceStatus(&slow, 5, .denied);
+        } else {
+            try slow.client.serveObjectRefMessage(.link_death, ObjectRef.remote(10005));
+        }
+        try expectDisconnected(&slow);
+        slow.close();
+        try waitPeerCount(h, 1);
+        try barrier(&healthy);
+        h.broker.mutex.lockUncancelable(io);
+        const remaining = h.broker.deliveries;
+        const objects = h.broker.objects.count();
+        h.broker.mutex.unlock(io);
+        try testing.expectEqualDeep(Broker.DeliveryBudget{}, remaining);
+        try testing.expectEqual(@as(u32, 0), objects);
+    }
 }

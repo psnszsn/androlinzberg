@@ -610,9 +610,10 @@ const PendingCall = struct {
     mu: Io.Mutex = .init,
     cv: Io.Condition = .init,
     kind: PendingKind,
-    counted_transaction: bool = false,
+    counted_request: bool = false,
     done: bool = false,
     failed: bool = false,
+    failure_status: i32 = STATUS_DEAD_OBJECT,
     // reply:
     reply: ?*AParcel = null,
     reply_status: Client.Message.Reply.Status = .ok,
@@ -659,11 +660,13 @@ const Runtime = struct {
     pending: std.AutoHashMapUnmanaged(u64, *PendingCall) = .empty,
     /// Includes replies removed from pending but still owned by awaitReply.
     /// Leave room for all pool workers, nested calls and external caller threads.
-    active_transactions: usize = 0,
+    active_requests: usize = 0,
     locals: std.AutoHashMapUnmanaged(u64, *AIBinder) = .empty,
     export_uses: std.AutoHashMapUnmanaged(u64, u64) = .empty,
     proxies: std.AutoHashMapUnmanaged(u64, *AIBinder) = .empty,
     death_links: std.ArrayListUnmanaged(*DeathLink) = .empty,
+    /// Includes removed subscriptions still owned by running/queued callbacks.
+    live_death_links: std.atomic.Value(usize) = .init(0),
     death_mu: Io.Mutex = .init,
     /// Per-local-target FIFO queues serializing incoming oneway transactions.
     oneway_queues: std.AutoHashMapUnmanaged(u64, *SerialQueue) = .empty,
@@ -688,18 +691,21 @@ const Runtime = struct {
     /// nested-transaction parent tracking.
     servicing: Io.Mutex = .init,
 
-    const max_active_transactions = 128;
+    const max_active_requests = 128;
+    const max_live_death_links = 8192;
 
     const Work = union(enum) {
         transaction: *Incoming,
         oneway: *SerialQueue,
-        deaths: std.ArrayListUnmanaged(*DeathLink),
-        release: *AIBinder,
+        deaths: struct { links: std.ArrayListUnmanaged(*DeathLink), routing_id: u64 = 0 },
+        release: struct { binder: *AIBinder, routing_id: u64 = 0 },
         property: u64,
         discard: *AParcel,
     };
 
     const DeathLink = struct {
+        runtime: *Runtime,
+        counted: bool = false,
         global_id: u64,
         recipient: *AIBinder_DeathRecipient,
         cookie: ?*anyopaque,
@@ -712,6 +718,7 @@ const Runtime = struct {
             if (l.refs.fetchSub(1, .acq_rel) != 1) return;
             if (l.on_unlinked) |cb| cb(l.cookie);
             l.recipient.release();
+            if (l.counted) _ = l.runtime.live_death_links.fetchSub(1, .acq_rel);
             alloc.destroy(l);
         }
     };
@@ -974,11 +981,11 @@ const Runtime = struct {
             },
             .object_dead => {
                 const ref = std.mem.bytesToValue(ObjectRef, body[0..@sizeOf(ObjectRef)]);
-                r.notifyDeath(ref.value);
+                r.notifyDeath(ref.value, header.routing_id);
             },
             .object_released => {
                 const rel = std.mem.bytesToValue(Server.Message.ObjectReleased, body[0..@sizeOf(Server.Message.ObjectReleased)]);
-                r.maybeRelease(rel.object.value, rel.uses);
+                r.maybeRelease(rel.object.value, rel.uses, header.routing_id);
             },
             .property_changed => r.submitWork(.{ .property = header.routing_id }),
             .protocol_error => return false,
@@ -1048,8 +1055,14 @@ const Runtime = struct {
             switch (work) {
                 .transaction => |in| r.dispatch(in),
                 .oneway => |queue| r.serialDispatch(queue),
-                .deaths => |links| deliverDeaths(links),
-                .release => |binder| dropLocal(binder),
+                .deaths => |event| {
+                    deliverDeaths(event.links);
+                    if (event.routing_id != 0) r.completeDelivery(event.routing_id);
+                },
+                .release => |event| {
+                    dropLocal(event.binder);
+                    if (event.routing_id != 0) r.completeDelivery(event.routing_id);
+                },
                 .property => |routing_id| {
                     @import("framework_jni.zig").onPropertyChanged();
                     r.completeDelivery(routing_id);
@@ -1222,6 +1235,9 @@ const Runtime = struct {
     fn exportLocal(r: *Runtime, b: *AIBinder) u64 {
         r.mu.lockUncancelable(g_io);
         defer r.mu.unlock(g_io);
+        // A request can lose its connection after admission but before flatten.
+        // Do not recreate exports after onDisconnected drained their ownership.
+        if (r.disconnected.load(.monotonic)) return b.id;
         const prev = r.export_uses.get(b.id) orelse 0;
         if (prev == 0) {
             // The first export holds one strong ref for the whole export
@@ -1244,7 +1260,7 @@ const Runtime = struct {
             return b;
         }
         const b = alloc.create(AIBinder) catch @panic("oom");
-        b.* = .{ .strong = .init(1), .kind = .remote, .id = global_id, .dead = .init(false), .deliveries = 1 };
+        b.* = .{ .strong = .init(1), .kind = .remote, .id = global_id, .dead = .init(r.disconnected.load(.monotonic)), .deliveries = 1 };
         r.proxies.put(alloc, global_id, b) catch @panic("oom");
         return b;
     }
@@ -1310,7 +1326,7 @@ const Runtime = struct {
         alloc.destroy(q);
     }
 
-    fn maybeRelease(r: *Runtime, id: u64, uses: u64) void {
+    fn maybeRelease(r: *Runtime, id: u64, uses: u64, routing_id: u64) void {
         r.mu.lockUncancelable(g_io);
         const drop = (r.export_uses.get(id) orelse 0) == uses;
         var released: ?*AIBinder = null;
@@ -1323,13 +1339,14 @@ const Runtime = struct {
         // Our sole socket reader must remain able to deliver their replies.
         // Transfer the export's existing ref before disconnect can stop the
         // pool, including when the acknowledgement below fails to send.
-        if (released) |b| r.submitWorkLocked(.{ .release = b });
+        if (released) |b| r.submitWorkLocked(.{ .release = .{ .binder = b, .routing_id = routing_id } });
         r.mu.unlock(g_io);
         if (drop) {
             var body: [@sizeOf(ObjectRef)]u8 = undefined;
             @memcpy(&body, std.mem.asBytes(&ObjectRef.local(id)));
             r.sendFrame(.{ .tag = Client.Message.Tag.release_ack, .bytes_len = body.len }, &body, &.{}) catch {};
         }
+        if (released == null) r.completeDelivery(routing_id);
     }
 
     /// Releases one strong ref to a local object, running its onDestroy and
@@ -1342,7 +1359,7 @@ const Runtime = struct {
         decWeak(b);
     }
 
-    fn notifyDeath(r: *Runtime, global_id: u64) void {
+    fn notifyDeath(r: *Runtime, global_id: u64, routing_id: u64) void {
         var links = std.ArrayListUnmanaged(*DeathLink).empty;
         r.mu.lockUncancelable(g_io);
         if (r.proxies.get(global_id)) |binder| binder.dead.store(true, .monotonic);
@@ -1353,7 +1370,12 @@ const Runtime = struct {
             } else i += 1;
         }
         r.mu.unlock(g_io);
-        if (links.items.len > 0) r.submitWork(.{ .deaths = links }) else links.deinit(alloc);
+        if (links.items.len > 0) {
+            r.submitWork(.{ .deaths = .{ .links = links, .routing_id = routing_id } });
+        } else {
+            links.deinit(alloc);
+            r.completeDelivery(routing_id);
+        }
     }
 
     fn deliverDeaths(owned: std.ArrayListUnmanaged(*DeathLink)) void {
@@ -1401,9 +1423,9 @@ const Runtime = struct {
         // Publish the final deaths before allowing idle workers to exit.
         // Active serial callbacks can requeue their remaining FIFO work while
         // draining; at least that active worker remains available to serve it.
-        if (links.items.len > 0) r.submitWorkLocked(.{ .deaths = links }) else links.deinit(alloc);
+        if (links.items.len > 0) r.submitWorkLocked(.{ .deaths = .{ .links = links } }) else links.deinit(alloc);
         var objects = locals.valueIterator();
-        while (objects.next()) |object| r.submitWorkLocked(.{ .release = object.* });
+        while (objects.next()) |object| r.submitWorkLocked(.{ .release = .{ .binder = object.* } });
         r.dispatch_stopping = true;
         r.dispatch_cv.broadcast(g_io);
         r.mu.unlock(g_io);
@@ -1424,17 +1446,16 @@ const Runtime = struct {
         const check = in.wireStatus();
         if (check != STATUS_OK) return check;
         const request_id = r.next_request_id.fetchAdd(1, .monotonic);
-        const call = alloc.create(PendingCall) catch @panic("oom");
-        call.* = .{ .kind = .reply, .counted_transaction = true };
+        const call = r.preparePending(.reply);
+        if (call.done) return r.awaitReply(call, out);
         r.mu.lockUncancelable(g_io);
-        if (r.active_transactions >= max_active_transactions or r.disconnected.load(.monotonic)) {
-            r.mu.unlock(g_io);
-            alloc.destroy(call);
-            return if (r.disconnected.load(.monotonic)) STATUS_DEAD_OBJECT else STATUS_FAILED_TRANSACTION;
-        }
-        r.active_transactions += 1;
-        r.pending.put(alloc, request_id, call) catch @panic("oom");
+        const disconnected = r.disconnected.load(.monotonic);
+        if (disconnected) {
+            call.failed = true;
+            call.done = true;
+        } else r.pending.put(alloc, request_id, call) catch @panic("oom");
         r.mu.unlock(g_io);
+        if (disconnected) return r.awaitReply(call, out);
 
         var fds = std.ArrayListUnmanaged(fd_t).empty;
         defer fds.deinit(alloc);
@@ -1526,15 +1547,7 @@ const Runtime = struct {
     }
 
     fn awaitReply(r: *Runtime, call: *PendingCall, out: ?*AParcel) i32 {
-        defer {
-            if (call.counted_transaction) {
-                r.mu.lockUncancelable(g_io);
-                r.active_transactions -= 1;
-                r.mu.unlock(g_io);
-            }
-            call.nested.deinit(alloc);
-            alloc.destroy(call);
-        }
+        defer r.destroyPending(call);
         while (true) {
             call.mu.lockUncancelable(g_io);
             while (!call.done and call.nested.items.len == 0) call.cv.waitUncancelable(g_io, &call.mu);
@@ -1546,7 +1559,7 @@ const Runtime = struct {
                 continue;
             }
             if (!done) continue;
-            if (call.failed) return STATUS_DEAD_OBJECT;
+            if (call.failed) return call.failure_status;
             switch (call.reply_status) {
                 .ok => {},
                 .dead_object => {
@@ -1586,16 +1599,53 @@ const Runtime = struct {
 
     // ------------------------------------------------------- service ops
 
-    fn serviceRequest(r: *Runtime, tag: Client.Message.Tag, body_extra: []const u8) *PendingCall {
-        const request_id = r.next_request_id.fetchAdd(1, .monotonic);
+    /// Reserve before marshalling/exporting anything. The slot remains owned
+    /// through response consumption, including after the reader removes its map entry.
+    fn preparePending(r: *Runtime, kind: PendingKind) *PendingCall {
         const call = alloc.create(PendingCall) catch @panic("oom");
-        call.* = .{ .kind = if (tag == .reserve_package_uid) .package_uid else .service };
+        call.* = .{ .kind = kind };
+        r.mu.lockUncancelable(g_io);
+        defer r.mu.unlock(g_io);
         if (r.disconnected.load(.monotonic)) {
             call.failed = true;
             call.done = true;
+        } else if (r.active_requests >= max_active_requests) {
+            call.failed = true;
+            call.done = true;
+            call.failure_status = STATUS_FAILED_TRANSACTION;
+        } else {
+            r.active_requests += 1;
+            call.counted_request = true;
+        }
+        return call;
+    }
+
+    fn destroyPending(r: *Runtime, call: *PendingCall) void {
+        if (call.svc_names.len > 0) alloc.free(call.svc_names);
+        call.nested.deinit(alloc);
+        if (call.counted_request) {
+            r.mu.lockUncancelable(g_io);
+            r.active_requests -= 1;
+            r.mu.unlock(g_io);
+        }
+        alloc.destroy(call);
+    }
+
+    fn serviceRequest(r: *Runtime, tag: Client.Message.Tag, body_extra: []const u8) *PendingCall {
+        const call = r.preparePending(if (tag == .reserve_package_uid) .package_uid else .service);
+        return r.serviceRequestPrepared(tag, body_extra, call);
+    }
+
+    fn serviceRequestPrepared(r: *Runtime, tag: Client.Message.Tag, body_extra: []const u8, call: *PendingCall) *PendingCall {
+        if (call.done) return call;
+        const request_id = r.next_request_id.fetchAdd(1, .monotonic);
+        r.mu.lockUncancelable(g_io);
+        if (r.disconnected.load(.monotonic)) {
+            call.failed = true;
+            call.done = true;
+            r.mu.unlock(g_io);
             return call;
         }
-        r.mu.lockUncancelable(g_io);
         r.pending.put(alloc, request_id, call) catch @panic("oom");
         r.mu.unlock(g_io);
         // A write failure shuts down the socket. The reader owns completion,
@@ -2478,7 +2528,7 @@ export fn AIBinder_linkToDeath(binder: *AIBinder, recipient: *AIBinder_DeathReci
     if (binder.kind != .remote) return STATUS_INVALID_OPERATION;
     const r = Runtime.get();
     const l = alloc.create(Runtime.DeathLink) catch return STATUS_NO_MEMORY;
-    l.* = .{ .global_id = binder.id, .recipient = recipient, .cookie = cookie, .on_unlinked = recipient.on_unlinked };
+    l.* = .{ .runtime = r, .global_id = binder.id, .recipient = recipient, .cookie = cookie, .on_unlinked = recipient.on_unlinked };
     _ = recipient.refs.fetchAdd(1, .monotonic);
     r.death_mu.lockUncancelable(g_io);
     r.mu.lockUncancelable(g_io);
@@ -2488,6 +2538,16 @@ export fn AIBinder_linkToDeath(binder: *AIBinder, recipient: *AIBinder_DeathReci
         l.release();
         return STATUS_DEAD_OBJECT;
     }
+    if (r.live_death_links.load(.acquire) >= Runtime.max_live_death_links) {
+        r.mu.unlock(g_io);
+        r.death_mu.unlock(g_io);
+        // Pinned AIBinder_DeathRecipient.linkToDeath destroys its transfer
+        // recipient on failure, invoking onUnlinked before returning the error.
+        l.release();
+        return STATUS_NO_MEMORY;
+    }
+    l.counted = true;
+    _ = r.live_death_links.fetchAdd(1, .monotonic);
     const first = !r.hasDeathLinkLocked(binder.id);
     r.death_links.append(alloc, l) catch @panic("oom");
     r.mu.unlock(g_io);
@@ -2525,18 +2585,16 @@ export fn AServiceManager_addService(binder: *AIBinder, instance: [*:0]const u8)
     const r = Runtime.get();
     if (name.len > Client.limits.max_name_len) return EX_ILLEGAL_STATE;
     if (r.disconnected.load(.acquire)) return EX_TRANSACTION_FAILED;
+    const call = r.preparePending(.service);
+    defer r.destroyPending(call);
+    if (call.done) return EX_TRANSACTION_FAILED;
     const object = if (binder.kind == .local) ObjectRef.local(r.exportLocal(binder)) else ObjectRef.remote(binder.id);
     var body = std.ArrayListUnmanaged(u8).empty;
     defer body.deinit(alloc);
     const reg = Client.Message.RegisterService{ .object = object, .name_len = @intCast(name.len) };
     body.appendSlice(alloc, std.mem.asBytes(&reg)) catch @panic("oom");
     body.appendSlice(alloc, name) catch @panic("oom");
-    const call = r.serviceRequest(.register_service, body.items);
-    defer {
-        if (call.svc_names.len > 0) alloc.free(call.svc_names);
-        call.nested.deinit(alloc);
-        alloc.destroy(call);
-    }
+    _ = r.serviceRequestPrepared(.register_service, body.items, call);
     if (call.failed) return EX_TRANSACTION_FAILED;
     return switch (call.svc_status) {
         .ok => EX_NONE,
@@ -2557,11 +2615,7 @@ pub fn setSystemProperty(name: []const u8, value: []const u8) SetPropertyResult 
     body.appendSlice(alloc, name) catch @panic("oom");
     body.appendSlice(alloc, value) catch @panic("oom");
     const call = r.serviceRequest(.set_property, body.items);
-    defer {
-        if (call.svc_names.len > 0) alloc.free(call.svc_names);
-        call.nested.deinit(alloc);
-        alloc.destroy(call);
-    }
+    defer r.destroyPending(call);
     if (call.failed) return .failed;
     return switch (call.svc_status) {
         .ok => .ok,
@@ -2583,11 +2637,7 @@ fn lookup(instance: [*:0]const u8, wait: bool) ?*AIBinder {
     body.appendSlice(alloc, std.mem.asBytes(&lk)) catch @panic("oom");
     body.appendSlice(alloc, name) catch @panic("oom");
     const call = r.serviceRequest(.lookup_service, body.items);
-    defer {
-        if (call.svc_names.len > 0) alloc.free(call.svc_names);
-        call.nested.deinit(alloc);
-        alloc.destroy(call);
-    }
+    defer r.destroyPending(call);
     if (call.failed or call.svc_status != .ok or call.svc_ref.kind == .null) return null;
     // A service this peer registered itself resolves to a local ref (the broker
     // short-circuits ownership); returning a remote proxy would later send a
@@ -4102,14 +4152,14 @@ fn bsReservePackageUid(env: JNIEnvPtr, cls: jni.jclass, pkg: jni.jstring) callco
         throwException(env, "java/lang/IllegalArgumentException", "invalid package name length");
         return -1;
     }
-    const call = Runtime.get().serviceRequest(.reserve_package_uid, package);
-    defer {
-        if (call.svc_names.len > 0) alloc.free(call.svc_names);
-        call.nested.deinit(alloc);
-        alloc.destroy(call);
-    }
+    const r = Runtime.get();
+    const call = r.serviceRequest(.reserve_package_uid, package);
+    defer r.destroyPending(call);
     if (call.failed) {
-        throwRuntime(env, "broker disconnected while reserving package uid");
+        throwRuntime(env, if (call.failure_status == STATUS_FAILED_TRANSACTION)
+            "too many outstanding Binder requests"
+        else
+            "broker disconnected while reserving package uid");
         return -1;
     }
     switch (call.package_uid.status) {
