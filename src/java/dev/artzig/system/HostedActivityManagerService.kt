@@ -1,5 +1,7 @@
 package dev.artzig.system
 
+import com.android.server.am.HostActivityPendingIntents
+
 import android.app.ContentProviderHolder
 import android.app.IApplicationThread
 import android.app.IServiceConnection
@@ -461,9 +463,6 @@ class HostedActivityManagerService(private val context: android.content.Context?
             getContentProvider(null, "android", authority, providerUser, true)
         }
 
-    /** Activity/task ownership is separate in AOSP; this is the host seam between AMS and ATMS. */
-    @Volatile internal var activityTaskManager: HostedActivityTaskManagerService? = null
-
     private var stockTasks: com.android.server.wm.ActivityTaskManagerService? = null
     private val stockTaskLocal: com.android.server.wm.ActivityTaskManagerInternal
         get() = checkNotNull(com.android.server.LocalServices.getService(
@@ -518,7 +517,6 @@ class HostedActivityManagerService(private val context: android.content.Context?
     internal fun attachSystemWindowProcess(tasks: com.android.server.wm.ActivityTaskManagerService) {
         synchronized(lock) {
             check(stockTasks == null)
-            check(activityTaskManager == null) { "Competing task authorities" }
             stockTasks = tasks
             val record = checkNotNull(processes.values.singleOrNull {
                 it.pid == android.os.Process.myPid() && it.uid == android.os.Process.SYSTEM_UID
@@ -853,13 +851,6 @@ class HostedActivityManagerService(private val context: android.content.Context?
             }
         }
         replayConfigurationOverrides(record)
-        activityTaskManager?.onProcessAttached(
-            record.thread,
-            record.pid,
-            record.uid,
-            record.packageName,
-            record.processName,
-        )
         publishAppOpsUidState(record.uid, uidProcessState(record.uid))
         if (record.uid != android.os.Process.SYSTEM_UID) processObserver?.invoke(record.packageName, record.uid, true)
         // Replay bind/start operations that were waiting for this process. Each
@@ -986,7 +977,6 @@ class HostedActivityManagerService(private val context: android.content.Context?
         }
         Log.i(TAG, "process died: " + record.packageName + " pid=" + record.pid)
         processObservers.died(record.pid, record.uid)
-        activityTaskManager?.onProcessDied(record.binder)
         val remainingState = uidProcessState(record.uid)
         publishAppOpsUidState(record.uid, remainingState)
         processObserver?.invoke(record.packageName, record.uid, false)
@@ -1084,34 +1074,12 @@ class HostedActivityManagerService(private val context: android.content.Context?
             }
             if (sent != null) return sent.apply { userSetLocale = false }
         }
-        return activityTaskManager?.currentConfiguration() ?: Configuration()
+        return Configuration()
     }
 
     internal fun updateGlobalConfiguration(values: Configuration) {
         scheduleConfigurationDelta(values, null)
     }
-
-    internal fun sendActivityIntentSender(
-        target: android.content.IIntentSender?,
-        fillIn: Intent?,
-        resolvedType: String?,
-        resultTo: IBinder?,
-        resultWho: String?,
-        requestCode: Int,
-        flagsMask: Int,
-        flagsValues: Int,
-        options: android.os.Bundle?,
-    ): Int = pendingIntents.sendActivity(
-        target,
-        fillIn,
-        resolvedType,
-        resultTo,
-        resultWho,
-        requestCode,
-        flagsMask,
-        flagsValues,
-        options,
-    )
 
     // ---------------------------------------------------------- resolution
 
@@ -1586,6 +1554,11 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 "uid $callingUid is not allowed to create an IntentSender as $packageName",
             )
         }
+        if (stockTasks != null && (type == android.app.ActivityManager.INTENT_SENDER_ACTIVITY ||
+                type == android.app.ActivityManager.INTENT_SENDER_ACTIVITY_RESULT)) {
+            return HostActivityPendingIntents.create(type, packageName, featureId, callingUid,
+                userId, token, resultWho, requestCode, intents, resolvedTypes, flags, options)
+        }
         return pendingIntents.getIntentSender(
             type,
             packageName,
@@ -1610,14 +1583,21 @@ class HostedActivityManagerService(private val context: android.content.Context?
         intent: Intent?, resolvedType: String?, finishedReceiver: android.content.IIntentReceiver?,
         requiredPermission: String?, options: android.os.Bundle?,
     ): Int {
+        if (HostActivityPendingIntents.owns(target)) {
+            addCreatorToken(intent, HostActivityPendingIntents.creator(checkNotNull(target)))
+            return HostActivityPendingIntents.send(caller, target, whitelistToken, code, intent,
+                resolvedType, finishedReceiver, requiredPermission, options)
+        }
         val record = pendingIntents.record(target) ?: return android.app.ActivityManager.START_CANCELED
         return pendingIntents.sendInner(record, code, intent, resolvedType, finishedReceiver, requiredPermission, options)
     }
 
     override fun cancelIntentSender(sender: android.content.IIntentSender?) =
-        pendingIntents.cancel(sender, Binder.getCallingUid())
+        if (HostActivityPendingIntents.owns(sender)) HostActivityPendingIntents.cancel(checkNotNull(sender))
+        else pendingIntents.cancel(sender, Binder.getCallingUid())
 
     override fun getInfoForIntentSender(sender: android.content.IIntentSender?): android.app.ActivityManager.PendingIntentInfo? {
+        if (HostActivityPendingIntents.owns(sender)) return HostActivityPendingIntents.info(checkNotNull(sender))
         val record = pendingIntents.record(sender) ?: return null
         return android.app.ActivityManager.PendingIntentInfo(record.key.packageName, record.key.uid, record.immutable, record.key.type)
     }
@@ -1627,24 +1607,30 @@ class HostedActivityManagerService(private val context: android.content.Context?
             android.Manifest.permission.GET_INTENT_SENDER_INTENT,
             "getIntentForIntentSender()",
         )
+        if (HostActivityPendingIntents.owns(sender)) return HostActivityPendingIntents.intent(checkNotNull(sender))
         return pendingIntents.record(sender)?.key?.requestIntent?.let { Intent(it) }
     }
 
-    override fun getTagForIntentSender(sender: android.content.IIntentSender?, prefix: String?): String? = null
+    override fun getTagForIntentSender(sender: android.content.IIntentSender?, prefix: String?): String? =
+        if (HostActivityPendingIntents.owns(sender)) HostActivityPendingIntents.tag(checkNotNull(sender), prefix) else null
 
     override fun isIntentSenderTargetedToPackage(sender: android.content.IIntentSender?): Boolean {
+        if (HostActivityPendingIntents.owns(sender)) return HostActivityPendingIntents.targeted(checkNotNull(sender))
         val intent = pendingIntents.record(sender)?.key?.requestIntent ?: return false
         return intent.getPackage() != null || intent.component != null
     }
 
     override fun isIntentSenderAnActivity(sender: android.content.IIntentSender?): Boolean =
-        pendingIntents.record(sender)?.key?.type == android.app.ActivityManager.INTENT_SENDER_ACTIVITY
+        if (HostActivityPendingIntents.owns(sender)) HostActivityPendingIntents.activity(checkNotNull(sender))
+        else pendingIntents.record(sender)?.key?.type == android.app.ActivityManager.INTENT_SENDER_ACTIVITY
 
     override fun registerIntentSenderCancelListenerEx(sender: android.content.IIntentSender?, receiver: com.android.internal.os.IResultReceiver?): Boolean =
-        pendingIntents.registerCancelListener(sender, receiver)
+        if (HostActivityPendingIntents.owns(sender)) HostActivityPendingIntents.register(checkNotNull(sender), receiver)
+        else pendingIntents.registerCancelListener(sender, receiver)
 
     override fun unregisterIntentSenderCancelListener(sender: android.content.IIntentSender?, receiver: com.android.internal.os.IResultReceiver?) =
-        pendingIntents.unregisterCancelListener(sender, receiver)
+        if (HostActivityPendingIntents.owns(sender)) HostActivityPendingIntents.unregister(checkNotNull(sender), receiver)
+        else pendingIntents.unregisterCancelListener(sender, receiver)
 
     override fun queryIntentComponentsForIntentSender(
         sender: android.content.IIntentSender?,
@@ -1654,6 +1640,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
             android.Manifest.permission.GET_INTENT_SENDER_INTENT,
             "queryIntentComponentsForIntentSender()",
         )
+        if (HostActivityPendingIntents.owns(sender)) return HostActivityPendingIntents.query(checkNotNull(sender), matchFlags)
         return android.content.pm.ParceledListSlice(ArrayList<android.content.pm.ResolveInfo>())
     }
 

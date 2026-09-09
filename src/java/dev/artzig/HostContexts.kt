@@ -8,7 +8,6 @@ import android.content.res.AssetManager
 import android.content.res.Configuration
 import android.os.Environment
 import android.os.Process
-import android.view.ArtzigDisplay
 
 /**
  * Host bootstrap of a process's ActivityThread and system context.
@@ -17,9 +16,8 @@ import android.view.ArtzigDisplay
  * the zygote hand a process before its first Context: the system assets
  * (framework-res.apk), the "android" ApplicationInfo
  * (`installSystemApplicationInfo`), and the display the ResourcesManager
- * derives its metrics from. On this host the display is the desktop window:
- * `width` x `height` at `scale120` / 120 density, served by the process-local
- * display service the unchanged AOSP DisplayManagerGlobal client talks to.
+ * derives its metrics from. DisplayManagerGlobal queries the session display;
+ * ATMS supplies application/task configuration through stock transactions.
  */
 object HostContexts {
     init {
@@ -28,13 +26,11 @@ object HostContexts {
 
     private var processServiceCacheInitialized = false
     private var systemInfoInstalled = false
-    private var windowService: dev.artzig.system.HostedWindowManagerService? = null
 
-    /** The process's system context over the given window geometry (theme applied when not 0). */
+    /** The process's system context; display geometry belongs to the session service. */
     @JvmStatic
     fun systemContext(frameworkRes: String, width: Int, height: Int, scale120: Int, themeResId: Int): Context {
         val thread = bootstrap(frameworkRes)
-        configureDisplay(width, height, scale120)
         val context: Context = thread.systemContext
         if (themeResId != 0) context.setTheme(themeResId)
         return context
@@ -61,14 +57,7 @@ object HostContexts {
                 ActivityThread.initializeMainlineModules()
                 // AOSP ActivityThread.ApplicationThread.bindApplication seeds
                 // process-specific Binder references through this stock API.
-                android.os.ServiceManager.initServiceCache(
-                    if (dev.artzig.window.WindowBackend.stock) emptyMap<String, android.os.IBinder>()
-                    else hashMapOf<String, android.os.IBinder>(
-                        Context.WINDOW_SERVICE to dev.artzig.system.HostedWindowManagerService().also { windowService = it },
-                        Context.DISPLAY_SERVICE to dev.artzig.system.HostedDisplayManagerService(),
-                        Context.INPUT_SERVICE to dev.artzig.system.HostedInputManagerService(),
-                    ),
-                )
+                android.os.ServiceManager.initServiceCache(emptyMap<String, android.os.IBinder>())
                 processServiceCacheInitialized = true
             }
         }
@@ -100,34 +89,4 @@ object HostContexts {
         return thread
     }
 
-    /** Propagate the host display configuration through stock window-context transactions. */
-    @JvmStatic
-    fun dispatchWindowConfiguration(config: Configuration) {
-        windowService?.applyConfiguration(config)
-    }
-
-    /** The desktop window as the default display; every Resources follows through ResourcesManager
-     * (AOSP ActivityThread.handleConfigurationChanged applies the configuration the same way). */
-    @JvmStatic
-    fun configureDisplay(width: Int, height: Int, scale120: Int) {
-        // Stock WM owns the session display and delivers per-activity configurations.
-        if (dev.artzig.window.WindowBackend.stock) return
-        val density = scale120 / 120f
-        val densityDpi = Math.round(160f * density)
-        ArtzigDisplay.configure(width, height, densityDpi)
-        val config = Configuration()
-        config.setToDefaults()
-        config.setLocales(android.os.LocaleList.getDefault())
-        config.densityDpi = densityDpi
-        config.screenWidthDp = (width / density).toInt()
-        config.screenHeightDp = (height / density).toInt()
-        config.smallestScreenWidthDp = Math.min(config.screenWidthDp, config.screenHeightDp)
-        config.orientation =
-            if (width >= height) Configuration.ORIENTATION_LANDSCAPE else Configuration.ORIENTATION_PORTRAIT
-        config.windowConfiguration.setBounds(android.graphics.Rect(0, 0, width, height))
-        config.windowConfiguration.setAppBounds(0, 0, width, height)
-        config.windowConfiguration.setMaxBounds(0, 0, width, height)
-        ResourcesManager.getInstance().applyConfigurationToResources(config, null)
-        dispatchWindowConfiguration(config)
-    }
 }

@@ -145,8 +145,6 @@ internal object SystemServices {
             },
         )
         android.os.ServiceManager.addService(Context.INPUT_METHOD_SERVICE, HostedInputMethodManagerService(context))
-        android.os.ServiceManager.addService(HostedWindowManagerService.SURFACE_SYNC_SERVICE,
-            HostedWindowManagerService(com.android.server.wm.HostedSurfaceSyncGroups()))
         android.os.ServiceManager.addService(
             Context.ACCESSIBILITY_SERVICE,
             HostedAccessibilityManagerService(context),
@@ -157,12 +155,6 @@ internal object SystemServices {
         LocalServices.addService(UserManagerInternal::class.java, HostedUserManagerInternal(context, userLifecycle))
         // Seams the reused AOSP services consult (clipboard first): window focus,
         // URI grants, and the IUserManager binder.
-        if (stockWindows == null) LocalServices.addService(
-            com.android.server.wm.WindowManagerInternal::class.java,
-            Class.forName("com.android.server.wm.HostedLegacyWindowManagerInternal")
-                .getConstructor(java.util.function.IntPredicate::class.java)
-                .newInstance(java.util.function.IntPredicate { true }) as com.android.server.wm.WindowManagerInternal,
-        )
         LocalServices.addService(
             VirtualDeviceManagerInternal::class.java,
             HostedVirtualDeviceManagerInternal(),
@@ -237,17 +229,7 @@ internal object SystemServices {
         val imageApps = java.io.File(java.io.File(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES"))).parentFile.parentFile, "apps")
         imageApps.listFiles()?.filter { it.isFile && it.extension == "apk" }
             ?.sortedBy { it.name }?.forEach { packageManager.installSystemPackage(it.canonicalPath) }
-        if (stockWindows != null) {
-            stockWindows.startTasks(manager)
-        } else {
-            val activityTaskManager = HostedActivityTaskManagerService(
-                context,
-                activityManager,
-                packageManager,
-            )
-            activityManager.activityTaskManager = activityTaskManager
-            android.os.ServiceManager.addService(Context.ACTIVITY_TASK_SERVICE, activityTaskManager)
-        }
+        checkNotNull(stockWindows).startTasks(manager)
         android.os.ServiceManager.addService("hosted_installer", HostedInstallerService(packageManager, activityManager))
         if (dev.artzig.testing.ProcessInspection.enabled) {
             android.os.ServiceManager.addService(dev.artzig.testing.ProcessInspection.SERVICE,

@@ -509,7 +509,7 @@ static int azk_register_android_graphics_Bitmap(JNIEnv* env) {
 
 int azk_register_HostInputDispatcher(JNIEnv*);
 
-static jobject azk_HostedInputDispatcher_nativeLoadKeyCharacterMap(
+static jobject azk_HostedInputDevices_nativeLoadKeyCharacterMap(
         JNIEnv* env, jclass, jint device_id, jstring contents_object) {
     const char* contents = env->GetStringUTFChars(contents_object, nullptr);
     if (contents == nullptr) return nullptr;
@@ -529,7 +529,7 @@ static jobject azk_HostedInputDispatcher_nativeLoadKeyCharacterMap(
 
 // EventHub normally selects Generic.kl. The compositor replaces discovery;
 // retain the pinned parser and layout policy flags for the complete evdev range.
-static jintArray azk_HostedInputDispatcher_nativeLoadKeyLayout(
+static jintArray azk_HostedInputDevices_nativeLoadKeyLayout(
         JNIEnv* env, jclass, jstring contents_object) {
     if (contents_object == nullptr) {
         jniThrowNullPointerException(env, "key layout contents");
@@ -558,14 +558,14 @@ static jintArray azk_HostedInputDispatcher_nativeLoadKeyLayout(
     return result;
 }
 
-static int azk_register_android_view_HostedInputDispatcher(JNIEnv* env) {
-    jclass dispatcher_class = env->FindClass("android/view/HostedInputDispatcher");
+static int azk_register_dev_artzig_window_HostedInputDevices(JNIEnv* env) {
+    jclass dispatcher_class = env->FindClass("dev/artzig/window/HostedInputDevices");
     if (dispatcher_class == nullptr) return -1;
     const JNINativeMethod methods[] = {
             {"nativeLoadKeyCharacterMap", "(ILjava/lang/String;)Landroid/view/KeyCharacterMap;",
-             reinterpret_cast<void*>(azk_HostedInputDispatcher_nativeLoadKeyCharacterMap)},
+             reinterpret_cast<void*>(azk_HostedInputDevices_nativeLoadKeyCharacterMap)},
             {"nativeLoadKeyLayout", "(Ljava/lang/String;)[I",
-             reinterpret_cast<void*>(azk_HostedInputDispatcher_nativeLoadKeyLayout)},
+             reinterpret_cast<void*>(azk_HostedInputDevices_nativeLoadKeyLayout)},
     };
     return env->RegisterNatives(dispatcher_class, methods, 2);
 }
@@ -754,7 +754,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_android_media_ImageWriter),
             E(android::register_android_view_VelocityTracker),
             E(android::register_android_view_KeyCharacterMap),
-            E(azk_register_android_view_HostedInputDispatcher),
+            E(azk_register_dev_artzig_window_HostedInputDevices),
             E(azk_register_HostInputDispatcher),
             E(android::register_android_animation_PropertyValuesHolder),
             E(android::register_android_view_DisplayListCanvas),

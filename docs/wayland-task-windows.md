@@ -11,6 +11,29 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Legacy JVM window removal (2026-09-09)
+
+The synthetic window stack, fake ViewRootImpl/SurfaceView, global display/surface
+wrappers, old task/window/display services and their synthetic activity fixtures
+are removed. ApkHost now owns APK identity, installation and headless bootstrap;
+ActivityThread and stock ATMS own activity lifecycle. Host keyboard/device data
+lives at the input seam. Independent Activity API and SurfaceSyncGroup tests
+remain, including cross-process sync-token ownership. AOSP InlineContentView is
+compiled directly; the regenerated stub audit has four pending entries.
+
+The removal exposed activity PendingIntents still pointing at the old task
+manager. They now use stock ATMS PendingIntentRecords for launch policy, results,
+cancellation, identity and metadata. Hosted AMS retains its service/broadcast
+implementation. The new APK regression exercises record reuse/update, immutable
+fill-in, IntentSender launch results, cancellation, one-shot and pending results.
+Regression 639 passes that case with two clean steps and a checked screenshot.
+Regression 640 passes all 28 APK tests (88 clean steps), the JVM/native suites and
+source/build audits. Artifacts: `/tmp/wayland-pending-intent-639-artifacts/` and
+`/tmp/wayland-legacy-jvm-640-artifacts/`.
+
+The process-wide native renderer, direct Wayland video layers and superseded
+HWUI patch sections remain to be removed before the final acceptance run.
+
 ## Default task-window launch (2026-09-09)
 
 Stock ViewRootImpl/SurfaceView compilation is now the default. SystemServer

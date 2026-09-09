@@ -9,7 +9,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.RemoteException
-import android.view.HostedInputDispatcher
+import dev.artzig.window.HostedInputDevices
 import android.view.InputDevice
 import android.view.KeyCharacterMap
 
@@ -38,10 +38,10 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
     private val listeners = mutableMapOf<Int, Listener>()
     private var generation = 0
     private var notificationPending = false
-    private var keyboardMap = HostedInputDispatcher.createHostKeyCharacterMap()
+    private var keyboardMap = HostedInputDevices.createHostKeyCharacterMap()
     private var keyboardKeys: Set<Int> = emptySet()
-    private var seatKeyboardMap = HostedInputDispatcher.createHostKeyCharacterMap(
-        HostedInputDispatcher.HOST_KEYBOARD_DEVICE_ID, "type FULL\n")
+    private var seatKeyboardMap = HostedInputDevices.createHostKeyCharacterMap(
+        HostedInputDevices.HOST_KEYBOARD_DEVICE_ID, "type FULL\n")
     private var virtualKeyboard = keyboard(keyboardMap)
     private var keyboardDevice: InputDevice? = null
     private var pointerDevice: InputDevice? = null
@@ -119,7 +119,7 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
         tabletDevices = tabletDescriptions.values.sortedBy { it.id }.map(::tabletDevice)
         virtualKeyboard = keyboard(keyboardMap)
         keyboardDevice = if (seatCapabilities and 2 == 0) null else InputDevice.Builder()
-            .setId(HostedInputDispatcher.HOST_KEYBOARD_DEVICE_ID).setGeneration(generation)
+            .setId(HostedInputDevices.HOST_KEYBOARD_DEVICE_ID).setGeneration(generation)
             .setName("artzig Wayland keyboard").setDescriptor("artzig-wayland-keyboard")
             .setExternal(true).setAssociatedDisplayId(android.view.Display.DEFAULT_DISPLAY)
             .setSources(InputDevice.SOURCE_KEYBOARD)
@@ -204,7 +204,7 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
         require(keyExists.size >= keyCodes.size) { "keyExists must be at least as large as keyCodes" }
         for (i in keyCodes.indices) keyExists[i] = false
         return synchronized(deviceLock) {
-            if ((deviceId >= 0 && (deviceId != HostedInputDispatcher.HOST_KEYBOARD_DEVICE_ID || keyboardDevice == null)) ||
+            if ((deviceId >= 0 && (deviceId != HostedInputDevices.HOST_KEYBOARD_DEVICE_ID || keyboardDevice == null)) ||
                 InputDevice.SOURCE_KEYBOARD and sourceMask and InputDevice.SOURCE_CLASS_MASK.inv() == 0) {
                 false
             } else {

@@ -2,7 +2,7 @@ package dev.artzig.window
 
 import android.os.SystemClock
 import android.view.Display
-import android.view.HostedInputDispatcher
+import dev.artzig.window.HostedInputDevices
 import android.view.InputDevice
 import android.view.InputEvent
 import android.view.KeyCharacterMap
@@ -65,7 +65,7 @@ internal class WaylandTaskInput(private val android: Android,
     private data class KeyboardState(val active: Boolean = false,
         val supportedKeys: Set<Int> = emptySet(), val supportedScans: Set<Int> = emptySet(),
         val down: Map<Int, Int> = emptyMap()) {
-        fun accepts(deviceId: Int, sourceMask: Int) = active && (deviceId < 0 || deviceId == HostedInputDispatcher.HOST_KEYBOARD_DEVICE_ID) &&
+        fun accepts(deviceId: Int, sourceMask: Int) = active && (deviceId < 0 || deviceId == HostedInputDevices.HOST_KEYBOARD_DEVICE_ID) &&
             InputDevice.SOURCE_KEYBOARD and sourceMask and InputDevice.SOURCE_CLASS_MASK.inv() != 0
     }
     @Volatile private var keyboardState = KeyboardState()
@@ -93,7 +93,7 @@ internal class WaylandTaskInput(private val android: Android,
     fun keyboardLayout(generation: Int, characters: IntArray, symbols: IntArray = IntArray(WaylandKeyboardMap.SCAN_COUNT)) {
         if (generation <= layoutGeneration) return
         val map = WaylandKeyboardMap.compile(characters, symbols)
-        val keyboard = WaylandKeyboardMap.compile(characters, symbols, HostedInputDispatcher.HOST_KEYBOARD_DEVICE_ID)
+        val keyboard = WaylandKeyboardMap.compile(characters, symbols, HostedInputDevices.HOST_KEYBOARD_DEVICE_ID)
         focus?.releaseKeys()
         val available = WaylandKeyboardMap.supportedKeyCodes(characters, symbols)
         supportedKeys = available.toSet()
@@ -270,7 +270,7 @@ internal class WaylandTaskInput(private val android: Android,
         }
 
         private fun mouse(action: Int, actionButton: Int = 0, horizontal: Float = 0f, vertical: Float = 0f) {
-            val event = HostedInputDispatcher.createMouseEvent(pointerDownTime, clock(), action,
+            val event = HostedInputDevices.createMouseEvent(pointerDownTime, clock(), action,
                 buttons, actionButton, pointerX, pointerY, horizontal, vertical, metaState())
             if (captured) {
                 event.source = InputDevice.SOURCE_MOUSE_RELATIVE
@@ -318,7 +318,7 @@ internal class WaylandTaskInput(private val android: Android,
                 if (held == null && physicalKeys.containsKey(scanCode)) return
                 physicalKeys[scanCode] = code
                 if (held == null) {
-                    held = Pressed(this, code, clock(), HostedInputDispatcher.androidKeyFlagsForScanCode(scanCode, code))
+                    held = Pressed(this, code, clock(), HostedInputDevices.androidKeyFlagsForScanCode(scanCode, code))
                     keys[scanCode] = held
                     lockedMeta = lockedMeta xor when (code) {
                         KeyEvent.KEYCODE_CAPS_LOCK -> KeyEvent.META_CAPS_LOCK_ON
@@ -344,7 +344,7 @@ internal class WaylandTaskInput(private val android: Android,
             publishKeyboardState()
             held ?: return // Update physical state without inventing a delivered key-up.
             dispatch(KeyEvent(held!!.time, clock(), if (down) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP,
-                held.code, 0, metaState(), HostedInputDispatcher.HOST_KEYBOARD_DEVICE_ID, scanCode,
+                held.code, 0, metaState(), HostedInputDevices.HOST_KEYBOARD_DEVICE_ID, scanCode,
                 KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_KEYBOARD), repeatable, task, held.layoutFlags)
         }
 
@@ -353,7 +353,7 @@ internal class WaylandTaskInput(private val android: Android,
                 if (held.owner !== this) continue
                 keys.remove(scan)
                 dispatch(KeyEvent(held.time, clock(), KeyEvent.ACTION_UP, held.code, 0, metaState(),
-                    HostedInputDispatcher.HOST_KEYBOARD_DEVICE_ID, scan, KeyEvent.FLAG_FROM_SYSTEM or KeyEvent.FLAG_CANCELED,
+                    HostedInputDevices.HOST_KEYBOARD_DEVICE_ID, scan, KeyEvent.FLAG_FROM_SYSTEM or KeyEvent.FLAG_CANCELED,
                     InputDevice.SOURCE_KEYBOARD), owner = task, layoutFlags = held.layoutFlags)
             }
         }
@@ -459,7 +459,7 @@ internal class WaylandTaskInput(private val android: Android,
 
     private fun keyCode(scan: Int): Int = if (layoutGeneration != 0)
         WaylandKeyboardMap.keyCode(scan, layoutSymbols.getOrElse(scan) { 0 }) else
-        HostedInputDispatcher.androidKeyCodeForScanCode(scan)
+        HostedInputDevices.androidKeyCodeForScanCode(scan)
 
     private fun metaState(): Int {
         var result = compositorMeta ?: lockedMeta

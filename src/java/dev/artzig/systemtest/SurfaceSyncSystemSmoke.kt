@@ -44,19 +44,8 @@ internal object SurfaceSyncSystemSmoke {
                     1 -> checkNotNull(reply).writeStrongBinder(group.mISurfaceSyncGroup.asBinder())
                     2 -> group.markSyncReady()
                     3 -> {
-                        val controller = com.android.server.wm.HostedSurfaceSyncGroups()
-                        val token = Binder()
-                        val result = android.window.AddToSurfaceSyncGroupResult()
-                        check(controller.add(token, false, null, result))
-                        val owner = Binder.getCallingUid()
-                        val identity = Binder.clearCallingIdentity()
-                        val rejected = try {
-                            check(Binder.getCallingUid() != owner)
-                            runCatching { controller.markReady(token) }.exceptionOrNull() is IllegalArgumentException
-                        } finally { Binder.restoreCallingIdentity(identity) }
-                        controller.markReady(token)
-                        result.mTransactionReadyCallback.onTransactionReady(null)
-                        checkNotNull(reply).writeBoolean(rejected)
+                        checkNotNull(reply).writeBoolean(
+                            com.android.server.wm.StockSurfaceSyncSmoke.verifyRemoteOwner())
                     }
                     4 -> checkNotNull(reply).writeStrongBinder(transition.asBinder())
                     5 -> {

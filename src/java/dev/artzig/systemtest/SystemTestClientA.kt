@@ -46,7 +46,6 @@ internal object SystemTestClientA {
         // like the clipboard verify the calling package against the uid
         // (AppOpsService.checkPackage), so "android" would be a spoofed claim.
         dev.artzig.HostContexts.prepareApplicationEnvironment(frameworkRes)
-        dev.artzig.HostContexts.configureDisplay(640, 480, 120)
         // Server-side install of this package's fixture APK, then attach and
         // bind (AOSP handleBindApplication: the process context is the
         // package's Application). The fixture requests WRITE_SECURE_SETTINGS;

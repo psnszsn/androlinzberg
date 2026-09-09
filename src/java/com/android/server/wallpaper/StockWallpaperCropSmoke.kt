@@ -36,7 +36,7 @@ object StockWallpaperCropSmoke {
         check(WallpaperCropper.getTotalCrop(hints) == Rect(20, 10, 170, 90))
 
         val context: Context = ActivityThread.currentActivityThread().systemContext
-        val windows = Class.forName("com.android.server.wm.HostedLegacyWindowManagerInternal")
+        val windows = Class.forName("com.android.server.wm.HostedTestWindowManagerInternal")
             .getConstructor(java.util.function.IntPredicate::class.java)
             .newInstance(java.util.function.IntPredicate { error("Wallpaper crop must not query focus") }) as WindowManagerInternal
         val helper = WallpaperDisplayHelper(context.getSystemService(DisplayManager::class.java),

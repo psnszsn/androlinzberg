@@ -1,6 +1,6 @@
 package dev.artzig.window
 
-import android.view.HostedInputDispatcher
+import dev.artzig.window.HostedInputDevices
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
 
@@ -10,7 +10,7 @@ import android.view.KeyEvent
  * Rows are evdev scan codes; columns are Shift, Caps, Level3, Num, Ctrl, Alt bits.
  */
 internal object WaylandKeyboardMap {
-    const val SCAN_COUNT = HostedInputDispatcher.HOST_SCAN_COUNT
+    const val SCAN_COUNT = HostedInputDevices.HOST_SCAN_COUNT
     const val STATE_COUNT = 64
     private val modifiers = arrayOf("shift", "capslock", "ralt", "numlock", "ctrl", "lalt")
 
@@ -49,7 +49,7 @@ internal object WaylandKeyboardMap {
         in 0xffbe..0xffc9 -> KeyEvent.KEYCODE_F1 + symbol - 0xffbe
         // Generic.kl aliases ISO's extra key to BACKSLASH. Keep the extra
         // character position independent through a device KCM scan-code remap.
-        else -> if (scan == 86) KeyEvent.KEYCODE_RO else HostedInputDispatcher.androidKeyCodeForScanCode(scan)
+        else -> if (scan == 86) KeyEvent.KEYCODE_RO else HostedInputDevices.androidKeyCodeForScanCode(scan)
     }
 
     fun compile(characters: IntArray, symbols: IntArray = IntArray(SCAN_COUNT),
@@ -88,7 +88,7 @@ internal object WaylandKeyboardMap {
             append("type FULL\n")
             for (scan in 0 until SCAN_COUNT) {
                 val code = keyCode(scan, symbols[scan])
-                if (code != HostedInputDispatcher.androidKeyCodeForScanCode(scan)) {
+                if (code != HostedInputDevices.androidKeyCodeForScanCode(scan)) {
                     append("map key ").append(scan).append(' ')
                         .append(KeyEvent.keyCodeToString(code).removePrefix("KEYCODE_")).append('\n')
                 }
@@ -109,7 +109,7 @@ internal object WaylandKeyboardMap {
                 append("}\n")
             }
         }
-        return HostedInputDispatcher.createHostKeyCharacterMap(deviceId, contents)
+        return HostedInputDevices.createHostKeyCharacterMap(deviceId, contents)
     }
 
     /** Only positions present in the XKB layout are advertised. Modifier and

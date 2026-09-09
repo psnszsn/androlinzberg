@@ -11,7 +11,7 @@ import dev.artzig.system.HostedInputManagerService
 
 object WaylandKeyboardMapSmoke {
     fun run() {
-        val layout = android.view.HostedInputDispatcher
+        val layout = HostedInputDevices
         check(layout.androidKeyCodeForScanCode(120) == KeyEvent.KEYCODE_RECENT_APPS)
         check(layout.androidKeyCodeForScanCode(164) == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
         check(layout.androidKeyCodeForScanCode(582) == KeyEvent.KEYCODE_VOICE_ASSIST)

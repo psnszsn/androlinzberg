@@ -1,9 +1,7 @@
 package dev.artzig
 
-import android.view.ArtzigVideoLayer
 import android.view.Surface
 import android.os.Handler
-import dev.artzig.window.WindowBackend
 
 /** ACodec native-window ownership at the FFmpeg host seam. The stock codec
  * process is unavailable here; stock Surface/BufferQueue still own attachment,
@@ -105,7 +103,7 @@ class HostedVideoOutput : AutoCloseable {
     @Synchronized fun setSurface(value: Surface?) {
         if (surface === value) return
         // Connect the replacement first: a failed switch retains the old output.
-        val next = if (WindowBackend.stock && value != null) nativeConnect(value) else 0L
+        val next = if (value != null) nativeConnect(value) else 0L
         if (next != 0L) try { nativeConfigure(next, rotation, scalingMode) }
         catch (failure: RuntimeException) { nativeDisconnect(next); throw failure }
         invalidateCallbacks()
@@ -123,13 +121,9 @@ class HostedVideoOutput : AutoCloseable {
             releaseHardware(frame)
             return -19
         }
-        if (WindowBackend.stock) {
-            val status = nativeQueue(connection, frame, timestampNs, presentationTimeUs)
-            if (status == 0) schedulePoll(0)
-            return status
-        }
-        ArtzigVideoLayer.pushHardware(target, frame)
-        return 0
+        val status = nativeQueue(connection, frame, timestampNs, presentationTimeUs)
+        if (status == 0) schedulePoll(0)
+        return status
     }
 
     @Synchronized override fun close() {

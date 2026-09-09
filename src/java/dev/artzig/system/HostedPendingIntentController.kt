@@ -19,8 +19,8 @@ import android.util.Log
  * FLAG_NO_CREATE / FLAG_CANCEL_CURRENT / FLAG_UPDATE_CURRENT / FLAG_ONE_SHOT
  * semantics, cancel listeners, and `send` dispatching by type. Broadcast and
  * service sends go through the activity manager as the creator; activity
- * launches and pending activity results cross into the hosted activity task
- * manager with the creator identity retained.
+ * records in running sessions are stock PendingIntentRecords owned by ATMS.
+ * This controller also supports isolated service tests without a task owner.
  */
 internal class HostedPendingIntentController(private val ams: HostedActivityManagerService) {
     class Key(
@@ -206,17 +206,9 @@ internal class HostedPendingIntentController(private val ams: HostedActivityMana
                 started
             }
             ActivityManager.INTENT_SENDER_ACTIVITY_RESULT -> {
-                val delivered = ams.activityTaskManager?.deliverPendingActivityResult(
-                    key.activityToken,
-                    key.resultWho,
-                    key.requestCode,
-                    code,
-                    finalIntent,
-                    android.os.Process.INVALID_UID,
-                    null,
-                ) ?: false
-                if (delivered) finishedReceiver?.let { deliverFinished(it, finalIntent, 0) }
-                if (delivered) ActivityManager.START_SUCCESS else ActivityManager.START_CANCELED
+                // Activity senders in a running session are stock PendingIntentRecords.
+                // An isolated AMS service fixture has no activity/task owner.
+                ActivityManager.START_CANCELED
             }
             else -> {
                 Log.w(TAG, "unsupported PendingIntent kind ${key.type}: $finalIntent")
@@ -313,28 +305,7 @@ internal class HostedPendingIntentController(private val ams: HostedActivityMana
         requestCode: Int,
         options: Bundle?,
     ): Int {
-        val key = record.key
-        val allIntents = prepared.allIntents
-        if (allIntents != null) {
-            return ams.activityTaskManager?.startActivitiesFromPendingIntent(
-                key.packageName,
-                key.uid,
-                allIntents,
-                prepared.allResolvedTypes,
-                resultTo,
-                options,
-            ) ?: ActivityManager.START_CANCELED
-        }
-        return ams.activityTaskManager?.startActivityFromPendingIntent(
-            key.packageName,
-            key.uid,
-            prepared.intent,
-            prepared.resolvedType,
-            resultTo,
-            resultWho,
-            requestCode,
-            options,
-        ) ?: ActivityManager.START_CANCELED
+        return ActivityManager.START_CANCELED
     }
 
     private fun deliverFinished(receiver: IIntentReceiver, intent: Intent, code: Int) {

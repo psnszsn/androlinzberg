@@ -74,6 +74,7 @@ pub const Set = struct {
 
 pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
     const stock_window_clients = b.option(bool, "stock-window-clients", "Compile the stock ViewRootImpl and SurfaceView client path") orelse true;
+    if (!stock_window_clients) std.debug.panic("The legacy window client backend has been removed", .{});
     var framework = StaticCollector.init(b);
     const fb = SourceFiles.Root.dependency(b, aosp, "frameworks/base");
     const modules_utils = SourceFiles.Root.dependency(b, aosp, "frameworks/libs/modules-utils");
@@ -96,20 +97,9 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
     }
     const project_root = SourceFiles.Root.project(b, "");
     for (project_sources.framework) |path| {
-        if (stock_window_clients and (std.mem.eql(u8, path, "src/framework/android/view/ViewRootImpl.java") or
-            std.mem.eql(u8, path, "src/framework/android/view/SurfaceView.java") or
-            // Keep legacy root tests separate from the shared framework suite.
-            std.mem.eql(u8, path, "src/java/dev/artzig/LegacyWindowSmoke.kt"))) continue;
         framework.files.addFile(project_root, path);
     }
-    framework.files.addFile(project_root, if (stock_window_clients)
-        "src/java/dev/artzig/window/StockRootFrames.kt"
-    else
-        "src/java/dev/artzig/window/LegacyRootFrames.kt");
-    framework.files.addFile(project_root, if (stock_window_clients)
-        "src/java/dev/artzig/window/StockRootInput.kt"
-    else
-        "src/java/dev/artzig/window/LegacyRootInput.kt");
+    framework.files.addFile(project_root, "src/java/dev/artzig/window/StockRootFrames.kt");
 
     var annotations = SourceFiles.Collector.init(b);
     // AnnotationValidations holds class literals for these annotations, so they
@@ -3718,6 +3708,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/service/wallpaper/EngineWindowPage.java");
     try c.file("$CJ/android/speech/RecognizerIntent.java");
     try c.file("$CJ/android/util/TimingLogger.java");
+    try c.file("$CJ/android/widget/inline/InlineContentView.java");
     try c.file("$CJ/android/widget/inline/InlinePresentationSpec.java");
     try c.file("$CJ/com/android/internal/graphics/palette/CelebiQuantizer.java");
     try c.file("$CJ/com/android/internal/graphics/palette/ColorCutQuantizer.java");

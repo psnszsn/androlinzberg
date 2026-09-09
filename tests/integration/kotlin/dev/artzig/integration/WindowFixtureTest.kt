@@ -53,6 +53,16 @@ class WindowFixtureTest {
     }
 
     @Test
+    fun activityPendingIntentsLaunchAndDeliverResults() = app.run {
+        click(text = "SHOW ACTIVITY PENDINGINTENT")
+        expectVisible(text = "Activity PendingIntent ready")
+        click(text = "CHECK ACTIVITY PENDINGINTENT")
+        waitFor(text = "Activity PendingIntent contracts verified")
+        assertLog("PendingIntentFixture", "stock activity record: identity, update, immutable fill-in, launch result, cancellation, one-shot and pending result verified")
+        assertColorArea(screenshot("activity-pending-intent.png"), 0xff00ffff.toInt(), 5_000)
+    }
+
+    @Test
     fun visibleActivityReceivesAudioFocusCallbacks() = app.run {
         click(text = "SHOW AUDIO FOCUS")
         expectVisible(text = "Audio focus ready")

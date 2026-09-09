@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 5 (budget 5). Survivors: 2. Total: 7.
+Pending: 4 (budget 4). Survivors: 2. Total: 6.
 
 ## Survivors
 
@@ -20,12 +20,6 @@ Pending: 5 (budget 5). Survivors: 2. Total: 7.
 | `android/service/wallpaper/WallpaperService.java` | live-wallpaper engine drives the window session (IWindowSession relayout, transform hints, PixelCopy), a host seam this runtime lacks | replaceable |
 
 ## Pending replacement
-
-### autofill
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/widget/inline/InlineContentView.java` | blocked | frameworks/base/core/java/android/widget/inline/InlineContentView.java (1 to add); android.widget.inline.InlineContentView: existing host class android.view.SurfaceView lacks method getSurfaceRenderPosition (via InlineContentView); android.widget.inline.InlineContentView: existing host class android |
 
 ### packagemanager
 

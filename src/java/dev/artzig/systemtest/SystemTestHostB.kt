@@ -25,7 +25,6 @@ internal object SystemTestHostB {
         // Own package identity (the clipboard's AppOps checkPackage verifies
         // the calling package against this process's uid).
         dev.artzig.HostContexts.prepareApplicationEnvironment(frameworkRes)
-        dev.artzig.HostContexts.configureDisplay(640, 480, 120)
         // Install this package's fixture APK: the session's package manager
         // parses the real manifest (client A asserts the parsed values).
         val fixture = checkNotNull(System.getenv("AZK_FIXTURE_APK_B")) { "AZK_FIXTURE_APK_B is not set" }
