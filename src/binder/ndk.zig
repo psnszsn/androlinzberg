@@ -828,10 +828,15 @@ const Runtime = struct {
     // descriptors ride via Connection.attachFds/takeFds (SCM_RIGHTS).
 
     fn sendFrame(r: *Runtime, header_partial: OutHeader, body: []const u8, fds: []const fd_t) !void {
-        var header = header_partial;
-        header.fd_count = @intCast(fds.len);
         r.write_mu.lockUncancelable(g_io);
         defer r.write_mu.unlock(g_io);
+        try r.sendFrameLocked(header_partial, body, fds);
+    }
+
+    // Caller owns write_mu through export accounting and frame publication.
+    fn sendFrameLocked(r: *Runtime, header_partial: OutHeader, body: []const u8, fds: []const fd_t) !void {
+        var header = header_partial;
+        header.fd_count = @intCast(fds.len);
         errdefer r.conn.stream.shutdown(g_io, .both) catch {};
         const w = &r.conn.writer.interface;
         if (fds.len > 0) {
@@ -849,8 +854,8 @@ const Runtime = struct {
     // -------------------------------------------------------------- reader
 
     fn readLoop(r: *Runtime) void {
-        // RELEASE can destroy Java-backed objects on this thread. Keep its
-        // attachment until exit, just as the transaction workers do.
+        // Incoming parcels can construct Java-backed objects. Keep this
+        // attachment until exit; workers own application callbacks and cleanup.
         if (g_jvm != null and jniEnv() == null) @panic("cannot attach Binder worker to the JVM");
         defer detachCurrentThread();
         const client: Client = .{ .in = &r.conn.reader.interface, .out = undefined };
@@ -1144,6 +1149,8 @@ const Runtime = struct {
     }
 
     fn sendReply(r: *Runtime, routing_id: u64, requested_status: Client.Message.Reply.Status, binder_status: i32, out: *AParcel) void {
+        r.write_mu.lockUncancelable(g_io);
+        defer r.write_mu.unlock(g_io);
         const status: Client.Message.Reply.Status = if (out.wireStatus() == STATUS_OK) requested_status else .failed;
         var body = std.ArrayListUnmanaged(u8).empty;
         defer body.deinit(alloc);
@@ -1166,13 +1173,14 @@ const Runtime = struct {
             for (wire) |e| body.appendSlice(alloc, std.mem.asBytes(&e)) catch @panic("oom");
             body.appendSlice(alloc, data) catch @panic("oom");
         }
-        r.sendFrame(.{ .tag = Client.Message.Tag.reply, .bytes_len = @intCast(body.items.len), .routing_id = routing_id }, body.items, if (status == .ok) fds.items else &.{}) catch {};
+        r.sendFrameLocked(.{ .tag = Client.Message.Tag.reply, .bytes_len = @intCast(body.items.len), .routing_id = routing_id }, body.items, if (status == .ok) fds.items else &.{}) catch {};
     }
 
     // ------------------------------------------------- object marshalling
 
     /// Flattens a locally built parcel's side table into wire entries; local
-    /// binders are exported, fds are appended to `fds`.
+    /// binders are exported, fds are appended to `fds`. Caller owns write_mu
+    /// until publishing the containing frame.
     fn flatten(r: *Runtime, p: *AParcel, fds: *std.ArrayListUnmanaged(fd_t)) []ObjectEntry {
         const out = alloc.alloc(ObjectEntry, p.entries.items.len) catch @panic("oom");
         for (p.entries.items, 0..) |e, i| {
@@ -1327,6 +1335,10 @@ const Runtime = struct {
     }
 
     fn maybeRelease(r: *Runtime, id: u64, uses: u64, routing_id: u64) void {
+        // Reset the export count in the same wire order as its acknowledgement.
+        // A concurrent flatten must either precede both or follow both; otherwise
+        // the broker can revive an old generation after our count reset.
+        r.write_mu.lockUncancelable(g_io);
         r.mu.lockUncancelable(g_io);
         const drop = (r.export_uses.get(id) orelse 0) == uses;
         var released: ?*AIBinder = null;
@@ -1344,8 +1356,9 @@ const Runtime = struct {
         if (drop) {
             var body: [@sizeOf(ObjectRef)]u8 = undefined;
             @memcpy(&body, std.mem.asBytes(&ObjectRef.local(id)));
-            r.sendFrame(.{ .tag = Client.Message.Tag.release_ack, .bytes_len = body.len }, &body, &.{}) catch {};
+            r.sendFrameLocked(.{ .tag = Client.Message.Tag.release_ack, .bytes_len = body.len }, &body, &.{}) catch {};
         }
+        r.write_mu.unlock(g_io);
         if (released == null) r.completeDelivery(routing_id);
     }
 
@@ -1457,35 +1470,34 @@ const Runtime = struct {
         r.mu.unlock(g_io);
         if (disconnected) return r.awaitReply(call, out);
 
-        var fds = std.ArrayListUnmanaged(fd_t).empty;
-        defer fds.deinit(alloc);
-        const wire = r.flatten(in, &fds);
-        defer alloc.free(wire);
+        {
+            r.write_mu.lockUncancelable(g_io);
+            defer r.write_mu.unlock(g_io);
+            var fds = std.ArrayListUnmanaged(fd_t).empty;
+            defer fds.deinit(alloc);
+            const wire = r.flatten(in, &fds);
+            defer alloc.free(wire);
 
-        var body = std.ArrayListUnmanaged(u8).empty;
-        defer body.deinit(alloc);
-        const tr = Client.Message.Transact{
-            .target = ObjectRef.remote(target.id),
-            .code = code,
-            .flags = flags,
-            .object_count = @intCast(wire.len),
-            .data_len = @intCast(in.data.items.len),
-        };
-        body.appendSlice(alloc, std.mem.asBytes(&tr)) catch @panic("oom");
-        for (wire) |e| body.appendSlice(alloc, std.mem.asBytes(&e)) catch @panic("oom");
-        body.appendSlice(alloc, in.data.items) catch @panic("oom");
+            var body = std.ArrayListUnmanaged(u8).empty;
+            defer body.deinit(alloc);
+            const tr = Client.Message.Transact{
+                .target = ObjectRef.remote(target.id),
+                .code = code,
+                .flags = flags,
+                .object_count = @intCast(wire.len),
+                .data_len = @intCast(in.data.items.len),
+            };
+            body.appendSlice(alloc, std.mem.asBytes(&tr)) catch @panic("oom");
+            for (wire) |e| body.appendSlice(alloc, std.mem.asBytes(&e)) catch @panic("oom");
+            body.appendSlice(alloc, in.data.items) catch @panic("oom");
 
-        r.sendFrame(.{
-            .tag = Client.Message.Tag.transact,
-            .bytes_len = @intCast(body.items.len),
-            .request_id = request_id,
-            .routing_id = current_routing,
-        }, body.items, fds.items) catch {
-            // sendFrame shuts down the socket on failure. Let its reader finish
-            // an already-arriving reply or mark this call failed before freeing
-            // it; it may already have removed the pointer from pending.
-            return r.awaitReply(call, out);
-        };
+            r.sendFrameLocked(.{
+                .tag = Client.Message.Tag.transact,
+                .bytes_len = @intCast(body.items.len),
+                .request_id = request_id,
+                .routing_id = current_routing,
+            }, body.items, fds.items) catch {};
+        }
         // Oneway waits only for admission, not handler completion. The broker
         // reports an exhausted recipient with the same FAILED_TRANSACTION status
         // as pinned IPCThreadState.waitForResponse's BR_FAILED_REPLY path.
@@ -1637,20 +1649,30 @@ const Runtime = struct {
     }
 
     fn serviceRequestPrepared(r: *Runtime, tag: Client.Message.Tag, body_extra: []const u8, call: *PendingCall) *PendingCall {
-        if (call.done) return call;
+        r.write_mu.lockUncancelable(g_io);
+        r.publishServiceRequestLocked(tag, body_extra, call);
+        r.write_mu.unlock(g_io);
+        return r.awaitServiceRequest(call);
+    }
+
+    fn publishServiceRequestLocked(r: *Runtime, tag: Client.Message.Tag, body_extra: []const u8, call: *PendingCall) void {
+        if (call.done) return;
         const request_id = r.next_request_id.fetchAdd(1, .monotonic);
         r.mu.lockUncancelable(g_io);
         if (r.disconnected.load(.monotonic)) {
             call.failed = true;
             call.done = true;
             r.mu.unlock(g_io);
-            return call;
+            return;
         }
         r.pending.put(alloc, request_id, call) catch @panic("oom");
         r.mu.unlock(g_io);
         // A write failure shuts down the socket. The reader owns completion,
         // including a reply that raced with the failed write.
-        r.sendFrame(.{ .tag = tag, .bytes_len = @intCast(body_extra.len), .request_id = request_id }, body_extra, &.{}) catch {};
+        r.sendFrameLocked(.{ .tag = tag, .bytes_len = @intCast(body_extra.len), .request_id = request_id }, body_extra, &.{}) catch {};
+    }
+
+    fn awaitServiceRequest(r: *Runtime, call: *PendingCall) *PendingCall {
         // Wait, servicing nested transactions like awaitReply.
         while (true) {
             call.mu.lockUncancelable(g_io);
@@ -2507,6 +2529,8 @@ export fn AIBinder_DeathRecipient_delete(recipient: *AIBinder_DeathRecipient) ca
     if (Runtime.instance) |r| {
         var removed = std.ArrayListUnmanaged(*Runtime.DeathLink).empty;
         defer removed.deinit(alloc);
+        var unsubscribe = std.AutoHashMapUnmanaged(u64, void).empty;
+        defer unsubscribe.deinit(alloc);
         r.death_mu.lockUncancelable(g_io);
         r.mu.lockUncancelable(g_io);
         var i: usize = 0;
@@ -2516,9 +2540,11 @@ export fn AIBinder_DeathRecipient_delete(recipient: *AIBinder_DeathRecipient) ca
             } else i += 1;
         }
         for (removed.items) |l| {
-            if (!r.hasDeathLinkLocked(l.global_id)) r.deathSubscription(l.global_id, false);
+            if (!r.hasDeathLinkLocked(l.global_id)) unsubscribe.put(alloc, l.global_id, {}) catch @panic("oom");
         }
         r.mu.unlock(g_io);
+        var ids = unsubscribe.keyIterator();
+        while (ids.next()) |id| r.deathSubscription(id.*, false);
         r.death_mu.unlock(g_io);
         for (removed.items) |l| l.release();
     }
@@ -2588,13 +2614,16 @@ export fn AServiceManager_addService(binder: *AIBinder, instance: [*:0]const u8)
     const call = r.preparePending(.service);
     defer r.destroyPending(call);
     if (call.done) return EX_TRANSACTION_FAILED;
+    r.write_mu.lockUncancelable(g_io);
     const object = if (binder.kind == .local) ObjectRef.local(r.exportLocal(binder)) else ObjectRef.remote(binder.id);
     var body = std.ArrayListUnmanaged(u8).empty;
     defer body.deinit(alloc);
     const reg = Client.Message.RegisterService{ .object = object, .name_len = @intCast(name.len) };
     body.appendSlice(alloc, std.mem.asBytes(&reg)) catch @panic("oom");
     body.appendSlice(alloc, name) catch @panic("oom");
-    _ = r.serviceRequestPrepared(.register_service, body.items, call);
+    r.publishServiceRequestLocked(.register_service, body.items, call);
+    r.write_mu.unlock(g_io);
+    _ = r.awaitServiceRequest(call);
     if (call.failed) return EX_TRANSACTION_FAILED;
     return switch (call.svc_status) {
         .ok => EX_NONE,

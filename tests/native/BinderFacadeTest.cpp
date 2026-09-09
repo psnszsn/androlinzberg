@@ -26,6 +26,7 @@ constexpr uint32_t EXCHANGE = 1, NESTED = 2, GRAPHICS = 3;
 constexpr uint32_t HOLD_WORKER = 8, MONITOR_POOL = 9, BLOB_ROUND_TRIP = 10;
 constexpr uint32_t RETAIN_RELEASE_TARGET = 12, DROP_RELEASE_TARGET = 13;
 constexpr uint32_t QUOTA_ONEWAY = 14, QUOTA_PROGRESS = 15, PREPARE_WAITERS = 16;
+constexpr uint32_t DROP_TRANSIENT = 17;
 constexpr int POOL_WORKERS = 32;
 static void pass(const char *s) { std::cout << "PASS " << s << std::endl; }
 struct Listener final : gui::BnFpsListener {
@@ -106,6 +107,11 @@ struct Service final : BBinder {
   }
   status_t onTransact(uint32_t code, const Parcel &in, Parcel *out,
                       uint32_t flags) override {
+    if (code == DROP_TRANSIENT) {
+      auto target = in.readStrongBinder();
+      assert(target && target->remoteBinder());
+      return OK;
+    }
     if (code == PREPARE_WAITERS) {
       const int gate = dup(in.readFileDescriptor());
       assert(gate >= 0);
@@ -354,6 +360,42 @@ static void releaseReaderProgressTest(const sp<IBinder>& server) {
   caller.join();
   assert(repliedWhileDestructorBlocked && "export destruction must not block Binder reply reception");
   pass("exported object destruction can wait for a lock while Binder replies progress");
+}
+
+// A caller may reuse the same live local Binder while the broker releases
+// its previous export. Large ordinary payloads exercise marshalling concurrent
+// with release notifications; every final export must still retire.
+static void reexportReleaseTest(const sp<IBinder>& server) {
+  std::atomic<int> destroyed = 0;
+  struct Tracked final : BBinder {
+    std::atomic<int>& destroyed;
+    explicit Tracked(std::atomic<int>& value) : destroyed(value) {}
+    ~Tracked() override { ++destroyed; }
+  };
+  constexpr int rounds = 24;
+  for (int round = 0; round < rounds; ++round) {
+    auto target = sp<Tracked>::make(destroyed);
+    std::vector<std::thread> senders;
+    for (int worker = 0; worker < 4; ++worker) {
+      senders.emplace_back([&, target] {
+        for (int request = 0; request < 64; ++request) {
+          Parcel in, out;
+          assert(in.writeStrongBinder(target) == OK);
+          auto *padding = in.writeInplace(256 * 1024);
+          assert(padding);
+          memset(padding, 0x5a, 256 * 1024);
+          assert(server->transact(DROP_TRANSIENT, in, &out) == OK);
+        }
+      });
+    }
+    for (auto& sender : senders) sender.join();
+    target.clear();
+  }
+  const auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (destroyed != rounds && std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(1ms);
+  assert(destroyed == rounds && "concurrent re-export must not lose final release");
+  pass("concurrent local Binder re-export preserves final destruction");
 }
 
 static void poolMonitorTest(const sp<IBinder>& server) {
@@ -636,6 +678,7 @@ int main(int argc, char **argv) {
   assert(raw);
   auto server = IBinder::fromNative(raw);
   releaseReaderProgressTest(server);
+  reexportReleaseTest(server);
   poolMonitorTest(server);
   onewayQuotaTest(server);
   deathLinkQuotaTest(server);

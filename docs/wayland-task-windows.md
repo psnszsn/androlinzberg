@@ -11,6 +11,24 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Binder re-export wire ordering (2026-09-09)
+
+Export accounting and its containing request/reply now share the writer lock
+with release-counter reset and acknowledgement. This closes a source-level race
+where the broker could revive an old export after the runtime had reset its use
+count. Service publication uses the same ordering and unlocks before waiting or
+servicing nested calls. Death-recipient deletion collects unsubscribe IDs under
+the runtime lock and writes afterward, preserving a consistent lock order.
+
+The new four-sender C++ stress test verifies final destruction after repeated
+re-export. It passes both before (608) and after the change, so it is regression
+coverage rather than a reproduction of the race. Regression 610 passes native
+Binder, Java Binder, NDK, system-service, BufferQueue and source-audit checks.
+Regression 611 passes all 26 stock APK cases, 16 drag-pressure rounds with 116
+clean steps, and all five service/compositor-loss cases with no leaked processes
+or session directories. Artifacts: `/tmp/wayland-reexport-610-native-artifacts/`
+and `/tmp/wayland-reexport-611-artifacts/`.
+
 ## Dialog contracts through stock APK windows (2026-09-09)
 
 The Kotlin window APK now checks the pinned Dialog lifecycle through real WMS
