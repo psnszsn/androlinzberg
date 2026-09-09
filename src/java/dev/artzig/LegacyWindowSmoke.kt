@@ -22,7 +22,6 @@ import android.view.WindowManagerImpl
 import android.view.ViewRootImpl
 import android.widget.FrameLayout
 import android.widget.EditText
-import android.widget.SeekBar
 
 /** Temporary regression suite for the legacy window backend. Migrate these
  * contracts to real APK windows before deleting the legacy implementation. */
@@ -47,11 +46,7 @@ internal object LegacyWindowSmoke {
             testHostedInputEvents()
             testHostedInputDispatch()
             testHostedPhysicalInputLifecycle()
-            testHostedInputHierarchyDispatch()
-            testHostedMouseSeekBarDrag()
-            testHostedInputCancelOnInterception()
             testHostedInputWindowRouting()
-            testHostedInputSiblingDispatch()
             FrameworkModuleSmoke.runLegacyActivityFixtures(args[1])
         }
         println("legacy window regression smoke: PASS")
@@ -831,131 +826,6 @@ internal object LegacyWindowSmoke {
         }
     }
 
-
-    private fun testHostedInputHierarchyDispatch() {
-        val context = HostContexts.systemContext(
-            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
-            200,
-            200,
-            120,
-            0,
-        )
-        val observed = mutableListOf<String>()
-        val child = RecordingInputView(context, "child", observed).apply {
-            isClickable = true
-            contentDescription = "transformed child"
-            translationX = 20f
-        }
-        val parent = InterceptingInputGroup(context, observed).apply { addView(child) }
-        val root = ViewRootImpl(context)
-        root.setView(parent, 200, 200)
-        parent.measure(
-            View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY),
-        )
-        parent.layout(0, 0, 200, 200)
-        try {
-            HostedInputDispatcher.dispatchMouse(
-                root, MotionEvent.ACTION_DOWN,
-                MotionEvent.BUTTON_PRIMARY, 0, 50f, 50f,
-            )
-            HostedInputDispatcher.dispatchMouse(
-                root, MotionEvent.ACTION_UP, 0, 0, 50f, 50f,
-            )
-            check(observed == listOf(
-                "intercept:0", "parent:0", "parent:1", "child:g:9",
-            )) {
-                "root hierarchy must own hit testing and interception: $observed"
-            }
-        } finally {
-            HostedInputDispatcher.reset()
-            root.destroy()
-        }
-    }
-
-    private fun testHostedMouseSeekBarDrag() {
-        val context = HostContexts.systemContext(
-            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
-            200,
-            100,
-            120,
-            0,
-        )
-        val seekBar = SeekBar(context).apply {
-            max = 1_000
-            progress = 0
-        }
-        val parent = FrameLayout(context).apply {
-            addView(seekBar, FrameLayout.LayoutParams(200, 30))
-        }
-        val root = ViewRootImpl(context)
-        root.setView(parent, 200, 100)
-        parent.measure(
-            View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(100, View.MeasureSpec.EXACTLY),
-        )
-        parent.layout(0, 0, 200, 100)
-        try {
-            HostedInputDispatcher.dispatchMouse(
-                root, MotionEvent.ACTION_DOWN,
-                MotionEvent.BUTTON_PRIMARY, 0, 10f, 15f,
-            )
-            HostedInputDispatcher.dispatchMouse(
-                root, MotionEvent.ACTION_MOVE,
-                MotionEvent.BUTTON_PRIMARY, 0, 150f, 15f,
-            )
-            HostedInputDispatcher.dispatchMouse(
-                root, MotionEvent.ACTION_UP, 0, 0, 150f, 15f,
-            )
-            check(seekBar.progress > 600) {
-                "mouse drag must update SeekBar progress: ${seekBar.progress}"
-            }
-        } finally {
-            HostedInputDispatcher.reset()
-            root.destroy()
-        }
-    }
-
-    private fun testHostedInputCancelOnInterception() {
-        val context = HostContexts.systemContext(
-            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
-            200,
-            200,
-            120,
-            0,
-        )
-        val observed = mutableListOf<String>()
-        val child = RecordingInputView(context, "child", observed).apply { isClickable = true }
-        val parent = MoveInterceptingInputGroup(context, observed).apply { addView(child) }
-        val root = ViewRootImpl(context)
-        root.setView(parent, 200, 200)
-        parent.measure(
-            View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY),
-        )
-        parent.layout(0, 0, 200, 200)
-        try {
-            HostedInputDispatcher.dispatchMouse(
-                root, MotionEvent.ACTION_DOWN,
-                MotionEvent.BUTTON_PRIMARY, 0, 50f, 50f,
-            )
-            HostedInputDispatcher.dispatchMouse(
-                root, MotionEvent.ACTION_MOVE,
-                MotionEvent.BUTTON_PRIMARY, 0, 50f, 20f,
-            )
-            HostedInputDispatcher.dispatchMouse(
-                root, MotionEvent.ACTION_MOVE,
-                MotionEvent.BUTTON_PRIMARY, 0, 50f, 10f,
-            )
-            check(observed == listOf("child:0", "child:3", "parent:2")) {
-                "interception must cancel the original mouse target before scrolling: $observed"
-            }
-        } finally {
-            HostedInputDispatcher.reset()
-            root.destroy()
-        }
-    }
-
     private fun testHostedInputWindowRouting() {
         val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
@@ -1042,48 +912,6 @@ internal object LegacyWindowSmoke {
         }
     }
 
-    private fun testHostedInputSiblingDispatch() {
-        val context = HostContexts.systemContext(
-            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
-            200,
-            200,
-            120,
-            0,
-        )
-        val observed = mutableListOf<String>()
-        val bottom = RecordingInputView(context, "bottom", observed).apply { isClickable = true }
-        val top = RecordingInputView(context, "top", observed).apply {
-            isClickable = true
-            translationX = 20f
-        }
-        val parent = OverlayInputGroup(context).apply {
-            addView(bottom)
-            addView(top)
-        }
-        val root = ViewRootImpl(context)
-        root.setView(parent, 200, 200)
-        parent.measure(
-            View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY),
-        )
-        parent.layout(0, 0, 200, 200)
-        try {
-            HostedInputDispatcher.dispatchMouse(
-                root, MotionEvent.ACTION_DOWN,
-                MotionEvent.BUTTON_PRIMARY, 0, 100f, 50f,
-            )
-            HostedInputDispatcher.dispatchMouse(
-                root, MotionEvent.ACTION_UP, 0, 0, 100f, 50f,
-            )
-            check(observed == listOf("top:0", "top:1", "top:g:9")) {
-                "ViewGroup must resolve transformed overlapping siblings: $observed"
-            }
-        } finally {
-            HostedInputDispatcher.reset()
-            root.destroy()
-        }
-    }
-
     private fun addInputWindow(
         manager: WindowManagerImpl,
         context: Context,
@@ -1127,75 +955,6 @@ internal object LegacyWindowSmoke {
         override fun onGenericMotionEvent(event: MotionEvent): Boolean {
             observed += "$name:g:${event.actionMasked}"
             return true
-        }
-    }
-
-    private class InterceptingInputGroup(
-        context: Context,
-        private val observed: MutableList<String>,
-    ) : ViewGroup(context) {
-        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-            getChildAt(0).measure(
-                MeasureSpec.makeMeasureSpec(80, MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(80, MeasureSpec.EXACTLY),
-            )
-            setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), MeasureSpec.getSize(heightMeasureSpec))
-        }
-
-        override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-            getChildAt(0).layout(10, 10, 90, 90)
-        }
-
-        override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
-            if (event.actionMasked == MotionEvent.ACTION_DOWN) observed += "intercept:0"
-            return event.actionMasked == MotionEvent.ACTION_DOWN
-        }
-
-        override fun onTouchEvent(event: MotionEvent): Boolean {
-            observed += "parent:${event.actionMasked}"
-            return true
-        }
-    }
-
-    private class MoveInterceptingInputGroup(
-        context: Context,
-        private val observed: MutableList<String>,
-    ) : ViewGroup(context) {
-        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-            getChildAt(0).measure(widthMeasureSpec, heightMeasureSpec)
-            setMeasuredDimension(
-                MeasureSpec.getSize(widthMeasureSpec),
-                MeasureSpec.getSize(heightMeasureSpec),
-            )
-        }
-
-        override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-            getChildAt(0).layout(0, 0, right - left, bottom - top)
-        }
-
-        override fun onInterceptTouchEvent(event: MotionEvent): Boolean =
-            event.actionMasked == MotionEvent.ACTION_MOVE
-
-        override fun onTouchEvent(event: MotionEvent): Boolean {
-            observed += "parent:${event.actionMasked}"
-            return true
-        }
-    }
-
-    private class OverlayInputGroup(context: Context) : ViewGroup(context) {
-        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-            for (index in 0 until childCount) {
-                getChildAt(index).measure(
-                    MeasureSpec.makeMeasureSpec(80, MeasureSpec.EXACTLY),
-                    MeasureSpec.makeMeasureSpec(80, MeasureSpec.EXACTLY),
-                )
-            }
-            setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), MeasureSpec.getSize(heightMeasureSpec))
-        }
-
-        override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-            getChildAt(0).layout(0, 10, 80, 90)
-            getChildAt(1).layout(10, 10, 90, 90)
         }
     }
 

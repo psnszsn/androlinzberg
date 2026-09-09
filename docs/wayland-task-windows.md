@@ -11,6 +11,23 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Native pointer routing APK contracts (2026-09-09)
+
+The APK fixture now routes physical input through a translated and scaled child
+outside its original bounds and checks that local coordinates map back to raw
+screen coordinates. It verifies parent interception on down, cancellation when
+a parent intercepts movement, cancellation before a target detaches, and
+SeekBar start/progress/stop callbacks. Four corresponding legacy-root test
+families and their three helper groups are retired.
+
+Regressions 580 and 581 each pass both input APK cases with 12 clean interaction
+steps and verified screenshots. Regression 581 also passes the full default JVM
+suite; 582 passes the full JVM suite with stock clients. Regression 583 passes
+all 23 APK cases on the stock task path with 75 clean steps. Artifacts:
+`/tmp/wayland-input-580-artifacts/`, `/tmp/wayland-input-default-581-artifacts/`,
+and `/tmp/wayland-stock-583-artifacts/`. Nine direct legacy-root families and the
+legacy activity fixtures remain, alongside resource quotas and default cutover.
+
 ## Framework smoke coverage with stock clients (2026-09-09)
 
 The general FrameworkModuleSmoke now compiles with stock window clients. Thirteen

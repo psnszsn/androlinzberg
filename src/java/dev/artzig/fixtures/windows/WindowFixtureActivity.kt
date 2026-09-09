@@ -84,6 +84,7 @@ open class WindowFixtureActivity : Activity() {
         button("Show layout and popups") { startActivity(Intent(this, LayoutFixtureActivity::class.java)) }
         button("Show virtual accessibility") { startActivity(Intent(this, AccessibilityFixtureActivity::class.java)) }
         button("Show window registry") { startActivity(Intent(this, WindowRegistryFixtureActivity::class.java)) }
+        button("Show input routing") { startActivity(Intent(this, InputRoutingFixtureActivity::class.java)) }
         setContentView(android.widget.ScrollView(this).apply { addView(content) })
     }
 

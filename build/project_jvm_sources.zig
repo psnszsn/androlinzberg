@@ -405,6 +405,7 @@ pub const testkit = [_][]const u8{
 pub const tests = [_][]const u8{
     "tests/integration/kotlin/dev/artzig/integration/NewPipeTest.kt",
     "tests/integration/kotlin/dev/artzig/integration/WindowInputTest.kt",
+    "tests/integration/kotlin/dev/artzig/integration/WindowRoutingTest.kt",
     "tests/testkit/kotlin/dev/artzig/testkit/WebViewFrameCheck.kt",
     "tests/integration/kotlin/dev/artzig/integration/WindowFixtureTest.kt",
     "tests/testkit/kotlin/dev/artzig/testkit/ApkRegistryTest.kt",
