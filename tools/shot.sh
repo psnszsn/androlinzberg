@@ -76,7 +76,19 @@ SESSION
       chmod +x "$COMPOSITOR_DIR/session"
       local session_command compositor_status=0
       printf -v session_command '%q' "$COMPOSITOR_DIR/session"
-      "${SHOT_LABWC_BINARY:-labwc}" --config-dir "$COMPOSITOR_DIR/config" --session "$session_command" || compositor_status=$?
+      # The exec preserves the PID exported to this compositor's own session.
+      # Fault tests pin it with pidfd and verify their ancestry before signalling.
+      bash -c 'export SHOT_COMPOSITOR_PID=$$; exec "$@"' -- \
+        "${SHOT_LABWC_BINARY:-labwc}" --config-dir "$COMPOSITOR_DIR/config" --session "$session_command" || compositor_status=$?
+      if [[ ${SHOT_EXPECT_COMPOSITOR_LOSS:-0} == 1 && $compositor_status == 137 ]]; then
+        # The test runner survives the killed compositor and checks retirement
+        # before returning its result. Bound this wait even if the runner fails.
+        local attempts=0
+        while [[ ! -f $SHOT_SESSION_STATUS && $attempts -lt 600 ]]; do
+          sleep 0.05
+          attempts=$((attempts + 1))
+        done
+      fi
       if [[ ! -f $SHOT_SESSION_STATUS ]]; then
         echo "shot.sh: labwc session exited without a client result ($compositor_status)" >&2
         return 1
@@ -85,6 +97,9 @@ SESSION
       read -r session_status < "$SHOT_SESSION_STATUS"
       [[ $session_status =~ ^[0-9]+$ ]] || return 1
       if [[ $session_status == 0 && $compositor_status != 0 ]]; then
+        if [[ ${SHOT_EXPECT_COMPOSITOR_LOSS:-0} == 1 && $compositor_status == 137 ]]; then
+          return 0
+        fi
         return "$compositor_status"
       fi
       return "$session_status"

@@ -11,6 +11,23 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Compositor loss and buffer cleanup (2026-09-09)
+
+The existing headless harness now supports killing its owned compositor. The
+runner verifies its ancestry and pins the compositor identity with pidfd before
+signalling it; the harness waits for the independent client result. The test
+requires a presented APK frame before injecting the fault.
+
+Regression 568 retired the complete session after compositor loss, but exposed
+that the presenter's live-buffer check only ran after successful returns. The
+presenter now verifies buffer cleanup after error unwinding as well, then returns
+the original error. Regressions 569 and 570 pass all five loss cases: system,
+SurfaceFlinger, presenter, broker and compositor. Compositor loss in 569 retires
+the launcher in 615 ms, leaves no live descendants or session directory, and
+reports zero live graphics buffers. The 570 pre-fault screenshot shows the APK.
+Artifacts: `/tmp/wayland-loss-569-artifacts/` and
+`/tmp/wayland-loss-570-artifacts/`. Default cutover and resource quotas remain open.
+
 ## Surface and accessibility APK contracts (2026-09-09)
 
 The window fixture now verifies SurfaceView attachment versus visibility

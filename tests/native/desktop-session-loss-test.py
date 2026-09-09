@@ -15,7 +15,7 @@ import subprocess
 import time
 
 p = argparse.ArgumentParser()
-p.add_argument('--fault', choices=('system', 'surfaceflinger', 'presenter', 'broker'), required=True)
+p.add_argument('--fault', choices=('system', 'surfaceflinger', 'presenter', 'broker', 'compositor'), required=True)
 p.add_argument('--output', type=Path, required=True)
 p.add_argument('--seat', type=Path, required=True)
 p.add_argument('command', nargs=argparse.REMAINDER)
@@ -31,6 +31,7 @@ report = {'passed': False, 'fault': a.fault}
 owned = {}
 owner = None
 seat = None
+compositor_fd = None
 
 
 def alive(fd):
@@ -86,14 +87,17 @@ try:
         deadline = time.monotonic() + 60
         while True:
             text = (out / 'app.log').read_text(errors='replace')
-            if 'Desktop launch accepted: dev.artzig.fixtures.windows' in text and 'Displayed dev.artzig.fixtures.windows/' in text:
+            if ('Desktop launch accepted: dev.artzig.fixtures.windows' in text
+                    and 'Displayed dev.artzig.fixtures.windows/' in text
+                    and 'surface-presentation submission=' in text):
                 break
             if owner.poll() is not None or time.monotonic() >= deadline:
                 raise RuntimeError('fixture failed to launch')
             time.sleep(.05)
-        subprocess.run(['grim', str(out / 'before.png')], check=True, timeout=3)
-        # Let pending organizer callbacks settle so the controller is idle.
+        # Let pending organizer callbacks and the first visible frame settle
+        # so the controller is idle and the retained image shows the fixture.
         time.sleep(.25)
+        subprocess.run(['grim', str(out / 'before.png')], check=True, timeout=3)
         collect()
         services = {role: [(pid, value) for pid, value in owned.items() if value['role'] == role]
                     for role in ('system', 'surfaceflinger', 'presenter', 'broker')}
@@ -103,8 +107,16 @@ try:
         assert info['pid'] == owner.pid, 'service is not owned by this launcher'
         report['services'] = {role: values[0][0] for role, values in services.items()}
         report['session_dir'] = str(session_dir)
-        victim, record = services[a.fault][0]
-        assert victim in descendants(owner.pid) and alive(record['fd'])
+        if a.fault == 'compositor':
+            compositor_pid = int(os.environ['SHOT_COMPOSITOR_PID'])
+            compositor_fd = os.pidfd_open(compositor_pid)
+            assert os.getpid() in descendants(compositor_pid), 'compositor does not own this runner'
+            assert alive(compositor_fd), 'owned compositor has already exited'
+            victim, record = compositor_pid, {'fd': compositor_fd}
+            report['compositor_pid'] = compositor_pid
+        else:
+            victim, record = services[a.fault][0]
+            assert victim in descendants(owner.pid) and alive(record['fd'])
         report['before_log_bytes'] = (out / 'app.log').stat().st_size
         start = time.monotonic()
         signal.pidfd_send_signal(record['fd'], signal.SIGKILL)
@@ -124,12 +136,15 @@ try:
             assert crash not in text, crash
         if a.fault != 'presenter':
             assert 'task presenter released all buffers' in text
-        subprocess.run(['grim', str(out / 'after.png')], check=True, timeout=3)
+        if a.fault != 'compositor':
+            subprocess.run(['grim', str(out / 'after.png')], check=True, timeout=3)
         report['passed'] = True
 except BaseException as failure:
     report['error'] = repr(failure)
     raise
 finally:
+    if compositor_fd is not None:
+        os.close(compositor_fd)
     if owner is not None:
         # pidfds pin the identities found under this test's launcher. Cleanup
         # never discovers or signals unrelated user sessions or compositors.

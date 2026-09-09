@@ -1335,14 +1335,15 @@ pub fn build(b: *std.Build) void {
         b.step(if (video_fixture) "stock-video-test" else if (ime_fixture) "stock-ime-test" else if (clipboard_fixture) "stock-clipboard-test" else if (drag_pressure) "stock-drag-pressure-test" else if (drag_fixture) "stock-drag-test" else "stock-desktop-launcher-test", "Launch an APK through ATMS and verify task-scoped UI through Wayland")
             .dependOn(&desktop_launcher.run.step);
     }
-    const session_loss_step = b.step("stock-session-loss-test", "Retire an idle APK session after system, graphics, presenter or broker death");
-    for ([_][]const u8{ "system", "surfaceflinger", "presenter", "broker" }) |fault| {
+    const session_loss_step = b.step("stock-session-loss-test", "Retire an idle APK session after service or compositor death");
+    for ([_][]const u8{ "system", "surfaceflinger", "presenter", "broker", "compositor" }) |fault| {
         const run = @import("build/command.zig").create(b);
         setApplicationEnvironment(run, application_tree);
         run.setEnvironment("AZK_WINDOW_BACKEND", "stock");
         run.setEnvironment("AZK_TASK_WINDOWS", "1");
         run.setEnvironment("WLR_RENDERER", "gles2");
         run.setEnvironment("SHOT_COMPOSITOR", "labwc");
+        if (std.mem.eql(u8, fault, "compositor")) run.setEnvironment("SHOT_EXPECT_COMPOSITOR_LOSS", "1");
         run.addArg("env");
         run.addPrefixedFileArg("SHOT_LABWC_CONFIG=", b.path("testdata/wayland/launcher-desktop.xml"));
         run.addFileArg(b.path("tools/shot.sh"));

@@ -1177,11 +1177,14 @@ fn writeValues(parcel: *Parcel, values: anytype) !void {
     };
 }
 pub fn main(init: std.process.Init) !void {
-    try run(init);
+    // run unwinds its owned queues and Wayland imports on both orderly exit
+    // and compositor disconnect. Verify that cleanup on either return path.
+    const result = run(init);
     if (azk_graphics_live_buffers() != 0) return error.LeakedGraphicsBuffers;
     // The supervisor may have stopped draining stdout before orderly shutdown.
     // Resource verification belongs on stderr with the other native diagnostics.
     try Io.File.stderr().writeStreamingAll(init.io, "task presenter released all buffers\n");
+    return result;
 }
 
 fn run(init: std.process.Init) !void {
