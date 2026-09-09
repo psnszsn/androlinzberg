@@ -77,7 +77,7 @@ try:
         log = (d / 'client.log').open('w')
         logs.append(log)
         c = subprocess.Popen(
-            [str(a.probe.resolve())], env=env, cwd=r,
+            [str(a.probe.resolve()), *(a.probe_arg or [])], env=env, cwd=r,
             stdout=subprocess.PIPE, stderr=log, text=True,
         )
         children.append(c)

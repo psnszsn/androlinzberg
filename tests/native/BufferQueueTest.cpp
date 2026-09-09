@@ -30,6 +30,7 @@
 #include <thread>
 #include <atomic>
 #include <array>
+#include <vector>
 
 using namespace android;
 using namespace std::chrono_literals;
@@ -142,6 +143,85 @@ size_t openFiles() {
   return std::distance(std::filesystem::directory_iterator("/proc/self/fd"),
                        std::filesystem::directory_iterator{});
 }
+// Run in a fresh process so the administrative limits precede GBM startup.
+void graphicsBudgetTest(bool countLimit) {
+  assert(setenv("AZK_GRAPHICS_MAX_BUFFERS", countLimit ? "3" : "1024", 1) == 0);
+  assert(setenv("AZK_GRAPHICS_MAX_BYTES", countLimit ? "2097152" : "1048576", 1) == 0);
+  AHardwareBuffer_Desc desc{};
+  desc.width = desc.height = 64;
+  desc.layers = 1;
+  desc.format = AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
+  desc.usage = usage;
+  AHardwareBuffer *warm = nullptr;
+  assert(AHardwareBuffer_allocate(&desc, &warm) == OK);
+  const auto unit = azk_graphics_live_bytes();
+  assert(unit >= 64 * 64 * 4);
+  void *warmPixels = nullptr;
+  assert(AHardwareBuffer_lock(warm, AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN,
+                              -1, nullptr, &warmPixels) == OK && warmPixels);
+  assert(AHardwareBuffer_unlock(warm, nullptr) == OK);
+  AHardwareBuffer_release(warm);
+  const auto files = openFiles();
+  const uint64_t limit = countLimit ? 3 : 1048576 / unit;
+  assert(limit > 1 && limit < 1024);
+  for (int round = 0; round < 3; ++round) {
+    std::vector<AHardwareBuffer*> held;
+    for (uint64_t i = 0; i < limit; ++i) {
+      AHardwareBuffer *buffer = nullptr;
+      assert(AHardwareBuffer_allocate(&desc, &buffer) == OK && buffer);
+      held.push_back(buffer);
+    }
+    assert(azk_graphics_live_buffers() == limit);
+    assert(azk_graphics_live_bytes() == limit * unit);
+    const auto occupied = openFiles();
+    AHardwareBuffer *rejected = nullptr;
+    assert(AHardwareBuffer_allocate(&desc, &rejected) == NO_MEMORY && !rejected);
+    assert(openFiles() == occupied && azk_graphics_live_buffers() == limit);
+    AHardwareBuffer_release(held.back());
+    held.pop_back();
+    AHardwareBuffer *retry = nullptr;
+    assert(AHardwareBuffer_allocate(&desc, &retry) == OK && retry);
+    held.push_back(retry);
+    for (auto *buffer : held) AHardwareBuffer_release(buffer);
+    assert(azk_graphics_live_buffers() == 0 && azk_graphics_live_bytes() == 0);
+    assert(openFiles() == files);
+
+    // Repeated imports of one borrowed DMA-BUF also consume full admission.
+    AHardwareBuffer *source = nullptr;
+    assert(AHardwareBuffer_allocate(&desc, &source) == OK);
+    auto *graphic = GraphicBuffer::fromAHardwareBuffer(source);
+    std::vector<native_handle_t*> imported;
+    for (uint64_t i = 1; i < limit; ++i) {
+      native_handle_t *handle = nullptr;
+      assert(azk_graphics_import(graphic->handle, &handle) == OK && handle);
+      imported.push_back(handle);
+    }
+    const auto importFiles = openFiles();
+    native_handle_t *denied = nullptr;
+    assert(azk_graphics_import(graphic->handle, &denied) == NO_MEMORY && !denied);
+    assert(openFiles() == importFiles && azk_graphics_live_buffers() == limit);
+    assert(azk_graphics_free(imported.back()) == OK);
+    imported.pop_back();
+    assert(azk_graphics_import(graphic->handle, &denied) == OK && denied);
+    imported.push_back(denied);
+    AHardwareBuffer_release(source);
+    // The imported descriptor remains usable after its exporter disappears.
+    void *pixels = nullptr;
+    int32_t bpp, stride;
+    assert(azk_graphics_lock(imported[0], GRALLOC_USAGE_SW_WRITE_OFTEN,
+                              0, 0, 64, 64, &pixels, &bpp, &stride) == OK);
+    assert(pixels && bpp == 4);
+    *static_cast<uint32_t*>(pixels) = 0xff123456;
+    assert(azk_graphics_unlock(imported[0]) == OK);
+    for (auto *handle : imported) assert(azk_graphics_free(handle) == OK);
+    assert(azk_graphics_live_buffers() == 0 && azk_graphics_live_bytes() == 0);
+    assert(openFiles() == files);
+  }
+  std::cout << "PASS gralloc " << (countLimit ? "handle" : "byte")
+            << " admission: allocation/import rejection, live exporter independence, "
+               "capacity reuse, stable descriptors and zero retained bytes" << std::endl;
+}
+
 void hardwareBufferTests() {
   const auto baseline = azk_graphics_live_buffers();
   const auto files = openFiles();
@@ -433,6 +513,11 @@ void handleTests() {
 }
 } // namespace
 int main(int argc, char **argv) {
+  if (argc > 1 && (std::string(argv[1]) == "budget-count" ||
+                  std::string(argv[1]) == "budget-bytes")) {
+    graphicsBudgetTest(std::string(argv[1]) == "budget-count");
+    return 0;
+  }
   if (argc > 1 && std::string(argv[1]) == "server") {
     auto service = sp<Service>::make();
     auto *native = service->acquireNative();

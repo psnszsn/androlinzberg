@@ -194,7 +194,8 @@ public:
   bool isLoaded() const override { return true; }
   std::string dumpDebugInfo(bool) const override {
     return "host GBM live buffers: " +
-           std::to_string(azk_graphics_live_buffers()) + "\n";
+           std::to_string(azk_graphics_live_buffers()) + ", charged bytes: " +
+           std::to_string(azk_graphics_live_bytes()) + "\n";
   }
   status_t allocate(std::string, uint32_t w, uint32_t h, PixelFormat f,
                     uint32_t layers, uint64_t usage, uint32_t *stride,

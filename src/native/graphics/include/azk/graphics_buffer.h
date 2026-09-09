@@ -27,6 +27,8 @@ int32_t azk_graphics_lock(const native_handle_t *, uint64_t usage, int32_t left,
 int32_t azk_graphics_unlock(const native_handle_t *);
 int32_t azk_graphics_dataspace(const native_handle_t *, int32_t);
 uint64_t azk_graphics_live_buffers(void);
+// Sum of retained handle charges; aliased imports are charged independently.
+uint64_t azk_graphics_live_bytes(void);
 void *azk_graphics_gbm_device(void);
 #ifdef __cplusplus
 }

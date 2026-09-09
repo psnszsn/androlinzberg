@@ -449,7 +449,28 @@ pub fn build(b: *std.Build) void {
     gui_run.addArgs(&.{ "--output", b.pathResolve(&.{"zig-out/test-results/bufferqueue"}) });
     gui_run.addArg("--producer-crash");
     gui_run.has_side_effects = true;
-    b.step("gui-test", "Exercise stock BufferQueue and host GBM allocation across AZKB (requires GPU)").dependOn(&gui_run.step);
+    const gui_test_step = b.step("gui-test", "Exercise stock BufferQueue and host GBM allocation across AZKB (requires GPU)");
+    gui_test_step.dependOn(&gui_run.step);
+    const graphics_budget_step = b.step("graphics-budget-test", "Verify allocation/import memory and handle admission on a GPU");
+    for ([_][]const u8{ "count", "bytes" }) |dimension| {
+        const run = b.addSystemCommand(&.{"python3"});
+        run.addFileArg(b.path("tools/binder-facade-test.py"));
+        run.addArg("--standalone");
+        run.addArg("--probe");
+        run.addArtifactArg(gui_test);
+        run.addArg("--probe-arg");
+        run.addArg(b.fmt("budget-{s}", .{dimension}));
+        run.addArg("--library");
+        run.addArtifactArg(binder_cpp);
+        run.addArg("--library");
+        run.addArtifactArg(binder_ndk);
+        run.addArg("--broker");
+        run.addArtifactArg(binder_broker);
+        run.addArgs(&.{ "--output", b.pathResolve(&.{b.fmt("zig-out/test-results/graphics-budget-{s}", .{dimension})}) });
+        run.has_side_effects = true;
+        graphics_budget_step.dependOn(&run.step);
+        gui_test_step.dependOn(&run.step);
+    }
     const surface_queue_mod = b.createModule(.{
         .root_source_file = b.path("src/platform/surface_queue.zig"),
         .target = target,

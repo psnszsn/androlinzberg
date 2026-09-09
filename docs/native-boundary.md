@@ -133,6 +133,12 @@ zig build -j10 cpp-audit
 - `src/platform/host_renderer.zig` manages the Wayland render target.
 - `src/platform/graphics_buffer.zig` owns GBM allocation/import, metadata,
   mapping and DMA-BUF descriptors. Stock libui and AHardwareBuffer use it.
+  Per-process mapper admission caps registered handles at 1,024 and charged
+  storage at 2 GiB, with a 256 MiB per-buffer limit. Aliased imports are charged
+  independently. Lower-only AZK_GRAPHICS_MAX_BYTES/MAX_BUFFERS settings can
+  reduce these limits. Charges use DMA-BUF size or pitch extent and are not
+  total physical VRAM accounting; raw handles after mapper release and driver
+  allocations have separate lifetimes.
 - `src/platform/host_composer.zig` owns the host display's layer validation,
   power state and software vsync worker through `std.Io`. It does not present
   task windows; Wayland owns desktop presentation.

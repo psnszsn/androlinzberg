@@ -37,7 +37,7 @@ pub const Handle = extern struct {
     }
 };
 pub const Info = @import("graphics_types.zig").Info;
-const Buffer = struct { handle: *Handle, bo: *Bo, file: Io.File, info: Info, map_token: ?*anyopaque = null, mapped: bool = false };
+const Buffer = struct { handle: *Handle, bo: *Bo, file: Io.File, info: Info, charged_bytes: u64, map_token: ?*anyopaque = null, mapped: bool = false };
 const Imported = extern struct { width: u32, height: u32, format: u32, num_fds: u32, fds: [4]c_int, strides: [4]c_int, offsets: [4]c_int, modifier: u64 };
 const Format = struct { drm: u32, bpp: u32 };
 fn formatInfo(format: u32) ?Format {
@@ -72,11 +72,50 @@ var mutex: Io.Mutex = .init;
 var device: ?*Device = null;
 var device_file: ?Io.File = null;
 var buffers: std.ArrayList(Buffer) = .empty;
+// Bound retained GBM objects and their DMA-BUF storage independently. Imports
+// are charged in full even when they alias another handle: this also bounds
+// driver import metadata and descriptors without trusting caller-supplied IDs.
+const Budget = struct {
+    const default_bytes: u64 = 2 * 1024 * 1024 * 1024;
+    const default_count: usize = 1024;
+    const max_buffer_bytes: u64 = 256 * 1024 * 1024;
+    bytes_limit: u64 = default_bytes,
+    count_limit: usize = default_count,
+    bytes: u64 = 0,
+    count: usize = 0,
+
+    fn fits(b: Budget, cost: u64) bool {
+        return cost <= max_buffer_bytes and cost <= b.bytes_limit - b.bytes and b.count < b.count_limit;
+    }
+    fn retain(b: *Budget, cost: u64) bool {
+        if (!b.fits(cost)) return false;
+        b.bytes += cost;
+        b.count += 1;
+        return true;
+    }
+    fn release(b: *Budget, cost: u64) void {
+        std.debug.assert(b.count > 0 and cost <= b.bytes);
+        b.count -= 1;
+        b.bytes -= cost;
+    }
+};
+var budget: Budget = .{};
+fn configuredLimit(comptime T: type, name: [*:0]const u8, maximum: T) T {
+    const value = getenv(name) orelse return maximum;
+    // Administrative limits can only reduce the built-in ceiling. Invalid
+    // values deny allocations, rather than silently removing a resource limit.
+    return @min(std.fmt.parseInt(T, std.mem.span(value), 10) catch return 0, maximum);
+}
+fn layoutBytes(info: Info) u64 {
+    return @as(u64, info.offset) + @as(u64, info.stride) * info.height;
+}
 fn ensureIo() void {
     if (initialized.load(.acquire) == 2) return;
     if (initialized.cmpxchgStrong(0, 1, .acq_rel, .acquire) == null) {
         threaded = Io.Threaded.init(alloc, .{});
         io = threaded.io();
+        budget.bytes_limit = configuredLimit(u64, "AZK_GRAPHICS_MAX_BYTES", Budget.default_bytes);
+        budget.count_limit = configuredLimit(usize, "AZK_GRAPHICS_MAX_BUFFERS", Budget.default_count);
         initialized.store(2, .release);
     } else while (initialized.load(.acquire) != 2) std.atomic.spinLoopHint();
 }
@@ -137,17 +176,32 @@ fn register(bo: *Bo, info_in: Info, output: *?*Handle) i32 {
         return -12;
     }
     const file: Io.File = .{ .handle = fd, .flags = .{ .nonblocking = false } };
-    const handle = native_handle_create(1, integer_count) orelse {
-        file.close(io);
-        gbm_bo_destroy(bo);
-        return -12;
-    };
     info.fd = fd;
     info.stride = gbm_bo_get_stride(bo);
     info.offset = gbm_bo_get_offset(bo, 0);
     info.modifier = gbm_bo_get_modifier(bo);
+    // DMA-BUF stat size includes driver padding when reported. Otherwise retain
+    // the full pitch/height extent, as the pinned allocator's size estimate does.
+    const storage = file.length(io) catch {
+        file.close(io);
+        gbm_bo_destroy(bo);
+        return -22;
+    };
+    const cost = @max(storage, layoutBytes(info));
+    if (!budget.retain(cost)) {
+        file.close(io);
+        gbm_bo_destroy(bo);
+        return -12;
+    }
+    const handle = native_handle_create(1, integer_count) orelse {
+        budget.release(cost);
+        file.close(io);
+        gbm_bo_destroy(bo);
+        return -12;
+    };
     encode(handle, info);
-    buffers.append(alloc, .{ .handle = handle, .bo = bo, .file = file, .info = info }) catch {
+    buffers.append(alloc, .{ .handle = handle, .bo = bo, .file = file, .info = info, .charged_bytes = cost }) catch {
+        budget.release(cost);
         _ = native_handle_delete(handle);
         file.close(io);
         gbm_bo_destroy(bo);
@@ -161,8 +215,9 @@ pub export fn azk_graphics_allocate(width: u32, height: u32, format: u32, layers
     if (!valid(width, height, format, layers, usage)) return -22;
     lock();
     defer unlock();
-    const d = getDevice() orelse return -19;
     const f = formatInfo(format).?;
+    if (!budget.fits(@as(u64, width) * height * f.bpp)) return -12;
+    const d = getDevice() orelse return -19;
     // Legacy GBM allocation can report INVALID (implicit layout) even with
     // USE_LINEAR. Request the explicit linear modifier for CPU-visible buffers
     // so GraphicBuffer's plane-layout contract can report a real byte layout.
@@ -199,6 +254,7 @@ fn importBuffer(info: Info, output: *?*Handle) i32 {
     // minimum last-row extent when the exporter supplies a nonzero size.
     const borrowed: Io.File = .{ .handle = info.fd, .flags = .{ .nonblocking = false } };
     const stat = borrowed.stat(io) catch return -22;
+    if (!budget.fits(@max(stat.size, layoutBytes(info)))) return -12;
     if (info.modifier == 0 and stat.size != 0) {
         const extent = @as(u64, info.offset) + @as(u64, info.stride) * (info.height - 1) + @as(u64, info.width) * formatInfo(info.format).?.bpp;
         if (extent > stat.size) return -22;
@@ -217,6 +273,7 @@ pub export fn azk_graphics_free(handle: *const Handle) callconv(.c) i32 {
         buffer.file.close(io);
         gbm_bo_destroy(buffer.bo);
         _ = native_handle_delete(buffer.handle);
+        budget.release(buffer.charged_bytes);
         return 0;
     }
     return -22;
@@ -279,10 +336,40 @@ pub export fn azk_graphics_live_buffers() callconv(.c) u64 {
     defer unlock();
     return buffers.items.len;
 }
+pub export fn azk_graphics_live_bytes() callconv(.c) u64 {
+    lock();
+    defer unlock();
+    return budget.bytes;
+}
 pub export fn azk_graphics_gbm_device() callconv(.c) ?*Device {
     lock();
     defer unlock();
     return getDevice();
+}
+
+test "graphics admission bounds bytes and handles independently and reuses released capacity" {
+    var b: Budget = .{ .bytes_limit = 100, .count_limit = 3 };
+    try std.testing.expect(b.retain(60));
+    try std.testing.expect(!b.retain(41));
+    try std.testing.expect(b.retain(20));
+    try std.testing.expect(b.retain(20));
+    try std.testing.expect(!b.retain(0));
+    b.release(60);
+    try std.testing.expect(b.retain(60));
+    b.release(20);
+    b.release(60);
+    b.release(20);
+    try std.testing.expectEqual(@as(u64, 0), b.bytes);
+    try std.testing.expectEqual(@as(usize, 0), b.count);
+    var full: Budget = .{};
+    try std.testing.expect(!full.retain(Budget.max_buffer_bytes + 1));
+    try std.testing.expect(full.retain(Budget.max_buffer_bytes));
+    full.release(Budget.max_buffer_bytes);
+    b.count_limit = 0;
+    try std.testing.expect(!b.retain(1));
+    b.count_limit = 3;
+    b.bytes_limit = 0;
+    try std.testing.expect(!b.retain(1));
 }
 
 test "wire metadata rejects malformed and unsupported buffers without a device" {

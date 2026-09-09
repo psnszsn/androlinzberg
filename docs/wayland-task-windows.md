@@ -11,6 +11,31 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Graphics allocation/import admission (2026-09-09)
+
+The host mapper now bounds each process to 1,024 registered GBM handles and
+2 GiB of charged buffer storage, with a 256 MiB per-buffer ceiling. Allocation
+and import preflight admission before asking GBM for an object, then charge the
+larger of the returned DMA-BUF size and its pitch/height extent. Aliased imports
+are charged independently. Rejection closes all temporary resources; freeing
+a handle returns capacity only after destroying its GBM object.
+`AZK_GRAPHICS_MAX_BYTES` and `AZK_GRAPHICS_MAX_BUFFERS` can lower the ceilings;
+invalid values deny allocation. Gralloc diagnostics expose charged bytes.
+
+These are per-process mapper bounds, not a measurement or cap of total physical
+VRAM: EGL/driver allocations and caller-owned raw native handles after mapper
+release have different lifetimes. DMA-BUF exporters that report no size use a
+pitch estimate. Transport FD/queue limits and the task presenter's bounded
+imports remain independent protections.
+
+Regression 626 passes the pure admission checks, real-GPU allocation and import
+exhaustion tests for both dimensions, and build/source audits. Three rounds per
+case verify NO_MEMORY, capacity reuse, exporter-independent imports, stable
+FD counts and zero retained bytes after release. Regression 627 passes all 27 APK cases (86 clean steps), 16 drag-pressure rounds (116 clean steps), the stock BufferQueue gate and all five service/compositor-loss cases with no surviving children or session directories.
+Artifacts: `/tmp/wayland-graphics-budget-626-artifacts/` and
+`/tmp/wayland-graphics-budget-627-artifacts/`. Default cutover and removal of the
+superseded graphics/window code remain unfinished.
+
 ## Stock-service framework and APK contracts (2026-09-09)
 
 The general framework suite now runs against the production stock services.
