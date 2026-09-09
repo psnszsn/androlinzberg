@@ -11,6 +11,31 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Binder delivery admission and completion (2026-09-09)
+
+Protocol v5 now bounds delivered bytes, descriptors and call counts through
+handler and input-parcel cleanup. One-way admission returns promptly with either
+success or `FAILED_TRANSACTION`; synchronous replies and nested routing continue
+while the asynchronous allowance is full. A synchronous reply does not release
+its input charge before cleanup. Property and service-registration callbacks use
+the same accounting. Producer death cannot reset a recipient's queued work;
+forged, duplicate and premature completions are rejected. Runtime remote calls
+remain counted through reply consumption, and socket outboxes also bound frame
+and descriptor counts.
+
+Regression 587 proves the old implementation fails the held-handler pressure
+case by admitting all 4,096 attempts. Regressions 591 and 592 pass independent
+byte/count/descriptor and callback-pressure tests, rejected Binder/FD ownership,
+producer/recipient death, C++ interoperability and destructor progress, Java's
+1,024 callbacks on 32 reused workers, system services, GUI and graphics buffers.
+Regression 593 passes all 24 stock APK cases (79 clean steps), 16 drag-pressure
+runs (116 clean steps), all five service/compositor-loss cases, and source audits.
+Artifacts are retained in `/tmp/wayland-quota-negative-587-artifacts/`,
+`/tmp/wayland-quota-592-native-artifacts/`, and
+`/tmp/wayland-quota-593-artifacts/`. Broker-wide storage, metadata and retained
+release/death callback bounds remain next; this does not complete M11 or the
+default cutover.
+
 ## Inspection contracts through APK windows (2026-09-09)
 
 The real-window inspection fixture now verifies stale physical and semantic

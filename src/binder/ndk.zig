@@ -610,6 +610,7 @@ const PendingCall = struct {
     mu: Io.Mutex = .init,
     cv: Io.Condition = .init,
     kind: PendingKind,
+    counted_transaction: bool = false,
     done: bool = false,
     failed: bool = false,
     // reply:
@@ -656,6 +657,9 @@ const Runtime = struct {
     mu: Io.Mutex = .init,
     next_request_id: std.atomic.Value(u64) = .init(1),
     pending: std.AutoHashMapUnmanaged(u64, *PendingCall) = .empty,
+    /// Includes replies removed from pending but still owned by awaitReply.
+    /// Leave room for all pool workers, nested calls and external caller threads.
+    active_transactions: usize = 0,
     locals: std.AutoHashMapUnmanaged(u64, *AIBinder) = .empty,
     export_uses: std.AutoHashMapUnmanaged(u64, u64) = .empty,
     proxies: std.AutoHashMapUnmanaged(u64, *AIBinder) = .empty,
@@ -684,12 +688,15 @@ const Runtime = struct {
     /// nested-transaction parent tracking.
     servicing: Io.Mutex = .init,
 
+    const max_active_transactions = 128;
+
     const Work = union(enum) {
         transaction: *Incoming,
         oneway: *SerialQueue,
         deaths: std.ArrayListUnmanaged(*DeathLink),
         release: *AIBinder,
-        callback: *const fn () void,
+        property: u64,
+        discard: *AParcel,
     };
 
     const DeathLink = struct {
@@ -725,7 +732,7 @@ const Runtime = struct {
     var connect_mu: Io.Mutex = .init;
     threadlocal var current_routing: u64 = 0;
     /// True while this thread runs an incoming on_transact (IPCThreadState::isServingCall):
-    /// the calling identity is the caller's, even for oneway calls that carry no routing id.
+    /// the calling identity is the caller's, including oneway calls with no waiting caller.
     threadlocal var current_in_transaction: bool = false;
     /// Caller identity of the transaction the current thread is servicing
     /// (AIBinder_getCallingUid/Pid), valid only inside an onTransact callback.
@@ -866,6 +873,9 @@ const Runtime = struct {
             alloc.free(body);
             if (!keep) break;
         }
+        // A protocol failure must retire broker ownership too; merely stopping
+        // the reader leaves a live socket with permanently charged deliveries.
+        r.conn.stream.shutdown(r.io, .both) catch {};
         r.onDisconnected();
     }
 
@@ -925,7 +935,7 @@ const Runtime = struct {
                     c.mu.unlock(g_io);
                 } else {
                     const discarded = r.inflate(rest, rep.object_count, rep.data_len, fds) catch return true;
-                    discarded.destroy();
+                    r.submitWork(.{ .discard = discarded });
                 }
             },
             .service_result => {
@@ -970,7 +980,7 @@ const Runtime = struct {
                 const rel = std.mem.bytesToValue(Server.Message.ObjectReleased, body[0..@sizeOf(Server.Message.ObjectReleased)]);
                 r.maybeRelease(rel.object.value, rel.uses);
             },
-            .property_changed => @import("framework_jni.zig").onPropertyChanged(),
+            .property_changed => r.submitWork(.{ .property = header.routing_id }),
             .protocol_error => return false,
             .shutdown => return false,
             else => {
@@ -1040,7 +1050,11 @@ const Runtime = struct {
                 .oneway => |queue| r.serialDispatch(queue),
                 .deaths => |links| deliverDeaths(links),
                 .release => |binder| dropLocal(binder),
-                .callback => |callback| callback(),
+                .property => |routing_id| {
+                    @import("framework_jni.zig").onPropertyChanged();
+                    r.completeDelivery(routing_id);
+                },
+                .discard => |parcel| parcel.destroy(),
             }
         }
     }
@@ -1054,11 +1068,12 @@ const Runtime = struct {
         // Borrow its attachment or release the one acquired for this dispatch.
         const detach = attachCallbackThread();
         defer if (detach) detachCurrentThread();
+        const oneway = in.flags & FLAG_ONEWAY != 0;
         defer {
             in.parcel.destroy();
+            r.completeDelivery(in.routing_id);
             alloc.destroy(in);
         }
-        const oneway = in.flags & FLAG_ONEWAY != 0;
         var out = AParcel.create();
         defer out.destroy();
         var status = Client.Message.Reply.Status.ok;
@@ -1095,7 +1110,7 @@ const Runtime = struct {
             const prev_stack = serving_stack;
             current_flags = in.flags;
             serving_stack = &prev_flags;
-            current_routing = in.routing_id;
+            current_routing = if (oneway) 0 else in.routing_id;
             current_in_transaction = true;
             current_caller_uid = in.caller_uid;
             // Oneway transactions have no waiting caller; AOSP reports pid 0.
@@ -1109,6 +1124,10 @@ const Runtime = struct {
             current_caller_pid = prev_pid;
         }
         if (!oneway) r.sendReply(in.routing_id, status, binder_status, out);
+    }
+
+    fn completeDelivery(r: *Runtime, routing_id: u64) void {
+        r.sendFrame(.{ .tag = .delivery_done, .bytes_len = 0, .routing_id = routing_id }, &.{}, &.{}) catch {};
     }
 
     fn sendReply(r: *Runtime, routing_id: u64, requested_status: Client.Message.Reply.Status, binder_status: i32, out: *AParcel) void {
@@ -1161,7 +1180,9 @@ const Runtime = struct {
     fn inflate(r: *Runtime, rest: []const u8, object_count: u32, data_len: u32, fds: []fd_t) !*AParcel {
         const entries_len = @as(usize, object_count) * @sizeOf(ObjectEntry);
         const p = AParcel.create();
-        errdefer p.destroy();
+        // Even malformed input can own local C++ objects whose destruction
+        // transacts. Keep all such cleanup off the sole socket reader.
+        errdefer r.submitWork(.{ .discard = p });
         p.owns_fds = true;
         p.fds.appendSlice(alloc, fds) catch @panic("oom");
         if (rest.len != entries_len + data_len) return error.Malformed;
@@ -1253,9 +1274,10 @@ const Runtime = struct {
         var created = false;
         const q = r.oneway_queues.get(target_id) orelse blk: {
             const tgt = r.locals.get(target_id) orelse {
+                // The missing target still owes completion and input cleanup.
+                // Dispatch it on a worker so object destructors cannot block replies.
+                r.submitWorkLocked(.{ .transaction = in });
                 r.mu.unlock(g_io);
-                in.parcel.destroy();
-                alloc.destroy(in);
                 return;
             };
             _ = tgt.strong.fetchAdd(1, .monotonic);
@@ -1401,8 +1423,18 @@ const Runtime = struct {
         if (target.dead.load(.monotonic) or r.disconnected.load(.monotonic)) return STATUS_DEAD_OBJECT;
         const check = in.wireStatus();
         if (check != STATUS_OK) return check;
-        const oneway = flags & FLAG_ONEWAY != 0;
-        const request_id: u64 = if (oneway) 0 else r.next_request_id.fetchAdd(1, .monotonic);
+        const request_id = r.next_request_id.fetchAdd(1, .monotonic);
+        const call = alloc.create(PendingCall) catch @panic("oom");
+        call.* = .{ .kind = .reply, .counted_transaction = true };
+        r.mu.lockUncancelable(g_io);
+        if (r.active_transactions >= max_active_transactions or r.disconnected.load(.monotonic)) {
+            r.mu.unlock(g_io);
+            alloc.destroy(call);
+            return if (r.disconnected.load(.monotonic)) STATUS_DEAD_OBJECT else STATUS_FAILED_TRANSACTION;
+        }
+        r.active_transactions += 1;
+        r.pending.put(alloc, request_id, call) catch @panic("oom");
+        r.mu.unlock(g_io);
 
         var fds = std.ArrayListUnmanaged(fd_t).empty;
         defer fds.deinit(alloc);
@@ -1422,14 +1454,6 @@ const Runtime = struct {
         for (wire) |e| body.appendSlice(alloc, std.mem.asBytes(&e)) catch @panic("oom");
         body.appendSlice(alloc, in.data.items) catch @panic("oom");
 
-        var call: ?*PendingCall = null;
-        if (!oneway) {
-            call = alloc.create(PendingCall) catch @panic("oom");
-            call.?.* = .{ .kind = .reply };
-            r.mu.lockUncancelable(g_io);
-            r.pending.put(alloc, request_id, call.?) catch @panic("oom");
-            r.mu.unlock(g_io);
-        }
         r.sendFrame(.{
             .tag = Client.Message.Tag.transact,
             .bytes_len = @intCast(body.items.len),
@@ -1439,11 +1463,12 @@ const Runtime = struct {
             // sendFrame shuts down the socket on failure. Let its reader finish
             // an already-arriving reply or mark this call failed before freeing
             // it; it may already have removed the pointer from pending.
-            if (call) |c| return r.awaitReply(c, out);
-            return STATUS_DEAD_OBJECT;
+            return r.awaitReply(call, out);
         };
-        if (oneway) return STATUS_OK;
-        return r.awaitReply(call.?, out);
+        // Oneway waits only for admission, not handler completion. The broker
+        // reports an exhausted recipient with the same FAILED_TRANSACTION status
+        // as pinned IPCThreadState.waitForResponse's BR_FAILED_REPLY path.
+        return r.awaitReply(call, out);
     }
 
     /// In-process dispatch to a local object (self-call short-circuit). Needs no
@@ -1502,6 +1527,11 @@ const Runtime = struct {
 
     fn awaitReply(r: *Runtime, call: *PendingCall, out: ?*AParcel) i32 {
         defer {
+            if (call.counted_transaction) {
+                r.mu.lockUncancelable(g_io);
+                r.active_transactions -= 1;
+                r.mu.unlock(g_io);
+            }
             call.nested.deinit(alloc);
             alloc.destroy(call);
         }
@@ -2587,11 +2617,6 @@ export fn AServiceManager_isDeclared(instance: [*:0]const u8) callconv(.c) bool 
     const b = lookup(instance, false) orelse return false;
     AIBinder_decStrong(b);
     return true;
-}
-
-/// Framework callbacks may transact; never execute them on the socket reader.
-pub fn dispatchFrameworkCallback(callback: *const fn () void) void {
-    Runtime.get().submitWork(.{ .callback = callback });
 }
 
 // ----- ABinderProcess (AZKB dispatch pool and independent socket reader)

@@ -25,6 +25,7 @@ using namespace std::chrono_literals;
 constexpr uint32_t EXCHANGE = 1, NESTED = 2, GRAPHICS = 3;
 constexpr uint32_t HOLD_WORKER = 8, MONITOR_POOL = 9, BLOB_ROUND_TRIP = 10;
 constexpr uint32_t RETAIN_RELEASE_TARGET = 12, DROP_RELEASE_TARGET = 13;
+constexpr uint32_t QUOTA_ONEWAY = 14, QUOTA_PROGRESS = 15;
 constexpr int POOL_WORKERS = 32;
 static void pass(const char *s) { std::cout << "PASS " << s << std::endl; }
 struct Listener final : gui::BnFpsListener {
@@ -92,6 +93,7 @@ struct RemoteTracked final : BBinder {
   ~RemoteTracked() override { ++remoteDestroyed; }
 };
 struct Service final : BBinder {
+  std::atomic<int> quotaCompleted = 0;
   std::mutex releaseMutex;
   sp<IBinder> releaseTarget;
   int ownUid = IPCThreadState::self()->getCallingUid();
@@ -104,6 +106,21 @@ struct Service final : BBinder {
   }
   status_t onTransact(uint32_t code, const Parcel &in, Parcel *out,
                       uint32_t flags) override {
+    if (code == QUOTA_ONEWAY) {
+      assert(flags & IBinder::FLAG_ONEWAY);
+      const int sequence = in.readInt32();
+      assert(sequence == quotaCompleted);
+      if (sequence == 0) {
+        const int fd = in.readFileDescriptor();
+        pollfd ready{fd, POLLIN, 0};
+        assert(poll(&ready, 1, 10000) == 1);
+        char byte;
+        assert(read(fd, &byte, 1) == 1);
+      }
+      ++quotaCompleted;
+      return OK;
+    }
+    if (code == QUOTA_PROGRESS) return out->writeInt32(quotaCompleted);
     if (code == RETAIN_RELEASE_TARGET) {
       std::lock_guard lock(releaseMutex);
       assert(!releaseTarget);
@@ -359,6 +376,51 @@ static void poolMonitorTest(const sp<IBinder>& server) {
   for (int fd : {release[0], release[1], ready[0], ready[1], monitor[0], monitor[1], start[0], start[1]}) close(fd);
   pass("Watchdog pool monitor blocks at capacity and resumes when one worker completes");
 }
+static void onewayQuotaTest(const sp<IBinder>& server) {
+  int gate[2];
+  assert(pipe2(gate, O_CLOEXEC) == 0);
+  int accepted = 0;
+  status_t rejected = OK;
+  const auto start = std::chrono::steady_clock::now();
+  for (; accepted < 4096; ++accepted) {
+    Parcel input;
+    assert(input.writeInt32(accepted) == OK);
+    if (accepted == 0) assert(input.writeFileDescriptor(gate[0], false) == OK);
+    rejected = server->transact(QUOTA_ONEWAY, input, nullptr, IBinder::FLAG_ONEWAY);
+    if (rejected != OK) break;
+  }
+  Parcel progress, response;
+  assert(server->transact(QUOTA_PROGRESS, progress, &response) == OK);
+  const bool controlProgress = response.readInt32() == 0;
+  const bool prompt = std::chrono::steady_clock::now() - start < 5s;
+  // Always unblock and drain the receiver before asserting the negative case.
+  assert(write(gate[1], "x", 1) == 1);
+  close(gate[0]);
+  close(gate[1]);
+  int completed = 0;
+  for (int i = 0; i < 500 && completed != accepted; ++i) {
+    Parcel request, reply;
+    assert(server->transact(QUOTA_PROGRESS, request, &reply) == OK);
+    completed = reply.readInt32();
+    if (completed != accepted) std::this_thread::sleep_for(10ms);
+  }
+  assert(completed == accepted);
+  const bool bounded = accepted > 0 && accepted < 4096;
+  assert(bounded && rejected == FAILED_TRANSACTION && prompt && controlProgress);
+  // Completion returns admission credit and preserves FIFO through the retry.
+  Parcel retry;
+  assert(retry.writeInt32(accepted) == OK);
+  assert(server->transact(QUOTA_ONEWAY, retry, nullptr, IBinder::FLAG_ONEWAY) == OK);
+  for (int i = 0; i < 500 && completed != accepted + 1; ++i) {
+    Parcel request, reply;
+    assert(server->transact(QUOTA_PROGRESS, request, &reply) == OK);
+    completed = reply.readInt32();
+    if (completed != accepted + 1) std::this_thread::sleep_for(10ms);
+  }
+  assert(completed == accepted + 1);
+  pass("oneway admission bounded until handler completion; synchronous progress and FIFO retry");
+}
+
 int main(int argc, char **argv) {
   if (argc > 1 && std::string(argv[1]) == "server") {
     assert(ABinderProcess_setThreadPoolMaxThreadCount(POOL_WORKERS - 1));
@@ -432,6 +494,7 @@ int main(int argc, char **argv) {
   auto server = IBinder::fromNative(raw);
   releaseReaderProgressTest(server);
   poolMonitorTest(server);
+  onewayQuotaTest(server);
   {
     const std::optional<std::vector<std::optional<std::string>>> values{
         std::vector<std::optional<std::string>>{std::nullopt, std::string{},

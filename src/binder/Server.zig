@@ -35,7 +35,8 @@ pub const Message = struct {
         /// `transact`: when non-zero, the peer request id whose waiting
         /// thread must execute this nested call.
         request_id: u64 = 0,
-        /// `transact`: broker routing id the peer echoes in its `reply`.
+        /// `transact`/`property_changed`: id echoed in `reply` (sync only),
+        /// then `delivery_done` after the handler and input cleanup finish.
         routing_id: u64 = 0,
     };
 
@@ -262,8 +263,8 @@ pub fn serveObjectReleased(s: *const Server, object: ObjectRef, uses: u64) Write
     try s.out.flush();
 }
 
-pub fn servePropertyChanged(s: *const Server, name: []const u8) Writer.Error!void {
-    try s.serveMessageHeader(.{ .tag = .property_changed, .bytes_len = @intCast(name.len) });
+pub fn servePropertyChanged(s: *const Server, name: []const u8, routing_id: u64) Writer.Error!void {
+    try s.serveMessageHeader(.{ .tag = .property_changed, .bytes_len = @intCast(name.len), .routing_id = routing_id });
     try s.out.writeAll(name);
     try s.out.flush();
 }

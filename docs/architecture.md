@@ -83,6 +83,25 @@ layer supplies the Android C-library interface and loads these files.
 
 ### Hosted Binder
 
+AZKB protocol v5 admits remote calls against per-recipient and session-wide
+byte, descriptor and call-count allowances. One-way calls receive an immediate
+admission reply; exhausted transaction admission returns `FAILED_TRANSACTION`
+without waiting for the handler or retiring a healthy service. The receiver
+returns `delivery_done` after handler and parcel cleanup, including cleanup
+after a synchronous reply. Property callbacks and service-registration callbacks
+also consume delivery credit. An unresponsive notification recipient is retired
+explicitly; notifications are not coalesced. Half the allowance remains available
+for synchronous work when asynchronous admission is full.
+
+The default recipient allowance is 32 MiB, 4,096 deliveries and 1,024 descriptor
+charges; its asynchronous half is 16 MiB, 2,048 deliveries and 512 charges.
+Session-wide delivery allowances are eight times these values. Accounting charges
+wire descriptors and every decoded descriptor entry independently, plus payload
+and conservative entry metadata. Outgoing remote transactions are capped at 128
+through reply consumption. Each socket outbox is capped at 64 MiB, 8,192 frames
+and 2,048 descriptors. Broker-wide storage, metadata and retained release/death
+callback limits are subsequent resource-hardening work.
+
 Local `Binder.transact` calls `onTransact` directly, as on Android. Every
 launch is a session: the launcher starts one `azk-binder-broker` process and
 one headless system process (`androlinzberg --system-server`, uid 1000), and

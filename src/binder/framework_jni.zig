@@ -214,11 +214,11 @@ fn dispatchChangeCallbacks() void {
     if (env != null) callChangeCallbacks(env);
 }
 
-/// Keep property notifications on the existing attached Binder pool. Callbacks
-/// may transact, so the broker reader must remain available to carry replies.
+/// Called on an attached Binder worker. The runtime returns admission credit
+/// only after these callbacks finish; every notification is delivered.
 pub fn onPropertyChanged() void {
     if (!g_change_callbacks_armed.load(.acquire)) return;
-    ndk.dispatchFrameworkCallback(dispatchChangeCallbacks);
+    dispatchChangeCallbacks();
 }
 
 fn nativeAddChangeCallback(_: JNIEnvPtr, _: jni.jclass) callconv(.c) void {

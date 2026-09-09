@@ -28,6 +28,7 @@ const prop_area = @import("prop_area.zig");
 const ObjectRef = Client.ObjectRef;
 const ObjectEntry = Client.ObjectEntry;
 const limits = Client.limits;
+pub const DeliveryBudget = @import("DeliveryBudget.zig");
 
 pub const log = std.log.scoped(.binder_broker);
 
@@ -62,6 +63,8 @@ waiters: std.ArrayList(Waiter) = .empty,
 service_callbacks: std.StringHashMapUnmanaged(std.ArrayListUnmanaged(u64)) = .empty,
 calls: std.AutoHashMapUnmanaged(u64, Call) = .empty,
 next_routing_id: u64 = 1,
+deliveries: DeliveryBudget = .{},
+delivery_limits: DeliveryBudget.Limits,
 
 /// Bytes a peer may have queued before it is considered unresponsive.
 pub const max_outbox_bytes: usize = 64 * 1024 * 1024;
@@ -76,6 +79,7 @@ pub const Options = struct {
     prop_area_path: []const u8,
     first_app_uid: u32 = Client.default_app_uid,
     kernel_backlog: u31 = 16,
+    delivery_limits: DeliveryBudget.Limits = .{},
 };
 
 const LocalKey = struct { peer: u32, local_id: u64 };
@@ -87,6 +91,9 @@ const Call = struct {
     caller_request: u64,
     target: u32,
     parent: u64,
+    asynchronous: bool,
+    replied: bool = false,
+    cost: DeliveryBudget.Usage,
 };
 
 const Object = struct {
@@ -141,6 +148,8 @@ const Peer = struct {
     out_cond: Io.Condition = .init,
     outbox: std.ArrayList(Frame) = .empty,
     outbox_bytes: usize = 0,
+    outbox_fds: usize = 0,
+    deliveries: DeliveryBudget = .{},
     closing: bool = false,
     writer_done: bool = false,
 
@@ -148,11 +157,14 @@ const Peer = struct {
         const io = p.broker.io;
         p.out_mutex.lockUncancelable(io);
         defer p.out_mutex.unlock(io);
-        if (p.closing or p.outbox_bytes + frame.bytes.len > max_outbox_bytes) {
+        if (p.closing or p.outbox_bytes + frame.bytes.len > max_outbox_bytes or
+            p.outbox.items.len >= 8192 or p.outbox_fds + frame.fds.len > 2048)
+        {
             p.broker.destroyFrame(frame);
             if (!p.closing) {
                 log.warn("peer {d} unresponsive; disconnecting", .{p.id});
                 p.closing = true;
+                p.conn.stream.shutdown(io, .both) catch {};
             }
             p.out_cond.signal(io);
             return;
@@ -164,6 +176,7 @@ const Peer = struct {
             return;
         };
         p.outbox_bytes += frame.bytes.len;
+        p.outbox_fds += frame.fds.len;
         p.out_cond.signal(io);
     }
 
@@ -198,6 +211,7 @@ pub fn init(gpa: Allocator, io: Io, options: Options) !*Broker {
         .cookie = cookie,
         .system_cookie = system_cookie,
         .props = props,
+        .delivery_limits = options.delivery_limits,
         .next_app_uid = options.first_app_uid,
     };
     return b;
@@ -311,6 +325,8 @@ pub fn shutdown(b: *Broker) void {
 }
 
 pub fn deinit(b: *Broker) void {
+    assert(b.calls.count() == 0);
+    assert(b.deliveries.total.count == 0 and b.deliveries.total.bytes == 0 and b.deliveries.total.fds == 0);
     const gpa = b.gpa;
     const io = b.io;
     b.listener.deinit(io);
@@ -420,6 +436,7 @@ fn writerTask(peer: *Peer) Io.Cancelable!void {
         }
         const frame = peer.outbox.orderedRemove(0);
         peer.outbox_bytes -= frame.bytes.len;
+        peer.outbox_fds -= frame.fds.len;
         peer.out_mutex.unlock(io);
         const ok = writeFrame(peer, frame);
         b.destroyFrame(frame);
@@ -429,6 +446,7 @@ fn writerTask(peer: *Peer) Io.Cancelable!void {
             for (peer.outbox.items) |f| b.destroyFrame(f);
             peer.outbox.clearRetainingCapacity();
             peer.outbox_bytes = 0;
+            peer.outbox_fds = 0;
             // Unblock the reader (it removes the peer) before publishing completion.
             peer.conn.stream.shutdown(io, .both) catch {};
             peer.writer_done = true;
@@ -525,6 +543,7 @@ fn serveLoop(peer: *Peer) ServeError!void {
                 try handleReply(peer, header, body, fds);
                 fds_owned = false;
             },
+            .delivery_done => try handleDeliveryDone(peer, header, body),
             .release => try handleRelease(peer, header, body),
             .release_ack => try handleReleaseAck(peer, body),
             .link_death => try handleLink(peer, header, body, true),
@@ -756,10 +775,48 @@ fn findNestRequest(b: *Broker, parent: u64, target_peer: u32) u64 {
     var guard: usize = 0;
     while (current != 0 and guard < 4096) : (guard += 1) {
         const call = b.calls.get(current) orelse return 0;
-        if (call.caller == target_peer) return call.caller_request;
+        if (!call.asynchronous and call.caller == target_peer) return call.caller_request;
         current = call.parent;
     }
     return 0;
+}
+
+/// Includes wire copies and conservative decoded-entry metadata. Every FD
+/// entry is charged independently: repeated ordinals still duplicate descriptors
+/// in AParcel.inflate. All delivery accounting is under the broker mutex.
+fn deliveryCost(payload: Client.Payload, fd_count: u16) DeliveryBudget.Usage {
+    var descriptors: usize = fd_count;
+    for (0..payload.entries.len) |i| {
+        if (payload.entry(i).kind == .file_descriptor) descriptors += 1;
+    }
+    return .{ .bytes = 128 + payload.data.len + payload.entries.len * 128, .fds = descriptors, .count = 1 };
+}
+
+fn beginDelivery(b: *Broker, target: *Peer, caller: u32, request: u64, parent: u64, asynchronous: bool, cost: DeliveryBudget.Usage) !?u64 {
+    if (!target.deliveries.fits(cost, asynchronous, b.delivery_limits) or
+        !b.deliveries.fits(cost, asynchronous, DeliveryBudget.global_limits)) return null;
+    const id = b.next_routing_id;
+    b.next_routing_id += 1;
+    try b.calls.put(b.gpa, id, .{ .caller = caller, .caller_request = request, .target = target.id, .parent = parent, .asynchronous = asynchronous, .cost = cost });
+    target.deliveries.add(cost, asynchronous);
+    b.deliveries.add(cost, asynchronous);
+    return id;
+}
+
+fn finishDelivery(b: *Broker, id: u64) void {
+    const call = b.calls.fetchRemove(id).?.value;
+    if (b.peers.get(call.target)) |target| target.deliveries.subtract(call.cost, call.asynchronous);
+    b.deliveries.subtract(call.cost, call.asynchronous);
+}
+
+fn handleDeliveryDone(peer: *Peer, header: Client.Message.Header, body: []const u8) ServeError!void {
+    const b = peer.broker;
+    if (body.len != 0 or header.request_id != 0) return protocolError(peer, "malformed delivery completion");
+    b.mutex.lockUncancelable(b.io);
+    defer b.mutex.unlock(b.io);
+    const call = b.calls.get(header.routing_id) orelse return protocolError(peer, "completion for unknown delivery");
+    if (call.target != peer.id or (!call.asynchronous and !call.replied)) return protocolError(peer, "completion from wrong recipient or before synchronous reply");
+    b.finishDelivery(header.routing_id);
 }
 
 fn handleTransact(peer: *Peer, header: Client.Message.Header, body: []const u8, fds: []Io.File) ServeError!void {
@@ -770,14 +827,15 @@ fn handleTransact(peer: *Peer, header: Client.Message.Header, body: []const u8, 
     const payload = Client.Payload.parse(body[@sizeOf(Client.Message.Transact)..], t.object_count, t.data_len) catch
         return protocolError(peer, "malformed transact payload");
     const oneway = (t.flags & 1) != 0;
-    if (!oneway and header.request_id == 0) return protocolError(peer, "synchronous transact without request id");
+    if (header.request_id == 0) return protocolError(peer, "transact without request id");
 
     // The reserved context object is the service manager: the broker answers
     // the stable IServiceManager AIDL directly rather than routing to an owner.
     if (t.target.kind == .remote and t.target.value == Client.context_object_id) {
+        try handleServiceManagerTransact(peer, header, t, payload);
         b.closeAll(fds);
         gpa.free(fds);
-        return handleServiceManagerTransact(peer, header, t, payload);
+        return;
     }
 
     b.mutex.lockUncancelable(io);
@@ -788,23 +846,35 @@ fn handleTransact(peer: *Peer, header: Client.Message.Header, body: []const u8, 
     };
     if (header.routing_id != 0) {
         const parent = b.calls.get(header.routing_id) orelse return protocolError(peer, "unknown parent routing id");
-        if (parent.target != peer.id) return protocolError(peer, "parent routing id belongs to another peer");
+        if (parent.target != peer.id or parent.asynchronous or parent.replied) return protocolError(peer, "invalid synchronous parent routing id");
     }
     const owner: ?*Peer = if (object.dead) null else b.peers.get(object.owner);
     if (owner == null or !owner.?.alive) {
         try b.discardEntries(peer, payload);
+        peer.enqueue(try b.encode(Server.serveReply, .{Server.ReplyOptions{
+            .request_id = header.request_id,
+            .status = .dead_object,
+            .handled = false,
+        }}));
         b.closeAll(fds);
         gpa.free(fds);
-        if (!oneway) {
-            peer.enqueue(try b.encode(Server.serveReply, .{Server.ReplyOptions{
-                .request_id = header.request_id,
-                .status = .dead_object,
-                .handled = false,
-            }}));
-        }
         return;
     }
     const target = owner.?;
+    const routing_id = (try b.beginDelivery(target, peer.id, header.request_id, header.routing_id, oneway, deliveryCost(payload, header.fd_count))) orelse {
+        // Pinned IPCThreadState.waitForResponse returns BR_FAILED_REPLY for
+        // failed admission, including oneway. A busy target remains usable.
+        try b.discardEntries(peer, payload);
+        peer.enqueue(try b.encode(Server.serveReply, .{Server.ReplyOptions{
+            .request_id = header.request_id,
+            .status = .failed,
+            .handled = false,
+        }}));
+        b.closeAll(fds);
+        gpa.free(fds);
+        return;
+    };
+    errdefer b.finishDelivery(routing_id);
     var delivered: std.ArrayList(*Object) = .empty;
     defer delivered.deinit(gpa);
     const entries = b.translateEntries(peer, target, payload, header.fd_count, &delivered) catch |err| switch (err) {
@@ -813,19 +883,15 @@ fn handleTransact(peer: *Peer, header: Client.Message.Header, body: []const u8, 
     };
     defer gpa.free(entries);
     errdefer b.undeliverAll(target, delivered.items);
-    var routing_id: u64 = 0;
-    var nest_request: u64 = 0;
-    if (!oneway) {
-        routing_id = b.next_routing_id;
-        b.next_routing_id += 1;
-        try b.calls.put(gpa, routing_id, .{
-            .caller = peer.id,
-            .caller_request = header.request_id,
-            .target = target.id,
-            .parent = header.routing_id,
-        });
-        nest_request = b.findNestRequest(header.routing_id, target.id);
-    }
+    const nest_request = if (oneway) 0 else b.findNestRequest(header.routing_id, target.id);
+    // Pinned IPCThreadState.waitForResponse accepts BR_TRANSACTION_COMPLETE
+    // without waiting for a oneway handler. Reserve first, then acknowledge.
+    const admission = if (oneway) try b.encode(Server.serveReply, .{Server.ReplyOptions{
+        .request_id = header.request_id,
+        .status = .ok,
+        .handled = true,
+    }}) else null;
+    errdefer if (admission) |ack| b.destroyFrame(ack);
     var frame = try b.encode(Server.serveTransact, .{Server.TransactOptions{
         .target = if (object.owner == target.id) ObjectRef.local(object.local_id) else ObjectRef.remote(object.id),
         .code = t.code,
@@ -840,6 +906,7 @@ fn handleTransact(peer: *Peer, header: Client.Message.Header, body: []const u8, 
     }});
     frame.fds = fds;
     target.enqueue(frame);
+    if (admission) |ack| peer.enqueue(ack);
 }
 
 fn handleReply(peer: *Peer, header: Client.Message.Header, body: []const u8, fds: []Io.File) ServeError!void {
@@ -852,11 +919,11 @@ fn handleReply(peer: *Peer, header: Client.Message.Header, body: []const u8, fds
     b.mutex.lockUncancelable(io);
     defer b.mutex.unlock(io);
     const call = b.calls.get(header.routing_id) orelse return protocolError(peer, "reply for unknown call");
-    if (call.target != peer.id) return protocolError(peer, "reply from the wrong peer");
+    if (call.target != peer.id or call.asynchronous or call.replied) return protocolError(peer, "reply from wrong peer, for asynchronous delivery or already answered");
     const caller = b.peers.get(call.caller);
     if (caller == null or !caller.?.alive) {
-        _ = b.calls.remove(header.routing_id);
         try b.discardEntries(peer, payload);
+        b.calls.getPtr(header.routing_id).?.replied = true;
         b.closeAll(fds);
         gpa.free(fds);
         return;
@@ -879,7 +946,7 @@ fn handleReply(peer: *Peer, header: Client.Message.Header, body: []const u8, fds
         .fd_count = header.fd_count,
     }});
     frame.fds = fds;
-    _ = b.calls.remove(header.routing_id);
+    b.calls.getPtr(header.routing_id).?.replied = true;
     caller.?.enqueue(frame);
 }
 
@@ -1085,7 +1152,15 @@ fn notifyServiceCallbacks(b: *Broker, name: []const u8, object: *Object) ServeEr
         try smWriteI32(&data, gpa, 0x53595354); // 'SYST'
         try smWriteString16(&data, gpa, "android.os.IServiceCallback");
         try smWriteString16(&data, gpa, name);
+        const cost: DeliveryBudget.Usage = .{ .bytes = data.items.len + 256, .count = 1 };
+        const routing_id = (try b.beginDelivery(owner, 0, 0, 0, true, cost)) orelse {
+            log.warn("peer {d} exhausted service callback admission; disconnecting", .{owner.id});
+            owner.requestClose();
+            continue;
+        };
+        errdefer b.finishDelivery(routing_id);
         const ref = try b.deliverRef(owner, object);
+        errdefer if (ref.kind == .remote) b.undeliverAll(owner, &.{object});
         const off: u32 = @intCast(data.items.len);
         try smWriteI32(&data, gpa, 1);
         try entries.append(gpa, .{ .offset = off, .kind = binderEntryKind(ref.kind), .value = ref.value });
@@ -1095,7 +1170,7 @@ fn notifyServiceCallbacks(b: *Broker, name: []const u8, object: *Object) ServeEr
             .flags = 1, // FLAG_ONEWAY
             .caller_pid = 0,
             .caller_uid = 1000, // the service manager's identity
-            .routing_id = 0,
+            .routing_id = routing_id,
             .entries = entries.items,
             .data = data.items,
             .fd_count = 0,
@@ -1588,7 +1663,17 @@ fn handleSetProperty(peer: *Peer, header: Client.Message.Header, body: []const u
     var it = b.peers.valueIterator();
     while (it.next()) |other| {
         if (!other.*.alive or !other.*.hello_done) continue;
-        other.*.enqueue(try b.encode(Server.servePropertyChanged, .{name}));
+        const target = other.*;
+        const cost: DeliveryBudget.Usage = .{ .bytes = name.len + 128, .count = 1 };
+        const routing_id = (try b.beginDelivery(target, 0, 0, 0, true, cost)) orelse {
+            // Property notifications are not coalesced or silently lost. Retire
+            // an unresponsive subscription; healthy peers continue independently.
+            log.warn("peer {d} exhausted property callback admission; disconnecting", .{target.id});
+            target.requestClose();
+            continue;
+        };
+        errdefer b.finishDelivery(routing_id);
+        target.enqueue(try b.encode(Server.servePropertyChanged, .{ name, routing_id }));
     }
 }
 
@@ -1600,26 +1685,25 @@ fn removePeer(b: *Broker, peer: *Peer) void {
     peer.alive = false;
     _ = b.peers.remove(peer.id);
 
-    // Calls targeting the peer fail; calls it made are forgotten.
+    // Fail synchronous callers. Keep dead-caller deliveries charged until the
+    // recipient finishes: disconnecting a producer must not reset its backlog.
     var dead_calls: std.ArrayList(u64) = .empty;
     defer dead_calls.deinit(gpa);
     var calls = b.calls.iterator();
     while (calls.next()) |entry| {
         const call = entry.value_ptr.*;
         if (call.target == peer.id) {
-            if (b.peers.get(call.caller)) |caller| {
+            if (!call.asynchronous and !call.replied) if (b.peers.get(call.caller)) |caller| {
                 if (caller.alive) caller.enqueue(b.encode(Server.serveReply, .{Server.ReplyOptions{
                     .request_id = call.caller_request,
                     .status = .dead_object,
                     .handled = false,
                 }}) catch continue);
-            }
-            dead_calls.append(gpa, entry.key_ptr.*) catch {};
-        } else if (call.caller == peer.id) {
+            };
             dead_calls.append(gpa, entry.key_ptr.*) catch {};
         }
     }
-    for (dead_calls.items) |id| _ = b.calls.remove(id);
+    for (dead_calls.items) |id| b.finishDelivery(id);
 
     // Registry names, waiters and notification callbacks.
     b.purgeServiceCallbacks(peer.id);

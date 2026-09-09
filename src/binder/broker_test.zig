@@ -22,6 +22,10 @@ const Harness = struct {
     group: Io.Group = .init,
 
     fn start(gpa: std.mem.Allocator, io: Io) !*Harness {
+        return startWithLimits(gpa, io, .{});
+    }
+
+    fn startWithLimits(gpa: std.mem.Allocator, io: Io, limits: Broker.DeliveryBudget.Limits) !*Harness {
         var buf: [64]u8 = undefined;
         var nonce_bytes: [8]u8 = undefined;
         io.random(&nonce_bytes);
@@ -29,7 +33,7 @@ const Harness = struct {
         const path = try gpa.dupe(u8, try std.fmt.bufPrint(&buf, "/tmp/azk-binder-test-{x}.sock", .{nonce}));
         var prop_buf: [64]u8 = undefined;
         const prop_path = try gpa.dupe(u8, try std.fmt.bufPrint(&prop_buf, "/tmp/azk-binder-test-{x}.props", .{nonce}));
-        const broker = try Broker.init(gpa, io, .{ .socket_path = path, .cookie = cookie, .system_cookie = system_cookie, .prop_area_path = prop_path });
+        const broker = try Broker.init(gpa, io, .{ .socket_path = path, .cookie = cookie, .system_cookie = system_cookie, .prop_area_path = prop_path, .delivery_limits = limits });
         const h = try gpa.create(Harness);
         h.* = .{ .broker = broker, .path = path, .prop_path = prop_path };
         try h.group.concurrent(io, runBroker, .{broker});
@@ -132,6 +136,17 @@ fn expectReleased(peer: *Peer, local_id: u64, uses: u64) !void {
     try testing.expectEqual(local_id, released.object.value);
     try testing.expectEqual(uses, released.uses);
     try peer.client.serveObjectRefMessage(.release_ack, ObjectRef.local(local_id));
+}
+
+fn expectAdmission(peer: *Peer, id: u64, status: Client.Message.Reply.Status) !void {
+    const msg = try peer.next();
+    defer testing.allocator.free(msg.fds);
+    try testing.expectEqual(Server.Message.Tag.reply, msg.header.tag);
+    try testing.expectEqual(id, msg.header.request_id);
+    const rep, const payload = try replyBody(msg.body);
+    try testing.expectEqual(status, rep.status);
+    try testing.expectEqual(@as(usize, 0), payload.data.len);
+    try testing.expectEqual(@as(usize, 0), payload.entries.len);
 }
 
 test "hello with a bad cookie is rejected" {
@@ -246,6 +261,7 @@ test "registry, transaction routing, nesting, oneway, release and death" {
         try testing.expectEqual(@as(u64, 42), t.target.value);
     }
     try client.client.serveReply(.{ .routing_id = nested_routing, .data = "ok" });
+    try client.client.serveDeliveryDone(nested_routing);
     {
         const msg = try server.next();
         defer gpa.free(msg.fds);
@@ -258,6 +274,7 @@ test "registry, transaction routing, nesting, oneway, release and death" {
     // Reply to the outer call returns the callback to its owner as local.
     const reply_entries = [_]ObjectEntry{.{ .offset = 0, .kind = .binder_remote, .value = callback_gid }};
     try server.client.serveReply(.{ .routing_id = routing, .entries = &reply_entries, .data = "done" });
+    try server.client.serveDeliveryDone(routing);
     {
         const msg = try client.next();
         defer gpa.free(msg.fds);
@@ -268,13 +285,15 @@ test "registry, transaction routing, nesting, oneway, release and death" {
         try testing.expectEqual(@as(u64, 42), payload.entry(0).value);
     }
 
-    // Oneway calls carry no routing id and stay ordered.
-    try client.client.serveTransact(.{ .target = ObjectRef.remote(svc_gid), .code = 3, .flags = 1, .data = "a" });
-    try client.client.serveTransact(.{ .target = ObjectRef.remote(svc_gid), .code = 4, .flags = 1, .data = "b" });
+    // Oneway admission replies precede handler completion; deliveries stay ordered.
+    try client.client.serveTransact(.{ .target = ObjectRef.remote(svc_gid), .code = 3, .flags = 1, .request_id = 13, .data = "a" });
+    try client.client.serveTransact(.{ .target = ObjectRef.remote(svc_gid), .code = 4, .flags = 1, .request_id = 14, .data = "b" });
+    for ([_]u64{ 13, 14 }) |id| try expectAdmission(&client, id, .ok);
     for ([_]u32{ 3, 4 }) |code| {
         const msg = try server.next();
         defer gpa.free(msg.fds);
-        try testing.expectEqual(@as(u64, 0), msg.header.routing_id);
+        try testing.expect(msg.header.routing_id != 0);
+        try server.client.serveDeliveryDone(msg.header.routing_id);
         const t, _ = try transactBody(msg.body);
         try testing.expectEqual(code, t.code);
     }
@@ -294,21 +313,25 @@ test "registry, transaction routing, nesting, oneway, release and death" {
     // Race: the client re-exports 42 before acknowledging. The broker revives
     // the same global object, the stale ack is ignored, and the object stays
     // callable.
-    try client.client.serveTransact(.{ .target = ObjectRef.remote(svc_gid), .code = 7, .flags = 1, .entries = &entries, .data = "\x00\x00\x00\x00\x00\x00\x00\x00" });
+    try client.client.serveTransact(.{ .target = ObjectRef.remote(svc_gid), .code = 7, .flags = 1, .request_id = 17, .entries = &entries, .data = "\x00\x00\x00\x00\x00\x00\x00\x00" });
+    try expectAdmission(&client, 17, .ok);
     try client.client.serveObjectRefMessage(.release_ack, ObjectRef.local(42));
     {
         const msg = try server.next();
+        try server.client.serveDeliveryDone(msg.header.routing_id);
         defer gpa.free(msg.fds);
         _, const payload = try transactBody(msg.body);
         try testing.expectEqual(callback_gid, payload.entry(0).value);
     }
-    try server.client.serveTransact(.{ .target = ObjectRef.remote(callback_gid), .code = 8, .flags = 1 });
+    try server.client.serveTransact(.{ .target = ObjectRef.remote(callback_gid), .code = 8, .flags = 1, .request_id = 18 });
+    try expectAdmission(&server, 18, .ok);
     {
         const msg = try client.next();
         defer gpa.free(msg.fds);
         try testing.expectEqual(Server.Message.Tag.transact, msg.header.tag);
         const t, _ = try transactBody(msg.body);
         try testing.expectEqual(@as(u64, 42), t.target.value);
+        try client.client.serveDeliveryDone(msg.header.routing_id);
     }
     // Clean release: the hold is dropped and the owner acknowledges (the
     // broker reports both local references it processed).
@@ -401,10 +424,12 @@ test "descriptors cross the broker and unauthorized use closes only the offender
     defer read_end.close(io);
     try b.conn.writer.attachFds(&.{write_end});
     const fd_entries = [_]ObjectEntry{.{ .offset = 0, .kind = .file_descriptor, .value = 0 }};
-    try b.client.serveTransact(.{ .target = ObjectRef.remote(a_gid), .code = 1, .flags = 1, .entries = &fd_entries, .data = "\x00\x00\x00\x00", .fd_count = 1 });
+    try b.client.serveTransact(.{ .target = ObjectRef.remote(a_gid), .code = 1, .flags = 1, .request_id = 2, .entries = &fd_entries, .data = "\x00\x00\x00\x00", .fd_count = 1 });
     write_end.close(io);
+    try expectAdmission(&b, 2, .ok);
     {
         const msg = try a.next();
+        try a.client.serveDeliveryDone(msg.header.routing_id);
         defer gpa.free(msg.fds);
         try testing.expectEqual(@as(u16, 1), msg.header.fd_count);
         try testing.expectEqual(@as(usize, 1), msg.fds.len);
@@ -448,6 +473,7 @@ test "descriptors cross the broker and unauthorized use closes only the offender
         defer gpa.free(msg.fds);
         try testing.expectEqual(Server.Message.Tag.transact, msg.header.tag);
         try a.client.serveReply(.{ .routing_id = msg.header.routing_id });
+        try a.client.serveDeliveryDone(msg.header.routing_id);
     }
     {
         const msg = try b.next();
@@ -518,6 +544,7 @@ test "per-package uids, system role, and registry policy" {
         const t, _ = try transactBody(msg.body);
         try testing.expectEqual(@as(u32, 10002), t.caller_uid);
         try a.client.serveReply(.{ .routing_id = msg.header.routing_id });
+        try a.client.serveDeliveryDone(msg.header.routing_id);
     }
     gpa.free((try b.next()).fds);
     // An app peer must present a package name.
@@ -646,7 +673,10 @@ test "session-wide properties: policy, area contents, change push" {
         while (true) {
             const msg = try case.peer.next();
             defer gpa.free(msg.fds);
-            if (msg.header.tag == .property_changed) continue;
+            if (msg.header.tag == .property_changed) {
+                try case.peer.client.serveDeliveryDone(msg.header.routing_id);
+                continue;
+            }
             try testing.expectEqual(Server.Message.Tag.service_result, msg.header.tag);
             try testing.expectEqual(@as(u64, @intCast(i + 1)), msg.header.request_id);
             try testing.expectEqual(case.status, (try serviceResult(msg.body)).status);
@@ -667,6 +697,7 @@ test "session-wide properties: policy, area contents, change push" {
         defer gpa.free(msg.fds);
         try testing.expectEqual(Server.Message.Tag.property_changed, msg.header.tag);
         try testing.expectEqualStrings(expected, msg.body);
+        try sys.client.serveDeliveryDone(msg.header.routing_id);
     }
 }
 
@@ -909,6 +940,7 @@ test "context object serves the IServiceManager AIDL over the broker" {
         defer gpa.free(got);
         try testing.expectEqualStrings(name2, got);
         try testing.expectEqual(pos, payload.entry(0).offset);
+        try client.client.serveDeliveryDone(msg.header.routing_id);
     }
 
     // Cross-path: a native lookup_service now sees the AIDL-registered service.
@@ -955,4 +987,229 @@ test "invalid reply retains pending call until protocol disconnect fails caller"
     try testing.expectEqual(@as(u64, 3), reply.header.request_id);
     const result, _ = try replyBody(reply.body);
     try testing.expectEqual(Client.Message.Reply.Status.dead_object, result.status);
+}
+
+fn barrier(peer: *Peer) !void {
+    try peer.client.serveMessageHeader(.{ .tag = .list_services, .bytes_len = 0, .request_id = 90000 });
+    try peer.client.out.flush();
+    const msg = try peer.next();
+    defer testing.allocator.free(msg.fds);
+    try testing.expectEqual(Server.Message.Tag.service_result, msg.header.tag);
+    try testing.expectEqual(@as(u64, 90000), msg.header.request_id);
+}
+
+fn quotaService(owner: *Peer, caller: *Peer) !ObjectRef {
+    try owner.client.serveRegisterService(1, ObjectRef.local(1), "dev.artzig.test.quota");
+    testing.allocator.free((try owner.next()).fds);
+    try caller.client.serveLookupService(1, "dev.artzig.test.quota", false);
+    const msg = try caller.next();
+    defer testing.allocator.free(msg.fds);
+    return (try serviceResult(msg.body)).object;
+}
+
+test "recipient byte, count and descriptor admission preserves sync progress and rejected ownership" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const Usage = Broker.DeliveryBudget.Usage;
+    for ([_]struct { limit: Usage, accepted: usize, fd_entries: usize }{
+        .{ .limit = .{ .bytes = 65536, .fds = 64, .count = 4 }, .accepted = 4, .fd_entries = 0 },
+        .{ .limit = .{ .bytes = 512, .fds = 64, .count = 16 }, .accepted = 2, .fd_entries = 0 },
+        .{ .limit = .{ .bytes = 65536, .fds = 4, .count = 16 }, .accepted = 2, .fd_entries = 1 },
+        // Repeated wire ordinals become separately owned descriptors at inflate.
+        .{ .limit = .{ .bytes = 65536, .fds = 6, .count = 16 }, .accepted = 2, .fd_entries = 2 },
+    }) |case| {
+        const h = try Harness.startWithLimits(gpa, io, .{ .asynchronous = case.limit });
+        defer h.stop(gpa, io);
+        var owner: Peer = undefined;
+        try owner.connect(io, h.path, cookie);
+        defer owner.close();
+        try owner.expectWelcome();
+        var caller: Peer = undefined;
+        try caller.connect(io, h.path, cookie);
+        defer caller.close();
+        try caller.expectWelcome();
+        const target = try quotaService(&owner, &caller);
+        var pipe_fds: [2]std.posix.fd_t = undefined;
+        try testing.expectEqual(@as(usize, 0), linux.pipe2(&pipe_fds, .{ .CLOEXEC = true }));
+        const read_end: Io.File = .{ .handle = pipe_fds[0], .flags = .{ .nonblocking = false } };
+        const write_end: Io.File = .{ .handle = pipe_fds[1], .flags = .{ .nonblocking = false } };
+        defer read_end.close(io);
+        var write_closed = false;
+        defer if (!write_closed) write_end.close(io);
+        var entries: [3]ObjectEntry = undefined;
+        for (entries[0..case.fd_entries], 0..) |*entry, i| entry.* = .{ .offset = @intCast(i * 4), .kind = .file_descriptor, .value = 0 };
+        const bytes: [128]u8 = @splat(0);
+        var routes: [4]u64 = undefined;
+        for (0..case.accepted) |i| {
+            if (case.fd_entries > 0) try caller.conn.writer.attachFds(&.{write_end});
+            try caller.client.serveTransact(.{ .target = target, .code = @intCast(i), .request_id = i + 10, .flags = 1, .data = &bytes, .entries = entries[0..case.fd_entries], .fd_count = if (case.fd_entries > 0) 1 else 0 });
+            try expectAdmission(&caller, i + 10, .ok);
+            const msg = try owner.next();
+            defer gpa.free(msg.fds);
+            for (msg.fds) |fd| fd.close(io);
+            routes[i] = msg.header.routing_id;
+            const tr, _ = try transactBody(msg.body);
+            try testing.expectEqual(@as(u32, @intCast(i)), tr.code);
+            // Reading the frame is not completion: its admission credit stays held.
+        }
+        entries[case.fd_entries] = .{ .offset = @intCast(case.fd_entries * 4), .kind = .binder_local, .value = 99 };
+        if (case.fd_entries > 0) try caller.conn.writer.attachFds(&.{write_end});
+        try caller.client.serveTransact(.{ .target = target, .code = 99, .request_id = 99, .flags = 1, .data = &bytes, .entries = entries[0 .. case.fd_entries + 1], .fd_count = if (case.fd_entries > 0) 1 else 0 });
+        try expectReleased(&caller, 99, 1);
+        try expectAdmission(&caller, 99, .failed);
+        write_end.close(io);
+        write_closed = true;
+        var eof: [1]u8 = undefined;
+        try testing.expectError(error.EndOfStream, read_end.readStreaming(io, &.{&eof}));
+
+        // A synchronous operation still fits while async is full.
+        try caller.client.serveTransact(.{ .target = target, .code = 500, .request_id = 500 });
+        const sync = try owner.next();
+        defer gpa.free(sync.fds);
+        const tr, _ = try transactBody(sync.body);
+        try testing.expectEqual(@as(u32, 500), tr.code);
+        try owner.client.serveReply(.{ .routing_id = sync.header.routing_id, .data = "control" });
+        try owner.client.serveDeliveryDone(sync.header.routing_id);
+        const reply = try caller.next();
+        defer gpa.free(reply.fds);
+        const rep, const payload = try replyBody(reply.body);
+        try testing.expectEqual(Client.Message.Reply.Status.ok, rep.status);
+        try testing.expectEqualStrings("control", payload.data);
+        for (routes[0..case.accepted]) |id| try owner.client.serveDeliveryDone(id);
+        try barrier(&owner);
+        try caller.client.serveTransact(.{ .target = target, .code = 600, .request_id = 600, .flags = 1 });
+        try expectAdmission(&caller, 600, .ok);
+        const retry = try owner.next();
+        defer gpa.free(retry.fds);
+        try owner.client.serveDeliveryDone(retry.header.routing_id);
+        try barrier(&owner);
+        h.broker.mutex.lockUncancelable(io);
+        const remaining = h.broker.deliveries;
+        h.broker.mutex.unlock(io);
+        try testing.expectEqualDeep(Broker.DeliveryBudget{}, remaining);
+    }
+}
+
+test "forged completion and producer death cannot reset another recipient's quota" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const h = try Harness.startWithLimits(gpa, io, .{ .asynchronous = .{ .bytes = 65536, .count = 1, .fds = 64 } });
+    defer h.stop(gpa, io);
+    var owner: Peer = undefined;
+    try owner.connect(io, h.path, cookie);
+    defer owner.close();
+    try owner.expectWelcome();
+    var caller: Peer = undefined;
+    try caller.connect(io, h.path, cookie);
+    defer caller.close();
+    try caller.expectWelcome();
+    const target = try quotaService(&owner, &caller);
+    try caller.client.serveTransact(.{ .target = target, .code = 1, .request_id = 2, .flags = 1 });
+    try expectAdmission(&caller, 2, .ok);
+    const held = try owner.next();
+    defer gpa.free(held.fds);
+    const route = held.header.routing_id;
+    try caller.client.serveDeliveryDone(route);
+    const bad = try caller.next();
+    defer gpa.free(bad.fds);
+    try testing.expectEqual(Server.Message.Tag.protocol_error, bad.header.tag);
+    try testing.expectError(error.EndOfStream, caller.client.receiveMessage());
+    caller.close();
+    var newcomer: Peer = undefined;
+    try newcomer.connect(io, h.path, cookie);
+    defer newcomer.close();
+    try newcomer.expectWelcome();
+    try newcomer.client.serveLookupService(1, "dev.artzig.test.quota", false);
+    gpa.free((try newcomer.next()).fds);
+    try newcomer.client.serveTransact(.{ .target = target, .code = 2, .request_id = 2, .flags = 1 });
+    try expectAdmission(&newcomer, 2, .failed);
+    try owner.client.serveDeliveryDone(route);
+    try barrier(&owner);
+    try newcomer.client.serveTransact(.{ .target = target, .code = 3, .request_id = 3, .flags = 1 });
+    try expectAdmission(&newcomer, 3, .ok);
+    const accepted = try owner.next();
+    defer gpa.free(accepted.fds);
+    // Double completion rejects the owner; the other admitted delivery retires
+    // with its dead recipient, and a pending synchronous caller receives death.
+    try newcomer.client.serveTransact(.{ .target = target, .code = 4, .request_id = 4 });
+    gpa.free((try owner.next()).fds);
+    try owner.client.serveDeliveryDone(route);
+    const duplicate = try owner.next();
+    defer gpa.free(duplicate.fds);
+    try testing.expectEqual(Server.Message.Tag.protocol_error, duplicate.header.tag);
+    try expectAdmission(&newcomer, 4, .dead_object);
+    h.broker.mutex.lockUncancelable(io);
+    const remaining = h.broker.deliveries;
+    h.broker.mutex.unlock(io);
+    try testing.expectEqualDeep(Broker.DeliveryBudget{}, remaining);
+}
+
+test "slow property callbacks retire only their recipient without losing healthy notifications" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const h = try Harness.startWithLimits(gpa, io, .{ .asynchronous = .{ .bytes = 65536, .count = 2, .fds = 64 } });
+    defer h.stop(gpa, io);
+    var slow: Peer = undefined;
+    try slow.connect(io, h.path, cookie);
+    defer slow.close();
+    try slow.expectWelcome();
+    var healthy: Peer = undefined;
+    try healthy.connect(io, h.path, cookie);
+    defer healthy.close();
+    try healthy.expectWelcome();
+    for ([_][]const u8{ "first", "second", "third", "fourth" }, 0..) |value, i| {
+        try healthy.client.serveSetProperty(i + 1, "debug.quota", value);
+        const ack = try healthy.next();
+        defer gpa.free(ack.fds);
+        try testing.expectEqual(Server.Message.Tag.service_result, ack.header.tag);
+        try testing.expectEqual(Server.Message.ServiceResult.Status.ok, (try serviceResult(ack.body)).status);
+        const notification = try healthy.next();
+        defer gpa.free(notification.fds);
+        try testing.expectEqual(Server.Message.Tag.property_changed, notification.header.tag);
+        try testing.expectEqualStrings("debug.quota", notification.body);
+        try healthy.client.serveDeliveryDone(notification.header.routing_id);
+        try barrier(&healthy);
+        if (i < 2) {
+            // It reads the socket but never completes the notification callback.
+            const held = try slow.next();
+            defer gpa.free(held.fds);
+            try testing.expectEqual(Server.Message.Tag.property_changed, held.header.tag);
+        } else if (i == 2) {
+            try testing.expectError(error.EndOfStream, slow.client.receiveMessage());
+            slow.close();
+        }
+    }
+}
+
+test "a synchronous reply does not release input ownership before cleanup" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const allowance: Broker.DeliveryBudget.Usage = .{ .bytes = 65536, .fds = 64, .count = 1 };
+    const h = try Harness.startWithLimits(gpa, io, .{ .total = allowance, .asynchronous = allowance });
+    defer h.stop(gpa, io);
+    var owner: Peer = undefined;
+    try owner.connect(io, h.path, cookie);
+    defer owner.close();
+    try owner.expectWelcome();
+    var caller: Peer = undefined;
+    try caller.connect(io, h.path, cookie);
+    defer caller.close();
+    try caller.expectWelcome();
+    const target = try quotaService(&owner, &caller);
+    try caller.client.serveTransact(.{ .target = target, .code = 1, .request_id = 2 });
+    const held = try owner.next();
+    defer gpa.free(held.fds);
+    const route = held.header.routing_id;
+    try owner.client.serveReply(.{ .routing_id = route });
+    try expectAdmission(&caller, 2, .ok);
+    try caller.client.serveTransact(.{ .target = target, .code = 2, .request_id = 3, .flags = 1 });
+    try expectAdmission(&caller, 3, .failed);
+    try owner.client.serveDeliveryDone(route);
+    try barrier(&owner);
+    try caller.client.serveTransact(.{ .target = target, .code = 3, .request_id = 4, .flags = 1 });
+    try expectAdmission(&caller, 4, .ok);
+    const accepted = try owner.next();
+    defer gpa.free(accepted.fds);
+    try owner.client.serveDeliveryDone(accepted.header.routing_id);
+    try barrier(&owner);
 }

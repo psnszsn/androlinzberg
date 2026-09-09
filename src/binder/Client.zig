@@ -24,7 +24,7 @@ out: *Writer,
 /// First 4 bytes of every frame ("AZKB" as little-endian u32).
 pub const magic: u32 = 0x424B5A41;
 /// Bumped for every incompatible wire change.
-pub const version: u16 = 4;
+pub const version: u16 = 5;
 
 /// Android uid of the trusted system process (AOSP `Process.SYSTEM_UID`).
 pub const system_uid: u32 = 1000;
@@ -154,6 +154,9 @@ pub const Message = struct {
         /// Body is a package name. Trusted system peers reserve its uid before
         /// launching a process; answered with `package_uid_result`.
         reserve_package_uid,
+        /// Empty body. Return routing credit after a transaction or property
+        /// callback and its input cleanup finish. Sync calls must reply first.
+        delivery_done,
         _,
     };
 
@@ -282,8 +285,8 @@ pub const TransactOptions = struct {
     target: ObjectRef,
     code: u32,
     flags: u32 = 0,
-    /// 0 for oneway calls.
-    request_id: u64 = 0,
+    /// Nonzero for both synchronous replies and oneway admission replies.
+    request_id: u64,
     /// Routing id of the call the sending thread is servicing, or 0.
     parent_routing_id: u64 = 0,
     entries: []const ObjectEntry = &.{},
@@ -311,6 +314,12 @@ pub fn serveTransact(c: *const Client, options: TransactOptions) Writer.Error!vo
     }, .little);
     try c.out.writeSliceEndian(ObjectEntry, options.entries, .little);
     try c.out.writeAll(options.data);
+    try c.out.flush();
+}
+
+/// Complete a delivered call after input cleanup (and reply, for sync calls).
+pub fn serveDeliveryDone(c: *const Client, routing_id: u64) Writer.Error!void {
+    try c.serveMessageHeader(.{ .tag = .delivery_done, .bytes_len = 0, .routing_id = routing_id });
     try c.out.flush();
 }
 
