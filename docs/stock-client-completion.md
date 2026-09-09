@@ -164,9 +164,9 @@ Validation passed with `-j10`: Java/build/native audits, framework-module, full
 JVM, system, APK integration, headless WebView and desktop launcher suites.
 All 28 fresh APK cases contain 88 steps with zero structured issues; the desktop
 launcher contains 16 steps with zero issues. The new AppOps privacy test passes.
-The separate uncommitted WebView pause probe still fails, now also with directly
-generated I420 input. Playing pixels and input pass, but the earlier hypothesis
-of a canvas-format-only failure is insufficient; no paused-video fix is claimed.
+The accompanying capture-stream pause probe failed with both canvas and I420
+input. The follow-up below distinguishes the canvas black-frame result from
+I420 color-metadata loss; these are separate failures.
 
 ### Stock device policy and storage (2026-09-09)
 
@@ -204,9 +204,42 @@ Validation passed: Java and system-service tests with `-j24`, then build-tool,
 native/source/graph audits, full JVM and APK integration, WebView and desktop
 launcher tests with `-j10`. All 28 fresh APK cases contain 89 steps with zero
 structured runtime issues; the desktop launcher has 16 steps with zero issues.
-Desktop modal and NewPipe fullscreen screenshots were inspected. The separate
-uncommitted WebView paused-video probe remains failing and is not counted as
-completed coverage.
+Desktop modal and NewPipe fullscreen screenshots were inspected. Capture-stream pause failures were still open at this checkpoint; the follow-up
+below adds ordinary encoded playback coverage and retains those reproductions.
+
+### WebView playback regression and capture diagnosis (2026-09-09)
+
+The HTML fixture is now an APK asset, so JavaScript/video iterations do not
+recompile the framework. Ordinary playback uses an embedded, locally generated
+silent VP8 WebM. The headless regression requires video-frame callbacks and
+visible green content, then compares every green baseline pixel after pause
+with a two-code-value tolerance. It also retains the original heading and
+Android input checks. The encoded video passes this comparison.
+
+The capture probes remain available through `AZK_WEBVIEW_VIDEO_SOURCE=i420` or
+`canvas`; both deliberately remain failing reproductions. I420 retains visible
+green pixels but loses its BT.709/sRGB ColorSpace on pause, changing all 57,600
+video pixels. This corrects the earlier classification of its failure as a
+black frame. A readback probe and a second run without readback confirmed the
+visible retained frame; `new VideoFrame(video).colorSpace` changes to all-null.
+The pinned Chromium CopyFrame code copies frame metadata without ColorSpace.
+Canvas capture changes from RGBA to a black I420 frame, also changing all 57,600
+pixels. This is consistent with a CopyFrame fallback; selecting its exact
+fallback branch still requires provider instrumentation. Neither capture failure
+is described as fixed, and successful encoded playback is separate coverage.
+
+Reproductions retained under `zig-out/test-results/webview-capture-i420/` and
+`webview-capture-canvas/` contain the playing/paused images, three issue-free
+steps, failure record and before/after format metadata. Fixture provenance and
+commands are in [its README](../testdata/fixture-apks/dev.artzig.webviewtest/README.md).
+WebView root-framebuffer/overlay eligibility remains open. This checkpoint
+changes no runtime backend or AOSP package; the archive pins remain current.
+
+Validation passed with `-j10`: `testkit-test build-tools-test graph-audit
+webview-test webview-ui-test`. The encoded UI test has three steps with zero
+structured issues, and the playing/paused screenshots were inspected. Both
+capture-mode runs intentionally fail the same pixel-preservation assertion,
+with three issue-free steps each; they are retained as counterexamples.
 
 ## Objective and boundary
 

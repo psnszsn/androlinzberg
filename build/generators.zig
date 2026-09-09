@@ -1051,6 +1051,12 @@ fn fixtureApks(b: *std.Build, aosp: *std.Build.Dependency, framework_res: LazyPa
             link.addFileArg(compile.addOutputFileArg("fixture-resources.zip"));
             compile.setName("aapt2 compile framework fixture resources");
         }
+        if (comptime std.mem.eql(u8, package, "dev.artzig.webviewtest")) {
+            const assets = b.addWriteFiles();
+            _ = assets.addCopyFile(b.path("testdata/fixture-apks/dev.artzig.webviewtest/assets/index.html"), "index.html");
+            link.addArg("-A");
+            link.addDirectoryArg(assets.getDirectory());
+        }
         link.addArgs(&.{ "--min-sdk-version", "21", "--target-sdk-version", "35" });
         link.setName(b.fmt("aapt2 link fixture {s}", .{package}));
         // Keep a real v1 signature alongside v2 for strict JAR verification

@@ -14,7 +14,32 @@ tools/azk-test diagnose | python3 -c 'import json,sys; d=json.load(sys.stdin); i
 tools/azk-test step click --text "Count: 0" --settle idle >/dev/null
 tools/azk-test wait exists --text "Count: 1" >/dev/null
 tools/azk-test diagnose | python3 -c 'import json,sys; d=json.load(sys.stdin); issues=d["diagnostics"]["runtime"]["issues"]; assert not issues, issues'
-# Capture while the app is still running, then require actual painted text.
-frame="${SHOT_A11Y_OUT%.a11y.json}.content.png"
-grim "$frame"
-java -cp "${AZK_TESTKIT_ROOT:-zig-out/lib/azk-test}/*" dev.artzig.testkit.WebViewFrameCheck "$frame"
+# Default: ordinary encoded-video playback. The stream modes retain separate
+# Chromium 133 pause-copy reproductions; see the fixture README.
+case "${AZK_WEBVIEW_VIDEO_SOURCE:-encoded}" in
+  encoded) video_button="Start video" ;;
+  i420) video_button="Start I420 video" ;;
+  canvas) video_button="Start canvas video" ;;
+  *) echo "unknown AZK_WEBVIEW_VIDEO_SOURCE" >&2; exit 2 ;;
+esac
+tools/azk-test step click --text "$video_button" --settle idle >/dev/null
+tools/azk-test --timeout 60 wait exists --text "Video frames ready" >/dev/null
+# DOM callbacks precede presentation. Require a visible moving frame before
+# pausing, then check that the same frame is retained after pause.
+check_video_frame() {
+  local frame=$1
+  for attempt in {1..30}; do
+    grim "$frame"
+    if java -cp "${AZK_TESTKIT_ROOT:-zig-out/lib/azk-test}/*" dev.artzig.testkit.WebViewFrameCheck "$frame" "${@:2}" 2>"$frame.check.log"; then
+      return
+    fi
+    if [[ "$attempt" == 30 ]]; then cat "$frame.check.log" >&2; return 1; fi
+    sleep 0.1
+  done
+}
+check_video_frame "${SHOT_A11Y_OUT%.a11y.json}.playing.png"
+tools/azk-test step click --text "Pause video" --settle idle >/dev/null
+tools/azk-test wait exists --text "Video paused" >/dev/null
+tools/azk-test diagnose | python3 -c 'import json,sys; issues=json.load(sys.stdin)["diagnostics"]["runtime"]["issues"]; assert not issues, issues'
+# Capture while the app is still running, then require actual painted text/video.
+check_video_frame "${SHOT_A11Y_OUT%.a11y.json}.content.png" "${SHOT_A11Y_OUT%.a11y.json}.playing.png"

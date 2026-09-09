@@ -1,0 +1,80 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stock Android WebView</title>
+<style>body { font: 24px sans-serif; padding: 24px; background: white; color: #16324f; }
+button { font: inherit; padding: 16px 24px; }</style></head>
+<body><h1>Stock Android WebView</h1><p>This page is rendered by the bundled Android Chromium provider.</p>
+<button onclick="this.textContent='Count: '+(++count)">Count: 0</button>
+<p><button onclick="startVideo()">Start video</button>
+<button onclick="pauseVideo()">Pause video</button>
+<button onclick="startVideo('i420')">Start I420 video</button>
+<button onclick="startVideo('canvas')">Start canvas video</button></p>
+<video id="video" width="320" height="180" muted playsinline></video>
+<p id="videoStatus">Video stopped</p><p id="pausedPixels"></p>
+<script>
+let count = 0, timer = null;
+const source = document.createElement('canvas');
+source.width = 320; source.height = 180;
+const ctx = source.getContext('2d');
+let sourceColor = '#3ab16f', sourceMode = 'encoded';
+const video = document.getElementById('video');
+const videoStatus = document.getElementById('videoStatus');
+function startVideo(mode = 'encoded') {
+    sourceMode = mode;
+    function paint() { ctx.fillStyle = sourceColor; ctx.fillRect(0, 0, 320, 180); }
+    if (mode === 'encoded') {
+        video.loop = true;
+        video.src = 'data:video/webm;base64,GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAXFEU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHGTbuMU6uEElTDZ1OsggEvTbuMU6uEHFO7a1OsggWv7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmoCrXsYMPQkBNgIRMYXZmV0GETGF2ZkSJiECfQAAAAAAAFlSua+SuAQAAAAAAAFvXgQFzxYgAAAAAAAAAAZyBACK1nIN1bmSIgQCGhVZfVlA4g4EBI+ODhAP5QKrgnbCCAUC6gbSagQJVsJBVuoEGVbGBBlW7gQZVuYEBVe6BAOwBAAAAAAAAAgAAElTDZ9Bzc81jwItjxYgAAAAAAAAAAWfImEWjh0VOQ09ERVJEh4tMYXZjIGxpYnZweGfIoUWjiERVUkFUSU9ORIeTMDA6MDA6MDIuMDAwMDAwMDAwAB9DtnVEJeeBAKNAn4EAAIBQDwCdASpAAbQAAEcIhYWIhYSIAgICdaoCBmZlaX2vbmyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc4eyc3gD+7qY/8W0joUyH/7qK/+6iv/uor/3R0KOdgQBDALECAAEQEAAYABhYL/QACIAEM1+tck+VgACjnYEAhQCxAgABEBAAGAAYWC/0AAiABDNfrXJPlYAAo52BAMgAsQIAARAQABgAGFgv9AAIgAQzX61yT5WAAKOdgQELALECAAEQEAAYABhYL/QACIAEM1+tck+VgACjnYEBTQCxAgABEBAAGAAYWC/0AAiABDNfrXJPlYAAo52BAZAAsQIAARAQABgAGFgv9AAIgAQzX61yT5WAAKOcgQHTAJECAAEQEBRgAGFgv9AAIgAQzX61yT5WAKOdgQIVALECAAEQEAAYABhYL/QACIAEM1+tck+VgACjnYECWACxAgABEBAAGAAYWC/0AAiABDNfrXJPlYAAo52BApsAsQIAARAQABgAGFgv9AAIgAQzX61yT5WAAKOdgQLdALECAAEQEAAYABhYL/QACIAEM1+tck+VgACjnYEDIACxAgABEBAAGAAYWC/0AAiABDNfrXJPlYAAo52BA2MAsQIAARAQABgAGFgv9AAIgAQzX61yT5WAAKOdgQOlALECAAEQEAAYABhYL/QACIAEM1+tck+VgACjnYED6ACxAgABEBAAGAAYWC/0AAiABDNfrXJPlYAAo52BBCsAsQIAARAQABgAGFgv9AAIgAQzX61yT5WAAKOdgQRtALECAAEQEAAYABhYL/QACIAEM1+tck+VgACjnIEEsACRAgABEBAUYABhYL/QACIAEM1+tck+VgCjnYEE8wCxAgABEBAAGAAYWC/0AAiABDNfrXJPlYAAo52BBTUAsQIAARAQABgAGFgv9AAIgAQzX61yT5WAAKOdgQV4ALECAAEQEAAYABhYL/QACIAEM1+tck+VgACjnYEFuwCxAgABEBAAGAAYWC/0AAiABDNfrXJPlYAAo52BBf0AsQIAARAQABgAGFgv9AAIgAQzX61yT5WAAKOdgQZAALECAAEQEAAYABhYL/QACIAEM1+tck+VgACjnYEGgwCxAgABEBAAGAAYWC/0AAiABDNfrXJPlYAAo52BBsUAsQIAARAQABgAGFgv9AAIgAQzX61yT5WAAKOdgQcIALECAAEQEAAYABhYL/QACIAEM1+tck+VgACjnYEHSwCxAgABEBAAGAAYWC/0AAiABDNfrXJPlYAAo5yBB40AkQIAARAQFGAAYWC/0AAiABDNfrXJPlYAHFO7a5G7j7OBALeK94EB8YIBhPCBAw==';
+    } else if (mode === 'canvas') {
+        paint();
+        video.srcObject = source.captureStream(15);
+        timer = setInterval(paint, 50);
+    } else {
+        const track = new MediaStreamTrackGenerator({kind: 'video'});
+        const writer = track.writable.getWriter();
+        video.srcObject = new MediaStream([track]);
+        let timestamp = 0;
+        async function produce() {
+            const pixels = new Uint8Array(320 * 180 * 3 / 2);
+            const green = sourceColor === '#3ab16f';
+            pixels.fill(green ? 142 : 90, 0, 320 * 180);
+            pixels.fill(green ? 111 : 115, 320 * 180, 320 * 180 * 5 / 4);
+            pixels.fill(green ? 78 : 191, 320 * 180 * 5 / 4);
+            const frame = new VideoFrame(pixels, {
+                format: 'I420', codedWidth: 320, codedHeight: 180,
+                timestamp: timestamp += 66667,
+                colorSpace: {primaries: 'bt709', transfer: 'iec61966-2-1',
+                    matrix: 'bt709', fullRange: false}
+            });
+            try { await writer.write(frame); }
+            finally { frame.close(); }
+            timer = setTimeout(produce, 66);
+        }
+        produce().catch(error => videoStatus.textContent = 'Video error: ' + error);
+    }
+    let frames = 0;
+    function presented() {
+        if (++frames >= 5) videoStatus.textContent = 'Video frames ready';
+        else video.requestVideoFrameCallback(presented);
+    }
+    video.requestVideoFrameCallback(presented);
+    video.play().catch(error => videoStatus.textContent = 'Video error: ' + error);
+}
+function pauseVideo() {
+    if (sourceMode === 'encoded') {
+        video.pause();
+        setTimeout(() => videoStatus.textContent = 'Video paused', 250);
+        return;
+    }
+    const before = new VideoFrame(video);
+    const beforeDescription = before.format + ' ' + JSON.stringify(before.colorSpace.toJSON());
+    before.close();
+    video.pause(); sourceColor = '#bf3546';
+    setTimeout(() => {
+        const after = new VideoFrame(video);
+        document.getElementById('pausedPixels').textContent =
+            beforeDescription + ' -> ' + after.format + ' ' + JSON.stringify(after.colorSpace.toJSON());
+        after.close();
+        videoStatus.textContent = 'Video paused';
+    }, 250);
+}
+</script></body></html>
