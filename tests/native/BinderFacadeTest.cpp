@@ -135,13 +135,20 @@ struct Service final : BBinder {
       return out->writeInt32(42);
     }
     if (code == MONITOR_POOL) {
-      // Oneway dispatch has a serial queue independent of the saturated
-      // two-way pool, as does Watchdog's foreground monitor thread.
-      assert(flags & IBinder::FLAG_ONEWAY);
-      const int result = in.readFileDescriptor();
-      assert(write(result, "S", 1) == 1);
-      IPCThreadState::self()->blockUntilThreadAvailable();
-      assert(write(result, "A", 1) == 1);
+      // Pinned Watchdog.BinderThreadMonitor runs on FgThread, outside the
+      // Binder pool it monitors. Arm the same external caller before saturation.
+      const int result = dup(in.readFileDescriptor());
+      const int start = dup(in.readFileDescriptor());
+      assert(result >= 0 && start >= 0);
+      std::thread([result, start] {
+        char signal;
+        assert(read(start, &signal, 1) == 1 && signal == 'S');
+        assert(write(result, "S", 1) == 1);
+        IPCThreadState::self()->blockUntilThreadAvailable();
+        assert(write(result, "A", 1) == 1);
+        close(start);
+        close(result);
+      }).detach();
       return OK;
     }
     if (code == 4)
@@ -231,8 +238,12 @@ void parcelTests();
 void blobTests();
 static void poolMonitorTest(const sp<IBinder>& server) {
   IPCThreadState::self()->blockUntilThreadAvailable();
-  int release[2], ready[2], monitor[2];
-  assert(pipe(release) == 0 && pipe(ready) == 0 && pipe(monitor) == 0);
+  int release[2], ready[2], monitor[2], start[2];
+  assert(pipe(release) == 0 && pipe(ready) == 0 && pipe(monitor) == 0 && pipe(start) == 0);
+  Parcel request, reply;
+  assert(request.writeFileDescriptor(monitor[1]) == OK);
+  assert(request.writeFileDescriptor(start[0]) == OK);
+  assert(server->transact(MONITOR_POOL, request, &reply) == OK);
   std::vector<std::thread> callers;
   for (int i = 0; i < POOL_WORKERS; ++i) {
     callers.emplace_back([&] {
@@ -250,9 +261,7 @@ static void poolMonitorTest(const sp<IBinder>& server) {
     assert(read(fd, &value, 1) == 1 && value == expected);
   };
   for (int i = 0; i < POOL_WORKERS; ++i) receive(ready[0], 'R');
-  Parcel request;
-  assert(request.writeFileDescriptor(monitor[1]) == OK);
-  assert(server->transact(MONITOR_POOL, request, nullptr, IBinder::FLAG_ONEWAY) == OK);
+  assert(write(start[1], "S", 1) == 1);
   receive(monitor[0], 'S');
   pollfd waiting{monitor[0], POLLIN, 0};
   assert(poll(&waiting, 1, 200) == 0);
@@ -260,7 +269,7 @@ static void poolMonitorTest(const sp<IBinder>& server) {
   receive(monitor[0], 'A');
   for (int i = 1; i < POOL_WORKERS; ++i) assert(write(release[1], "R", 1) == 1);
   for (auto& caller : callers) caller.join();
-  for (int fd : {release[0], release[1], ready[0], ready[1], monitor[0], monitor[1]}) close(fd);
+  for (int fd : {release[0], release[1], ready[0], ready[1], monitor[0], monitor[1], start[0], start[1]}) close(fd);
   pass("Watchdog pool monitor blocks at capacity and resumes when one worker completes");
 }
 int main(int argc, char **argv) {

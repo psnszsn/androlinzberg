@@ -1,0 +1,43 @@
+--- a/nptl/pthread_getattr_np.c
++++ b/nptl/pthread_getattr_np.c
+@@ -212,3 +212,30 @@
+ compat_symbol (libc, __pthread_getattr_np_alias,
+ 	       pthread_getattr_np, GLIBC_2_2_3);
+ #endif
++
++/* Artzig needs only the allocated stack and guard, even when Chromium's
++   Android sandbox denies sched_getaffinity. Keep this private query inside
++   the pinned libc that owns struct pthread; leave pthread_getattr_np and
++   its affinity/error contract unchanged. The initial thread has no allocated
++   stack block and must use the ordinary getter before sandbox startup. */
++int
++__artzig_pthread_getstack (pthread_t thread_id, void **base, size_t *size,
++                          size_t *guard)
++{
++  struct pthread *thread = (struct pthread *) thread_id;
++  int ret = ENOTSUP;
++  lll_lock (thread->lock, LLL_PRIVATE);
++  if (thread->stackblock != NULL)
++    {
++      *size = thread->stackblock_size - thread->guardsize;
++#if _STACK_GROWS_DOWN
++      *base = (char *) thread->stackblock + thread->guardsize;
++#else
++      *base = (char *) thread->stackblock;
++#endif
++      *guard = thread->reported_guardsize;
++      ret = 0;
++    }
++  lll_unlock (thread->lock, LLL_PRIVATE);
++  return ret;
++}
+--- a/nptl/Versions
++++ b/nptl/Versions
+@@ -382,6 +382,7 @@
+     pthread_gettid_np;
+   }
+   GLIBC_PRIVATE {
++    __artzig_pthread_getstack;
+     __libc_alloca_cutoff;
+     __lll_lock_wake_private;
+     __lll_lock_wait_private;

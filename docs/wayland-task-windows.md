@@ -11,6 +11,74 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## ART stack queries under Chromium's sandbox (2026-09-09)
+
+The remaining renderer crash was broader than Binder attachment. Regression 541
+traced `pthread_getattr_np` failing at its CPU-affinity query on both Java-created
+threads and Chromium's direct JNI attachment path. Regression 543 demonstrated
+that changing the affinity query to Linux's `pid=0` form still fails under the
+actual Chromium filter.
+
+The pinned host glibc now provides a private stack-only query, implemented beside
+its existing attribute getter under the same thread lock. It returns the allocated
+stack bounds and reported guard without requesting affinity. ART's
+`Thread::GetThreadStack` uses that query; the initial thread retains the ordinary
+pre-sandbox getter and unlimited-stack adjustment. The ordinary pthread attribute
+API and Chromium's sandbox policy retain their behavior. The Nix shell supplies
+an isolated runtime libc, selected by the hosted launcher without rebuilding
+unrelated host dependencies.
+
+The native regression compares results with public pthread attributes before
+denying every affinity query. It covers default allocation, explicit stack and
+guard sizes, caller-supplied stacks, and the initial-thread fallback. The ART
+source package hash is `N-V-__8AAJ5Pbgldok9RkOZtk30hPG96EbbSuvMybX0hy1Z_`.
+Comparing all 6,920 entries with the previous archive finds only
+`art/runtime/thread.cc` changed. A duplicate build-time x86 optimization patch
+is removed: that correction is already in the packaged source.
+
+Regressions 547 and 549 each pass all four NewPipe desktop cases and nineteen
+clean physical interaction steps under syscall tracing, with no affinity failures.
+The previously failing renderer-service destruction completes normally. The
+latter run uses the launcher's library path instead of a test-only override.
+Artifacts and inspected fullscreen pixels:
+`/tmp/wayland-affinity-547-artifacts/` and
+`/tmp/wayland-affinity-549-artifacts/`. Regression 553 subsequently passes the complete stock APK suite: 18 cases and
+53 clean interaction steps. Regression 554 passes the default JVM suite and all
+18 APK cases with 60 clean steps. Retained artifacts:
+`/tmp/wayland-stock-553-artifacts/` and `/tmp/wayland-default-554-artifacts/`.
+
+## Bounded Binder workers and remaining drag stall (2026-09-09)
+
+Regression 552 verifies lazy growth to at most 32 Binder workers. Two batches
+of 512 callbacks preserve per-object ordering, make progress across objects,
+perform nested synchronous calls, and reuse the same workers. Death callbacks
+also reuse the pool. C++, NDK, stack-query and source-audit gates pass. Payload,
+file-descriptor and queued-work quotas remain separate M11 work.
+
+Regression 553 passes all four service-loss cases and the stock APK suite, but
+reproduces the intermittent drag traversal stall on round nine: USE DRAG FILE
+applies, reports no structured issue, and never settles. The screenshot remains
+at “Drag started” while inspection responds and the session frame counter moves.
+Eight preceding samples hold at 60 descriptors and 27 threads, with RSS about
+298–301 MiB. The managed dump contains only its header; native capture is denied
+by ptrace. Artifacts: `/tmp/wayland-drag-553-artifacts/stock-drag-pressure/`.
+This stall remains open; successful earlier stress runs do not resolve it.
+
+## Layout and nonfocusable popup contracts (2026-09-09)
+
+The window-contracts APK now exercises draw-only invalidation, the second layout
+pass for a child's reentrant `requestLayout`, and synchronous `View.post`
+callbacks observing updated geometry. Two independently attached, nonfocusable
+popup windows share the main queue while the underlying button remains usable.
+
+Regression 544 passes five physical steps with no runtime issues, verifies both
+popup colors and their dimensions, and dismisses each popup independently.
+Artifacts: `/tmp/wayland-layout-544-artifacts/`. Testkit's existing full selector
+is exposed through `AppSession` and `ApkRule` overloads, so a test can explicitly
+address nonfocused windows while preserving the default focused-window search.
+Legacy-root test migration, the intermittent drag traversal stall, queue/resource
+quotas and the default production cutover remain unfinished.
+
 ## Frame callbacks through stock APK windows (2026-09-08)
 
 The window-contracts APK now tests frame callback registration order, callbacks

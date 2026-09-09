@@ -1,6 +1,7 @@
 package dev.artzig.integration
 
 import dev.artzig.testkit.ApkRule
+import dev.artzig.testkit.Selector
 import dev.artzig.testkit.LaunchSize
 import kotlin.test.Test
 import org.junit.Rule
@@ -69,6 +70,33 @@ class WindowFixtureTest {
         expectVisible(text = "Resumed frame committed")
         assertLog("FrameFixture", "stop,resume,commit; callbacks completed once on main")
         assertColorArea(screenshot("frame-resumed-cyan.png"), 0xff00ffff.toInt(), 40_000)
+    }
+
+    @Test
+    fun layoutSchedulingAndNonModalPopupInput() = app.run {
+        click(text = "SHOW LAYOUT AND POPUPS")
+        expectVisible(text = "Layout scheduling verified")
+        assertLog("LayoutFixture", "draw-only invalidation; reentrant second pass; post after layout; no duplicate traversal")
+        click(text = "SHOW POPUP WINDOWS")
+        expectVisible(text = "Two popup windows laid out")
+        assertLog("LayoutFixture", "shared main queue: first=80x90,second=120x130")
+        val popupFrame = screenshot("two-popup-windows.png")
+        assertColorArea(popupFrame, 0xff00ffff.toInt(), 5_000)
+        assertColorArea(popupFrame, 0xffff00ff.toInt(), 12_000)
+        click(text = "INCREMENT UNDERLYING")
+        expectVisible(text = "UNDERLYING CLICKS: 1")
+        val first = Selector(description = "Close first popup", allWindows = true, visible = true)
+        val second = Selector(description = "Close second popup", allWindows = true, visible = true)
+        waitFor(first)
+        waitFor(second)
+        click(first)
+        waitFor(first, absent = true)
+        waitFor(second)
+        assertColorArea(screenshot("second-popup-remains.png"), 0xffff00ff.toInt(), 12_000)
+        click(second)
+        expectVisible(text = "Popup windows dismissed")
+        waitFor(second, absent = true)
+        expectVisible(text = "UNDERLYING CLICKS: 1")
     }
 
     private fun assertColorArea(path: java.nio.file.Path, color: Int, minimumPixels: Int) {

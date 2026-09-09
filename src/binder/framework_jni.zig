@@ -10,7 +10,9 @@ const art = @import("art");
 const jni = art.jni;
 const ndk = @import("ndk.zig");
 const prop_area = @import("prop_area.zig");
-comptime { _ = @import("native_properties.zig"); }
+comptime {
+    _ = @import("native_properties.zig");
+}
 const proc_parser = @import("proc_parser.zig");
 
 const JNIEnvPtr = [*c]jni.JNIEnv;
@@ -207,20 +209,16 @@ fn callChangeCallbacks(env: JNIEnvPtr) void {
     }
 }
 
-fn changeCallbackThread() void {
+fn dispatchChangeCallbacks() void {
     const env = ndk.jniEnv();
-    if (env == null) return;
-    defer ndk.detachCurrentThread();
-    callChangeCallbacks(env);
+    if (env != null) callChangeCallbacks(env);
 }
 
-/// Broker property_changed push (ndk.zig read loop). Runs the Java callbacks
-/// on a fresh thread: they may transact, and the read loop must stay free to
-/// carry the reply.
+/// Keep property notifications on the existing attached Binder pool. Callbacks
+/// may transact, so the broker reader must remain available to carry replies.
 pub fn onPropertyChanged() void {
     if (!g_change_callbacks_armed.load(.acquire)) return;
-    const t = std.Thread.spawn(.{}, changeCallbackThread, .{}) catch return;
-    t.detach();
+    ndk.dispatchFrameworkCallback(dispatchChangeCallbacks);
 }
 
 fn nativeAddChangeCallback(_: JNIEnvPtr, _: jni.jclass) callconv(.c) void {

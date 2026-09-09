@@ -14,6 +14,15 @@ nix develop ./artzig
 The shell contains the supported Zig compiler, OpenJDK 21, build tools, and
 native library headers.
 
+It also builds the isolated glibc runtime used by hosted ART. Chromium's Android
+sandbox denies CPU-affinity queries, so ART uses a private stack-only query
+inside that pinned libc. The launcher selects it at build time through
+`AZK_HOST_LIBC`; an explicit `-Dhost-libc=/absolute/runtime/path` overrides the
+shell value. The normal pthread attribute API and sandbox policy are unchanged.
+Run `zig build -j10 host-stack-test` to verify stack and guard bounds under
+affinity denial. The glibc patch is in `artzig/patches/glibc/`, and its isolated
+Nix derivation is `artzig/host-libc.nix`.
+
 The build consumes pinned AOSP source tarballs through the Zig package manager.
 Follow [the AOSP package instructions](../aosp/README.md) to initialize the
 selective Repo checkout and regenerate those archives.

@@ -13,6 +13,7 @@ pub fn build(b: *std.Build, aosp: *std.Build.Dependency, framework: @import("jav
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/WindowFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/TextureFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/FrameFixtureActivity.kt"));
+    kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/LayoutFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/VideoFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/ImeFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/ClipboardFixtureActivity.kt"));

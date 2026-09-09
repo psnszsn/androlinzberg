@@ -635,23 +635,13 @@ const Incoming = struct {
     parcel: *AParcel,
 };
 
-/// Per-local-target FIFO for oneway transactions. AOSP delivers oneway calls to
-/// a given binder in submission order and never concurrently, so each target
-/// gets one drain worker that runs its queue in order; a new submission starts
-/// a worker only when none is running. All fields are guarded by Runtime.mu.
-/// One persistent worker thread drains a target's queue in order for the whole
-/// time the target receives oneway calls. It holds a strong ref to the target,
-/// so a call queued before the object's export is released is still delivered
-/// before the object goes away; the worker exits (and frees the queue, dropping
-/// that ref) only once the queue is empty *and* retired. All fields are guarded
-/// by Runtime.mu; the worker parks on `cv` while idle rather than on the reader
-/// thread, so a callback can make synchronous binder calls without deadlock.
+/// A queued/running target owns one strong ref. Only one pool work item may
+/// drain this FIFO at a time; after each transaction it yields to other work.
+/// An empty FIFO is retired immediately. All fields are guarded by Runtime.mu.
 const SerialQueue = struct {
     target_id: u64,
     target: *AIBinder,
     items: std.ArrayListUnmanaged(*Incoming) = .empty,
-    cv: Io.Condition = .init,
-    retired: bool = false,
 };
 
 const Runtime = struct {
@@ -673,15 +663,12 @@ const Runtime = struct {
     death_mu: Io.Mutex = .init,
     /// Per-local-target FIFO queues serializing incoming oneway transactions.
     oneway_queues: std.AutoHashMapUnmanaged(u64, *SerialQueue) = .empty,
-    /// Two-way inbound transactions are dispatched by a small elastic pool of
-    /// persistent worker threads rather than a fresh detached thread per call.
-    /// Each worker attaches to the JVM once and is reused, so the per-transaction
-    /// attach leak and unbounded OS-thread spawn of the old path are both gone.
-    /// The pool grows by one worker whenever a transaction arrives with no idle
-    /// worker (bounded by `max_dispatch_workers`); reentrant nested calls are
-    /// routed to the parked caller thread, not the pool, so they never starve it.
-    /// All three fields are guarded by `mu`.
-    dispatch_queue: std.ArrayListUnmanaged(*Incoming) = .empty,
+    /// Pinned IPCThreadState.executeCommand serves transactions and death
+    /// notifications on Binder pool threads. AZKB uses the same bounded worker
+    /// set for both, with per-object FIFO scheduling for oneway calls. Workers
+    /// attach once for their lifetime and grow lazily up to the configured cap.
+    dispatch_queue: std.ArrayListUnmanaged(Work) = .empty,
+    dispatch_stopping: bool = false,
     dispatch_cv: Io.Condition = .init,
     dispatch_available: Io.Condition = .init,
     dispatch_idle: usize = 0,
@@ -696,6 +683,13 @@ const Runtime = struct {
     /// The routing id of the call each thread is currently servicing, for
     /// nested-transaction parent tracking.
     servicing: Io.Mutex = .init,
+
+    const Work = union(enum) {
+        transaction: *Incoming,
+        oneway: *SerialQueue,
+        deaths: std.ArrayListUnmanaged(*DeathLink),
+        callback: *const fn () void,
+    };
 
     const DeathLink = struct {
         global_id: u64,
@@ -726,8 +720,6 @@ const Runtime = struct {
         r.sendFrame(.{ .tag = if (link) .link_death else .unlink_death, .bytes_len = body.len }, &body, &.{}) catch {};
     }
 
-    /// Upper bound on persistent two-way dispatch workers. Generous so reentrant
-    /// call chains cannot deadlock the pool; a steady app uses only a few.
     var instance: ?*Runtime = null;
     var connect_mu: Io.Mutex = .init;
     threadlocal var current_routing: u64 = 0;
@@ -809,7 +801,8 @@ const Runtime = struct {
         r.package = try alloc.dupe(u8, package);
         errdefer alloc.free(r.package);
 
-        const thread = try std.Thread.spawn(.{}, readLoop, .{r});
+        const thread = std.Thread.spawn(.{}, readLoop, .{r}) catch
+            @panic("cannot start Binder reader");
         thread.detach();
         return r;
     }
@@ -843,7 +836,7 @@ const Runtime = struct {
     fn readLoop(r: *Runtime) void {
         // RELEASE can destroy Java-backed objects on this thread. Keep its
         // attachment until exit, just as the transaction workers do.
-        _ = jniEnv();
+        if (g_jvm != null and jniEnv() == null) @panic("cannot attach Binder worker to the JVM");
         defer detachCurrentThread();
         const client: Client = .{ .in = &r.conn.reader.interface, .out = undefined };
         while (true) {
@@ -899,7 +892,7 @@ const Runtime = struct {
                 }
                 // Oneway calls (request_id 0) to a local target run on that
                 // target's serial queue so their delivery order is preserved;
-                // two-way calls each get their own worker.
+                // two-way calls use the same bounded worker pool.
                 if (in.flags & FLAG_ONEWAY != 0 and in.target.kind == .local) {
                     r.serialSubmit(in.target.value, in);
                     return true;
@@ -989,83 +982,69 @@ const Runtime = struct {
     fn dispatch(r: *Runtime, in: *Incoming) void {
         r.mu.lockUncancelable(g_io);
         const target = if (in.target.kind == .local) r.locals.get(in.target.value) else null;
+        if (target) |binder| _ = binder.strong.fetchAdd(1, .monotonic);
         r.mu.unlock(g_io);
+        defer if (target) |binder| AIBinder_decStrong(binder);
         r.dispatchTo(target, in);
     }
 
-    /// Enqueues a two-way inbound transaction for the dispatch pool, growing the
-    /// pool by one persistent worker when no worker is idle (up to
-    /// `max_dispatch_workers`). Guarded by `mu`.
-    fn dispatchSubmit(r: *Runtime, in: *Incoming) void {
-        r.mu.lockUncancelable(g_io);
-        var spawn_worker = false;
-        if (r.dispatch_idle == 0 and r.dispatch_total < r.max_dispatch_workers) {
-            r.dispatch_total += 1;
-            spawn_worker = true;
-        }
-        r.dispatch_queue.append(alloc, in) catch @panic("oom");
-        r.dispatch_cv.signal(g_io);
-        r.mu.unlock(g_io);
-        if (spawn_worker) {
-            const th = std.Thread.spawn(.{}, dispatchWorker, .{r}) catch {
-                r.mu.lockUncancelable(g_io);
-                r.dispatch_total -= 1;
-                r.dispatch_available.broadcast(g_io);
-                const no_workers = r.dispatch_total == 0;
-                r.mu.unlock(g_io);
-                // Could not grow the pool. A live worker will pick the item up;
-                // if none exists, run a detached one-shot so the two-way caller
-                // is never left without a reply.
-                if (no_workers) {
-                    const th2 = std.Thread.spawn(.{}, dispatchOneShot, .{r}) catch return;
-                    th2.detach();
-                }
-                return;
-            };
-            th.detach();
-        }
+    fn startWorkerLocked(r: *Runtime) void {
+        r.dispatch_total += 1;
+        const worker = std.Thread.spawn(.{}, dispatchWorker, .{r}) catch
+            @panic("cannot start Binder dispatch worker");
+        worker.detach();
     }
 
-    /// A persistent dispatch-pool worker: attaches to the JVM once (a no-op in a
-    /// native-only process) and then drains two-way transactions in a loop,
-    /// parking on `dispatch_cv` while the queue is empty.
+    fn submitWorkLocked(r: *Runtime, work: Work) void {
+        r.dispatch_queue.append(alloc, work) catch @panic("oom");
+        if (!r.dispatch_stopping and r.dispatch_queue.items.len > r.dispatch_idle and r.dispatch_total < r.max_dispatch_workers) r.startWorkerLocked();
+        r.dispatch_cv.signal(g_io);
+    }
+
+    fn submitWork(r: *Runtime, work: Work) void {
+        r.mu.lockUncancelable(g_io);
+        defer r.mu.unlock(g_io);
+        r.submitWorkLocked(work);
+    }
+
+    fn dispatchSubmit(r: *Runtime, in: *Incoming) void {
+        r.submitWork(.{ .transaction = in });
+    }
+
+    /// Each worker retains its JVM attachment until all queued work has drained
+    /// at disconnect. Reentrant transactions still execute on their parked
+    /// originating caller, independently of pool capacity.
     fn dispatchWorker(r: *Runtime) void {
-        _ = jniEnv(); // attach this worker thread to the JVM once, if one exists
+        if (g_jvm != null and jniEnv() == null) @panic("cannot attach Binder worker to the JVM");
         defer detachCurrentThread();
         while (true) {
             r.mu.lockUncancelable(g_io);
             r.dispatch_idle += 1;
             r.dispatch_available.broadcast(g_io);
-            while (r.dispatch_queue.items.len == 0 and !r.disconnected.load(.acquire)) r.dispatch_cv.waitUncancelable(g_io, &r.mu);
+            while (r.dispatch_queue.items.len == 0 and !r.dispatch_stopping) r.dispatch_cv.waitUncancelable(g_io, &r.mu);
             r.dispatch_idle -= 1;
             if (r.dispatch_queue.items.len == 0) {
                 r.dispatch_total -= 1;
                 r.mu.unlock(g_io);
                 return;
             }
-            const in = r.dispatch_queue.orderedRemove(0);
+            const work = r.dispatch_queue.orderedRemove(0);
+            // A burst can arrive while an idle worker is waking. Grow for its
+            // remaining backlog as well, so parked callbacks cannot strand it.
+            if (!r.dispatch_stopping and r.dispatch_queue.items.len > r.dispatch_idle and
+                r.dispatch_total < r.max_dispatch_workers) r.startWorkerLocked();
             r.mu.unlock(g_io);
-            r.dispatch(in);
+            switch (work) {
+                .transaction => |in| r.dispatch(in),
+                .oneway => |queue| r.serialDispatch(queue),
+                .deaths => |links| deliverDeaths(links),
+                .callback => |callback| callback(),
+            }
         }
-    }
-
-    /// Best-effort fallback used only when the pool cannot grow (thread-spawn
-    /// exhaustion) and no worker exists: dispatches one queued transaction, then
-    /// exits.
-    fn dispatchOneShot(r: *Runtime) void {
-        r.mu.lockUncancelable(g_io);
-        if (r.dispatch_queue.items.len == 0) {
-            r.mu.unlock(g_io);
-            return;
-        }
-        const in = r.dispatch_queue.orderedRemove(0);
-        r.mu.unlock(g_io);
-        r.dispatch(in);
-        detachCurrentThread();
     }
 
     /// Runs a received transaction against a resolved target (null = gone). The
-    /// oneway serial worker passes the target it holds a ref to, so a call
+    /// oneway FIFO passes the target it holds a ref to, so a call
     /// queued before the object's export was released still reaches it.
     fn dispatchTo(r: *Runtime, target: ?*AIBinder, in: *Incoming) void {
         // A nested synchronous call can dispatch on an external native caller
@@ -1265,15 +1244,13 @@ const Runtime = struct {
         decWeak(b);
     }
 
-    /// Enqueues a oneway transaction on its target's serial queue, creating the
-    /// queue (and its persistent worker) on first use. The queue holds a strong
-    /// ref to the target for its whole lifetime so queued calls stay deliverable.
+    /// Only a newly active target enters the shared ready queue. Queued calls
+    /// own their target through the FIFO even if the broker releases its export.
     fn serialSubmit(r: *Runtime, target_id: u64, in: *Incoming) void {
         r.mu.lockUncancelable(g_io);
         var created = false;
         const q = r.oneway_queues.get(target_id) orelse blk: {
             const tgt = r.locals.get(target_id) orelse {
-                // Target already gone: drop this best-effort oneway call.
                 r.mu.unlock(g_io);
                 in.parcel.destroy();
                 alloc.destroy(in);
@@ -1287,55 +1264,23 @@ const Runtime = struct {
             break :blk nq;
         };
         q.items.append(alloc, in) catch @panic("oom");
-        q.cv.signal(g_io);
+        if (created) r.submitWorkLocked(.{ .oneway = q });
         r.mu.unlock(g_io);
-        if (created) {
-            const th = std.Thread.spawn(.{}, serialWorker, .{ r, q }) catch {
-                // No worker could start (resource exhaustion): drop this queue's
-                // best-effort oneway calls and release its target ref. Never
-                // drain inline — that would run callbacks on the reader thread.
-                r.mu.lockUncancelable(g_io);
-                _ = r.oneway_queues.remove(target_id);
-                var items = q.items;
-                q.items = .empty;
-                r.mu.unlock(g_io);
-                for (items.items) |it| {
-                    it.parcel.destroy();
-                    alloc.destroy(it);
-                }
-                items.deinit(alloc);
-                AIBinder_decStrong(q.target);
-                alloc.destroy(q);
-                return;
-            };
-            th.detach();
-        }
     }
 
-    /// The per-target oneway drain loop: process items in order, park on the
-    /// queue's condition when idle, and exit once empty and retired.
-    fn serialWorker(r: *Runtime, q: *SerialQueue) void {
-        // Follow AndroidRuntime::javaThreadShell: an owned Binder worker keeps
-        // its JVM attachment until it exits. Detaching after each dispatch
-        // loses Java thread identity and forces a fresh ART stack query after
-        // clients such as WebView have installed their syscall sandbox.
-        _ = jniEnv();
-        defer detachCurrentThread();
-        while (true) {
-            r.mu.lockUncancelable(g_io);
-            while (q.items.items.len == 0 and !q.retired) q.cv.waitUncancelable(g_io, &r.mu);
-            if (q.items.items.len == 0 and q.retired) {
-                _ = r.oneway_queues.remove(q.target_id);
-                r.mu.unlock(g_io);
-                break;
-            }
-            const in = q.items.orderedRemove(0);
+    fn serialDispatch(r: *Runtime, q: *SerialQueue) void {
+        r.mu.lockUncancelable(g_io);
+        const in = q.items.orderedRemove(0);
+        r.mu.unlock(g_io);
+        r.dispatchTo(q.target, in);
+        r.mu.lockUncancelable(g_io);
+        if (q.items.items.len > 0) {
+            r.submitWorkLocked(.{ .oneway = q });
             r.mu.unlock(g_io);
-            // Dispatch against the ref the queue holds, so a call queued before
-            // the export was released still reaches the (still-alive) object.
-            r.dispatchTo(q.target, in);
+            return;
         }
-        // Empty and retired: drop the queue's target ref and free it.
+        _ = r.oneway_queues.remove(q.target_id);
+        r.mu.unlock(g_io);
         AIBinder_decStrong(q.target);
         q.items.deinit(alloc);
         alloc.destroy(q);
@@ -1348,13 +1293,6 @@ const Runtime = struct {
         if (drop) {
             _ = r.export_uses.remove(id);
             if (r.locals.fetchRemove(id)) |kv| released = kv.value;
-            // Signal the oneway worker (if any) to finish draining then exit;
-            // it holds its own ref, so the object outlives this export drop
-            // until every queued oneway call has been delivered.
-            if (r.oneway_queues.get(id)) |q| {
-                q.retired = true;
-                q.cv.signal(g_io);
-            }
         }
         r.mu.unlock(g_io);
         if (drop) {
@@ -1387,23 +1325,12 @@ const Runtime = struct {
             } else i += 1;
         }
         r.mu.unlock(g_io);
-        deliverDeaths(links);
+        if (links.items.len > 0) r.submitWork(.{ .deaths = links }) else links.deinit(alloc);
     }
 
-    fn deliverDeaths(links: std.ArrayListUnmanaged(*DeathLink)) void {
-        if (links.items.len == 0) {
-            var empty = links;
-            empty.deinit(alloc);
-            return;
-        }
-        const thread = std.Thread.spawn(.{}, deathWorker, .{links}) catch @panic("cannot dispatch Binder death notification");
-        thread.detach();
-    }
-    fn deathWorker(owned: std.ArrayListUnmanaged(*DeathLink)) void {
+    fn deliverDeaths(owned: std.ArrayListUnmanaged(*DeathLink)) void {
         var links = owned;
         defer links.deinit(alloc);
-        _ = jniEnv();
-        defer detachCurrentThread();
         for (links.items) |l| {
             if (l.recipient.on_died) |cb| cb(l.cookie);
             l.release();
@@ -1443,13 +1370,13 @@ const Runtime = struct {
         var locals = r.locals;
         r.locals = .empty;
         r.export_uses.clearRetainingCapacity();
-        var queues = r.oneway_queues.valueIterator();
-        while (queues.next()) |q| {
-            q.*.retired = true;
-            q.*.cv.signal(g_io);
-        }
+        // Publish the final deaths before allowing idle workers to exit.
+        // Active serial callbacks can requeue their remaining FIFO work while
+        // draining; at least that active worker remains available to serve it.
+        if (links.items.len > 0) r.submitWorkLocked(.{ .deaths = links }) else links.deinit(alloc);
+        r.dispatch_stopping = true;
+        r.dispatch_cv.broadcast(g_io);
         r.mu.unlock(g_io);
-        deliverDeaths(links);
         var objects = locals.valueIterator();
         while (objects.next()) |object| dropLocal(object.*);
         locals.deinit(alloc);
@@ -2656,8 +2583,12 @@ export fn AServiceManager_isDeclared(instance: [*:0]const u8) callconv(.c) bool 
     return true;
 }
 
-// ----- ABinderProcess (no dedicated binder thread pool; the reader thread and
-// per-transaction workers handle incoming calls)
+/// Framework callbacks may transact; never execute them on the socket reader.
+pub fn dispatchFrameworkCallback(callback: *const fn () void) void {
+    Runtime.get().submitWork(.{ .callback = callback });
+}
+
+// ----- ABinderProcess (AZKB dispatch pool and independent socket reader)
 
 export fn ABinderProcess_startThreadPool() callconv(.c) void {
     _ = Runtime.get();
@@ -2693,7 +2624,7 @@ export fn ABinderProcess_isThreadPoolStarted() callconv(.c) bool {
 var park_mu: Io.Mutex = .init;
 var park_cv: Io.Condition = .init;
 export fn ABinderProcess_joinThreadPool() callconv(.c) void {
-    // The reader thread services incoming calls; a joiner parks forever.
+    // AZKB-owned workers service incoming calls; a joiner parks forever.
     _ = Runtime.get();
     park_mu.lockUncancelable(g_io);
     while (true) park_cv.waitUncancelable(g_io, &park_mu);
@@ -2949,8 +2880,7 @@ pub fn jniEnv() JNIEnvPtr {
 }
 
 /// Detaches the calling thread from the JVM if jniEnv() attached it. Every
-/// library thread that may have run Java (oneway serial workers, the reader
-/// thread, one-shot dispatchers) calls this before exiting: ART aborts a
+/// owned dispatch worker and reader calls this before exiting: ART aborts a
 /// process whose attached native thread exits without detaching.
 pub fn detachCurrentThread() void {
     const vm: [*c]jni.JavaVM = @ptrCast(@alignCast(g_jvm orelse return));

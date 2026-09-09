@@ -115,7 +115,6 @@ pub const Options = struct {
 pub const GeneratedArtifacts = struct {
     aconfig: SourceArtifacts,
     compiler_operators: SourceArtifacts,
-    compiler_optimization: std.Build.LazyPath,
     dex2oat_operators: SourceArtifacts,
     libartbase_operators: SourceArtifacts,
     dexfile_operators: SourceArtifacts,
@@ -1587,10 +1586,10 @@ fn srcs_libdex2oat_static_static(b: *std.Build, o: Options, I: Incs, m: *SourceG
         },
         .flags = flags(b, o, &cf_0, I.inc_18),
     });
-    // AOSP exposes X86MemoryOperandGeneration to both x86 backends but guards
-    // its constructor with x86 only. The declared patch keeps this build
-    // x86_64-only while following the shared pass contract.
-    m.addCSourceFile(.{ .file = o.generated.compiler_optimization, .flags = compilerOptimizationFlags(b, o, I) });
+    // The packaged ART patch 0008 exposes the shared x86 memory pass to x86_64.
+    // Compile that source directly; applying a second build-time patch diverges
+    // from the dependency hash and fails on a fresh source extraction.
+    m.addCSourceFile(.{ .file = o.vendor.path(b, "art/compiler/optimizing/optimization.cc"), .flags = compilerOptimizationFlags(b, o, I) });
     addGeneratedSources(m, o.generated.compiler_operators, flags(b, o, &cf_0, I.inc_18));
     m.addCSourceFiles(.{
         .root = o.vendor,
@@ -1948,7 +1947,7 @@ fn srcs_libart_compiler_static(b: *std.Build, o: Options, I: Incs, m: *SourceGro
         },
         .flags = flags(b, o, &cf_0, I.inc_18),
     });
-    m.addCSourceFile(.{ .file = o.generated.compiler_optimization, .flags = compilerOptimizationFlags(b, o, I) });
+    m.addCSourceFile(.{ .file = o.vendor.path(b, "art/compiler/optimizing/optimization.cc"), .flags = compilerOptimizationFlags(b, o, I) });
     addGeneratedSources(m, o.generated.compiler_operators, flags(b, o, &cf_0, I.inc_18));
 }
 fn srcs_libart_runtime_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {

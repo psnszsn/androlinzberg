@@ -86,18 +86,6 @@ pub fn build(b: *std.Build, o: Options) art.GeneratedArtifacts {
         break :blk mk.captureStdOut(.{ .basename = "asm_defines.h" });
     };
 
-    // Pinned AOSP's x86 memory optimization is shared by the x86 and x86_64
-    // backends, but its construction switch is guarded only by the former.
-    // Apply the minimal source patch as a cacheable graph node rather than
-    // enabling and compiling the unused 32-bit backend.
-    const compiler_optimization = blk: {
-        const run = b.addSystemCommand(&.{ "patch", "--batch", "--forward", "--quiet", "--output" });
-        const output = run.addOutputFileArg("optimization.cc");
-        run.addFileArg(o.vendor.path(b, "art/compiler/optimizing/optimization.cc"));
-        run.addFileArg(b.path("build/patches/art-x86_64-memory-optimization.patch"));
-        break :blk output;
-    };
-
     // --- aconfig flag library: vendored
     return .{
         .aconfig = .{
@@ -105,7 +93,6 @@ pub fn build(b: *std.Build, o: Options) art.GeneratedArtifacts {
             .include_roots = &.{b.path("src/gen/aconfig")},
         },
         .compiler_operators = .{ .sources = compiler_operators },
-        .compiler_optimization = compiler_optimization,
         .dex2oat_operators = .{ .sources = dex2oat_operators },
         .libartbase_operators = .{ .sources = libartbase_operators },
         .dexfile_operators = .{ .sources = dexfile_operators },

@@ -112,6 +112,8 @@ internal object BinderTestClient {
         val seqs = server.drainSeqs(50)
         check(seqs.toList() == (1..50).toList(), "oneway calls keep per-object order")
 
+        checkWorkerReuseAndOrdering(server)
+
         // File descriptor passing.
         val pipe = ParcelFileDescriptor.createPipe()
         server.writeToPipe(pipe[1], "hello")
@@ -135,10 +137,16 @@ internal object BinderTestClient {
 
         // Death.
         val died = CountDownLatch(1)
-        val recipient = IBinder.DeathRecipient { died.countDown() }
+        val workersBeforeDeath = Thread.getAllStackTraces().keys
+        val deathThread = java.util.concurrent.atomic.AtomicReference<Thread>()
+        val recipient = IBinder.DeathRecipient {
+            deathThread.set(Thread.currentThread())
+            died.countDown()
+        }
         binder.linkToDeath(recipient, 0)
         server.exit()
         check(died.await(20, TimeUnit.SECONDS), "death recipient fires once the server exits")
+        check(deathThread.get() in workersBeforeDeath, "death notification reuses an attached worker")
         check(!binder.isBinderAlive, "isBinderAlive is false after death")
         var dead = false
         try {
@@ -154,6 +162,62 @@ internal object BinderTestClient {
             Thread.sleep(50)
         }
         check(gone, "service name disappears with its owner")
+    }
+
+    private fun checkWorkerReuseAndOrdering(server: IBinderTestService) {
+        val warmed = checkCallbackBatch(server, saturate = true)
+        val reused = checkCallbackBatch(server, saturate = false)
+        check(warmed.size == 32, "blocking callbacks grow the shared pool to its bound")
+        check(reused.size <= 32 && reused.all { it in warmed },
+            "new Binder objects reuse attached workers (${reused.size} observed)")
+    }
+
+    private fun checkCallbackBatch(server: IBinderTestService, saturate: Boolean): Set<Thread> {
+        val targetCount = 64
+        val notesPerTarget = 8
+        val saturated = CountDownLatch(32)
+        val threads = java.util.concurrent.ConcurrentHashMap.newKeySet<Thread>()
+        val errors = java.util.concurrent.ConcurrentLinkedQueue<String>()
+        val othersStarted = CountDownLatch(targetCount - 1)
+        val completed = CountDownLatch(targetCount * notesPerTarget)
+        val callbacks = Array(targetCount) { index ->
+            object : IBinderTestCallback.Stub() {
+                private val active = java.util.concurrent.atomic.AtomicBoolean()
+                private var next = 0
+                override fun ping(value: Int) = value
+                override fun note(seq: Int) {
+                    if (active.getAndSet(true)) errors.add("Concurrent callback on object $index")
+                    try {
+                        threads.add(Thread.currentThread())
+                        if (seq != next++) errors.add("Object $index expected ${next - 1}, got $seq")
+                        if (seq == 0) {
+                            if (saturate && index < 32) {
+                                saturated.countDown()
+                                if (!saturated.await(10, TimeUnit.SECONDS)) errors.add("Pool failed to grow for blocked work")
+                            }
+                            if (index == 0) {
+                                if (!othersStarted.await(10, TimeUnit.SECONDS)) errors.add("Blocked object starved other targets")
+                            } else othersStarted.countDown()
+                        }
+                        // A serial callback can itself transact without blocking
+                        // the reader or losing per-object FIFO exclusivity.
+                        if (server.add(index, seq) != index + seq) errors.add("Nested call failed")
+                    } catch (failure: Throwable) {
+                        errors.add(failure.toString())
+                    } finally {
+                        active.set(false)
+                        completed.countDown()
+                    }
+                }
+            }
+        }
+        val exported = Bundle()
+        callbacks.forEachIndexed { index, callback -> exported.putBinder(index.toString(), callback) }
+        server.queueNotes(exported, notesPerTarget)
+        check(completed.await(20, TimeUnit.SECONDS), "64 Binder objects complete 512 ordered callbacks")
+        check(errors.isEmpty(), "per-object exclusion, FIFO and independent progress: $errors")
+        check(threads.size <= 32, "callbacks obey the shared worker limit (${threads.size} observed)")
+        return threads
     }
 
     private fun waitForHelperCallback(server: IBinderTestService): IBinderTestCallback? {

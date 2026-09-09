@@ -48,6 +48,14 @@ class ApkRule(
         resourceId, text, description, className, role, index, absent, visible, stateDescription,
     )
 
+    fun waitFor(selector: Selector, absent: Boolean = false) = session.waitFor(selector, absent)
+
+    fun click(
+        selector: Selector,
+        via: InputVia = InputVia.WAYLAND,
+        settle: WaitKind = WaitKind.IDLE,
+    ) = session.click(selector, via, settle)
+
     fun expectVisible(
         resourceId: String? = null,
         text: String? = null,

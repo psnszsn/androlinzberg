@@ -26,6 +26,8 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{ .default_target = .{ .cpu_model = .baseline } });
     const optimize = b.standardOptimizeOption(.{});
     const host_toolchain = @import("build/host_toolchain.zig").discover(b);
+    const host_libc = b.option([]const u8, "host-libc", "Pinned glibc runtime providing ART's private stack query") orelse
+        b.graph.environ_map.get("AZK_HOST_LIBC");
 
     const build_tools_test = b.step("build-tools-test", "Run build graph support unit tests");
     @import("build/command.zig").addTests(b, build_tools_test);
@@ -736,6 +738,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    if (host_libc) |root| exe.root_module.addRPath(b.graph.cwdRelativePath(b.fmt("{s}/lib", .{root})));
     exe.root_module.linkSystemLibrary("wayland-client", .{ .needed = true });
     exe.root_module.linkSystemLibrary("xkbcommon", .{ .needed = true });
     exe.root_module.linkSystemLibrary("fontconfig", .{ .needed = true }); // platform/fonts.zig
@@ -799,7 +802,8 @@ pub fn build(b: *std.Build) void {
         .file = b.path("src/platform/azk_pipewire.c"),
         .flags = &.{ "-std=c11", "-D_GNU_SOURCE" },
     });
-    for (host_toolchain.pipewire.roots) |root| audio_mod.addSystemIncludePath(root);
+    for (host_toolchain.pipewire.include_roots) |root| audio_mod.addSystemIncludePath(root);
+    for (host_toolchain.pipewire.library_roots) |root| audio_mod.addLibraryPath(root);
     audio_mod.linkSystemLibrary("pipewire-0.3", .{ .needed = true, .use_pkg_config = .no });
     const event_fd_mod = b.createModule(.{
         .root_source_file = b.path("src/platform/event_fd.zig"),
@@ -1023,6 +1027,17 @@ pub fn build(b: *std.Build) void {
     const run_process_memory_tests = b.addRunArtifact(process_memory_tests);
     b.step("process-memory-test", "Test Android process-memory accounting").dependOn(&run_process_memory_tests.step);
     const native_test_step = b.step("native-test", "Build Zig JNI adapters and run native unit tests");
+    const host_stack_step = b.step("host-stack-test", "Check ART stack bounds under Chromium-style affinity denial");
+    const host_stack_test = b.addExecutable(.{
+        .name = "host-stack-test",
+        .root_module = b.createModule(.{ .target = target, .optimize = .ReleaseSafe, .link_libc = true }),
+    });
+    host_stack_test.root_module.addCSourceFile(.{ .file = b.path("tests/native/HostStackTest.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    if (host_libc) |root| host_stack_test.root_module.addRPath(b.graph.cwdRelativePath(b.fmt("{s}/lib", .{root})));
+    const host_stack_run = b.addRunArtifact(host_stack_test);
+    host_stack_step.dependOn(&host_stack_run.step);
+    if (host_libc != null) native_test_step.dependOn(host_stack_step);
+
     const media_format_tests = b.addExecutable(.{
         .name = "azk-media-format-test",
         .root_module = b.createModule(.{

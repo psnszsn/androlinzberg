@@ -10,6 +10,7 @@
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
+      hostLibc = import ./host-libc.nix { glibc = pkgs.glibc; };
       zigPinned = zig-overlay.packages.${system}."master-2026-08-25";
     in {
       # Zig + a JDK for javac/d8, Repo for refreshing the AOSP source packages,
@@ -22,6 +23,8 @@
             # MediaCodec video: system FFmpeg provides VA-API/DRM hwcontexts;
             # libva exports decoded surfaces and libdrm defines DMA-BUF formats.
             ffmpeg-full libva libdrm libgbm ]);
+          # ART's stack-only query comes from the libc that owns pthreads.
+          AZK_HOST_LIBC = "${hostLibc.out}";
           JAVA_HOME = "${pkgs.openjdk21_headless}/lib/openjdk";
           # Pinned AOSP rustc uses libz; pkg-config may select zlib's static output.
           AZK_AOSP_TOOL_LIBRARY_PATH = "${pkgs.zlib}/lib";
@@ -29,6 +32,7 @@
       };
       packages.${system} = {
         zig = zigPinned;
+        host-libc = hostLibc.out;
       };
     };
 }

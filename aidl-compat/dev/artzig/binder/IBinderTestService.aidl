@@ -23,4 +23,6 @@ interface IBinderTestService {
     int callerPid();
     int callerUid();
     void exit();
+    /** Queues ordered notes on many distinct local objects in the caller. */
+    void queueNotes(in Bundle callbacks, int count);
 }

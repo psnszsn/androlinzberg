@@ -1,0 +1,45 @@
+--- a/runtime/thread.cc
++++ b/runtime/thread.cc
+@@ -16,6 +16,7 @@
+ 
+ #include "thread.h"
+ 
++#include <dlfcn.h>
+ #include <limits.h>  // for INT_MAX
+ #include <pthread.h>
+ #include <signal.h>
+@@ -984,11 +985,29 @@
+   CHECK_PTHREAD_CALL(pthread_attr_getguardsize, (&attributes, guard_size), __FUNCTION__);
+   CHECK_PTHREAD_CALL(pthread_attr_destroy, (&attributes), __FUNCTION__);
+ #else
+-  pthread_attr_t attributes;
+-  CHECK_PTHREAD_CALL(pthread_getattr_np, (thread, &attributes), __FUNCTION__);
+-  CHECK_PTHREAD_CALL(pthread_attr_getstack, (&attributes, stack_base, stack_size), __FUNCTION__);
+-  CHECK_PTHREAD_CALL(pthread_attr_getguardsize, (&attributes, guard_size), __FUNCTION__);
+-  CHECK_PTHREAD_CALL(pthread_attr_destroy, (&attributes), __FUNCTION__);
++  bool have_stack = false;
++#if defined(__GLIBC__)
++  // Hosted Chromium can deny sched_getaffinity, which glibc's full attribute
++  // query includes. Ask the pinned host libc only for its owned stack bounds.
++  // The initial thread uses the ordinary getter before sandbox startup.
++  using HostGetStack = int (*)(pthread_t, void**, size_t*, size_t*);
++  static const auto host_get_stack = reinterpret_cast<HostGetStack>(
++      dlsym(RTLD_DEFAULT, "__artzig_pthread_getstack"));
++  if (host_get_stack != nullptr) {
++    const int result = host_get_stack(thread, stack_base, stack_size, guard_size);
++    if (result != ENOTSUP) {
++      CHECK_EQ(result, 0) << "host stack query failed: " << strerror(result);
++      have_stack = true;
++    }
++  }
++#endif
++  if (!have_stack) {
++    pthread_attr_t attributes;
++    CHECK_PTHREAD_CALL(pthread_getattr_np, (thread, &attributes), __FUNCTION__);
++    CHECK_PTHREAD_CALL(pthread_attr_getstack, (&attributes, stack_base, stack_size), __FUNCTION__);
++    CHECK_PTHREAD_CALL(pthread_attr_getguardsize, (&attributes, guard_size), __FUNCTION__);
++    CHECK_PTHREAD_CALL(pthread_attr_destroy, (&attributes), __FUNCTION__);
++  }
+ 
+ #if defined(__GLIBC__)
+   // If we're the main thread, check whether we were run with an unlimited stack. In that case,

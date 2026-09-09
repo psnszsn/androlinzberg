@@ -47,16 +47,15 @@ class AppSession internal constructor(
         absent: Boolean = false,
         visible: Boolean = true,
         stateDescription: String? = null,
-    ): JsonObject {
+    ): JsonObject = waitFor(
+        Selector(resourceId, text, description, className, role, index,
+            visible = visible, stateDescription = stateDescription),
+        absent,
+    )
+
+    fun waitFor(selector: Selector, absent: Boolean = false): JsonObject {
         requireAlive("while waiting for accessibility state")
-        val result = client.observe(
-            Selector(
-                resourceId, text, description, className, role, index,
-                visible = visible,
-                stateDescription = stateDescription,
-            ),
-            wait = if (absent) WaitKind.ABSENT else WaitKind.EXISTS,
-        )
+        val result = client.observe(selector, wait = if (absent) WaitKind.ABSENT else WaitKind.EXISTS)
         checkPendingDiagnostics()
         return result
     }
@@ -100,6 +99,12 @@ class AppSession internal constructor(
         Action(ActionKind.CLICK, via, fromXFraction = xFraction, fromYFraction = yFraction),
         settle,
     )
+
+    fun click(
+        selector: Selector,
+        via: InputVia = InputVia.WAYLAND,
+        settle: WaitKind = WaitKind.IDLE,
+    ): StepResult = action(selector, Action(ActionKind.CLICK, via), settle)
 
     fun drag(
         fromXFraction: Double,

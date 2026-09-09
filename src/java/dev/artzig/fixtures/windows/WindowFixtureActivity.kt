@@ -96,6 +96,7 @@ open class WindowFixtureActivity : Activity() {
             requestPermissions(permissionNames, 71)
         }
         button("Show frame callbacks") { startActivity(Intent(this, FrameFixtureActivity::class.java)) }
+        button("Show layout and popups") { startActivity(Intent(this, LayoutFixtureActivity::class.java)) }
         setContentView(android.widget.ScrollView(this).apply { addView(content) })
     }
 

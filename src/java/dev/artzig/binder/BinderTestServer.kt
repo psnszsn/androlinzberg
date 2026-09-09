@@ -79,6 +79,13 @@ internal object BinderTestServer {
 
         override fun callerUid(): Int = Binder.getCallingUid()
 
+        override fun queueNotes(callbacks: Bundle, count: Int) {
+            val targets = (0 until callbacks.size()).map {
+                IBinderTestCallback.Stub.asInterface(checkNotNull(callbacks.getBinder(it.toString())))
+            }
+            for (seq in 0 until count) for (target in targets) target.note(seq)
+        }
+
         override fun exit() {
             exitLatch.countDown()
         }
