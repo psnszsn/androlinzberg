@@ -13,15 +13,7 @@ import android.view.SurfaceSession
 /** Stock Java/JNI clients talking to the launcher's separate SurfaceFlinger process. */
 object SurfaceClientSmoke {
     private fun await(done: () -> Boolean) {
-        val deadline = SystemClock.uptimeMillis() + 5000
-        val queue = checkNotNull(Looper.myLooper()).queue
-        while (!done() && SystemClock.uptimeMillis() < deadline) {
-            val message = queue.`pollDueMessage$artzig`()
-            if (message == null) { Thread.sleep(1); continue }
-            try { message.target.dispatchMessage(message) }
-            finally { android.os.MessageQueue.`recycleDispatched$artzig`(message) }
-        }
-        check(done()) { "Timed out waiting for stock SurfaceFlinger callback" }
+        BoundedLooper.await("stock SurfaceFlinger callback", 5000, done)
     }
 
     @JvmStatic fun main(args: Array<String>) {

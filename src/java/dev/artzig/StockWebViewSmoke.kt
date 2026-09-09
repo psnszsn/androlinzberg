@@ -69,20 +69,10 @@ object StockWebViewSmoke {
         println("StockWebViewSmoke: PASS")
     }
     private fun await(condition: () -> Boolean) {
-        val end = SystemClock.uptimeMillis() + 20_000
-        while (!condition() && SystemClock.uptimeMillis() < end) {
-            drainMainQueue()
-            Thread.sleep(5)
-        }
-        check(condition()) { "Timed out waiting for Chromium" }
+        BoundedLooper.await("Chromium", 20_000, condition)
     }
     private fun drainMainQueue() {
-        val queue = Looper.getMainLooper().queue
-        while (true) {
-            val message = queue.`pollDueMessage$artzig`() ?: return
-            try { message.target.dispatchMessage(message) }
-            finally { android.os.MessageQueue.`recycleDispatched$artzig`(message) }
-        }
+        BoundedLooper.drain()
     }
     fun verifyUnhandledInput(context: android.app.Activity, completed: () -> Unit) {
         val dialog = android.app.Dialog(context)

@@ -312,6 +312,45 @@ surface/task-output/WebView tests and the full JVM/WebView/audit rerun. Desktop
 modal and NewPipe fullscreen screenshots were inspected. No new desktop, audio
 or media backend was added.
 
+### Stock MessageQueue and Looper dispatch (2026-09-09)
+
+Removed the MessageQueue patch and all five host pump methods. Bootstrap,
+desktop supervision and test callers now enter the pinned Looper.loopOnce
+through a bounded host adapter. Stock Looper owns native polling, barriers,
+observer/tracing callbacks, work-source attribution, failure propagation and
+recycling. The adapter restores caller identity and loop state when returning
+to the host. Deadline messages are asynchronous; a clock check also prevents
+front-of-queue traffic from starving the native owner's deadline.
+
+The system server now sets its broker identity and process name before preparing
+its main Looper, matching the identity ordering established by Zygote on Android.
+The original queue chooses its implementation. Native/input/task-output tests
+exercise the concurrent queue under the system identity and the legacy queue in
+an ordinary process. No framework flag or queue algorithm is replaced.
+
+New regressions cover delayed delivery, cross-thread enqueueing, barriers,
+front-of-queue deadline fairness, observer completion/failure callbacks,
+work-source restoration, propagation of the original exception, recovery after
+failure, idle transitions and quit. The first framework test exposed an incorrect
+test setup: Handler takes attribution from the sending thread at enqueue time.
+The corrected test follows that original contract. Input FD callbacks and both
+task outputs pass through the new dispatch path.
+
+The exact static inputs now contain 7,073 unchanged AOSP sources, ten modified
+client files and 40 modified server files, with no missing reference. The stub
+inventory remains five. The framework archive is SHA-256
+`b119640dd7a26b3dbdc7a25af3f590a9f56f9fbb44d0231f941d8ece549907c5`, pinned to
+`N-V-__8AAMep8U7RpfcAi3NxJe0jqbCqoadxWJuAukDIRSyd`. Packaging restored the isolated
+checkout; ART is unchanged. Both local archives are current.
+
+Validation passed: Java, framework-module, input-channel, surface-buffer and
+task-output tests, then source/native/graph audits, full JVM and system suites,
+full APK integration, WebView smoke/UI, desktop launcher and session-loss gates.
+All 28 fresh APK cases contain 88 steps with zero structured issues. WebView's
+three and the desktop launcher's 16 steps also have zero issues. WebView pause,
+desktop modal and NewPipe fullscreen screenshots were inspected. Runtime/path,
+ICU, ToneGenerator, service-instance and package-snapshot work remains open.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

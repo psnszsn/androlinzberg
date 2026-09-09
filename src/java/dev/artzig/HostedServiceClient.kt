@@ -81,16 +81,9 @@ object HostedServiceClient {
         }
         // The host starts its event loop after bootstrap. Dispatch the stock
         // bindApplication callback before the launcher can submit activity work.
-        val deadline = android.os.SystemClock.uptimeMillis() + 5_000
-        val queue = android.os.Looper.myQueue()
-        while (ActivityThread.currentPackageName() != packageName &&
-            android.os.SystemClock.uptimeMillis() < deadline) {
-            val message = queue.`pollDueMessage$artzig`()
-            if (message == null) android.os.SystemClock.sleep(1)
-            else try { message.target.dispatchMessage(message) }
-            finally { android.os.MessageQueue.`recycleDispatched$artzig`(message) }
+        BoundedLooper.await("application binding: $packageName", 5000) {
+            ActivityThread.currentPackageName() == packageName
         }
-        check(ActivityThread.currentPackageName() == packageName) { "application binding timed out: $packageName" }
         return checkNotNull(ActivityThread.currentApplication())
     }
 

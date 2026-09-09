@@ -41,21 +41,16 @@ object SurfaceBufferSmoke {
     }
 
     private fun await(label: String = "SurfaceTexture frame callback", done: () -> Boolean) {
-        val deadline = SystemClock.uptimeMillis() + 3000
-        val queue = checkNotNull(Looper.myLooper()).queue
-        while (!done() && SystemClock.uptimeMillis() < deadline) {
-            val message = queue.`pollDueMessage$artzig`()
-            if (message == null) { Thread.sleep(1); continue }
-            try { message.target.dispatchMessage(message) }
-            finally { android.os.MessageQueue.`recycleDispatched$artzig`(message) }
-        }
-        check(done()) { "Missing $label" }
+        BoundedLooper.await(label, 3000, done)
     }
 
     @JvmStatic fun main(args: Array<String>) {
         val taskOutputsOnly = args.size == 2 && args[1] == "--task-outputs"
         require(args.size == 1 || taskOutputsOnly)
-        if (taskOutputsOnly) BinderSession.setIdentity("dev.artzig.task-output", true)
+        if (taskOutputsOnly) {
+            BinderSession.setIdentity("dev.artzig.task-output", true)
+            android.os.Process.setArgV0("dev.artzig.task-output")
+        }
         System.load(File(args[0]).absolutePath)
         check(nativeBinderUid() == android.os.Process.myUid()) { "Java and C++ must share one Binder identity" }
         val callback = object : android.os.Binder() {
@@ -68,6 +63,14 @@ object SurfaceBufferSmoke {
         check(foreignBinderThread(callback)) { "Binder retained an attachment on an external native thread" }
 
         if (Looper.myLooper() == null) Looper.prepareMainLooper()
+        val queueDump = StringBuilder()
+        Looper.myLooper()!!.dump({ queueDump.append(it).append('\n') }, "")
+        val concurrent = !android.os.Flags.messageQueueForceLegacy() &&
+            (android.os.Flags.forceConcurrentMessageQueue() || taskOutputsOnly)
+        check(queueDump.contains(if (concurrent) "Concurrent implementation" else "Legacy implementation")) {
+            "Unexpected stock MessageQueue selection: $queueDump"
+        }
+        println("SurfaceBuffer: stock MessageQueue mode=${if (concurrent) "concurrent" else "legacy"}")
         // This isolated native gate owns SF and the production display/input
         // bootstrap, without starting ATMS/WMS or a second input dispatcher.
         val stockServices = if (taskOutputsOnly) dev.artzig.system.StockWindowServices.prepare() else null

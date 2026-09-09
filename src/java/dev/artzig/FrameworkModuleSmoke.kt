@@ -3172,29 +3172,18 @@ internal object FrameworkModuleSmoke {
 
     private fun testMessageQueueSyncBarrier() {
         drainMainQueue()
-        val looper = checkNotNull(Looper.getMainLooper())
+        val looper = checkNotNull(Looper.myLooper())
         val queue = looper.queue
         val observed = mutableListOf<String>()
         val synchronous = Handler(looper)
         val asynchronous = Handler.createAsync(looper)
         val barrier = queue.postSyncBarrier()
-        synchronous.post { observed += "sync" }
-        asynchronous.post { observed += "async" }
-
-        val asyncMessage = checkNotNull(queue.`pollDueMessage$artzig`()) {
-            "barrier blocked asynchronous message"
-        }
         try {
-            asyncMessage.target.dispatchMessage(asyncMessage)
-        } finally {
-            android.os.MessageQueue.`recycleDispatched$artzig`(asyncMessage)
-        }
-        check(observed == listOf("async")) { "unexpected barrier delivery: $observed" }
-        check(queue.`pollDueMessage$artzig`() == null) {
-            "barrier allowed a synchronous message through"
-        }
-
-        queue.removeSyncBarrier(barrier)
+            synchronous.post { observed += "sync" }
+            asynchronous.post { observed += "async" }
+            BoundedLooper.runSlice()
+            check(observed == listOf("async")) { "unexpected barrier delivery: $observed" }
+        } finally { queue.removeSyncBarrier(barrier) }
         drainMainQueue()
         check(observed == listOf("async", "sync")) { "barrier did not release sync work: $observed" }
         check(runCatching { queue.removeSyncBarrier(barrier) }.exceptionOrNull()
@@ -3202,52 +3191,7 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testMessageQueueHostPumpSemantics() {
-        drainMainQueue()
-        val looper = checkNotNull(Looper.getMainLooper())
-        val queue = looper.queue
-        val handler = Handler(looper)
-
-        var delayedRan = false
-        handler.postDelayed({ delayedRan = true }, 35)
-        val delay = queue.`nextPollDelayMillis$artzig`()
-        check(delay in 1..35) { "host poll deadline did not track delayed work: $delay" }
-        check(queue.`pollDueMessage$artzig`() == null)
-        Thread.sleep(45)
-        drainMainQueue()
-        check(delayedRan) { "delayed message was not runnable at its deadline" }
-
-        var idleRuns = 0
-        queue.addIdleHandler {
-            idleRuns++
-            idleRuns < 2
-        }
-        queue.`runIdleHandlers$artzig`()
-        queue.`runIdleHandlers$artzig`()
-        check(idleRuns == 1) { "idle handler ran repeatedly without queue activity" }
-        handler.post { }
-        drainMainQueue()
-        queue.`runIdleHandlers$artzig`()
-        check(idleRuns == 2) { "idle handler was not rearmed after work drained" }
-
-        val raced = AtomicInteger()
-        val producer = Thread({
-            repeat(128) { handler.post { raced.incrementAndGet() } }
-        }, "MessageQueue-cross-thread-smoke")
-        producer.start()
-        producer.join()
-        drainMainQueue()
-        check(raced.get() == 128) { "enqueue/drain race lost ${128 - raced.get()} messages" }
-
-        var enqueueAfterQuit = true
-        val quitter = Thread({
-            Looper.prepare()
-            val privateLooper = checkNotNull(Looper.myLooper())
-            privateLooper.quit()
-            enqueueAfterQuit = Handler(privateLooper).post { }
-        }, "MessageQueue-quit-smoke")
-        quitter.start()
-        quitter.join()
-        check(!enqueueAfterQuit) { "MessageQueue accepted work after quit" }
+        StockLooperSmoke.run()
     }
 
     private fun testChoreographerPhaseOrder() {
@@ -3293,17 +3237,7 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun drainMainQueueCounting(): Int {
-        val queue = checkNotNull(Looper.getMainLooper()).queue
-        var count = 0
-        while (true) {
-            val message = queue.`pollDueMessage$artzig`() ?: return count
-            try {
-                message.target.dispatchMessage(message)
-                count++
-            } finally {
-                android.os.MessageQueue.`recycleDispatched$artzig`(message)
-            }
-        }
+        return BoundedLooper.drain()
     }
 
     private fun testSimpleRendererContracts() {

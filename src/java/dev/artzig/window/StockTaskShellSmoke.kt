@@ -100,14 +100,6 @@ internal object StockTaskShellSmoke {
     }
 
     private fun await(label: String, ready: () -> Boolean) {
-        val deadline = SystemClock.uptimeMillis() + 10_000
-        val queue = checkNotNull(Looper.myLooper()).queue
-        while (!ready() && SystemClock.uptimeMillis() < deadline) {
-            val message = queue.`pollDueMessage$artzig`()
-            if (message == null) { SystemClock.sleep(1); continue }
-            try { message.target.dispatchMessage(message) }
-            finally { android.os.MessageQueue.`recycleDispatched$artzig`(message) }
-        }
-        check(ready()) { "Timed out waiting for $label" }
+        dev.artzig.BoundedLooper.await(label, 10_000, ready)
     }
 }

@@ -3,7 +3,6 @@ package dev.artzig.window
 import android.hardware.input.IInputDevicesChangedListener
 import android.os.Handler
 import android.os.Looper
-import android.os.MessageQueue
 import android.os.Parcel
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
@@ -107,18 +106,10 @@ object WaylandKeyboardMapSmoke {
         check(current.generation == previous.generation + 2)
         check(previous.keyCharacterMap.get(KeyEvent.KEYCODE_A, 0) == 0)
         check(current.keyCharacterMap.get(KeyEvent.KEYCODE_A, 0) == 'q'.code)
-        while (changes.isEmpty()) {
-            val message = checkNotNull(looper.queue.`pollDueMessage$artzig`())
-            try { message.target.dispatchMessage(message) }
-            finally { MessageQueue.`recycleDispatched$artzig`(message) }
-        }
+        dev.artzig.BoundedLooper.await("keyboard map change") { changes.isNotEmpty() }
         check(changes.single().contentEquals(intArrayOf(KeyCharacterMap.VIRTUAL_KEYBOARD, current.generation)))
         fun awaitDeviceNotice(count: Int) {
-            while (changes.size < count) {
-                val message = checkNotNull(looper.queue.`pollDueMessage$artzig`())
-                try { message.target.dispatchMessage(message) }
-                finally { MessageQueue.`recycleDispatched$artzig`(message) }
-            }
+            dev.artzig.BoundedLooper.await("input device notice $count") { changes.size >= count }
         }
         service.publishSeatCapabilities(1, 15)
         check(service.inputDeviceIds.contentEquals(intArrayOf(-1, 0, 1, 2)))

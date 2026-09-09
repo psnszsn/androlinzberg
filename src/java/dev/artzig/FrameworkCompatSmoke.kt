@@ -1208,11 +1208,7 @@ public final class FrameworkCompatSmoke {
         }
 
         @JvmStatic private fun drainMainLooper() {
-            var message: Message
-            while ((Looper.myQueue().`pollDueMessage$artzig`().also { message = it }) != null) {
-                message.getTarget().dispatchMessage(message)
-                android.os.MessageQueue.`recycleDispatched$artzig`(message)
-            }
+            BoundedLooper.drain()
         }
 
         /** Cross-process prerequisite: every framework value type must survive a Parcel round trip. */

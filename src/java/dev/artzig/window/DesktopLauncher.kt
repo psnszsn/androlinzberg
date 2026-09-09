@@ -98,10 +98,7 @@ object DesktopLauncher {
                     if (live) observedTask = true else if (observedTask) return
                 }
                 check(observedTask || SystemClock.uptimeMillis() < deadline) { "ATMS never created an application task" }
-                val message = Looper.myQueue().`pollDueMessage$artzig`()
-                if (message == null) SystemClock.sleep(5)
-                else try { message.target.dispatchMessage(message) }
-                finally { android.os.MessageQueue.`recycleDispatched$artzig`(message) }
+                dev.artzig.BoundedLooper.runSlice()
             }
         } catch (dead: android.os.DeadObjectException) {
             sessionLost(lost.get() ?: "activity_task")

@@ -4,7 +4,6 @@ import android.graphics.Rect
 import android.os.Binder
 import android.os.IBinder
 import android.os.Looper
-import android.os.MessageQueue
 import android.os.Process
 import android.os.SystemClock
 import android.view.InputApplicationHandle
@@ -90,14 +89,7 @@ object HostInputDispatcherSmoke {
             override fun notifyUnsupportedHardwareEvent(kind: String) { unexpected.add(kind) }
         }
         fun await(label: String, condition: () -> Boolean) {
-            val deadline = SystemClock.uptimeMillis() + 5000
-            while (!condition() && SystemClock.uptimeMillis() < deadline) {
-                val message = looper.queue.`pollDueMessage$artzig`()
-                if (message == null) Thread.sleep(1)
-                else try { message.target.dispatchMessage(message) }
-                finally { MessageQueue.`recycleDispatched$artzig`(message) }
-            }
-            check(condition()) { "Timed out waiting for $label: $observed; errors=$unexpected" }
+            BoundedLooper.await("$label: $observed; errors=$unexpected", 5000, condition)
             check(unexpected.isEmpty()) { unexpected.toString() }
             System.err.println("HostInputManagerBridge gate: $label")
         }

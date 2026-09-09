@@ -100,10 +100,7 @@ object StockWindowBootSmoke {
         val deadline = android.os.SystemClock.uptimeMillis() + 10_000
         while ((resumed == null || (dev.artzig.testing.HostedRootFrames.stockClients && !frameCommitted.get())) &&
             android.os.SystemClock.uptimeMillis() < deadline) {
-            val message = android.os.Looper.myQueue().`pollDueMessage$artzig`()
-            if (message == null) android.os.SystemClock.sleep(1)
-            else try { message.target.dispatchMessage(message) }
-            finally { android.os.MessageQueue.`recycleDispatched$artzig`(message) }
+            dev.artzig.BoundedLooper.runSlice()
         }
         application.unregisterActivityLifecycleCallbacks(lifecycle)
         checkNotNull(resumed) { "Stock ATMS did not resume the fixture activity" }
@@ -124,10 +121,7 @@ object StockWindowBootSmoke {
         resumed!!.finish()
         val backgroundDeadline = android.os.SystemClock.uptimeMillis() + 10_000
         do {
-            val message = android.os.Looper.myQueue().`pollDueMessage$artzig`()
-            if (message == null) android.os.SystemClock.sleep(5)
-            else try { message.target.dispatchMessage(message) }
-            finally { android.os.MessageQueue.`recycleDispatched$artzig`(message) }
+            dev.artzig.BoundedLooper.runSlice()
             android.app.ActivityManager.getMyMemoryState(memory)
         } while ((memory.processState < android.app.ActivityManager.PROCESS_STATE_CACHED_ACTIVITY ||
                 audioFocusMode() != android.app.AppOpsManager.MODE_IGNORED) &&
@@ -268,11 +262,7 @@ object StockWindowBootSmoke {
     }
 
     private fun drainDueMessages() {
-        while (true) {
-            val message = android.os.Looper.myQueue().`pollDueMessage$artzig`() ?: return
-            try { message.target.dispatchMessage(message) }
-            finally { android.os.MessageQueue.`recycleDispatched$artzig`(message) }
-        }
+        dev.artzig.BoundedLooper.drain()
     }
 
     /** Exercise the actual session contract before switching the ViewRootImpl client.

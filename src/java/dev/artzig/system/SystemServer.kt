@@ -22,10 +22,11 @@ import kotlin.concurrent.thread
 internal object SystemServer {
     @JvmStatic
     fun main(args: Array<String>) {
-        Looper.prepareMainLooper()
-        // Identity first: uid 1000, the only peer allowed to claim system names.
+        // Match Zygote's identity/name setup before SystemServer prepares its
+        // looper: stock MessageQueue uses these to choose its implementation.
         BinderSession.setIdentity("android", true)
         Process.setArgV0("system_server")
+        Looper.prepareMainLooper()
         val uid = BinderSession.assignedUid()
         check(uid == Process.SYSTEM_UID) { "broker assigned uid " + uid + " to the system process" }
         // ro.boot.qemu is never seeded: the real ClipboardService takes its plain path.

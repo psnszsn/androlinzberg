@@ -17,23 +17,13 @@ import java.util.concurrent.atomic.AtomicReference
 /** Exercises stock Java/JNI input and MessageQueue callbacks through real sockets. */
 object InputEventSmoke {
     private fun pump(looper: Looper) {
-        repeat(100) {
-            val message = looper.queue.`pollDueMessage$artzig`() ?: return
-            try {
-                message.target.dispatchMessage(message)
-            } finally {
-                MessageQueue.`recycleDispatched$artzig`(message)
-            }
-        }
+        check(looper.isCurrentThread)
+        BoundedLooper.drain()
     }
 
     private fun await(looper: Looper, condition: () -> Boolean) {
-        val deadline = SystemClock.uptimeMillis() + 3000
-        while (!condition()) {
-            check(SystemClock.uptimeMillis() < deadline) { "Timed out waiting for input callback" }
-            pump(looper)
-            Thread.sleep(1)
-        }
+        check(looper.isCurrentThread)
+        BoundedLooper.await("input callback", 3000, condition)
     }
 
     fun run() {
