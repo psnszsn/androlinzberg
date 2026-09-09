@@ -11,6 +11,25 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Root draw and window registry APK contracts (2026-09-09)
+
+The frame fixture now verifies root draw-start notification before the draw
+listener, callback removal, and the shared main Choreographer. Regressions 567
+and 568 pass the three physical steps, frame-commit ordering and stop/resume.
+The obsolete legacy-root jank fallback assertion is removed; the generic jank
+value and invalid-surface checks remain.
+
+The window registry fixture uses WMS-owned windows to verify listener
+registration deduplication, independent snapshots, token and name lookup,
+preservation of root-owned layout attributes, and deferred close ordering.
+Closing windows with the activity token retains the excluded activity root and
+its panel window. Regression 572 passes on stock and 573 passes on legacy, each
+with two clean interaction steps and the expected screenshot. Regression 573
+also passes the full JVM suite and source audits after retiring the old registry
+test. Artifacts: `/tmp/wayland-frame-567-artifacts/`,
+`/tmp/wayland-registry-572-artifacts/`, and
+`/tmp/wayland-registry-default-573-artifacts/`.
+
 ## Compositor loss and buffer cleanup (2026-09-09)
 
 The existing headless harness now supports killing its owned compositor. The

@@ -25,6 +25,35 @@ class FrameFixtureActivity : Activity() {
     private var stopProbeArmed = false
     private var resumed = false
     private var unsubmittedCallback = false
+    private var callbackRoot: android.view.ViewRootImpl? = null
+    private var observeDrawStart = true
+    private var started = false
+    private var drawStarts = 0
+    private var observedDraws = 0
+    private var startsAtRemoval = 0
+    private var drawsAfterRemoval = 0
+    private val surfaceCallback = object : android.view.ViewRootImpl.SurfaceChangedCallback {
+        override fun surfaceCreated(transaction: android.view.SurfaceControl.Transaction) = Unit
+        override fun surfaceReplaced(transaction: android.view.SurfaceControl.Transaction) = Unit
+        override fun surfaceDestroyed() = Unit
+        override fun vriDrawStarted(isWmSync: Boolean) {
+            onMain()
+            check(observeDrawStart)
+            drawStarts++
+            started = true
+        }
+    }
+    private val drawObserver = android.view.ViewTreeObserver.OnDrawListener {
+        onMain()
+        if (observeDrawStart) {
+            check(started) { "Root draw listener ran before vriDrawStarted" }
+            started = false
+            observedDraws++
+        } else {
+            check(drawStarts == startsAtRemoval) { "Removed root callback received a draw" }
+            drawsAfterRemoval++
+        }
+    }
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -44,14 +73,36 @@ class FrameFixtureActivity : Activity() {
                         check(unsubmitted.viewTreeObserver.unregisterFrameCommitCallback(pending))
                         check(!unsubmitted.viewTreeObserver.unregisterFrameCommitCallback(pending))
                         events += "fromDraw"
-                        complete = true
+                        check(observedDraws >= 2)
+                        checkNotNull(callbackRoot).removeSurfaceChangedCallback(surfaceCallback)
+                        startsAtRemoval = drawStarts
+                        observeDrawStart = false
+                        viewTreeObserver.registerFrameCommitCallback {
+                            onMain()
+                            check(drawsAfterRemoval > 0 && drawStarts == startsAtRemoval)
+                            complete = true
+                            status.text = "Frame callbacks verified"
+                            Log.i("FrameFixture", "root draw-start precedes draw listener; removal stops callbacks")
+                            Log.i("FrameFixture", "commit order=first,second,fromDraw; unattached callback not submitted")
+                        }
                         setBackgroundColor(Color.BLUE)
-                        status.text = "Frame callbacks verified"
-                        Log.i("FrameFixture", "commit order=first,second,fromDraw; unattached callback not submitted")
                     }
                 }
             }
         }.apply { setWillNotDraw(false); setBackgroundColor(Color.RED) }
+        probe.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(view: View) {
+                callbackRoot = checkNotNull(view.viewRootImpl)
+                check(callbackRoot!!.choreographer === android.view.Choreographer.getInstance())
+                if (observeDrawStart) callbackRoot!!.addSurfaceChangedCallback(surfaceCallback)
+                view.viewTreeObserver.addOnDrawListener(drawObserver)
+            }
+            override fun onViewDetachedFromWindow(view: View) {
+                callbackRoot?.removeSurfaceChangedCallback(surfaceCallback)
+                callbackRoot = null
+                if (view.viewTreeObserver.isAlive) view.viewTreeObserver.removeOnDrawListener(drawObserver)
+            }
+        })
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(status)

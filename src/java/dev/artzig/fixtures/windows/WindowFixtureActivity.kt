@@ -83,6 +83,7 @@ open class WindowFixtureActivity : Activity() {
         button("Show frame callbacks") { startActivity(Intent(this, FrameFixtureActivity::class.java)) }
         button("Show layout and popups") { startActivity(Intent(this, LayoutFixtureActivity::class.java)) }
         button("Show virtual accessibility") { startActivity(Intent(this, AccessibilityFixtureActivity::class.java)) }
+        button("Show window registry") { startActivity(Intent(this, WindowRegistryFixtureActivity::class.java)) }
         setContentView(android.widget.ScrollView(this).apply { addView(content) })
     }
 

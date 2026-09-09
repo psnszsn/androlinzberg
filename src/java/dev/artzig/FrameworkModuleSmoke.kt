@@ -326,7 +326,6 @@ internal object FrameworkModuleSmoke {
         testStockApplicationSharedMemory()
         testStockMemoryIntArray()
         testStockCompanionModelsAndLocalSockets()
-        testWindowRootRegistry()
         testWindowConfigurationCallbacks()
         testStockRuntimeInitialization()
         testStockMimeMapResources()
@@ -475,26 +474,6 @@ internal object FrameworkModuleSmoke {
             .generateSessionName("SCROLL", "list") == "J<SCROLL::list>")
         check(com.android.internal.jank.DisplayRefreshRate.getRefreshRate(16_666_667L) ==
             com.android.internal.jank.DisplayRefreshRate.REFRESH_RATE_60_HZ)
-        val root = ViewRootImpl(context)
-        val events = arrayListOf<String>()
-        val callback = object : ViewRootImpl.SurfaceChangedCallback {
-            override fun surfaceCreated(transaction: android.view.SurfaceControl.Transaction) { error("No compositor surface") }
-            override fun surfaceReplaced(transaction: android.view.SurfaceControl.Transaction) { error("No compositor surface") }
-            override fun surfaceDestroyed() { error("No compositor surface") }
-            override fun vriDrawStarted(isWmSync: Boolean) { check(!isWmSync); events.add("start") }
-        }
-        try {
-            root.setView(view, 32, 32)
-            root.addSurfaceChangedCallback(callback)
-            view.viewTreeObserver.addOnDrawListener { events.add("draw") }
-            root.doTraversal()
-            check(events == listOf("start", "draw"))
-            root.removeSurfaceChangedCallback(callback)
-            events.clear()
-            view.invalidate()
-            root.doTraversal()
-            check(events == listOf("draw"))
-        } finally { root.removeSurfaceChangedCallback(callback); root.destroy() }
     }
 
     private fun testStockSystemConfigAndRuntimeInfo() {
@@ -737,139 +716,6 @@ internal object FrameworkModuleSmoke {
             android.content.type.DefaultMimeMapFactory.create { "text/plain  txt\n".byteInputStream() }
         }.exceptionOrNull()
         check(malformed is RuntimeException && malformed.cause is IllegalArgumentException)
-    }
-
-    private fun testWindowRootRegistry() {
-        val context = android.app.ActivityThread.currentActivityThread().systemContext
-        val global = android.view.WindowManagerGlobal.getInstance()
-        val before = global.windowViews
-        val changes = ArrayList<List<View>>()
-        val listener = java.util.function.Consumer<List<View>> { changes.add(ArrayList(it)) }
-        global.addWindowViewsListener(java.util.concurrent.Executor { it.run() }, listener)
-        global.addWindowViewsListener(java.util.concurrent.Executor { it.run() }, listener)
-        check(changes.size == 1 && changes.single() == before)
-        val token = android.os.Binder()
-        val parent = View(context)
-        parent.layoutParams = android.view.WindowManager.LayoutParams().apply {
-            this.token = token
-            title = "Registry parent"
-        }
-        val parentRoot = HostedWindowRoots.attach(parent, 100, 100)
-        HostedWindowStack.setActivityRoot(parentRoot)
-        val manager = WindowManagerImpl(context)
-        var childRoot: ViewRootImpl? = null
-        try {
-            val child = View(context)
-            child.layoutParams = android.view.WindowManager.LayoutParams().apply {
-                this.token = parent.windowToken
-                type = android.view.WindowManager.LayoutParams.TYPE_APPLICATION_PANEL
-                title = "Registry child"
-            }
-            manager.addView(child, child.layoutParams)
-            childRoot = checkNotNull(child.viewRootImpl).also { it.setSize(100, 100) }
-            val overlay = checkNotNull(HostedWindowStack.topFocusable())
-            check(overlay.view === child && overlay.root === childRoot)
-            check(HostedWindowStack.entries().none { it.view === parent })
-            overlay.frame.set(4, 5, 64, 65)
-            val overlayUpdate = WindowManager.LayoutParams().apply {
-                copyFrom(child.layoutParams as WindowManager.LayoutParams)
-                flags = flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                width = 60
-            }
-            manager.updateViewLayout(child, overlayUpdate)
-            check(HostedWindowStack.topFocusable()?.view !== child)
-            check(HostedWindowStack.topTouchable() === overlay)
-            check(overlay.lp === overlayUpdate && overlay.frame == Rect(4, 5, 64, 65))
-            overlayUpdate.flags = overlayUpdate.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
-            manager.updateViewLayout(child, overlayUpdate)
-            check(HostedWindowStack.topFocusable() === overlay)
-            check(changes.last() == before + listOf(parent, child))
-            check(global.getWindowView(parent.windowToken) === parent)
-            check(global.getRootViews(token) == listOf(parentRoot, childRoot))
-            check(global.getRootViews(android.os.Binder()).isEmpty())
-            val name = "Registry parent/android.view.ViewRootImpl@${Integer.toHexString(parentRoot.hashCode())}"
-            check(name in global.viewRootNames && global.getRootView(name) === parent)
-            check(global.getRootView("unknown") == null)
-            global.windowViews.clear()
-            check(global.windowViews.contains(parent))
-            val oldAttributes = parentRoot.mWindowAttributes
-            oldAttributes.systemUiVisibility = 0x100
-            oldAttributes.subtreeSystemUiVisibility = 0x200
-            oldAttributes.insetsFlags.appearance = 8
-            oldAttributes.insetsFlags.behavior = 2
-            oldAttributes.surfaceInsets.set(1, 2, 3, 4)
-            oldAttributes.hasManualSurfaceInsets = true
-            oldAttributes.softInputMode = android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
-            val changed = android.view.WindowManager.LayoutParams().apply {
-                copyFrom(parent.layoutParams as android.view.WindowManager.LayoutParams)
-                width = android.view.WindowManager.LayoutParams.MATCH_PARENT
-                height = android.view.WindowManager.LayoutParams.MATCH_PARENT
-                privateFlags = privateFlags or android.view.WindowManager.LayoutParams.PRIVATE_FLAG_EDGE_TO_EDGE_ENFORCED
-                setFitInsetsTypes(0)
-                setFitInsetsSides(0)
-                layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
-                preservePreviousSurfaceInsets = true
-            }
-            global.updateViewLayout(parent, changed)
-            check(parent.layoutParams === changed)
-            check(oldAttributes.systemUiVisibility == 0x100 && oldAttributes.subtreeSystemUiVisibility == 0x200)
-            check(oldAttributes.insetsFlags.appearance == 8 && oldAttributes.insetsFlags.behavior == 2)
-            check(oldAttributes.surfaceInsets == Rect(1, 2, 3, 4) && oldAttributes.hasManualSurfaceInsets)
-            check(oldAttributes.softInputMode and android.view.WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST ==
-                android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-            check(oldAttributes.layoutInDisplayCutoutMode == android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS)
-            check(changed.layoutInDisplayCutoutMode == android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER)
-            val sibling = View(context).apply {
-                layoutParams = android.view.WindowManager.LayoutParams().apply { this.token = Binder() }
-            }
-            val siblingRoot = HostedWindowRoots.attach(sibling, 100, 100)
-            try {
-                parentRoot.doTraversal()
-                childRoot.doTraversal()
-                siblingRoot.doTraversal()
-                check(parentRoot.`getRenderNode$artzig`() != null)
-                check(childRoot.`getRenderNode$artzig`() != null)
-                global.setStoppedState(token, true)
-                check(parentRoot.`getRenderNode$artzig`() == null)
-                check(childRoot.`getRenderNode$artzig`() == null)
-                check(siblingRoot.`getRenderNode$artzig`() != null)
-                check(parent.isAttachedToWindow && child.isAttachedToWindow)
-                global.setStoppedState(token, false)
-                parentRoot.doTraversal()
-                childRoot.doTraversal()
-                check(parentRoot.`getRenderNode$artzig`() != null)
-                check(childRoot.`getRenderNode$artzig`() != null)
-            } finally { siblingRoot.destroy() }
-            val closed = ArrayList<String>()
-            val leakedViews = (1..2).map { index ->
-                object : View(context) {
-                    override fun onDetachedFromWindow() {
-                        closed.add("detach-$index")
-                        super.onDetachedFromWindow()
-                    }
-                }.apply {
-                    layoutParams = android.view.WindowManager.LayoutParams().apply { this.token = token }
-                    HostedWindowRoots.attach(this, 20, 20).doTraversal()
-                }
-            }
-            global.closeAllExceptView(token, parent, null, null)
-            check(closed.isEmpty()) { "closeAll must defer destruction while iterating roots" }
-            check(leakedViews.all { global.windowViews.contains(it) && it.parent == null })
-            runHostedFrame()
-            check(closed == listOf("detach-1", "detach-2")) { "deferred removals: $closed" }
-            check(leakedViews.none { global.windowViews.contains(it) || it.isAttachedToWindow })
-            check(global.windowViews.contains(parent) && global.windowViews.contains(child))
-            manager.removeViewImmediate(child)
-            check(HostedWindowStack.entries().none { it.view === child })
-            check(changes.last() == before + parent)
-            check(!global.windowViews.contains(child))
-            parentRoot.destroy()
-            check(changes.last() == before && global.windowViews == before)
-        } finally {
-            childRoot?.destroy()
-            parentRoot.destroy()
-            global.removeWindowViewsListener(listener)
-        }
     }
 
     private fun testWindowConfigurationCallbacks() {
@@ -1150,13 +996,6 @@ internal object FrameworkModuleSmoke {
         check(stat.totalFrames == 2L && stat.jankyFrames == 1L)
         check(stat.uid == 10001 && stat.activityName == "Activity")
         check(stat.frameOverrunBuckets.sum() == 2)
-        // The stock AttachedSurfaceControl fallback reports no compositor jank
-        // subscription. App-state aggregation does not fabricate frame samples.
-        val root = android.view.ViewRootImpl(android.app.ActivityThread.currentActivityThread().systemContext)
-        check(root.choreographer === android.view.Choreographer.getInstance())
-        check(root.registerOnJankDataListener(java.util.concurrent.Executor { it.run() }) { error("No compositor subscription") }
-            === android.view.SurfaceControl.OnJankDataListenerRegistration.NONE)
-
         val configuration = android.net.wifi.SoftApConfiguration.Builder()
             .setSsid("fixture-ap").setBand(android.net.wifi.SoftApConfiguration.BAND_2GHZ)
             .setPassphrase("password123", android.net.wifi.SoftApConfiguration.SECURITY_TYPE_WPA2_PSK)

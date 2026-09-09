@@ -63,6 +63,7 @@ class WindowFixtureTest {
         click(text = "SHOW FRAME CALLBACKS")
         expectVisible(text = "Frame callbacks verified")
         assertLog("FrameFixture", "commit order=first,second,fromDraw; unattached callback not submitted")
+        assertLog("FrameFixture", "root draw-start precedes draw listener; removal stops callbacks")
         assertColorArea(screenshot("frame-committed-blue.png"), 0xff0000ff.toInt(), 40_000)
         click(text = "COVER FRAME WINDOW")
         expectVisible(text = "RETURN TO FRAME WINDOW")
@@ -138,6 +139,16 @@ class WindowFixtureTest {
         click(Selector(className = "android.widget.EditText", visible = true),
             via = dev.artzig.testkit.InputVia.SEMANTIC)
         expectVisible(text = "Virtual action 7 clicks=1")
+    }
+
+    @Test
+    fun windowRegistryPreservesLayoutAndDefersRemoval() = app.run {
+        click(text = "SHOW WINDOW REGISTRY")
+        expectVisible(text = "Window registry ready")
+        click(text = "CHECK WINDOW REGISTRY")
+        expectVisible(text = "Window registry verified")
+        assertLog("WindowRegistryFixture", "listener deduplication, snapshots, token and name lookup, layout preservation, deferred close and panel retention verified")
+        assertColorArea(screenshot("window-registry.png"), 0xff00ffff.toInt(), 5_000)
     }
 
     private fun assertColorArea(path: java.nio.file.Path, color: Int, minimumPixels: Int, maximumPixels: Int = Int.MAX_VALUE) {
