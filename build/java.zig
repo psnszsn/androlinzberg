@@ -15,6 +15,7 @@ pub const Options = struct {
 };
 
 pub const Result = struct {
+    stock_window_clients: bool,
     classes_jar: LazyPath,
     compile_boot_jar: LazyPath,
     /// Classpath jar containing classes.dex and any secondary dex files.
@@ -562,6 +563,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         path.addStepDependencies(java_step);
     }
     return .{
+        .stock_window_clients = sources.stock_window_clients,
         .classes_jar = classes_jar,
         .compile_boot_jar = core_plus,
         .classpath_jar = classpath_jar,

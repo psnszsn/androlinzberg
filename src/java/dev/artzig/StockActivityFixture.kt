@@ -23,6 +23,14 @@ import dev.artzig.system.HostedPackageManagerService
 /** Manifest-backed process fixture. The production task manager and stock transactions own
  * lifecycle decisions; only component metadata and service lookup are replaced for the test. */
 internal class StockActivityFixture(apk: String, private val drain: () -> Unit) : AutoCloseable {
+    init {
+        // Pinned PropertyInvalidatedCache provides this mode for in-process
+        // service fixtures. Our local PackageManager runs under the test app UID
+        // and must not publish privileged system-server invalidation properties.
+        // Own this setup here instead of relying on an earlier module test.
+        android.app.PropertyInvalidatedCache.disableForTestMode()
+    }
+
     private fun pump() = StockFrameTestDriver.settle(drain)
 
     private val context = HostContexts.systemContext(

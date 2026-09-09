@@ -11,6 +11,25 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Framework smoke coverage with stock clients (2026-09-09)
+
+The general FrameworkModuleSmoke now compiles with stock window clients. Thirteen
+remaining tests that construct legacy roots live in LegacyWindowSmoke, and the
+activity fixtures that substitute the legacy task manager run from that target.
+The default JVM suite includes both targets; the stock source selection includes
+the general suite. These legacy contracts still require APK migration before
+removing the old backend.
+
+The separated activity fixture now explicitly establishes its prerequisites:
+the runner installs and binds its fixture application, and StockActivityFixture
+owns the pinned cache test mode required by its in-process PackageManager.
+Regression 575 passes the general framework suite with stock clients and source
+audits. Regression 576 passes the other default JVM targets; after resolving
+those fixture prerequisites, regression 578 passes the independent legacy suite
+and audits. Logs: `/tmp/wayland-build-575.log`, `/tmp/wayland-build-576.log`, and
+`/tmp/wayland-build-578.log`. A full stock JVM/APK run remains the next combined
+check; this separation does not complete the default cutover.
+
 ## Root draw and window registry APK contracts (2026-09-09)
 
 The frame fixture now verifies root draw-start notification before the draw

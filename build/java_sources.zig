@@ -48,6 +48,7 @@ const StaticCollector = struct {
 };
 
 pub const Set = struct {
+    stock_window_clients: bool,
     java: SourceFiles.Files,
     kotlin: SourceFiles.Files,
     annotations: SourceFiles.Files,
@@ -97,8 +98,8 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
     for (project_sources.framework) |path| {
         if (stock_window_clients and (std.mem.eql(u8, path, "src/framework/android/view/ViewRootImpl.java") or
             std.mem.eql(u8, path, "src/framework/android/view/SurfaceView.java") or
-            // Remaining legacy root assertions are migrating to APK fixtures.
-            std.mem.eql(u8, path, "src/java/dev/artzig/FrameworkModuleSmoke.kt"))) continue;
+            // Keep legacy root tests separate from the shared framework suite.
+            std.mem.eql(u8, path, "src/java/dev/artzig/LegacyWindowSmoke.kt"))) continue;
         framework.files.addFile(project_root, path);
     }
     framework.files.addFile(project_root, if (stock_window_clients)
@@ -134,6 +135,7 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
     const kotlin = framework.files.select(".kt");
     const annotation_files = annotations.select(".java");
     return .{
+        .stock_window_clients = stock_window_clients,
         .java = java,
         .protobuf_lite = protobuf.files.select(".java"),
         .cronet_preload = cronet.files.select(".java"),

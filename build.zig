@@ -1378,6 +1378,22 @@ pub fn build(b: *std.Build) void {
     framework_module_smoke.run.setName("run hosted framework module tests");
     b.step("framework-module-test", "Test stock framework values and hosted service contracts").dependOn(&framework_module_smoke.run.step);
     jvm_test_step.dependOn(&framework_module_smoke.run.step);
+    if (!java.stock_window_clients) {
+        const legacy_window_smoke = @import("build/command.zig").create(b);
+        setApplicationEnvironment(legacy_window_smoke, application_tree);
+        legacy_window_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+        legacy_window_smoke.addArg("--javatest");
+        legacy_window_smoke.addFileArg(java.fixtures.permissions);
+        legacy_window_smoke.addFileArg(java.fixtures.example);
+        legacy_window_smoke.setEnvironment("AZK_TEST_CLASS", "dev.artzig.LegacyWindowSmoke");
+        legacy_window_smoke.setEnvironment("AZK_BINDER_PACKAGE", "org.example.permissions");
+        legacy_window_smoke.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
+        legacy_window_smoke.run.setName("run legacy window regression tests pending APK migration");
+        b.step("legacy-window-test", "Test the remaining legacy window contracts")
+            .dependOn(&legacy_window_smoke.run.step);
+        jvm_test_step.dependOn(&legacy_window_smoke.run.step);
+    }
+
     const webview_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(webview_smoke, application_tree);
     webview_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));

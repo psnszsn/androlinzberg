@@ -120,6 +120,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/InputEventSmoke.kt",
     "src/java/dev/artzig/InputHandleSmoke.kt",
     "src/java/dev/artzig/FrameworkModuleSmoke.kt",
+    "src/java/dev/artzig/LegacyWindowSmoke.kt",
     "src/java/com/android/server/HostedWatchdogEnvironment.kt",
     "src/java/com/android/server/StockWatchdogSmoke.kt",
     "src/java/dev/artzig/StockInstantAppResolutionSmoke.kt",
