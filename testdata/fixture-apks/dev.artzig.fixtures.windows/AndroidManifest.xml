@@ -21,6 +21,7 @@
         <activity android:name=".AccessibilityFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".WindowRegistryFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".InputRoutingFixtureActivity" android:resizeableActivity="true" />
+        <activity android:name=".InspectionFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".VideoFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".ImeFixtureActivity" android:resizeableActivity="true" />
         <provider android:name=".ClipboardFileProvider" android:exported="false" android:grantUriPermissions="true"

@@ -18,6 +18,7 @@ pub fn build(b: *std.Build, aosp: *std.Build.Dependency, framework: @import("jav
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/AccessibilityFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/WindowRegistryFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/InputRoutingFixtureActivity.kt"));
+    kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/InspectionFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/VideoFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/ImeFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/ClipboardFixtureActivity.kt"));

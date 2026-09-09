@@ -151,6 +151,18 @@ class WindowFixtureTest {
         assertColorArea(screenshot("window-registry.png"), 0xff00ffff.toInt(), 5_000)
     }
 
+    @Test
+    fun inspectionRejectsStaleTargetsAndBoundsJournal() = app.run {
+        click(text = "SHOW INSPECTION CONTRACTS")
+        expectVisible(text = "Inspection contracts ready")
+        click(text = "CHECK PHYSICAL SELECTION")
+        expectVisible(text = "Physical selection freshness verified")
+        click(text = "CHECK SEMANTIC REVISIONS")
+        expectVisible(text = "Semantic revisions, event order and bounded journal verified")
+        assertLog("InspectionFixture", "Semantic revisions, event order and bounded journal verified")
+        assertColorArea(screenshot("inspection-contracts.png"), 0xff00ffff.toInt(), 5_000)
+    }
+
     private fun assertColorArea(path: java.nio.file.Path, color: Int, minimumPixels: Int, maximumPixels: Int = Int.MAX_VALUE) {
         val image = javax.imageio.ImageIO.read(path.toFile())
         var pixels = 0

@@ -11,6 +11,24 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Inspection contracts through APK windows (2026-09-09)
+
+The real-window inspection fixture now verifies stale physical and semantic
+selection rejection, preservation across unrelated label changes and paint-only
+redraws, accessibility event ordering, and the bounded 128-entry journal.
+Two corresponding legacy-root test families are retired; their two independent
+Ravenwood runtime assertions remain in FrameworkModuleSmoke.
+
+Regression 584 passes all three new steps on stock windows. Regression 585
+passes the full default JVM suite, the same three APK steps, and native/source
+audits. Regression 586 passes all 24 stock APK cases with 78 clean steps and
+source audits. Screenshots and step records are retained in
+`/tmp/wayland-inspection-584-artifacts/`,
+`/tmp/wayland-inspection-default-585-artifacts/`, and
+`/tmp/wayland-stock-586-artifacts/`. Seven direct legacy-root families and the
+legacy activity fixture mapping remain, together with resource limits and the
+production default cutover.
+
 ## Native pointer routing APK contracts (2026-09-09)
 
 The APK fixture now routes physical input through a translated and scaled child

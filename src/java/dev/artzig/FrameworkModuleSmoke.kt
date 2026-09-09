@@ -365,6 +365,10 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testStockRuntimeInitialization() {
+        val environment = com.android.internal.ravenwood.RavenwoodEnvironment.getInstance()
+        check(!environment.isRunningOnRavenwood())
+        check(runCatching { environment.fromAddress<Any>(1) }.exceptionOrNull() is UnsupportedOperationException)
+
         val mime = libcore.content.type.MimeMap.getDefault()
         check(mime.guessMimeTypeFromExtension("apk") == "application/vnd.android.package-archive")
         check(mime.guessExtensionFromMimeType("image/jpeg") == "jpg")
