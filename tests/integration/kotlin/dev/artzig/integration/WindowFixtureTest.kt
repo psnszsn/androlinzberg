@@ -99,12 +99,53 @@ class WindowFixtureTest {
         expectVisible(text = "UNDERLYING CLICKS: 1")
     }
 
-    private fun assertColorArea(path: java.nio.file.Path, color: Int, minimumPixels: Int) {
+    @Test
+    fun surfaceViewFollowsAttachmentVisibilityAndDetach() = app.run {
+        click(text = "SHOW SURFACEVIEW")
+        expectVisible(text = "Invisible attached surface created")
+        click(text = "SHOW ATTACHED SURFACE")
+        expectVisible(text = "Attached surface blue")
+        assertColorArea(screenshot("surface-attached-blue.png"), 0xff0000ff.toInt(), 25_000)
+        click(text = "HIDE ATTACHED SURFACE")
+        expectVisible(text = "Hidden attached surface retained")
+        assertColorArea(screenshot("surface-hidden.png"), 0xff0000ff.toInt(), 0, 0)
+        click(text = "FOLLOW VISIBILITY")
+        expectVisible(text = "Hidden surface destroyed")
+        click(text = "RECREATE VISIBLE SURFACE")
+        expectVisible(text = "Visible surface recreated magenta")
+        assertColorArea(screenshot("surface-recreated-magenta.png"), 0xffff00ff.toInt(), 25_000)
+        click(text = "DETACH SURFACE")
+        expectVisible(text = "Detached surface destroyed")
+        assertColorArea(screenshot("surface-detached.png"), 0xffff00ff.toInt(), 0, 0)
+        assertLog("SurfaceLifecycleFixture", "Detached surface destroyed: created,destroyed,created,destroyed")
+    }
+
+    @Test
+    fun virtualAccessibilityRedactsPasswordsAndBoundsCycles() = app.run {
+        val entered = click(text = "SHOW VIRTUAL ACCESSIBILITY")
+        expectVisible(text = "Virtual provider ready")
+        val tree = entered.accessibility.json
+        check(!tree.get("truncated").asBoolean)
+        val virtual = tree.getAsJsonArray("nodes").map { it.asJsonObject }
+            .filter { it.get("virtual").asBoolean }
+        check(virtual.size == 1)
+        val child = virtual.single()
+        check(child.get("virtual_id").asInt == 7 && child.get("password").asBoolean)
+        for (name in listOf("text", "content_description", "hint")) check(child.get(name).isJsonNull)
+        check(child.getAsJsonArray("children").size() == 0)
+        check(listOf("private password", "private description", "private hint").none { it in tree.toString() })
+        assertColorArea(screenshot("virtual-provider.png"), 0xff00ff00.toInt(), 20_000)
+        click(Selector(className = "android.widget.EditText", visible = true),
+            via = dev.artzig.testkit.InputVia.SEMANTIC)
+        expectVisible(text = "Virtual action 7 clicks=1")
+    }
+
+    private fun assertColorArea(path: java.nio.file.Path, color: Int, minimumPixels: Int, maximumPixels: Int = Int.MAX_VALUE) {
         val image = javax.imageio.ImageIO.read(path.toFile())
         var pixels = 0
         for (y in 0 until image.height) for (x in 0 until image.width) {
             if (image.getRGB(x, y) == color) pixels++
         }
-        check(pixels >= minimumPixels) { "Compositor screenshot contains only $pixels expected texture pixels: $path" }
+        check(pixels in minimumPixels..maximumPixels) { "Compositor screenshot contains $pixels pixels of ${color.toUInt().toString(16)}, expected $minimumPixels..$maximumPixels: $path" }
     }
 }

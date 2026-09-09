@@ -11,6 +11,23 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Surface and accessibility APK contracts (2026-09-09)
+
+The window fixture now verifies SurfaceView attachment versus visibility
+lifetimes, callback ordering, real canvas buffers, recreation and detachment.
+Compositor screenshots verify blue and magenta buffers and their disappearance.
+A virtual accessibility provider verifies password redaction, cycle bounding and
+semantic action dispatch. These fixtures replace four legacy-root test families,
+including the layout and popup contracts already covered by the APK fixture.
+
+Regression 565 passes all 20 stock APK cases with 61 clean interaction steps,
+plus sixteen drag rounds with 116 clean steps. Regression 566 passes the JVM
+suite and 19 APK cases on the legacy backend. Its new SurfaceView case fails:
+the legacy SurfaceHolder.lockCanvas implementation always returns null. This
+previously untested legacy limitation remains pending the stock cutover; the
+new assertion is retained. Artifacts: `/tmp/wayland-stock-565-artifacts/` and
+`/tmp/wayland-default-566-artifacts/`.
+
 ## Drag stall: Binder reader destruction deadlock fixed (2026-09-09)
 
 Native capture in regression 558 identifies the intermittent traversal stall.

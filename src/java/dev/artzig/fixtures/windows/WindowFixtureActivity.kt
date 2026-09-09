@@ -7,8 +7,6 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
-import android.view.SurfaceHolder
-import android.view.SurfaceView
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -76,20 +74,7 @@ open class WindowFixtureActivity : Activity() {
         button("Show drag and drop") { startActivity(Intent(this, DragFixtureActivity::class.java)) }
         button("Show clipboard") { startActivity(Intent(this, ClipboardFixtureActivity::class.java)) }
         button("Recreate activity") { recreate() }
-        button("Show SurfaceView") {
-            content.addView(SurfaceView(this).apply {
-                contentDescription = "Fixture SurfaceView"
-                holder.addCallback(object : SurfaceHolder.Callback {
-                    override fun surfaceCreated(holder: SurfaceHolder) { journal("surface-created") }
-                    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-                        journal("surface-changed")
-                        val canvas = holder.lockCanvas() ?: return
-                        try { canvas.drawColor(Color.BLUE) } finally { holder.unlockCanvasAndPost(canvas) }
-                    }
-                    override fun surfaceDestroyed(holder: SurfaceHolder) { journal("surface-destroyed") }
-                })
-            }, LinearLayout.LayoutParams(240, 120))
-        }
+        button("Show SurfaceView") { startActivity(Intent(this, SurfaceLifecycleFixtureActivity::class.java)) }
         button("Show TextureView") { startActivity(Intent(this, TextureFixtureActivity::class.java)) }
         permissions = button("Check permission results") {
             permissionState = permissionNames.map(::checkSelfPermission).toIntArray()
@@ -97,6 +82,7 @@ open class WindowFixtureActivity : Activity() {
         }
         button("Show frame callbacks") { startActivity(Intent(this, FrameFixtureActivity::class.java)) }
         button("Show layout and popups") { startActivity(Intent(this, LayoutFixtureActivity::class.java)) }
+        button("Show virtual accessibility") { startActivity(Intent(this, AccessibilityFixtureActivity::class.java)) }
         setContentView(android.widget.ScrollView(this).apply { addView(content) })
     }
 

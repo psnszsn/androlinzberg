@@ -284,10 +284,7 @@ internal object FrameworkModuleSmoke {
         testChoreographerPhaseOrder()
         testAccessibilityInspectorContracts()
         testPhysicalInputSelection()
-        testAccessibilityVirtualNodes()
         testSimpleRendererContracts()
-        testPostedCallbackRunsAfterPendingTraversal()
-        testTraversalRescheduleAndSharedQueue()
         testHostedSystemServices()
         testStockActivityManagerAndBackup()
         testStockNetworkScoring()
@@ -357,7 +354,6 @@ internal object FrameworkModuleSmoke {
             testWebViewCallbackContracts()
             testAlertDialogContracts()
             testDialogLifecycleAndStateContracts()
-            testSurfaceViewLifecycle()
             testNetworkServiceDiscovery()
             testHostedInputEvents()
             testEditableTextSavedStateRoundTrips()
@@ -4509,99 +4505,6 @@ internal object FrameworkModuleSmoke {
 
     private fun testNetworkServiceDiscovery() { StockNsdSmoke.run() }
 
-    private fun testSurfaceViewLifecycle() {
-        ArtzigVideoLayer.setNativeCallsEnabledForTests(false)
-        val context = HostContexts.systemContext(
-            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
-            200,
-            200,
-            120,
-            0,
-        )
-        val callbacks = mutableListOf<String>()
-        val surfaceView = SurfaceView(context).apply {
-            visibility = View.INVISIBLE
-            holder.addCallback(object : SurfaceHolder.Callback {
-                override fun surfaceCreated(holder: SurfaceHolder) { callbacks += "created" }
-                override fun surfaceChanged(
-                    holder: SurfaceHolder,
-                    format: Int,
-                    width: Int,
-                    height: Int,
-                ) = Unit
-                override fun surfaceDestroyed(holder: SurfaceHolder) { callbacks += "destroyed" }
-            })
-            setSurfaceLifecycle(SurfaceView.SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT)
-        }
-        try {
-            val root = ViewRootImpl(context)
-            root.setView(surfaceView, 200, 200)
-            try {
-                root.doTraversal()
-                check(callbacks == listOf("created")) { "attachment lifecycle: $callbacks" }
-
-                surfaceView.visibility = View.VISIBLE
-                surfaceView.visibility = View.INVISIBLE
-                check(callbacks == listOf("created")) {
-                    "surface destroyed while attached: $callbacks"
-                }
-
-                surfaceView.setSurfaceLifecycle(SurfaceView.SURFACE_LIFECYCLE_FOLLOWS_VISIBILITY)
-                check(callbacks == listOf("created", "destroyed")) {
-                    "visibility lifecycle: $callbacks"
-                }
-                surfaceView.visibility = View.VISIBLE
-                check(callbacks == listOf("created", "destroyed", "created")) {
-                    "visible surface recreation: $callbacks"
-                }
-            } finally {
-                root.destroy()
-            }
-        } finally {
-            ArtzigVideoLayer.setNativeCallsEnabledForTests(true)
-        }
-        check(callbacks.last() == "destroyed") { "surface not destroyed on detach: $callbacks" }
-    }
-
-    private fun testPostedCallbackRunsAfterPendingTraversal() {
-        val context = HostContexts.systemContext(
-            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
-            200,
-            200,
-            120,
-            0,
-        )
-        val child = View(context)
-        val parent = DeferredGeometryGroup(context, child)
-        val root = ViewRootImpl(context)
-        root.setView(parent, 200, 200)
-        try {
-            root.doTraversal()
-            drainMainQueue()
-            root.doTraversal()
-            check(child.top == 10)
-
-            parent.childTop = 100
-            parent.requestLayout()
-            var observedTop = -1
-            child.post { observedTop = child.top }
-
-            // Mirror the hosted frame lifecycle. AOSP's traversal sync barrier keeps the
-            // synchronous View.post callback queued until CALLBACK_TRAVERSAL updates bounds.
-            drainMainQueue()
-            awaitChoreographerFrame()
-            drainMainQueue()
-            root.doTraversal()
-
-            check(observedTop == 100) {
-                "View.post observed stale bounds $observedTop before pending traversal"
-            }
-        } finally {
-            root.destroy()
-            drainMainQueue()
-        }
-    }
-
     private fun testMessageQueueSyncBarrier() {
         drainMainQueue()
         val looper = checkNotNull(Looper.getMainLooper())
@@ -4719,64 +4622,6 @@ internal object FrameworkModuleSmoke {
         }
     }
 
-    private fun testTraversalRescheduleAndSharedQueue() {
-        val context = HostContexts.systemContext(
-            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
-            200,
-            200,
-            120,
-            0,
-        )
-        val reschedulingView = ReentrantLayoutGroup(context)
-        val reschedulingRoot = ViewRootImpl(context)
-        reschedulingRoot.setView(reschedulingView, 200, 200)
-        try {
-            runHostedFrame()
-            runHostedFrame()
-            reschedulingView.layoutCount = 0
-            reschedulingView.invalidate()
-            runHostedFrame()
-            check(reschedulingView.layoutCount == 0) {
-                "draw-only invalidation incorrectly forced another layout pass"
-            }
-
-            reschedulingView.layoutCount = 0
-            reschedulingView.layoutRequestsRemaining = 1
-            reschedulingView.requestLayout()
-
-            runHostedFrame()
-            check(reschedulingView.layoutCount == 2) {
-                "requestLayout during the first layout pass did not run AOSP's second pass"
-            }
-            runHostedFrame()
-            check(reschedulingView.layoutCount == 2) {
-                "one layout request produced a duplicate traversal"
-            }
-        } finally {
-            reschedulingRoot.destroy()
-        }
-
-        val firstView = View(context)
-        val secondView = View(context)
-        val firstRoot = ViewRootImpl(context)
-        val secondRoot = ViewRootImpl(context)
-        firstRoot.setView(firstView, 80, 90)
-        secondRoot.setView(secondView, 120, 130)
-        val observed = mutableListOf<String>()
-        firstView.post { observed += "first:${firstView.width}x${firstView.height}" }
-        secondView.post { observed += "second:${secondView.width}x${secondView.height}" }
-        try {
-            runHostedFrame()
-            check(observed == listOf("first:80x90", "second:120x130")) {
-                "roots sharing the main queue did not release callbacks after traversal: $observed"
-            }
-        } finally {
-            firstRoot.destroy()
-            secondRoot.destroy()
-            drainMainQueue()
-        }
-    }
-
     private fun awaitChoreographerFrame() = StockFrameTestDriver.awaitFrame(::drainMainQueue)
 
     private fun runHostedFrame() {
@@ -4819,57 +4664,6 @@ internal object FrameworkModuleSmoke {
                 .getDisplay(android.view.Display.DEFAULT_DISPLAY), 0, 0)
         } finally {
             renderer.destroy()
-        }
-    }
-
-    private fun testAccessibilityVirtualNodes() {
-        val context = HostContexts.systemContext(System.getenv("ARTZIG_FRAMEWORK_RES"), 200, 200, 120, 0)
-        val root = ViewRootImpl(context)
-        var actionNode = 0
-        lateinit var host: View
-        val provider = object : android.view.accessibility.AccessibilityNodeProvider() {
-            override fun createAccessibilityNodeInfo(id: Int): android.view.accessibility.AccessibilityNodeInfo {
-                return android.view.accessibility.AccessibilityNodeInfo.obtain().apply {
-                    setSource(host, id)
-                    className = "android.widget.EditText"
-                    isVisibleToUser = true
-                    isEnabled = true
-                    if (id == HOST_VIEW_ID) {
-                        addChild(host, 7)
-                    } else {
-                        isPassword = true
-                        text = "private password"
-                        contentDescription = "private description"
-                        hintText = "private hint"
-                        addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)
-                        addChild(host, 7) // A broken provider must not make inspection loop forever.
-                    }
-                }
-            }
-            override fun performAction(id: Int, action: Int, arguments: Bundle?): Boolean {
-                actionNode = id
-                return action == android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK
-            }
-        }
-        host = object : View(context) {
-            override fun getAccessibilityNodeProvider() = provider
-        }
-        try {
-            root.setView(host, 200, 200)
-            ArtzigAccessibilityBridge.setActivityRoot(root)
-            val snapshot = org.json.JSONObject(ArtzigAccessibilityBridge.snapshot())
-            val nodes = snapshot.getJSONArray("nodes")
-            check(nodes.length() == 2 && !snapshot.getBoolean("truncated"))
-            val child = nodes.getJSONObject(1)
-            check(child.getBoolean("virtual") && child.getInt("virtual_id") == 7)
-            check(child.isNull("text") && child.isNull("content_description") && child.isNull("hint"))
-            check(ArtzigAccessibilityBridge.perform(snapshot.getLong("revision"), child.getLong("window_id"),
-                child.getInt("view_id"), 7, android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK, null))
-            check(actionNode == 7)
-        } finally {
-            root.destroy()
-            ArtzigAccessibilityBridge.setActivityRoot(null)
-            drainMainQueue()
         }
     }
 
@@ -6151,62 +5945,6 @@ internal object FrameworkModuleSmoke {
         override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
             getChildAt(0).layout(0, 10, 80, 90)
             getChildAt(1).layout(10, 10, 90, 90)
-        }
-    }
-
-    private class DeferredGeometryGroup(
-        context: Context,
-        child: View,
-    ) : ViewGroup(context) {
-        var childTop = 10
-
-        init {
-            addView(child)
-        }
-
-        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-            getChildAt(0).measure(
-                MeasureSpec.makeMeasureSpec(50, MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(50, MeasureSpec.EXACTLY),
-            )
-            setMeasuredDimension(
-                MeasureSpec.getSize(widthMeasureSpec),
-                MeasureSpec.getSize(heightMeasureSpec),
-            )
-        }
-
-        override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-            getChildAt(0).layout(0, childTop, 50, childTop + 50)
-        }
-    }
-
-    private class ReentrantLayoutGroup(context: Context) : ViewGroup(context) {
-        private val child = View(context)
-        var layoutCount = 0
-        var layoutRequestsRemaining = 0
-
-        init {
-            addView(child)
-        }
-
-        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-            child.measure(
-                MeasureSpec.makeMeasureSpec(50, MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(50, MeasureSpec.EXACTLY),
-            )
-            setMeasuredDimension(
-                MeasureSpec.getSize(widthMeasureSpec),
-                MeasureSpec.getSize(heightMeasureSpec),
-            )
-        }
-
-        override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-            layoutCount++
-            child.layout(0, 0, 50, 50)
-            if (layoutRequestsRemaining > 0) {
-                layoutRequestsRemaining--
-                child.requestLayout()
-            }
         }
     }
 
