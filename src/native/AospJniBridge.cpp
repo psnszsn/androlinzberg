@@ -572,6 +572,8 @@ static int azk_register_android_view_HostedInputDispatcher(JNIEnv* env) {
 
 // Minimal android::AndroidRuntime backing for core/jni code (getJNIEnv in
 // ApkAssets callbacks). The VM is stored at registration time.
+#include "TestStackCapture.h"
+
 static JavaVM* g_azk_vm = nullptr;
 extern int register_android_hardware_display_DisplayManagerGlobal(JNIEnv*);
 namespace android {
@@ -598,6 +600,7 @@ extern "C" {
 // Memory factories must precede the Binder-side memfd overrides. Surface JNI
 // must follow Binder registration because its class initialization uses Binder.
 int azk_register_runtime_jni(JNIEnv* env) {
+    if (!allowTestStackCapture()) return -1;
     env->GetJavaVM(&g_azk_vm);
     if (android::register_com_android_internal_os_ApplicationSharedMemory(env) != 0) return -1;
     return android::register_android_util_MemoryIntArray(env);

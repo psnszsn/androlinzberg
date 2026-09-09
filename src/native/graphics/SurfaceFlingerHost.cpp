@@ -3,6 +3,7 @@
 // loop. Graphics allocation and composer discovery use the local host backend.
 #define LOG_TAG "SurfaceFlingerHost"
 #include "SurfaceFlinger.h"
+#include "../TestStackCapture.h"
 #include "SurfaceFlingerDefaultFactory.h"
 #include <binder/IServiceManager.h>
 #include <binder/ProcessState.h>
@@ -18,6 +19,7 @@ extern "C" [[noreturn]] void azk_surfaceflinger_exit(int status) {
 }
 
 extern "C" int azk_surfaceflinger_run(void (*ready)(void *), void *context) {
+  if (!allowTestStackCapture()) return -1;
   android::ProcessState::self()->startThreadPool();
   android::surfaceflinger::DefaultFactory factory;
   auto flinger = android::sp<android::SurfaceFlinger>::make(factory);

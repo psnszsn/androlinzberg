@@ -688,6 +688,7 @@ const Runtime = struct {
         transaction: *Incoming,
         oneway: *SerialQueue,
         deaths: std.ArrayListUnmanaged(*DeathLink),
+        release: *AIBinder,
         callback: *const fn () void,
     };
 
@@ -1038,6 +1039,7 @@ const Runtime = struct {
                 .transaction => |in| r.dispatch(in),
                 .oneway => |queue| r.serialDispatch(queue),
                 .deaths => |links| deliverDeaths(links),
+                .release => |binder| dropLocal(binder),
                 .callback => |callback| callback(),
             }
         }
@@ -1294,13 +1296,17 @@ const Runtime = struct {
             _ = r.export_uses.remove(id);
             if (r.locals.fetchRemove(id)) |kv| released = kv.value;
         }
+        // Pinned IPCThreadState queues BR_RELEASE dereferences for Binder
+        // workers; destructors can take service locks or make transactions.
+        // Our sole socket reader must remain able to deliver their replies.
+        // Transfer the export's existing ref before disconnect can stop the
+        // pool, including when the acknowledgement below fails to send.
+        if (released) |b| r.submitWorkLocked(.{ .release = b });
         r.mu.unlock(g_io);
         if (drop) {
             var body: [@sizeOf(ObjectRef)]u8 = undefined;
             @memcpy(&body, std.mem.asBytes(&ObjectRef.local(id)));
             r.sendFrame(.{ .tag = Client.Message.Tag.release_ack, .bytes_len = body.len }, &body, &.{}) catch {};
-            // Drop the export's strong ref (exportLocal's first-export incStrong).
-            if (released) |b| dropLocal(b);
         }
     }
 
@@ -1374,11 +1380,11 @@ const Runtime = struct {
         // Active serial callbacks can requeue their remaining FIFO work while
         // draining; at least that active worker remains available to serve it.
         if (links.items.len > 0) r.submitWorkLocked(.{ .deaths = links }) else links.deinit(alloc);
+        var objects = locals.valueIterator();
+        while (objects.next()) |object| r.submitWorkLocked(.{ .release = object.* });
         r.dispatch_stopping = true;
         r.dispatch_cv.broadcast(g_io);
         r.mu.unlock(g_io);
-        var objects = locals.valueIterator();
-        while (objects.next()) |object| dropLocal(object.*);
         locals.deinit(alloc);
         // Wake any thread parked in BinderInternal.joinThreadPool.
         r.join_mu.lockUncancelable(g_io);

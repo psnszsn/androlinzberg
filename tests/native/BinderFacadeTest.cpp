@@ -24,6 +24,7 @@ using namespace android;
 using namespace std::chrono_literals;
 constexpr uint32_t EXCHANGE = 1, NESTED = 2, GRAPHICS = 3;
 constexpr uint32_t HOLD_WORKER = 8, MONITOR_POOL = 9, BLOB_ROUND_TRIP = 10;
+constexpr uint32_t RETAIN_RELEASE_TARGET = 12, DROP_RELEASE_TARGET = 13;
 constexpr int POOL_WORKERS = 32;
 static void pass(const char *s) { std::cout << "PASS " << s << std::endl; }
 struct Listener final : gui::BnFpsListener {
@@ -91,6 +92,8 @@ struct RemoteTracked final : BBinder {
   ~RemoteTracked() override { ++remoteDestroyed; }
 };
 struct Service final : BBinder {
+  std::mutex releaseMutex;
+  sp<IBinder> releaseTarget;
   int ownUid = IPCThreadState::self()->getCallingUid();
   status_t dump(int fd, const Vector<String16> &args) override {
     if (args.size() != 2 || args[0] != String16("--layers") ||
@@ -101,6 +104,23 @@ struct Service final : BBinder {
   }
   status_t onTransact(uint32_t code, const Parcel &in, Parcel *out,
                       uint32_t flags) override {
+    if (code == RETAIN_RELEASE_TARGET) {
+      std::lock_guard lock(releaseMutex);
+      assert(!releaseTarget);
+      releaseTarget = in.readStrongBinder();
+      assert(releaseTarget && releaseTarget->remoteBinder());
+      return OK;
+    }
+    if (code == DROP_RELEASE_TARGET) {
+      sp<IBinder> target;
+      {
+        std::lock_guard lock(releaseMutex);
+        target = std::move(releaseTarget);
+      }
+      assert(target);
+      target.clear();
+      return OK;
+    }
     if (code == 11) {
       auto memory = interface_cast<IMemory>(in.readStrongBinder());
       assert(memory && memory->size() == 8192 && memory->offset() > 0);
@@ -236,6 +256,73 @@ struct Death final : IBinder::DeathRecipient {
 };
 void parcelTests();
 void blobTests();
+struct ReleaseState {
+  std::mutex gate, progress;
+  std::condition_variable changed;
+  bool entered = false, destroyed = false, replied = false;
+};
+struct BlockingRelease final : BBinder {
+  std::shared_ptr<ReleaseState> state;
+  explicit BlockingRelease(std::shared_ptr<ReleaseState> value) : state(std::move(value)) {}
+  ~BlockingRelease() override {
+    {
+      std::lock_guard lock(state->progress);
+      state->entered = true;
+      state->changed.notify_all();
+    }
+    // SurfaceFlinger LayerHandle destruction takes its state lock. Its owner
+    // can simultaneously wait for a remote producer reply while holding it.
+    std::lock_guard gate(state->gate);
+    std::lock_guard lock(state->progress);
+    state->destroyed = true;
+    state->changed.notify_all();
+  }
+};
+static void releaseReaderProgressTest(const sp<IBinder>& server) {
+  auto state = std::make_shared<ReleaseState>();
+  std::unique_lock gate(state->gate);
+  {
+    auto target = sp<BlockingRelease>::make(state);
+    Parcel request, response;
+    assert(request.writeStrongBinder(target) == OK);
+    assert(server->transact(RETAIN_RELEASE_TARGET, request, &response) == OK);
+  }
+  {
+    Parcel request;
+    assert(server->transact(DROP_RELEASE_TARGET, request, nullptr, IBinder::FLAG_ONEWAY) == OK);
+  }
+  {
+    std::unique_lock progress(state->progress);
+    assert(state->changed.wait_for(progress, 5s, [&] { return state->entered; }));
+    assert(!state->destroyed);
+  }
+  std::thread caller([&] {
+    Parcel request, response;
+    assert(request.writeInt32(41) == OK);
+    assert(server->transact(NESTED, request, &response) == OK);
+    assert(response.readInt32() == 42);
+    std::lock_guard progress(state->progress);
+    state->replied = true;
+    state->changed.notify_all();
+  });
+  bool repliedWhileDestructorBlocked;
+  {
+    std::unique_lock progress(state->progress);
+    repliedWhileDestructorBlocked = state->changed.wait_for(progress, 1s, [&] { return state->replied; });
+    assert(!state->destroyed);
+  }
+  // Always break the deliberate lock cycle before asserting, including the
+  // old reader-side destruction path used as a negative control.
+  gate.unlock();
+  {
+    std::unique_lock progress(state->progress);
+    assert(state->changed.wait_for(progress, 5s, [&] { return state->destroyed && state->replied; }));
+  }
+  caller.join();
+  assert(repliedWhileDestructorBlocked && "export destruction must not block Binder reply reception");
+  pass("exported object destruction can wait for a lock while Binder replies progress");
+}
+
 static void poolMonitorTest(const sp<IBinder>& server) {
   IPCThreadState::self()->blockUntilThreadAvailable();
   int release[2], ready[2], monitor[2], start[2];
@@ -343,6 +430,7 @@ int main(int argc, char **argv) {
   auto *raw = AServiceManager_waitForService("dev.artzig.facade.v2");
   assert(raw);
   auto server = IBinder::fromNative(raw);
+  releaseReaderProgressTest(server);
   poolMonitorTest(server);
   {
     const std::optional<std::vector<std::optional<std::string>>> values{

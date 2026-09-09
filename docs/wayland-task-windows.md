@@ -11,6 +11,40 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Drag stall: Binder reader destruction deadlock fixed (2026-09-09)
+
+Native capture in regression 558 identifies the intermittent traversal stall.
+SurfaceFlinger's sole AZKB reader destroys a released LayerHandle and waits for
+`mStateLock` in `SurfaceFlinger::onHandleDestroyed`. SurfaceFlinger's main thread
+holds that lock while destroying a RenderSurface and awaiting a remote
+`IGraphicBufferProducer::disconnect` reply. The reader cannot receive the reply;
+vsync processing also waits for the state lock. The app remains inspectable with
+one traversal barrier, a scheduled Choreographer frame and no vsync callback.
+
+Export reference releases now enter the existing bounded worker pool, following
+pinned `IPCThreadState::processPendingDerefs` rather than executing user
+destructors on the transport reader. Ownership transfers under the runtime lock
+before an acknowledgement failure can stop the pool. Disconnect cleanup queues
+its final export releases before workers drain.
+
+Regression 559 is the negative control: hold a lock needed by an exported
+object's destructor, release its remote reference, and require an unrelated
+Binder reply while that destructor waits. The old implementation fails the
+specific reply-progress assertion. Regressions 560 and 561 pass it, alongside
+the C++ ownership, ordering, nested-call and death tests; 560 also passes Java
+Binder and NDK gates. Regression 561 completes sixteen drag rounds and 116 clean
+steps, plus four service-loss cases with 114 ms retirement and no live children.
+Artifacts: `/tmp/wayland-drag-558-artifacts/`,
+`/tmp/wayland-release-559-negative-artifacts/`, and
+`/tmp/wayland-release-561-artifacts/`.
+
+The headless runner now retains bounded native stacks before attempting ART's
+managed dump. Test processes authorize only the owning runner PID and its
+children for ptrace; system policy is unchanged. Optional main-thread frame
+inspection records the stock root and looper state after a prolonged traversal.
+The default cutover, remaining legacy-root migrations and resource quotas remain
+unfinished.
+
 ## ART stack queries under Chromium's sandbox (2026-09-09)
 
 The remaining renderer crash was broader than Binder attachment. Regression 541

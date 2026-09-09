@@ -21,6 +21,41 @@ object ProcessInspection {
     val enabled: Boolean get() = System.getenv("AZK_TEST_SOCKET") != null ||
         System.getenv("AZK_TEST_INSPECTION") == "1"
     private var registered = false
+    private val traceFrames = System.getenv("AZK_TEST_FRAME_DIAGNOSTICS") == "1"
+    private var busySince = 0L
+    private var dumpedBusy = false
+
+    // Test instrumentation only. Observe the pinned root and looper's own dump
+    // contracts on their owner thread when a traversal remains pending.
+    private fun inspectPendingFrames(idle: Boolean) {
+        if (!traceFrames) return
+        val roots = android.view.HostedRootFrames.managedRoots()
+        if (roots.isEmpty()) return
+        val now = android.os.SystemClock.uptimeMillis()
+        if (idle) { busySince = 0L; dumpedBusy = false; return }
+        if (busySince == 0L) busySince = now
+        if (dumpedBusy || now - busySince < 2000L) return
+        dumpedBusy = true
+        val text = java.io.StringWriter()
+        val writer = java.io.PrintWriter(text)
+        for (root in roots) root.dump("", writer)
+        Looper.getMainLooper().dump(android.util.Printer { writer.println(it) }, "")
+        val choreographer = android.view.Choreographer.getInstance()
+        val receiverField = android.view.Choreographer::class.java.getDeclaredField("mDisplayEventReceiver")
+            .apply { isAccessible = true }
+        val receiver = receiverField.get(choreographer)
+        if (receiver != null) {
+            val pointer = android.view.DisplayEventReceiver::class.java.getDeclaredField("mReceiverPtr")
+                .apply { isAccessible = true }.getLong(receiver)
+            writer.println("AZK display receiver pid=${Process.myPid()} ptr=0x${pointer.toString(16)}")
+            for (name in arrayOf("mHavePendingVsync", "mTimestampNanos", "mFrame")) {
+                val field = receiver.javaClass.getDeclaredField(name).apply { isAccessible = true }
+                writer.println("receiver.$name=${field.get(receiver)}")
+            }
+        }
+        writer.flush()
+        System.err.println("AZK pending frame diagnostics at $now\n${text.toString().take(65536)}")
+    }
 
     fun register(application: android.app.IApplicationThread) {
         if (!enabled || registered) return
@@ -36,6 +71,7 @@ object ProcessInspection {
                 enforceSystem()
                 return onMain(handler) {
                     ArtzigAccessibilityBridge.processObservation().apply {
+                        inspectPendingFrames(getBoolean("idle"))
                         putString("accessibility", ArtzigAccessibilityBridge.diagnostics(afterRevision))
                         putString("runtime", ArtzigTestDiagnostics.snapshot(afterLog, afterIssue))
                     }

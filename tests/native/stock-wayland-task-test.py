@@ -32,7 +32,7 @@ if args.drag_rounds != 1 and not args.drag:
     parser.error('--drag-rounds requires --drag')
 out = args.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
-for artifact in ('result.json', 'control-failure.txt', 'failure.json', 'a11y-before.json', 'a11y.json', 'thread-dump.log', 'native-thread-dump.log'):
+for artifact in ('result.json', 'control-failure.txt', 'failure.json', 'a11y-before.json', 'a11y.json', 'thread-dump.log', 'native-thread-dump.log', 'surfaceflinger-thread-dump.log'):
     (out / artifact).unlink(missing_ok=True)
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 command = args.command[1:] if args.command[0] == '--' else args.command
@@ -42,6 +42,11 @@ mixed_outputs = os.environ.get('AZK_TEST_MIXED_OUTPUTS') == '1'
 second_output, second_scale = 'HEADLESS-2', 1
 with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as control_dir, (out / 'app.log').open('wb') as log:
     environment = os.environ.copy()
+    if args.drag and shutil.which('gdb'):
+        # Permit only this session owner and its descendants to inspect the
+        # fixture. Do not change the machine's ptrace policy or allow all tracers.
+        environment['AZK_TEST_PTRACER_PID'] = str(os.getpid())
+        environment['AZK_TEST_FRAME_DIAGNOSTICS'] = '1'
     if desktop and not args.launcher and not mixed_outputs:
         environment['AZK_TEST_DESKTOP_CONFIGURATIONS'] = '1'
     if mixed_outputs:
@@ -83,6 +88,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
             raise RuntimeError('virtual keyboard startup failed')
         process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=log, stderr=log, env=environment)
         app_pidfd = None
+        sf_pidfd = None
         try:
             def output_pixels(output_name, color, size):
                 # Discover placement only inside the compositor screenshot;
@@ -313,6 +319,12 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     app_pidfd = candidate
                 finally:
                     if app_pidfd is None: os.close(candidate)
+                if args.drag:
+                    children = Path(f'/proc/{process.pid}/task/{process.pid}/children').read_text().split()
+                    sf_pid = next(int(pid) for pid in children
+                                  if Path(f'/proc/{pid}/comm').read_text().strip() == 'azk-surfaceflinger'[:15])
+                    sf_pidfd = os.pidfd_open(sf_pid)
+                    assert not select.select([sf_pidfd], [], [], 0)[0], 'SurfaceFlinger exited'
                 deadline = time.monotonic() + 15
                 while True:
                     ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], timeout=3)
@@ -894,6 +906,28 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
             result['passed'] = True
         except BaseException as error:
             result['error'] = str(error)
+            if app_pidfd is not None and not select.select([app_pidfd], [], [], 0)[0] and shutil.which('gdb'):
+                # Capture native stacks before SIGQUIT: a managed dump can
+                # itself wait for a checkpoint and obscure the original state.
+                # GDB detaches on exit; this runner owns subsequent cleanup.
+                targets = [(app_pid, 'native-thread-dump.log')]
+                if sf_pidfd is not None and not select.select([sf_pidfd], [], [], 0)[0]:
+                    targets.append((sf_pid, 'surfaceflinger-thread-dump.log'))
+                log_text = (out / 'app.log').read_text(errors='replace')
+                for pid, name in targets:
+                    commands = ['gdb', '--batch', '--nx',
+                        '-ex', 'set debuginfod enabled off',
+                        '-ex', 'set pagination off', '-ex', 'set language c++', '-ex', 'set print elements 64',
+                        '-ex', 'thread apply all bt 24']
+                    pointers = re.findall(r'AZK display receiver pid=' + str(pid) + r' ptr=(0x[0-9a-f]+)', log_text)
+                    for pointer in set(pointers):
+                        commands += ['-ex', f'p *(android::NativeDisplayEventReceiver*){pointer}']
+                    with (out / name).open('wb') as native_dump:
+                        try:
+                            subprocess.run(commands + ['-p', str(pid)], stdout=native_dump,
+                                stderr=subprocess.STDOUT, timeout=15, check=False)
+                        except subprocess.TimeoutExpired:
+                            native_dump.write(b'\nNative stack capture timed out after 15 seconds.\n')
             if app_pidfd is not None and not select.select([app_pidfd], [], [], 0)[0]:
                 # ART's pinned SignalCatcher/host palette writes managed and
                 # native thread stacks to stderr, even when the UI cannot pump
@@ -910,19 +944,6 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                         (out / 'thread-dump.log').write_bytes(dump)
                         break
                     time.sleep(.05)
-            if app_pidfd is not None and not select.select([app_pidfd], [], [], 0)[0] and shutil.which('gdb'):
-                # A managed dump can itself wait for a thread checkpoint. When
-                # available, retain a bounded native snapshot of this still-owned
-                # fixture as well. GDB detaches on exit; the runner cleans up next.
-                with (out / 'native-thread-dump.log').open('wb') as native_dump:
-                    try:
-                        subprocess.run(['gdb', '--batch', '--nx',
-                            '-ex', 'set debuginfod enabled off',
-                            '-ex', 'set pagination off',
-                            '-ex', 'thread apply all bt 24', '-p', str(app_pid)],
-                            stdout=native_dump, stderr=subprocess.STDOUT, timeout=15, check=False)
-                    except subprocess.TimeoutExpired:
-                        native_dump.write(b'\nNative stack capture timed out after 15 seconds.\n')
             if args.launcher:
                 try:
                     (out / 'failure.json').write_text(json.dumps(control('diagnose'), indent=2))
@@ -931,6 +952,8 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
             subprocess.run(['grim', str(out / 'screenshot.png')], timeout=3, check=False)
             raise
         finally:
+            if sf_pidfd is not None:
+                os.close(sf_pidfd)
             if app_pidfd is not None:
                 os.close(app_pidfd)
             if process.poll() is None:
