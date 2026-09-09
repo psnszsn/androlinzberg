@@ -21,6 +21,7 @@ object SurfaceBufferSmoke {
     @JvmStatic private external fun destroyFunctor(handle: Long)
     @JvmStatic private external fun pixelAt(reader: Long, x: Float, y: Float): Int
     @JvmStatic private external fun liveBuffers(): Long
+    @JvmStatic private external fun liveTunnelListeners(): Long
     @JvmStatic private external fun nativeBinderUid(): Int
     @JvmStatic private external fun foreignBinderThread(binder: android.os.IBinder): Boolean
     @JvmStatic private external fun createReader(): Long
@@ -72,6 +73,7 @@ object SurfaceBufferSmoke {
         val stockServices = if (taskOutputsOnly) dev.artzig.system.StockWindowServices.prepare() else null
         val context = HostContexts.systemContext(System.getenv("ARTZIG_FRAMEWORK_RES"), 640, 480, 120, 0)
         stockServices?.attachContext(context)
+        dev.artzig.window.StockTunnelModeSmoke.ownership(::liveTunnelListeners, taskOutputsOnly)
         if (taskOutputsOnly) {
             check(android.os.Process.myUid() == android.os.Process.SYSTEM_UID)
             val died = java.util.concurrent.CountDownLatch(1)
@@ -80,9 +82,11 @@ object SurfaceBufferSmoke {
             HostInputDispatcherSmoke.run()
             blastFrames()
             taskOutputs()
-            println("READY_DEATH")
-            System.out.flush()
-            check(died.await(10, java.util.concurrent.TimeUnit.SECONDS)) { "SF death was not delivered" }
+            dev.artzig.window.StockTunnelModeSmoke.disconnect(::liveTunnelListeners) {
+                println("READY_DEATH")
+                System.out.flush()
+                check(died.await(10, java.util.concurrent.TimeUnit.SECONDS)) { "SF death was not delivered" }
+            }
             return
         }
         val baseline = liveBuffers()

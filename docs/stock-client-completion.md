@@ -272,6 +272,46 @@ NewPipe fullscreen screenshots were inspected. The isolated task-output fixture
 still logs the stock renderer's caught scheduler warning because it deliberately
 starts without AMS; the end-to-end APK tests have no such missing service.
 
+### Stock tunnel listener and native lifetime (2026-09-09)
+
+TunnelModeEnabledListener.java now matches pinned AOSP. JNI keeps opaque handles
+with serialized native ownership and uses the original NativeAllocationRegistry
+for GC cleanup. Failed unregister/destroy calls preserve stock retry errors;
+they no longer consume the reachable Java object's ownership. When that object
+becomes unreachable, native cleanup still runs even if its Java finalizer throws.
+Concurrent destruction cannot dereference a freed pointer or leave a racing
+registration attached.
+
+Regressions observe actual native listener counts in ordinary and authorized
+processes. They cover repeated permission failures, initial/executor callbacks,
+concurrent register/unregister/destroy, destruction inside a callback, and eight
+allocation/cleanup cycles. A separate live-compositor test registers a listener,
+terminates SurfaceFlinger, verifies repeated stock destroy errors and requires
+GC to return native ownership to baseline. All pass.
+
+The wider run exposed a standalone WebView test shutdown race after its PASS
+message: session teardown stopped AMS while Chromium processed renderer death.
+The smoke now explicitly terminates its renderer and awaits the original
+onRenderProcessGone callback before returning. It passes both alone and alongside
+the JVM suite. This completes the smoke's renderer lifecycle; it does not change
+general session shutdown ordering or claim isolated-service completion.
+
+The exact static compiler inputs contain 7,072 unchanged sources, 11 modified
+client files and 40 modified server files, with no missing reference. The five
+stub entries and boot-library differences remain open. The rebuilt framework
+archive is SHA-256
+`9f2d11e2715e51500bfe053d4b92363401105f373c0101ad62699b898cf734d7`, pinned to
+`N-V-__8AABS_8U69Z0saeql8wELwgF-OqAWyXM_uF2P0e0Ar`. Packaging restored the isolated
+checkout; ART is unchanged and both local archives are current.
+
+Validation: Java and native listener/task-output tests, source/native/graph
+audits, full JVM, all 28 APK integration cases (88 steps, zero issues), WebView
+UI (three issue-free steps), and desktop launcher (16 issue-free steps). The
+standalone WebView failure described above was followed by passing focused
+surface/task-output/WebView tests and the full JVM/WebView/audit rerun. Desktop
+modal and NewPipe fullscreen screenshots were inspected. No new desktop, audio
+or media backend was added.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

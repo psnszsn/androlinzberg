@@ -1,62 +1,211 @@
 From: Androlinzberg host integration
-Subject: [PATCH] Tunnel listener: release ownership after compositor disconnect
+Subject: [PATCH] Tunnel listener: own hosted lifetime below stock Java
 
-Keep stock callbacks and failure reporting while releasing local ownership on
-failed remote removal, and serialize registration against explicit destruction.
+Follow the pinned JNI Binder calls and preserve failed-operation retries.
+Serialize opaque native handles and use the stock allocation registry to
+release listeners even when Java finalization cannot unregister remotely.
 
-diff --git a/core/java/android/view/TunnelModeEnabledListener.java b/core/java/android/view/TunnelModeEnabledListener.java
---- a/core/java/android/view/TunnelModeEnabledListener.java
-+++ b/core/java/android/view/TunnelModeEnabledListener.java
-@@ -37,13 +37,18 @@
-     /**
-      * Destroys the listener.
-      */
--    public void destroy() {
-+    public synchronized void destroy() {
-         if (mNativeListener == 0) {
-             return;
-         }
--        unregister(this);
--        nativeDestroy(mNativeListener);
-+        final long listener = mNativeListener;
-         mNativeListener = 0;
-+        try {
-+            nativeUnregister(listener);
-+        } finally {
-+            // A disconnected compositor must not retain the Java-owned native reference.
-+            nativeDestroy(listener);
+--- a/core/jni/android_view_TunnelModeEnabledListener.cpp
++++ b/core/jni/android_view_TunnelModeEnabledListener.cpp
+@@ -29,6 +29,12 @@
+ 
+ #include <gui/SurfaceComposerClient.h>
+ #include <ui/Rect.h>
++#ifdef ARTZIG_HOST_GRAPHICS
++#include <atomic>
++#include <memory>
++#include <mutex>
++#include <unordered_map>
++#endif
+ 
+ namespace android {
+ 
+@@ -39,9 +45,19 @@
+     jmethodID mDispatchOnTunnelModeEnabledChanged;
+ } gListenerClassInfo;
+ 
++#ifdef ARTZIG_HOST_GRAPHICS
++std::atomic<size_t> gLiveListeners{0};
++jobject gAllocationRegistry;
++jmethodID gRegisterAllocation, gRunCleaner;
++#endif
++
+ struct TunnelModeEnabledListener : public gui::BnTunnelModeEnabledListener {
+     TunnelModeEnabledListener(JNIEnv* env, jobject listener)
+-          : mListener(env->NewWeakGlobalRef(listener)) {}
++          : mListener(env->NewWeakGlobalRef(listener)) {
++#ifdef ARTZIG_HOST_GRAPHICS
++        ++gLiveListeners;
++#endif
++    }
+ 
+     binder::Status onTunnelModeEnabledChanged(bool tunnelModeEnabled) override {
+         JNIEnv* env = AndroidRuntime::getJNIEnv();
+@@ -70,12 +86,124 @@
+     virtual ~TunnelModeEnabledListener() {
+         JNIEnv* env = AndroidRuntime::getJNIEnv();
+         env->DeleteWeakGlobalRef(mListener);
++#ifdef ARTZIG_HOST_GRAPHICS
++        --gLiveListeners;
++#endif
+     }
+ 
+ private:
+     jweak mListener;
+ };
+ 
++#ifdef ARTZIG_HOST_GRAPHICS
++// Follow the pinned listener JNI's Binder calls and error contracts. Hosted
++// teardown can race Binder operations or fail before Java reaches nativeDestroy.
++// Opaque handles serialize lifetime below the unchanged Java caller; a stock
++// NativeAllocationRegistry cleans ownership even if Java finalization throws.
++struct ListenerEntry {
++    std::mutex mutex;
++    sp<TunnelModeEnabledListener> listener;
++    jobject cleaner = nullptr;
++    bool closed = false;
++    bool registered = false;
++};
++std::mutex gHandlesMutex;
++std::unordered_map<jlong, std::shared_ptr<ListenerEntry>> gHandles;
++jlong gNextHandle = 1;
++
++std::shared_ptr<ListenerEntry> findListener(jlong handle) {
++    std::lock_guard lock(gHandlesMutex);
++    auto it = gHandles.find(handle);
++    return it == gHandles.end() ? nullptr : it->second;
++}
++
++void retireListener(jlong handle, bool runCleaner) {
++    std::shared_ptr<ListenerEntry> entry;
++    {
++        std::lock_guard lock(gHandlesMutex);
++        auto it = gHandles.find(handle);
++        if (it == gHandles.end()) return;
++        entry = std::move(it->second);
++        gHandles.erase(it);
++    }
++    jobject cleaner;
++    {
++        std::lock_guard lock(entry->mutex);
++        entry->closed = true;
++        // A registration may have raced the Java unregister/destroy pair.
++        if (entry->registered) {
++            SurfaceComposerClient::removeTunnelModeEnabledListener(entry->listener);
++            entry->registered = false;
 +        }
++        cleaner = entry->cleaner;
++        entry->cleaner = nullptr;
++    }
++    if (cleaner) {
++        JNIEnv* env = AndroidRuntime::getJNIEnv();
++        // No locks across Java cleanup. Its native callback sees a retired ID.
++        if (runCleaner) env->CallVoidMethod(cleaner, gRunCleaner);
++        env->DeleteGlobalRef(cleaner);
++    }
++}
++
++void freeListener(void* handle) {
++    retireListener(reinterpret_cast<jlong>(handle), false);
++}
++
++jlong nativeCreate(JNIEnv* env, jclass, jobject obj) {
++    auto entry = std::make_shared<ListenerEntry>();
++    entry->listener = sp<TunnelModeEnabledListener>::make(env, obj);
++    if (env->ExceptionCheck()) return 0;
++    jlong handle;
++    {
++        std::lock_guard lock(gHandlesMutex);
++        LOG_ALWAYS_FATAL_IF(gNextHandle == INT64_MAX, "Listener handles exhausted");
++        handle = gNextHandle++;
++        gHandles.emplace(handle, entry);
++    }
++    jobject cleaner = env->CallObjectMethod(gAllocationRegistry, gRegisterAllocation, obj, handle);
++    if (!env->ExceptionCheck()) entry->cleaner = env->NewGlobalRef(cleaner);
++    if (cleaner) env->DeleteLocalRef(cleaner);
++    if (env->ExceptionCheck()) {
++        retireListener(handle, false);
++        return 0;
++    }
++    return handle;
++}
++
++void nativeDestroy(JNIEnv*, jclass, jlong handle) {
++    retireListener(handle, true);
++}
++
++void nativeRegister(JNIEnv* env, jclass, jlong handle) {
++    auto entry = findListener(handle);
++    if (!entry) return;
++    std::lock_guard lock(entry->mutex);
++    if (entry->closed) return;
++    status_t status = SurfaceComposerClient::addTunnelModeEnabledListener(entry->listener);
++    if (status != OK) {
++        ALOGE("Couldn't addTunnelModeEnabledListener (%d)", status);
++        jniThrowRuntimeException(env, "Couldn't addTunnelModeEnabledListener");
++    } else {
++        entry->registered = true;
++    }
++}
++
++void nativeUnregister(JNIEnv* env, jclass, jlong handle) {
++    auto entry = findListener(handle);
++    if (!entry) return;
++    std::lock_guard lock(entry->mutex);
++    if (entry->closed) return;
++    status_t status = SurfaceComposerClient::removeTunnelModeEnabledListener(entry->listener);
++    if (status != OK) {
++        ALOGE("Couldn't removeTunnelModeEnabledListener (%d)", status);
++        jniThrowRuntimeException(env, "Couldn't removeTunnelModeEnabledListener");
++    } else {
++        entry->registered = false;
++    }
++}
++
++#else
+ jlong nativeCreate(JNIEnv* env, jclass clazz, jobject obj) {
+     TunnelModeEnabledListener* listener = new TunnelModeEnabledListener(env, obj);
+     listener->incStrong((void*)nativeCreate);
+@@ -104,6 +232,8 @@
+         jniThrowRuntimeException(env, "Couldn't removeTunnelModeEnabledListener");
      }
+ }
++
++#endif
  
-     @Override
-@@ -64,20 +69,24 @@
-      * Registers a listener.
-      */
-     public static void register(TunnelModeEnabledListener listener) {
--        if (listener.mNativeListener == 0) {
--            return;
-+        synchronized (listener) {
-+            if (listener.mNativeListener == 0) {
-+                return;
-+            }
-+            nativeRegister(listener.mNativeListener);
-         }
--        nativeRegister(listener.mNativeListener);
-     }
+ const JNINativeMethod gMethods[] = {
+         /* name, signature, funcPtr */
+@@ -124,7 +254,33 @@
+     gListenerClassInfo.mDispatchOnTunnelModeEnabledChanged =
+             env->GetStaticMethodID(clazz, "dispatchOnTunnelModeEnabledChanged",
+                                    "(Landroid/view/TunnelModeEnabledListener;Z)V");
++#ifdef ARTZIG_HOST_GRAPHICS
++    jclass registry = FindClassOrDie(env, "libcore/util/NativeAllocationRegistry");
++    jclass classClass = FindClassOrDie(env, "java/lang/Class");
++    jobject loader = env->CallObjectMethod(clazz,
++            GetMethodIDOrDie(env, classClass, "getClassLoader", "()Ljava/lang/ClassLoader;"));
++    jmethodID createRegistry = GetStaticMethodIDOrDie(env, registry, "createNonmalloced",
++            "(Ljava/lang/ClassLoader;JJ)Llibcore/util/NativeAllocationRegistry;");
++    jobject allocationRegistry = env->CallStaticObjectMethod(registry, createRegistry, loader,
++            reinterpret_cast<jlong>(freeListener), static_cast<jlong>(sizeof(ListenerEntry)));
++    gAllocationRegistry = MakeGlobalRefOrDie(env, allocationRegistry);
++    gRegisterAllocation = GetMethodIDOrDie(env, registry, "registerNativeAllocation",
++            "(Ljava/lang/Object;J)Ljava/lang/Runnable;");
++    jclass runnable = FindClassOrDie(env, "java/lang/Runnable");
++    gRunCleaner = GetMethodIDOrDie(env, runnable, "run", "()V");
++    env->DeleteLocalRef(runnable);
++    env->DeleteLocalRef(allocationRegistry);
++    env->DeleteLocalRef(loader);
++    env->DeleteLocalRef(classClass);
++    env->DeleteLocalRef(registry);
++#endif
+     return 0;
+ }
  
-     /**
-      * Unregisters a listener.
-      */
-     public static void unregister(TunnelModeEnabledListener listener) {
--        if (listener.mNativeListener == 0) {
--            return;
-+        synchronized (listener) {
-+            if (listener.mNativeListener == 0) {
-+                return;
-+            }
-+            nativeUnregister(listener.mNativeListener);
-         }
--        nativeUnregister(listener.mNativeListener);
-     }
- 
-     /**
++#ifdef ARTZIG_HOST_GRAPHICS
++extern "C" JNIEXPORT jlong azk_hwui_live_tunnel_listeners() {
++    return static_cast<jlong>(gLiveListeners.load());
++}
++#endif
++
+ } // namespace android

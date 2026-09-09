@@ -22,12 +22,18 @@ object StockWebViewSmoke {
         check(android.webkit.WebViewFactoryProvider.isCompatibleImplementationPackage(provider))
         println("StockWebViewSmoke: provider ${provider.packageName} ${provider.versionName}")
         val events = ArrayList<String>()
+        var rendererGone = false
         val view = WebView(context).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) { events += "start" }
                 override fun onPageFinished(view: WebView?, url: String?) { events += "finish" }
+                override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
+                    check(!detail.didCrash()) { "Chromium renderer crashed" }
+                    rendererGone = true
+                    return true
+                }
             }
         }
         try {
@@ -53,6 +59,12 @@ object StockWebViewSmoke {
             cookies.removeSessionCookies { removed = true }
             await { removed }
             check(!cookies.hasCookies())
+            // Complete renderer lifecycle while AMS is still alive. Returning
+            // first races the launcher's session teardown against Chromium's
+            // asynchronous unbind callback.
+            val renderer = checkNotNull(view.webViewRenderProcess)
+            check(renderer.terminate()) { "Chromium renderer did not accept termination" }
+            await { rendererGone }
         } finally { view.destroy() }
         println("StockWebViewSmoke: PASS")
     }

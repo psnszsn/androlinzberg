@@ -557,7 +557,13 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_region.cpp"}, &.{ apex_inc, hw_jni_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.buffer_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{ "apex/android_canvas.cpp", "apex/android_paint.cpp" }, &.{ apex_inc, hw_jni_inc }, &.{});
-    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.surface_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
+    for (gen.surface_jni_srcs) |file| {
+        const flags: []const []const u8 = if (std.mem.eql(u8, file, "android_view_TunnelModeEnabledListener.cpp"))
+            &.{"-DARTZIG_HOST_GRAPHICS"}
+        else
+            &.{};
+        g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{file}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, flags);
+    }
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/properties.cpp"}, &.{apex_inc}, &.{});
     const texture_inc = o.aosp.path(b, "frameworks/native/libs/nativedisplay/include");
     g.add(o.aosp.path(b, "frameworks/native/libs/nativedisplay"), &gen.surface_texture_srcs, &.{ texture_inc, b.path("src/native/graphics/include") }, &.{});

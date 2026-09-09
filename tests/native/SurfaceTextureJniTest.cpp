@@ -201,3 +201,9 @@ extern "C" JNIEXPORT jint JNICALL Java_dev_artzig_SurfaceBufferSmoke_pixelAt(
         JNIEnv*, jclass, jlong ptr, jfloat x, jfloat y) {
     return reinterpret_cast<TextureReader*>(ptr)->pixel(x, y);
 }
+
+extern "C" jlong azk_hwui_live_tunnel_listeners();
+extern "C" JNIEXPORT jlong JNICALL
+Java_dev_artzig_SurfaceBufferSmoke_liveTunnelListeners(JNIEnv*, jclass) {
+    return azk_hwui_live_tunnel_listeners();
+}
