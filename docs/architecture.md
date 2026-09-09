@@ -99,8 +99,15 @@ Session-wide delivery allowances are eight times these values. Accounting charge
 wire descriptors and every decoded descriptor entry independently, plus payload
 and conservative entry metadata. Outgoing remote transactions are capped at 128
 through reply consumption. Each socket outbox is capped at 64 MiB, 8,192 frames
-and 2,048 descriptors. Broker-wide storage, metadata and retained release/death
-callback limits are subsequent resource-hardening work.
+and 2,048 descriptors. The broker-wide outbox limit is 256 MiB, 65,536 frames
+and 8,192 descriptors, charged through the actual write and descriptor close;
+work deliveries can use half, preserving room for replies and reference control.
+A session admits at most 64 peers and retains at most 65,536 Binder objects
+(16,384 per owner), 1,024 service names (256 per owner), 8,192 waiting lookups
+(256 per peer), and 8,192 service callback registrations across 1,024 names.
+Registry and waiter exhaustion return explicit errors; exhausted object owners
+or socket recipients are retired. Retained release/death callback work and
+service-request ownership still require their own runtime limits.
 
 Local `Binder.transact` calls `onTransact` directly, as on Android. Every
 launch is a session: the launcher starts one `azk-binder-broker` process and

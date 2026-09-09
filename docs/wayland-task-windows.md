@@ -11,6 +11,25 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Broker storage and metadata limits (2026-09-09)
+
+The broker now bounds session-wide outbox bytes, frames and descriptors through
+actual write completion and descriptor close. Queued work can consume half the
+allowance, preserving room for replies and reference control. Peer, exported
+object, service-name, waiting-lookup and callback-registration limits prevent
+metadata from bypassing the delivery budgets. Replacing an owned service or
+repeating a callback registration remains valid at capacity. Process retirement
+now releases the service references held by its notification registrations.
+
+Regressions 595 and 596 pass small-limit peer, byte, descriptor, frame, object,
+registry, waiter and callback tests, including blocked sockets, clean rejected
+ownership and capacity reuse. Regression 596 also passes C++, Java Binder, NDK,
+system-service and GUI tests and source audits. Regression 597 passes the full
+24-case stock APK suite with clean interaction steps and source audits; artifacts
+are retained at `/tmp/wayland-quota-global-597-artifacts/`. Runtime release/death
+callback work, service-request ownership and the production default cutover
+remain in progress.
+
 ## Binder delivery admission and completion (2026-09-09)
 
 Protocol v5 now bounds delivered bytes, descriptors and call counts through

@@ -26,6 +26,10 @@ const Harness = struct {
     }
 
     fn startWithLimits(gpa: std.mem.Allocator, io: Io, limits: Broker.DeliveryBudget.Limits) !*Harness {
+        return startWithResources(gpa, io, limits, .{});
+    }
+
+    fn startWithResources(gpa: std.mem.Allocator, io: Io, limits: Broker.DeliveryBudget.Limits, resources: Broker.ResourceLimits) !*Harness {
         var buf: [64]u8 = undefined;
         var nonce_bytes: [8]u8 = undefined;
         io.random(&nonce_bytes);
@@ -33,7 +37,7 @@ const Harness = struct {
         const path = try gpa.dupe(u8, try std.fmt.bufPrint(&buf, "/tmp/azk-binder-test-{x}.sock", .{nonce}));
         var prop_buf: [64]u8 = undefined;
         const prop_path = try gpa.dupe(u8, try std.fmt.bufPrint(&prop_buf, "/tmp/azk-binder-test-{x}.props", .{nonce}));
-        const broker = try Broker.init(gpa, io, .{ .socket_path = path, .cookie = cookie, .system_cookie = system_cookie, .prop_area_path = prop_path, .delivery_limits = limits });
+        const broker = try Broker.init(gpa, io, .{ .socket_path = path, .cookie = cookie, .system_cookie = system_cookie, .prop_area_path = prop_path, .delivery_limits = limits, .resource_limits = resources });
         const h = try gpa.create(Harness);
         h.* = .{ .broker = broker, .path = path, .prop_path = prop_path };
         try h.group.concurrent(io, runBroker, .{broker});
@@ -1212,4 +1216,275 @@ test "a synchronous reply does not release input ownership before cleanup" {
     defer gpa.free(accepted.fds);
     try owner.client.serveDeliveryDone(accepted.header.routing_id);
     try barrier(&owner);
+}
+
+fn waitPeerCount(h: *Harness, count: usize) !void {
+    for (0..1000) |_| {
+        h.broker.mutex.lockUncancelable(h.broker.io);
+        const actual = h.broker.peers.count();
+        h.broker.mutex.unlock(h.broker.io);
+        if (actual == count) return;
+        try h.broker.io.sleep(.fromMilliseconds(1), .awake);
+    }
+    return error.PeerRetirementTimeout;
+}
+
+fn expectDisconnected(peer: *Peer) !void {
+    _ = peer.client.receiveMessage() catch |err| switch (err) {
+        error.EndOfStream, error.ReadFailed => return,
+        else => return err,
+    };
+    return error.UnexpectedMessage;
+}
+
+fn expectServiceStatus(peer: *Peer, id: u64, status: Server.Message.ServiceResult.Status) !void {
+    const msg = try peer.next();
+    defer testing.allocator.free(msg.fds);
+    try testing.expectEqual(Server.Message.Tag.service_result, msg.header.tag);
+    try testing.expectEqual(id, msg.header.request_id);
+    try testing.expectEqual(status, (try serviceResult(msg.body)).status);
+}
+
+test "peer admission rejects excess connections and reuses retired capacity" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const h = try Harness.startWithResources(gpa, io, .{}, .{ .peers = 1 });
+    defer h.stop(gpa, io);
+    var owner: Peer = undefined;
+    try owner.connect(io, h.path, cookie);
+    defer owner.close();
+    try owner.expectWelcome();
+    var excess: Peer = undefined;
+    excess.connect(io, h.path, cookie) catch |err| switch (err) {
+        error.WriteFailed => {},
+        else => return err,
+    };
+    defer excess.close();
+    try expectDisconnected(&excess);
+    try barrier(&owner);
+    owner.close();
+    try waitPeerCount(h, 0);
+    var replacement: Peer = undefined;
+    try replacement.connect(io, h.path, cookie);
+    defer replacement.close();
+    try replacement.expectWelcome();
+    try barrier(&replacement);
+}
+
+test "session outbox byte and descriptor limits retire only the saturated recipient" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    for ([_]Broker.DeliveryBudget.Usage{
+        .{ .bytes = 512, .fds = 64, .count = 64 },
+        .{ .bytes = 65536, .fds = 0, .count = 64 },
+    }, 0..) |limit, kind| {
+        const h = try Harness.startWithResources(gpa, io, .{}, .{ .outbox = limit });
+        defer h.stop(gpa, io);
+        var owner: Peer = undefined;
+        try owner.connect(io, h.path, cookie);
+        defer owner.close();
+        try owner.expectWelcome();
+        var caller: Peer = undefined;
+        try caller.connect(io, h.path, cookie);
+        defer caller.close();
+        try caller.expectWelcome();
+        const target = try quotaService(&owner, &caller);
+        var pipe_fds: [2]std.posix.fd_t = undefined;
+        try testing.expectEqual(@as(usize, 0), linux.pipe2(&pipe_fds, .{ .CLOEXEC = true }));
+        const read_end: Io.File = .{ .handle = pipe_fds[0], .flags = .{ .nonblocking = false } };
+        const write_end: Io.File = .{ .handle = pipe_fds[1], .flags = .{ .nonblocking = false } };
+        defer read_end.close(io);
+        var write_closed = false;
+        defer if (!write_closed) write_end.close(io);
+        const data: [1024]u8 = @splat(0);
+        const entry = [_]ObjectEntry{.{ .kind = .file_descriptor, .offset = 0, .value = 0 }};
+        if (kind == 1) try caller.conn.writer.attachFds(&.{write_end});
+        try caller.client.serveTransact(.{ .target = target, .code = 1, .request_id = 2, .flags = 1, .data = if (kind == 0) &data else data[0..4], .entries = if (kind == 1) &entry else &.{}, .fd_count = if (kind == 1) 1 else 0 });
+        // Admission may succeed before the recipient's socket closes. Its
+        // subsequent death must still retire the delivery and all descriptors.
+        try expectAdmission(&caller, 2, .ok);
+        try expectDisconnected(&owner);
+        owner.close();
+        try waitPeerCount(h, 1);
+        try barrier(&caller);
+        write_end.close(io);
+        write_closed = true;
+        var eof: [1]u8 = undefined;
+        try testing.expectError(error.EndOfStream, read_end.readStreaming(io, &.{&eof}));
+        h.broker.mutex.lockUncancelable(io);
+        const remaining = h.broker.deliveries;
+        h.broker.mutex.unlock(io);
+        try testing.expectEqualDeep(Broker.DeliveryBudget{}, remaining);
+    }
+}
+
+test "global and per-owner export limits preserve retained objects until release" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    for ([_]Broker.ResourceLimits{ .{ .objects = 2 }, .{ .peer_objects = 1 } }) |resources| {
+        const h = try Harness.startWithResources(gpa, io, .{}, resources);
+        defer h.stop(gpa, io);
+        var owner: Peer = undefined;
+        try owner.connect(io, h.path, cookie);
+        defer owner.close();
+        try owner.expectWelcome();
+        var caller: Peer = undefined;
+        try caller.connect(io, h.path, cookie);
+        defer caller.close();
+        try caller.expectWelcome();
+        const target = try quotaService(&owner, &caller);
+        const entries = [_]ObjectEntry{.{ .offset = 0, .kind = .binder_local, .value = 100 }};
+        try caller.client.serveTransact(.{ .target = target, .code = 1, .request_id = 2, .flags = 1, .data = "\x00\x00\x00\x00", .entries = &entries });
+        try expectAdmission(&caller, 2, .ok);
+        const msg = try owner.next();
+        defer gpa.free(msg.fds);
+        const route = msg.header.routing_id;
+        _, const payload = try transactBody(msg.body);
+        const held_gid = payload.entry(0).value;
+        const excess = [_]ObjectEntry{.{ .offset = 0, .kind = .binder_local, .value = 101 }};
+        try caller.client.serveTransact(.{ .target = target, .code = 2, .request_id = 3, .flags = 1, .data = "\x00\x00\x00\x00", .entries = &excess });
+        const rejected = try caller.next();
+        defer gpa.free(rejected.fds);
+        try testing.expectEqual(Server.Message.Tag.protocol_error, rejected.header.tag);
+        try testing.expect(std.mem.indexOf(u8, rejected.body, "object limit") != null);
+        try expectDisconnected(&caller);
+        caller.close();
+        try waitPeerCount(h, 1);
+        h.broker.mutex.lockUncancelable(io);
+        const retained = h.broker.objects.count();
+        h.broker.mutex.unlock(io);
+        try testing.expectEqual(@as(u32, 2), retained);
+        try owner.client.serveRelease(ObjectRef.remote(held_gid), 1);
+        try owner.client.serveDeliveryDone(route);
+        try barrier(&owner);
+        h.broker.mutex.lockUncancelable(io);
+        const released = h.broker.objects.count();
+        h.broker.mutex.unlock(io);
+        try testing.expectEqual(@as(u32, 1), released);
+        var replacement: Peer = undefined;
+        try replacement.connect(io, h.path, cookie);
+        defer replacement.close();
+        try replacement.expectWelcome();
+        try replacement.client.serveLookupService(1, "dev.artzig.test.quota", false);
+        gpa.free((try replacement.next()).fds);
+        try replacement.client.serveTransact(.{ .target = target, .code = 3, .request_id = 2, .flags = 1, .data = "\x00\x00\x00\x00", .entries = &entries });
+        try expectAdmission(&replacement, 2, .ok);
+        const retry = try owner.next();
+        defer gpa.free(retry.fds);
+        try owner.client.serveDeliveryDone(retry.header.routing_id);
+    }
+}
+
+test "registry and waiter exhaustion returns a status and preserves existing operations" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    for ([_]Broker.ResourceLimits{ .{ .services = 1, .waiters = 1 }, .{ .peer_services = 1, .peer_waiters = 1 } }) |resources| {
+        const h = try Harness.startWithResources(gpa, io, .{}, resources);
+        defer h.stop(gpa, io);
+        var owner: Peer = undefined;
+        try owner.connect(io, h.path, cookie);
+        defer owner.close();
+        try owner.expectWelcome();
+        var caller: Peer = undefined;
+        try caller.connect(io, h.path, cookie);
+        defer caller.close();
+        try caller.expectWelcome();
+        try caller.client.serveLookupService(1, "dev.artzig.test.first", true);
+        try caller.client.serveLookupService(2, "dev.artzig.test.second", true);
+        try expectServiceStatus(&caller, 2, .exhausted);
+        try owner.client.serveRegisterService(1, ObjectRef.local(1), "dev.artzig.test.first");
+        try expectServiceStatus(&owner, 1, .ok);
+        try expectServiceStatus(&caller, 1, .ok);
+        try owner.client.serveRegisterService(2, ObjectRef.local(1), "dev.artzig.test.second");
+        try expectServiceStatus(&owner, 2, .exhausted);
+        try owner.client.serveRegisterService(3, ObjectRef.local(1), "dev.artzig.test.first");
+        try expectServiceStatus(&owner, 3, .ok);
+        // The fulfilled lookup releases its waiter slot.
+        try caller.client.serveLookupService(3, "dev.artzig.test.second", true);
+        try caller.client.serveLookupService(4, "dev.artzig.test.third", true);
+        try expectServiceStatus(&caller, 4, .exhausted);
+        try barrier(&owner);
+    }
+}
+
+fn callbackRequest(peer: *Peer, request: u64, local_id: u64, name: []const u8, register: bool, success: bool) !void {
+    var p = ParcelBuf{ .gpa = testing.allocator };
+    defer p.deinit();
+    try p.token();
+    try p.string16(name);
+    const offset: u32 = @intCast(p.bytes.items.len);
+    try p.i32v(1);
+    const entries = [_]ObjectEntry{.{ .offset = offset, .kind = .binder_local, .value = local_id }};
+    try peer.client.serveTransact(.{ .target = ObjectRef.remote(Client.context_object_id), .code = if (register) 7 else 8, .request_id = request, .data = p.bytes.items, .entries = &entries });
+    const msg = try peer.next();
+    defer testing.allocator.free(msg.fds);
+    const rep, const payload = try replyBody(msg.body);
+    try testing.expectEqual(Client.Message.Reply.Status.ok, rep.status);
+    const exception = std.mem.readInt(i32, payload.data[0..4], .little);
+    try testing.expectEqual(success, exception == 0);
+}
+
+test "callback registration bounds release rejected exports and retire owner references" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    for ([_]Broker.ResourceLimits{ .{ .callbacks = 1 }, .{ .callback_names = 1 } }, 0..) |resources, i| {
+        const h = try Harness.startWithResources(gpa, io, .{}, resources);
+        defer h.stop(gpa, io);
+        var owner: Peer = undefined;
+        try owner.connect(io, h.path, cookie);
+        defer owner.close();
+        try owner.expectWelcome();
+        try callbackRequest(&owner, 1, 42, "first", true, true);
+        // Idempotent registration remains valid at the cap.
+        try callbackRequest(&owner, 2, 42, "first", true, true);
+        const name = if (i == 0) "first" else "second";
+        try callbackRequest(&owner, 3, 43, name, true, false);
+        try expectReleased(&owner, 43, 1);
+        try callbackRequest(&owner, 4, 42, "first", false, true);
+        try expectReleased(&owner, 42, 3);
+        try callbackRequest(&owner, 5, 43, name, true, true);
+        owner.close();
+        try waitPeerCount(h, 0);
+        h.broker.mutex.lockUncancelable(io);
+        const objects = h.broker.objects.count();
+        const callbacks = h.broker.service_callback_count;
+        h.broker.mutex.unlock(io);
+        try testing.expectEqual(@as(u32, 0), objects);
+        try testing.expectEqual(@as(usize, 0), callbacks);
+    }
+}
+
+test "a blocked socket cannot consume the outbox frame allowance reserved for replies" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const h = try Harness.startWithResources(gpa, io, .{}, .{ .outbox = .{ .bytes = 256 * 1024 * 1024, .fds = 8192, .count = 4 } });
+    defer h.stop(gpa, io);
+    var owner: Peer = undefined;
+    try owner.connect(io, h.path, cookie);
+    defer owner.close();
+    try owner.expectWelcome();
+    var caller: Peer = undefined;
+    try caller.connect(io, h.path, cookie);
+    defer caller.close();
+    try caller.expectWelcome();
+    const target = try quotaService(&owner, &caller);
+    // Stop reading the recipient socket. Its blocked write remains charged;
+    // two work frames fill the work half of the four-frame session allowance.
+    const bytes: [16384]u8 = @splat(0);
+    var dead = false;
+    for (0..1024) |i| {
+        try caller.client.serveTransact(.{ .target = target, .code = 1, .request_id = i + 2, .flags = 1, .data = &bytes });
+        const response = try caller.next();
+        defer gpa.free(response.fds);
+        try testing.expectEqual(Server.Message.Tag.reply, response.header.tag);
+        const rep, _ = try replyBody(response.body);
+        if (rep.status == .dead_object) {
+            dead = true;
+            break;
+        }
+        try testing.expectEqual(Client.Message.Reply.Status.ok, rep.status);
+    }
+    try testing.expect(dead);
+    try waitPeerCount(h, 1);
+    try barrier(&caller);
 }

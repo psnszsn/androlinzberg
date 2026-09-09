@@ -65,11 +65,30 @@ calls: std.AutoHashMapUnmanaged(u64, Call) = .empty,
 next_routing_id: u64 = 1,
 deliveries: DeliveryBudget = .{},
 delivery_limits: DeliveryBudget.Limits,
+resource_limits: ResourceLimits,
+outbox_mutex: Io.Mutex = .init,
+outbox_usage: DeliveryBudget = .{},
+service_callback_count: usize = 0,
 
 /// Bytes a peer may have queued before it is considered unresponsive.
 pub const max_outbox_bytes: usize = 64 * 1024 * 1024;
 const read_buffer_len = 64 * 1024;
 const write_buffer_len = 64 * 1024;
+
+/// Host session metadata and transport storage, independent of Parcel payloads.
+/// Keep the service-name cap within the largest UTF-16 IServiceManager reply.
+pub const ResourceLimits = struct {
+    peers: usize = 64,
+    objects: usize = 65536,
+    peer_objects: usize = 16384,
+    services: usize = 1024,
+    peer_services: usize = 256,
+    waiters: usize = 8192,
+    peer_waiters: usize = 256,
+    callback_names: usize = 1024,
+    callbacks: usize = 8192,
+    outbox: DeliveryBudget.Usage = .{ .bytes = 256 * 1024 * 1024, .fds = 8192, .count = 65536 },
+};
 
 pub const Options = struct {
     socket_path: []const u8,
@@ -80,6 +99,7 @@ pub const Options = struct {
     first_app_uid: u32 = Client.default_app_uid,
     kernel_backlog: u31 = 16,
     delivery_limits: DeliveryBudget.Limits = .{},
+    resource_limits: ResourceLimits = .{},
 };
 
 const LocalKey = struct { peer: u32, local_id: u64 };
@@ -125,6 +145,12 @@ const Object = struct {
 const Frame = struct {
     bytes: []u8,
     fds: []Io.File,
+    accounted: bool = false,
+    user_work: bool = false,
+
+    fn cost(frame: Frame) DeliveryBudget.Usage {
+        return .{ .bytes = frame.bytes.len, .fds = frame.fds.len, .count = 1 };
+    }
 };
 
 const Peer = struct {
@@ -150,10 +176,14 @@ const Peer = struct {
     outbox_bytes: usize = 0,
     outbox_fds: usize = 0,
     deliveries: DeliveryBudget = .{},
+    owned_objects: usize = 0,
+    registered_services: usize = 0,
+    service_waiters: usize = 0,
     closing: bool = false,
     writer_done: bool = false,
 
-    fn enqueue(p: *Peer, frame: Frame) void {
+    fn enqueue(p: *Peer, incoming: Frame) void {
+        var frame = incoming;
         const io = p.broker.io;
         p.out_mutex.lockUncancelable(io);
         defer p.out_mutex.unlock(io);
@@ -169,6 +199,15 @@ const Peer = struct {
             p.out_cond.signal(io);
             return;
         }
+        if (!p.broker.reserveFrame(frame)) {
+            p.broker.destroyFrame(frame);
+            log.warn("peer {d} exhausted broker outbox storage; disconnecting", .{p.id});
+            p.closing = true;
+            p.conn.stream.shutdown(io, .both) catch {};
+            p.out_cond.signal(io);
+            return;
+        }
+        frame.accounted = true;
         p.outbox.append(p.broker.gpa, frame) catch {
             p.broker.destroyFrame(frame);
             p.closing = true;
@@ -212,6 +251,7 @@ pub fn init(gpa: Allocator, io: Io, options: Options) !*Broker {
         .system_cookie = system_cookie,
         .props = props,
         .delivery_limits = options.delivery_limits,
+        .resource_limits = options.resource_limits,
         .next_app_uid = options.first_app_uid,
     };
     return b;
@@ -326,6 +366,8 @@ pub fn shutdown(b: *Broker) void {
 
 pub fn deinit(b: *Broker) void {
     assert(b.calls.count() == 0);
+    assert(b.outbox_usage.total.count == 0 and b.outbox_usage.total.bytes == 0 and b.outbox_usage.total.fds == 0);
+    assert(b.service_callback_count == 0);
     assert(b.deliveries.total.count == 0 and b.deliveries.total.bytes == 0 and b.deliveries.total.fds == 0);
     const gpa = b.gpa;
     const io = b.io;
@@ -368,6 +410,12 @@ fn admit(b: *Broker, stream: net.Stream) !void {
         log.warn("rejecting peer pid {d}: uid {d} is not the session user", .{ creds.pid, creds.uid });
         return error.PeerNotSessionUser;
     }
+    b.mutex.lockUncancelable(io);
+    const exhausted = b.peers.count() >= b.resource_limits.peers;
+    b.mutex.unlock(io);
+    if (exhausted) return error.PeerLimit;
+    // Only the accept loop calls admit, so another admission cannot race this
+    // check while buffers are allocated. Peer removals only free capacity.
     const peer = try gpa.create(Peer);
     errdefer gpa.destroy(peer);
     const read_buffer = try gpa.alloc(u8, read_buffer_len);
@@ -465,10 +513,33 @@ fn writeFrame(peer: *Peer, frame: Frame) bool {
     return true;
 }
 
+/// Never take the broker mutex from a writer or while holding outbox_mutex.
+/// This short independent lock accounts retained frames through the actual
+/// write/close, not merely until a writer removes them from its queue.
+fn reserveFrame(b: *Broker, frame: Frame) bool {
+    b.outbox_mutex.lockUncancelable(b.io);
+    defer b.outbox_mutex.unlock(b.io);
+    const cost = frame.cost();
+    const total = b.resource_limits.outbox;
+    const quota: DeliveryBudget.Limits = .{ .total = total, .asynchronous = .{
+        .bytes = total.bytes / 2,
+        .fds = total.fds / 2,
+        .count = total.count / 2,
+    } };
+    if (!b.outbox_usage.fits(cost, frame.user_work, quota)) return false;
+    b.outbox_usage.add(cost, frame.user_work);
+    return true;
+}
+
 fn destroyFrame(b: *Broker, frame: Frame) void {
     for (frame.fds) |f| f.close(b.io);
     b.gpa.free(frame.fds);
     b.gpa.free(frame.bytes);
+    if (frame.accounted) {
+        b.outbox_mutex.lockUncancelable(b.io);
+        b.outbox_usage.subtract(frame.cost(), frame.user_work);
+        b.outbox_mutex.unlock(b.io);
+    }
 }
 
 /// Encodes one broker message with a `Server` helper into an owned frame.
@@ -654,7 +725,7 @@ fn namespacePrefix(package: []const u8, name: []const u8) bool {
 
 /// Resolves a reference the peer sent. Local references intern a new object
 /// on first use. Requires `b.mutex`.
-fn resolveRef(peer: *Peer, ref: ObjectRef) error{ Invalid, OutOfMemory }!*Object {
+fn resolveRef(peer: *Peer, ref: ObjectRef) error{ Invalid, OutOfMemory, ResourceLimit }!*Object {
     const b = peer.broker;
     switch (ref.kind) {
         .local => {
@@ -667,6 +738,8 @@ fn resolveRef(peer: *Peer, ref: ObjectRef) error{ Invalid, OutOfMemory }!*Object
                 existing.releasing = false;
                 return existing;
             }
+            if (b.objects.count() >= b.resource_limits.objects or peer.owned_objects >= b.resource_limits.peer_objects)
+                return error.ResourceLimit;
             const object = try b.gpa.create(Object);
             errdefer b.gpa.destroy(object);
             object.* = .{ .id = b.next_object_id, .owner = peer.id, .local_id = ref.value, .uses = 1 };
@@ -674,6 +747,7 @@ fn resolveRef(peer: *Peer, ref: ObjectRef) error{ Invalid, OutOfMemory }!*Object
             errdefer _ = b.objects.remove(object.id);
             try b.local_index.put(b.gpa, key, object.id);
             b.next_object_id += 1;
+            peer.owned_objects += 1;
             return object;
         },
         .remote => {
@@ -736,7 +810,7 @@ fn translateEntries(
     payload: Client.Payload,
     fd_count: u16,
     delivered_out: *std.ArrayList(*Object),
-) error{ Invalid, OutOfMemory }![]ObjectEntry {
+) error{ Invalid, OutOfMemory, ResourceLimit }![]ObjectEntry {
     const out = try b.gpa.alloc(ObjectEntry, payload.entries.len);
     errdefer b.gpa.free(out);
     errdefer {
@@ -842,6 +916,7 @@ fn handleTransact(peer: *Peer, header: Client.Message.Header, body: []const u8, 
     defer b.mutex.unlock(io);
     const object = resolveRef(peer, t.target) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
+        error.ResourceLimit => return protocolError(peer, "exported Binder object limit exceeded"),
         error.Invalid => return protocolError(peer, "transact on an object the peer does not hold"),
     };
     if (header.routing_id != 0) {
@@ -879,6 +954,7 @@ fn handleTransact(peer: *Peer, header: Client.Message.Header, body: []const u8, 
     defer delivered.deinit(gpa);
     const entries = b.translateEntries(peer, target, payload, header.fd_count, &delivered) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
+        error.ResourceLimit => return protocolError(peer, "exported Binder object limit exceeded"),
         error.Invalid => return protocolError(peer, "invalid object entry in transact"),
     };
     defer gpa.free(entries);
@@ -905,6 +981,7 @@ fn handleTransact(peer: *Peer, header: Client.Message.Header, body: []const u8, 
         .fd_count = header.fd_count,
     }});
     frame.fds = fds;
+    frame.user_work = true;
     target.enqueue(frame);
     if (admission) |ack| peer.enqueue(ack);
 }
@@ -932,6 +1009,7 @@ fn handleReply(peer: *Peer, header: Client.Message.Header, body: []const u8, fds
     defer delivered.deinit(gpa);
     const entries = b.translateEntries(peer, caller.?, payload, header.fd_count, &delivered) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
+        error.ResourceLimit => return protocolError(peer, "exported Binder object limit exceeded"),
         error.Invalid => return protocolError(peer, "invalid object entry in reply"),
     };
     defer gpa.free(entries);
@@ -958,6 +1036,7 @@ fn discardEntries(b: *Broker, peer: *Peer, payload: Client.Payload) ServeError!v
         if (e.kind == .binder_local) {
             const object = resolveRef(peer, ObjectRef.local(e.value)) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
+                error.ResourceLimit => return protocolError(peer, "exported Binder object limit exceeded"),
                 error.Invalid => return protocolError(peer, "invalid discarded object"),
             };
             try b.maybeReleaseObject(object);
@@ -1012,6 +1091,7 @@ fn maybeReleaseObject(b: *Broker, object: *Object) Allocator.Error!void {
 fn destroyObject(b: *Broker, object: *Object) void {
     _ = b.local_index.remove(.{ .peer = object.owner, .local_id = object.local_id });
     _ = b.objects.remove(object.id);
+    if (b.peers.get(object.owner)) |owner| owner.owned_objects -= 1;
     object.deinit(b.gpa);
 }
 
@@ -1069,6 +1149,7 @@ fn handleRegister(peer: *Peer, header: Client.Message.Header, body: []const u8) 
     defer b.mutex.unlock(io);
     const object = resolveRef(peer, reg.object) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
+        error.ResourceLimit => return protocolError(peer, "exported Binder object limit exceeded"),
         error.Invalid => return protocolError(peer, "register_service with an object the peer does not hold"),
     };
     defer b.maybeReleaseObject(object) catch {};
@@ -1084,11 +1165,12 @@ fn handleRegister(peer: *Peer, header: Client.Message.Header, body: []const u8) 
     const status: Server.Message.ServiceResult.Status = switch (try registerService(b, peer, object, name)) {
         .ok => .ok,
         .taken => .already_registered,
+        .exhausted => .exhausted,
     };
     peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, status, ObjectRef.null_ref, "" }));
 }
 
-const RegisterOutcome = enum { ok, taken };
+const RegisterOutcome = enum { ok, taken, exhausted };
 
 /// Registers `object` under `name` (replacing the owner's own prior registration)
 /// and wakes every waiter blocked on that name. Returns `.taken` without any
@@ -1107,10 +1189,12 @@ fn registerService(b: *Broker, peer: *Peer, object: *Object, name: []const u8) S
         object.service_refs += 1;
         try b.maybeReleaseObject(existing);
     } else {
+        if (b.services.count() >= b.resource_limits.services or peer.registered_services >= b.resource_limits.peer_services) return .exhausted;
         const owned_name = try gpa.dupe(u8, name);
         errdefer gpa.free(owned_name);
         try b.services.put(gpa, owned_name, object.id);
         object.service_refs += 1;
+        peer.registered_services += 1;
     }
     var i: usize = 0;
     while (i < b.waiters.items.len) {
@@ -1120,6 +1204,7 @@ fn registerService(b: *Broker, peer: *Peer, object: *Object, name: []const u8) S
             continue;
         }
         if (b.peers.get(w.peer)) |waiter| {
+            waiter.service_waiters -= 1;
             if (waiter.alive) {
                 const ref = try b.deliverRef(waiter, object);
                 waiter.enqueue(try b.encode(Server.serveServiceResult, .{ w.request_id, .ok, ref, "" }));
@@ -1164,7 +1249,7 @@ fn notifyServiceCallbacks(b: *Broker, name: []const u8, object: *Object) ServeEr
         const off: u32 = @intCast(data.items.len);
         try smWriteI32(&data, gpa, 1);
         try entries.append(gpa, .{ .offset = off, .kind = binderEntryKind(ref.kind), .value = ref.value });
-        const frame = try b.encode(Server.serveTransact, .{Server.TransactOptions{
+        var frame = try b.encode(Server.serveTransact, .{Server.TransactOptions{
             .target = ObjectRef.local(cb.local_id),
             .code = 1, // IServiceCallback.TRANSACTION_onRegistration
             .flags = 1, // FLAG_ONEWAY
@@ -1175,6 +1260,7 @@ fn notifyServiceCallbacks(b: *Broker, name: []const u8, object: *Object) ServeEr
             .data = data.items,
             .fd_count = 0,
         }});
+        frame.user_work = true;
         owner.enqueue(frame);
     }
 }
@@ -1191,6 +1277,11 @@ fn purgeServiceCallbacks(b: *Broker, peer_id: u32) void {
             const cb = b.objects.get(entry.value_ptr.items[i]);
             if (cb == null or cb.?.owner == peer_id) {
                 _ = entry.value_ptr.swapRemove(i);
+                b.service_callback_count -= 1;
+                if (cb) |object| {
+                    object.service_refs -= 1;
+                    b.maybeReleaseObject(object) catch {};
+                }
             } else i += 1;
         }
         if (entry.value_ptr.items.len == 0) emptied.append(gpa, entry.key_ptr.*) catch {};
@@ -1218,7 +1309,14 @@ fn handleLookup(peer: *Peer, header: Client.Message.Header, body: []const u8) Se
         return;
     }
     if (lookup.flags.wait and !b.shutting_down) {
-        try b.waiters.append(gpa, .{ .peer = peer.id, .request_id = header.request_id, .name = try gpa.dupe(u8, name) });
+        if (b.waiters.items.len >= b.resource_limits.waiters or peer.service_waiters >= b.resource_limits.peer_waiters) {
+            peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .exhausted, ObjectRef.null_ref, "" }));
+            return;
+        }
+        const owned_name = try gpa.dupe(u8, name);
+        errdefer gpa.free(owned_name);
+        try b.waiters.append(gpa, .{ .peer = peer.id, .request_id = header.request_id, .name = owned_name });
+        peer.service_waiters += 1;
         return;
     }
     peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .not_found, ObjectRef.null_ref, "" }));
@@ -1358,12 +1456,15 @@ fn handleServiceManagerTransact(
             }
             const object = resolveRef(peer, svc_ref) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
+                error.ResourceLimit => return protocolError(peer, "exported Binder object limit exceeded"),
                 error.Invalid => return protocolError(peer, "addService with an object the peer does not hold"),
             };
+            defer b.maybeReleaseObject(object) catch {};
             if (object.dead) return smReplyException(peer, header, EX_ILLEGAL_STATE, "service object is dead");
             switch (try registerService(b, peer, object, name)) {
                 .ok => {},
                 .taken => return smReplyException(peer, header, EX_ILLEGAL_STATE, "service already registered by another owner"),
+                .exhausted => return smReplyException(peer, header, EX_ILLEGAL_STATE, "service registry capacity exhausted"),
             }
             try smWriteI32(&data, gpa, 0); // void -> no exception only
             try smReply(peer, header, data.items, entries.items);
@@ -1412,10 +1513,24 @@ fn handleServiceManagerTransact(
                 return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "notification callback missing");
             const cb = resolveRef(peer, cb_ref) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
+                error.ResourceLimit => return protocolError(peer, "exported Binder object limit exceeded"),
                 error.Invalid => return protocolError(peer, "service callback the peer does not hold"),
             };
+            defer b.maybeReleaseObject(cb) catch {};
+            if (name.len == 0 or name.len > limits.max_name_len or std.mem.indexOfScalar(u8, name, 0) != null)
+                return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "malformed service callback name");
             if (t.code == SM.registerForNotifications) {
                 if (cb.dead) return smReplyException(peer, header, EX_ILLEGAL_STATE, "callback object is dead");
+                const existing = b.service_callbacks.get(name);
+                if (existing) |list| {
+                    for (list.items) |gid| if (gid == cb.id) {
+                        try smWriteI32(&data, gpa, 0);
+                        return smReply(peer, header, data.items, entries.items);
+                    };
+                }
+                if (b.service_callback_count >= b.resource_limits.callbacks or
+                    (existing == null and b.service_callbacks.count() >= b.resource_limits.callback_names))
+                    return smReplyException(peer, header, EX_ILLEGAL_STATE, "service callback capacity exhausted");
                 const gop = try b.service_callbacks.getOrPut(gpa, name);
                 if (!gop.found_existing) {
                     gop.key_ptr.* = try gpa.dupe(u8, name);
@@ -1426,6 +1541,7 @@ fn handleServiceManagerTransact(
                 if (!known) {
                     try gop.value_ptr.append(gpa, cb.id);
                     cb.service_refs += 1; // keep the callback exported while registered
+                    b.service_callback_count += 1;
                 }
             } else if (b.service_callbacks.getPtr(name)) |list| {
                 var i: usize = 0;
@@ -1433,7 +1549,7 @@ fn handleServiceManagerTransact(
                     if (list.items[i] != cb.id) continue;
                     _ = list.swapRemove(i);
                     cb.service_refs -= 1;
-                    try b.maybeReleaseObject(cb);
+                    b.service_callback_count -= 1;
                     break;
                 }
                 if (list.items.len == 0) {
@@ -1673,7 +1789,9 @@ fn handleSetProperty(peer: *Peer, header: Client.Message.Header, body: []const u
             continue;
         };
         errdefer b.finishDelivery(routing_id);
-        target.enqueue(try b.encode(Server.servePropertyChanged, .{ name, routing_id }));
+        var frame = try b.encode(Server.servePropertyChanged, .{ name, routing_id });
+        frame.user_work = true;
+        target.enqueue(frame);
     }
 }
 

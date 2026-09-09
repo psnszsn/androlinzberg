@@ -136,6 +136,8 @@ pub const Message = struct {
             shutdown = 3,
             /// The peer may not register that name (registry policy).
             denied = 4,
+            /// Registry or waiting-request capacity exhausted.
+            exhausted = 5,
             _,
         };
     };
