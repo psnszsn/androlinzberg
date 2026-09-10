@@ -351,6 +351,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/systemtest/TextToSpeechSystemSmoke.kt",
     "src/java/dev/artzig/systemtest/DevicePolicyManagerSystemSmoke.kt",
     "src/java/dev/artzig/systemtest/SystemTestClientA.kt",
+    "src/java/dev/artzig/systemtest/ServiceInstancesSystemSmoke.kt",
     "src/java/dev/artzig/systemtest/ActivityUriGrantSystemSmoke.kt",
     "src/java/dev/artzig/systemtest/CallerIdentitySystemSmoke.kt",
     "src/java/dev/artzig/systemtest/BindingApplication.kt",

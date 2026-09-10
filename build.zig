@@ -1062,6 +1062,7 @@ pub fn build(b: *std.Build) void {
     system_test_run.addFileArg(java.fixtures.identity_a);
     system_test_run.addFileArg(java.fixtures.identity_b);
     system_test_run.addFileArg(application_tree.path(b, "bin/azk-surfaceflinger"));
+    system_test_run.addFileArg(@import("build/service_fixtures.zig").build(b, aosp_dep, java));
     system_test_run.run.setName("run hosted system-service tests");
     b.step("system-test", "Run multi-process hosted system-service tests").dependOn(&system_test_run.run.step);
 

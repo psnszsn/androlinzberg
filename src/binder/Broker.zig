@@ -1978,6 +1978,11 @@ fn removePeer(b: *Broker, peer: *Peer) void {
     }
     for (dead_calls.items) |id| b.finishDelivery(id);
 
+    for (b.launches.grants.items) |grant| {
+        if (grant.supervisor == peer.id) if (grant.claimed_peer) |child_id| {
+            if (b.peers.get(child_id)) |child| child.requestClose();
+        };
+    }
     b.launches.disconnected(peer.id);
 
     // Registry names, waiters and notification callbacks.

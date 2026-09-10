@@ -3072,7 +3072,9 @@ fn javaForwardTransact(binder: *AIBinder, code: u32, in: *const AParcel, out: *A
     args[0].i = @bitCast(code);
     args[1].j = @intCast(@intFromPtr(in));
     args[2].j = @intCast(@intFromPtr(out));
-    args[3].i = 0; // flags (the on_transact seam does not carry them; oneway is handled by the caller)
+    // Java Binder uses FLAG_ONEWAY for exception reporting and dispatch
+    // semantics even though the native scheduler owns FIFO delivery.
+    args[3].i = @bitCast(Runtime.current_flags);
     const handled = env.*.*.CallBooleanMethodA.?(env, local, fw.binder_exec_transact, &args);
     if (env.*.*.ExceptionCheck.?(env) == jni.JNI_TRUE) {
         // Binder.execTransact rethrows what Parcel.writeException cannot encode; the

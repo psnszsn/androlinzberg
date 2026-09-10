@@ -429,6 +429,7 @@ internal object SystemTestClientA {
             android.content.pm.PackageManager.DONT_KILL_APP,
         )
 
+        ServiceInstancesSystemSmoke.run(context)
         val connected = CountDownLatch(1)
         val disconnected = CountDownLatch(1)
         val bindingDied = CountDownLatch(1)

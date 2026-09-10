@@ -19,6 +19,10 @@ class PackageManagerInternalProcessor : LocalServiceAdapterProcessor() {
         val name = method.simpleName.toString()
         val params = method.parameters.map { processingEnv.typeUtils.erasure(it.asType()).toString() }
         return when {
+            name == "addIsolatedUid" && params == listOf("int", "int") ->
+                "packages.addIsolatedUid(p0, p1);"
+            name == "removeIsolatedUid" && params == listOf("int") ->
+                "packages.removeIsolatedUid(p0);"
             name == "isPackageSuspended" && params == listOf("java.lang.String", "int") ->
                 "return packages.isPackageSuspended(p0, p1);"
             name == "notifyComponentUsed" && params == listOf("java.lang.String", "int", "java.lang.String", "java.lang.String") ->

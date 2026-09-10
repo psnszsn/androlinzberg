@@ -84,6 +84,19 @@ internal object StockPackageSnapshotsSmoke {
         val beforeUid = before.appId
         val manifestUid = checkNotNull(before.pkg).uid
         val signed = checkNotNull(before.pkg).isSignedWithPlatformKey
+        internal.addIsolatedUid(99000, manifestUid)
+        val owned = internal.snapshot() as HostedPackageSnapshot
+        check(owned.getIsolatedOwner(99000) == manifestUid)
+        check(owned.isCallerSameApp(packageName, 99000, true))
+        check(!owned.isCallerSameApp(packageName, 99000, false))
+        check(packages.getPackagesForUid(99000) == null)
+        check(packages.checkUidPermission(android.Manifest.permission.CAMERA, 99000) == PackageManager.PERMISSION_DENIED)
+        internal.removeIsolatedUid(99000)
+        check(owned.getIsolatedOwner(99000) == manifestUid) // Captured revision remains stable.
+        check(runCatching { (internal.snapshot() as HostedPackageSnapshot).getIsolatedOwner(99000) }
+            .exceptionOrNull() is IllegalStateException)
+        check(runCatching { snapshot.getIsolatedOwner(99000) }.exceptionOrNull() is IllegalStateException)
+
         val intent = Intent("android.view.InputMethod").setPackage(packageName)
             .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
         val flags = (PackageManager.MATCH_DIRECT_BOOT_AWARE or PackageManager.MATCH_DIRECT_BOOT_UNAWARE).toLong()

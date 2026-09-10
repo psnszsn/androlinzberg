@@ -91,7 +91,9 @@ internal object SystemServices {
         activityManager.platformCompat = platformCompat
         activityManager.processLauncher = sessionProcessLauncher(activityManager)
         activityManager.packageService = packageManager
-        android.os.ServiceManager.addService(Context.ACTIVITY_SERVICE, activityManager)
+        android.os.ServiceManager.addService(Context.ACTIVITY_SERVICE, activityManager, true,
+            android.os.IServiceManager.DUMP_FLAG_PRIORITY_CRITICAL or android.os.IServiceManager.DUMP_FLAG_PRIORITY_NORMAL or
+                android.os.IServiceManager.DUMP_FLAG_PROTO)
         // C++ PermissionCache uses android.os.IPermissionController over these same authorities.
         android.os.ServiceManager.addService("permission",
             HostedNativePermissionController(context, activityManager))
@@ -326,15 +328,15 @@ internal object SystemServices {
      * service in a package with no running process gets one. The launcher and
      * session directory come from the environment the launcher gave us.
      */
-    private fun sessionProcessLauncher(activityManager: HostedActivityManagerService): HostedProcessStarts.Launcher? {
+    private fun sessionProcessLauncher(activityManager: HostedActivityManagerService): HostedProcessStarts.Launcher<android.content.pm.ApplicationInfo>? {
         val sessionDir = System.getenv("AZK_BINDER_SESSION_DIR") ?: return null
         val launcher = System.getenv("AZK_LAUNCHER_EXE") ?: return null
-        return HostedProcessStarts.Launcher { request, onExit ->
+        return HostedProcessStarts.Launcher<android.content.pm.ApplicationInfo> { request, onExit ->
             val (packageName, processName) = request.key
             var launchId = 0L
             try {
                 val credential = dev.artzig.BinderSession.reserveLaunch(packageName, processName,
-                    false, request.sequence).split(':', limit = 3)
+                    request.key.isolated, request.sequence).split(':', limit = 3)
                 check(credential.size == 3 && credential[2].length == 64)
                 launchId = credential[0].toLong()
                 val launchUid = credential[1].toInt()
@@ -345,6 +347,7 @@ internal object SystemServices {
                 // system cookie an APK could reconnect as uid 1000 and claim
                 // the system service names.
                 builder.environment().remove("AZK_BINDER_SYSTEM_COOKIE")
+                builder.environment().remove("AZK_BINDER_COOKIE")
                 builder.environment()["AZK_BINDER_PACKAGE"] = packageName
                 builder.environment()["AZK_LAUNCH_CREDENTIAL"] = credential[2]
                 builder.environment()["AZK_LAUNCH_UID"] = launchUid.toString()
@@ -356,10 +359,11 @@ internal object SystemServices {
                     .filter { it.isNotEmpty() && !it.startsWith("glibc.pthread.rseq=") }
                 builder.environment()["GLIBC_TUNABLES"] = (tunables + "glibc.pthread.rseq=0").joinToString(":")
                 val child = builder.start()
+                val childPid: Int
                 try {
                     // Pinned UNIXProcess keeps the kernel child handle in its
                     // private final pid field; Android's Process API has no pid().
-                    val childPid = child.javaClass.getDeclaredField("pid").apply { isAccessible = true }.getInt(child)
+                    childPid = child.javaClass.getDeclaredField("pid").apply { isAccessible = true }.getInt(child)
                     dev.artzig.BinderSession.bindLaunch(launchId, childPid)
                     child.outputStream.use { gate -> gate.write(1); gate.flush() }
                 } catch (failure: Throwable) {
@@ -370,9 +374,11 @@ internal object SystemServices {
                 try {
                     Thread({
                         child.waitFor()
-                        dev.artzig.BinderSession.revokeLaunch(launchId)
-                        spawnedProcesses.remove(child)
-                        activityManager.dispatchProcessExit(onExit)
+                        try { dev.artzig.BinderSession.revokeLaunch(launchId) }
+                        finally {
+                            spawnedProcesses.remove(child)
+                            activityManager.dispatchProcessExit(onExit)
+                        }
                     }, "app-exit-${request.sequence}").apply { isDaemon = true; start() }
                 } catch (failure: Throwable) {
                     child.destroy()
@@ -381,6 +387,7 @@ internal object SystemServices {
                 }
                 Log.i(TAG, "spawning $processName start=${request.sequence}")
                 object : HostedProcessStarts.Child {
+                    override val identity = HostedProcessStarts.Identity(childPid, launchUid)
                     override fun terminate() {
                         child.destroy()
                         dev.artzig.BinderSession.revokeLaunch(launchId)

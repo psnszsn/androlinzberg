@@ -374,7 +374,8 @@ fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_
         const info = try joinSession(init, dir);
         if (info.storage) |storage| try applySessionStorage(init, storage);
         _ = setenv(binder_session.socket_env, try arena.dupeSentinel(u8, info.socket, 0), 1);
-        _ = setenv(binder_session.cookie_env, try arena.dupeSentinel(u8, info.cookie, 0), 1);
+        if (init.minimal.environ.getPosix("AZK_LAUNCH_CREDENTIAL") == null)
+            _ = setenv(binder_session.cookie_env, try arena.dupeSentinel(u8, info.cookie, 0), 1);
         _ = setenv(binder_session.prop_area_env, try arena.dupeSentinel(u8, info.prop_area, 0), 1);
         _ = setenv("AZK_BINDER_SESSION_DIR", try arena.dupeSentinel(u8, dir, 0), 1);
         std.debug.print("azk: joined binder session: {s}\n", .{dir});

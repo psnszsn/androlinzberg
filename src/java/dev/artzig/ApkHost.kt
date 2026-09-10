@@ -87,7 +87,9 @@ class ApkHost private constructor() {
         @JvmStatic
         fun prepareProcessIdentity(): String {
             sPackageIdentity?.let { return it }
-            val pkg = parseApkLitePackageName(checkNotNull(System.getenv("ARTZIG_APK")))
+            val pkg = if (System.getenv("AZK_LAUNCH_CREDENTIAL") != null)
+                checkNotNull(System.getenv("AZK_BINDER_PACKAGE"))
+            else parseApkLitePackageName(checkNotNull(System.getenv("ARTZIG_APK")))
             BinderSession.setIdentity(pkg, false)
             // AOSP ApkLiteParseUtils reads ApkAssets directly. System assets
             // initialize overlay configuration, which can query Process.myUid;
@@ -151,7 +153,10 @@ class ApkHost private constructor() {
             val pkg = prepareProcessIdentity()
             val processName = System.getenv("AZK_APP_PROCESS_NAME") ?: pkg
             android.os.Process.setArgV0(processName)
-            installOwnPackage(apkPath, pkg, extractNativeLibraries(apkPath))
+            // Supervised children use the package state prepared by their parent.
+            // Isolated UIDs must never acquire the installer capability.
+            if (System.getenv("AZK_LAUNCH_CREDENTIAL") == null)
+                installOwnPackage(apkPath, pkg, extractNativeLibraries(apkPath))
             HostContexts.prepareApplicationEnvironment(frameworkRes)
             if (java.security.Security.getProvider("AndroidKeyStore") == null) {
                 java.security.Security.insertProviderAt(ArtzigKeyStoreProvider(), 1)

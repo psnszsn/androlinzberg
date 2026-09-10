@@ -26,7 +26,18 @@ class HostedPackageSnapshot internal constructor(
     private val userIds: Set<Int> = setOf(UserHandle.USER_SYSTEM),
     private val permissionGrants: Map<Int, Set<String>> = emptyMap(),
     private val shellRestrictedUsers: Set<Int> = emptySet(),
+    private val isolatedOwners: Map<Int, Int> = emptyMap(),
 ) : PackageDataSnapshot {
+    /** ComputerEngine.getIsolatedOwner: unknown/released UIDs are not owners. */
+    fun getIsolatedOwner(uid: Int): Int = isolatedOwners[uid]
+        ?: throw IllegalStateException("No owner UID found for isolated UID $uid")
+
+    /** ComputerEngine.isCallerSameApp with its explicit isolated-resolution flag. */
+    fun isCallerSameApp(packageName: String?, uid: Int, resolveIsolatedUid: Boolean): Boolean {
+        val owner = if (resolveIsolatedUid && UserHandle.isIsolated(uid)) getIsolatedOwner(uid) else uid
+        return states[packageName]?.appId == UserHandle.getAppId(owner)
+    }
+
     fun getPackage(packageName: String): AndroidPackage? = states[packageName]?.androidPackage
     fun getPackageStateInternal(packageName: String): PackageStateInternal? = states[packageName]
 

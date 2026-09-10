@@ -3,6 +3,7 @@ package dev.artzig.binder
 import android.os.Binder
 import android.os.Bundle
 import android.os.IBinder
+import android.os.Parcel
 import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.os.ServiceManager
@@ -22,6 +23,14 @@ internal object BinderTestServer {
         private var callback: IBinderTestCallback? = null
         private val seqs = ArrayList<Int>()
         private val seqLock = java.lang.Object()
+
+        override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+            if (code == IBinderTestService.Stub.TRANSACTION_noteSeq) {
+                check(flags and IBinder.FLAG_ONEWAY != 0) { "One-way flag lost before Java dispatch" }
+                check(Binder.getCallingPid() == 0) { "One-way Binder caller PID must be zero" }
+            }
+            return super.onTransact(code, data, reply, flags)
+        }
 
         override fun add(a: Int, b: Int): Int = a + b
 

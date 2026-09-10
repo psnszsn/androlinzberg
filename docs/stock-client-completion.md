@@ -863,6 +863,39 @@ captured actions; WebView and desktop journals bring the total to 115 actions,
 all without structured runtime issues or fresh failure artifacts. No AOSP package
 inputs changed; both archives and pins remain at the archiver checkpoint.
 
+### Real isolated service instances (2026-09-10)
+
+Named isolated services, shared isolated processes and external-service caller
+identities now execute separately signed APK code through authenticated process
+starts. Attachment checks the actual child PID, UID and start sequence; captured
+application metadata retains the defining APK while external services use their
+caller's package identity. Isolated children receive the pinned AMS package and
+permission-manager cache exemptions, without inheriting their owner's permissions
+or shared session credentials. Immutable package snapshots retain isolated-owner
+metadata with explicit owner-resolution semantics.
+
+Final unbind waits for stock Service.onDestroy acknowledgement before retiring an
+unneeded isolated process. The Binder Java bridge now forwards transaction flags:
+one-way callbacks correctly expose caller PID zero and exceptions reach Android
+logging. Supervisor disconnect also closes its claimed child peers.
+
+Validation passed with `-j10`: `install jvm-test system-test integration-test
+webview-test webview-ui-test webview-overlay-test stock-desktop-launcher-test
+stock-session-loss-test binder-test binder-broker-test binder-cpp-test ndk-test
+build-tools-test cpp-audit graph-audit`. The standalone process-start test passes
+with generic captured metadata. The service APK regression covers separate/reused
+instances, shared processes, external ownership, APK class loading, kernel UID/GID,
+permission and AppOps denial, and final-service process death. All 28 fresh APK
+cases and 112 captured UI actions passed with zero structured runtime issues.
+WebView's real renderer attached with isolated UID 99000 in both UI suites.
+
+Batch 5 remains open for pending/repeated binding lifetime, restart/start-result
+semantics and broader shared-service regressions. The remaining modified static
+client is Process; the stub inventory remains zero. Both AOSP archives and pins
+are unchanged and current because this checkpoint changes only owned host code.
+Linux user namespaces provide kernel identities, not full Android filesystem,
+network or SELinux confinement.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

@@ -464,7 +464,8 @@ class HostedPackageManagerService(private val userManager: UserManagerInternal, 
         val users = userManager.userIds.toSet()
         HostedPackageSnapshot(packages.mapValues { (_, state) -> state.snapshot() }, componentResolver.snapshot(),
             users, packages.values.filter { it.appId >= 0 }.associate { it.appId to it.grantedPermissions.toSet() },
-            users.filterTo(HashSet()) { userManager.hasUserRestriction(android.os.UserManager.DISALLOW_DEBUGGING_FEATURES, it) })
+            users.filterTo(HashSet()) { userManager.hasUserRestriction(android.os.UserManager.DISALLOW_DEBUGGING_FEATURES, it) },
+            isolatedOwners.toMap())
     }
 
     private var archiver: com.android.server.pm.PackageArchiver? = null
@@ -521,6 +522,20 @@ class HostedPackageManagerService(private val userManager: UserManagerInternal, 
     internal fun isPlatformSignedUid(uid: Int): Boolean = synchronized(lock) {
         packagesByUid[uid]?.pkg?.isSignedWithPlatformKey == true
     }
+
+    private val isolatedOwners = HashMap<Int, Int>()
+
+    /** Pinned PMS.PackageManagerInternalImpl / ComputerEngine owner metadata.
+     * Only the process supervisor writes this map. It does not change package
+     * UIDs, signatures, permission grants or ordinary getPackagesForUid results. */
+    fun addIsolatedUid(isolatedUid: Int, ownerUid: Int) = synchronized(lock) {
+        require(UserHandle.isIsolated(isolatedUid) && android.os.Process.isApplicationUid(ownerUid))
+        val previous = isolatedOwners[isolatedUid]
+        check(previous == null || previous == ownerUid) { "Isolated UID already has another owner" }
+        isolatedOwners[isolatedUid] = ownerUid
+    }
+
+    fun removeIsolatedUid(isolatedUid: Int) { synchronized(lock) { isolatedOwners.remove(isolatedUid) } }
 
     /** Hosted identity map used by PackageManagerInternal.isSameApp. */
     fun isSameAppInternal(packageName: String?, uid: Int): Boolean {

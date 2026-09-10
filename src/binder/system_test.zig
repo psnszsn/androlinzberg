@@ -22,7 +22,7 @@ pub fn main(init: std.process.Init) !void {
         return std.process.replace(io, .{ .argv = args[2..] });
     if ((args.len == 6 or args.len == 7) and std.mem.eql(u8, args[1], "--cold-window"))
         return coldWindow(init, args);
-    if (args.len < 9) {
+    if (args.len < 10) {
         std.debug.print("usage: azk-system-test <androlinzberg> <azk-binder-broker> <test-a.apk> <test-b.apk> <ndk-system-client> <identity-a.apk> <identity-b.apk> <surfaceflinger>\n", .{});
         return error.InvalidArguments;
     }
@@ -34,6 +34,7 @@ pub fn main(init: std.process.Init) !void {
     const identity_a = args[6];
     const identity_b = args[7];
     const surfaceflinger_exe = args[8];
+    const service_fixture = args[9];
 
     var env = try init.minimal.environ.createMap(gpa);
     defer env.deinit();
@@ -42,6 +43,7 @@ pub fn main(init: std.process.Init) !void {
     try env.put("AZK_FIXTURE_APK_B", fixture_b);
     try env.put("AZK_FIXTURE_IDENTITY_A", identity_a);
     try env.put("AZK_FIXTURE_IDENTITY_B", identity_b);
+    try env.put("AZK_FIXTURE_SERVICE_INSTANCES", service_fixture);
     // Hermetic: a nonexistent display keeps the hosted clipboard monitor off
     // the developer's real Wayland clipboard (an empty value would fall back
     // to wayland-0; parallel test sessions would cross-talk through it).
@@ -72,6 +74,9 @@ pub fn main(init: std.process.Init) !void {
     var expired = std.atomic.Value(bool).init(false);
     try watchdog.concurrent(io, watch, .{ io, &expired });
     defer watchdog.cancel(io);
+
+    var fixture_install = try spawnPeer(io, &env, launcher, "dev.artzig.systemtest.ServiceFixtureInstallSmoke", "android");
+    if (!expectExit(io, &fixture_install, "service fixture install")) return error.SystemTestFailed;
 
     var host = try spawnPeer(io, &env, launcher, "dev.artzig.systemtest.SystemTestHostB", "dev.artzig.test.b");
     peer_pids[0].store(host.id.?, .release);

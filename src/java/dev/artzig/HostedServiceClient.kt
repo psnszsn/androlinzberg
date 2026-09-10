@@ -63,8 +63,10 @@ object HostedServiceClient {
         HostContexts.prepareApplicationEnvironment(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
         val am = checkNotNull(activityManagerOrNull()) { "activity manager unavailable" }
         try {
-            checkNotNull(installerOrNull()).bindProcessPackage(packageName, processName,
-                android.content.res.Configuration(ResourcesManager.getInstance().configuration))
+            if (System.getenv("AZK_LAUNCH_CREDENTIAL") == null) {
+                checkNotNull(installerOrNull()).bindProcessPackage(packageName, processName,
+                    android.content.res.Configuration(ResourcesManager.getInstance().configuration))
+            }
             if (ActivityThread.currentActivityThread() == null) {
                 HostedActivityProcess.attachApplication()
             } else {
@@ -75,7 +77,7 @@ object HostedServiceClient {
                 am.attachApplication(thread, 0)
             }
             attached = true
-            dev.artzig.testing.ProcessInspection.register(applicationThread())
+            if (!android.os.Process.isIsolated()) dev.artzig.testing.ProcessInspection.register(applicationThread())
         } catch (e: RemoteException) {
             throw e.rethrowFromSystemServer()
         }
