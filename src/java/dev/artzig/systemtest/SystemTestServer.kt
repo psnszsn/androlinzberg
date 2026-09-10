@@ -4,6 +4,7 @@ package dev.artzig.systemtest
  * its app peers. Production SystemServer keeps the generated flag defaults. */
 internal object SystemTestServer {
     @JvmStatic fun main(args: Array<String>) {
+        dev.artzig.StockZygoteCommandBufferSmoke.checkLaunchAuthority(true)
         ActivityUriGrantSystemSmoke.setCallerApis(true)
         // Exercise the pinned flag-enabled private sharing contract in this
         // fixture server; the production generated default stays unchanged.

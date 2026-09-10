@@ -23,6 +23,21 @@ object BinderSession {
     /** Supervisor-only one-use exec credential. Contains a secret; never log it. */
     @JvmStatic external fun reserveLaunch(packageName: String, processName: String,
         isolated: Boolean, sequence: Long): String
+    enum class LaunchKind(internal val wireValue: Int) { APP(0), ISOLATED(1), SYSTEM(2), WEBVIEW_CONTROLLER(3) }
+
+    /** Explicit Process.start UID; the broker verifies package ownership and
+     * restricts WebView controllers to isolated children. -1 allocates a UID. */
+    @JvmStatic fun reserveLaunchForUid(packageName: String, processName: String,
+        kind: LaunchKind, sequence: Long, userId: Int, uid: Int): String =
+        reserveProcessLaunch(packageName, processName, kind.wireValue, sequence, userId, uid)
+
+    @JvmStatic private external fun reserveProcessLaunch(packageName: String, processName: String,
+        kind: Int, sequence: Long, userId: Int, uid: Int): String
+
+    /** Active broker system authority, bound to the actual socket peer's kernel
+     * lifetime. Raw Linux UID and retained UID metadata do not authorize it. */
+    @JvmStatic external fun isSystemSocketPeer(descriptor: java.io.FileDescriptor): Boolean
+
     @JvmStatic external fun bindLaunch(id: Long, childPid: Int)
     @JvmStatic external fun revokeLaunch(id: Long): Boolean
 }

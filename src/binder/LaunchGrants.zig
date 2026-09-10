@@ -9,7 +9,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 pub const Token = [64]u8;
-pub const Kind = enum(u32) { app, isolated, system };
+pub const Kind = enum(u32) { app, isolated, system, webview_controller };
 pub const Failure = error{ Denied, Invalid, Exhausted, Stale, OutOfMemory };
 pub const Ticket = struct { id: u64, uid: u32, token: Token };
 pub const Claim = struct {
@@ -53,16 +53,45 @@ fn free(self: *LaunchGrants, grant: Grant) void {
 }
 
 pub fn reserve(self: *LaunchGrants, supervisor: u32, supervisor_pid: i32, kind: Kind, package: []const u8, process: []const u8, package_uid: u32, sequence: u64) Failure!Ticket {
+    return self.reserveForUid(supervisor, supervisor_pid, kind, package, process, package_uid, sequence, null);
+}
+
+/// Process.start specifies its UID; package_uid must come from the broker's
+/// own package registry. Ordinary services can still request automatic allocation.
+pub fn reserveForUid(self: *LaunchGrants, supervisor: u32, supervisor_pid: i32, kind: Kind, package: []const u8, process: []const u8, package_uid: u32, sequence: u64, requested_uid: ?u32) Failure!Ticket {
     if (supervisor == 0 or supervisor_pid <= 0 or package.len == 0 or process.len == 0 or
         package.len > 4096 or process.len > 4096 or std.mem.indexOfScalar(u8, package, 0) != null or
         std.mem.indexOfScalar(u8, process, 0) != null) return error.Invalid;
+    if (package_uid > std.math.maxInt(i32)) return error.Invalid;
     const app_id = package_uid % 100000;
     if (kind == .system) {
         if (package_uid != 1000) return error.Invalid;
     } else if (app_id < 10000 or app_id > 19999) return error.Invalid;
     self.collect();
     if (self.grants.items.len >= self.limit or self.next_id == std.math.maxInt(u64)) return error.Exhausted;
-    const uid = if (kind == .isolated) try self.isolatedUid(package_uid / 100000) else package_uid;
+    const uid: u32 = switch (kind) {
+        .app, .system => uid: {
+            if (requested_uid) |requested| if (requested != package_uid) return error.Denied;
+            break :uid package_uid;
+        },
+        .isolated => uid: {
+            if (requested_uid) |requested| {
+                const id = requested % 100000;
+                if (requested > std.math.maxInt(i32) or requested / 100000 != package_uid / 100000 or
+                    id < 90000 or id > 99999) return error.Denied;
+                if (self.uidReserved(requested)) return error.Exhausted;
+                break :uid requested;
+            }
+            break :uid try self.isolatedUid(package_uid / 100000);
+        },
+        .webview_controller => uid: {
+            // WebViewZygote is a global UID 1053 supervisor, never a system
+            // identity. Its code belongs to the selected user-0 provider.
+            if (package_uid / 100000 != 0) return error.Denied;
+            if (requested_uid) |requested| if (requested != 1053) return error.Denied;
+            break :uid 1053;
+        },
+    };
     var random: [32]u8 = undefined;
     self.io.random(&random);
     const ticket: Ticket = .{ .id = self.next_id, .uid = uid, .token = std.fmt.bytesToHex(random, .lower) };
@@ -84,20 +113,41 @@ pub fn reserve(self: *LaunchGrants, supervisor: u32, supervisor_pid: i32, kind: 
     return ticket;
 }
 
+fn uidReserved(self: *LaunchGrants, uid: u32) bool {
+    for (self.grants.items) |grant| if (grant.ticket.uid == uid) return true;
+    return false;
+}
+
+/// The WebView controller has only the child-UID authority of ChildZygoteInit;
+/// it cannot issue ordinary app, system or further controller identities.
+pub fn isIsolatedSupervisor(self: *LaunchGrants, peer: u32) bool {
+    for (self.grants.items) |grant| {
+        if (grant.kind != .webview_controller or grant.revoked or grant.claimed_peer != peer) continue;
+        const child = grant.child orelse continue;
+        const start = self.liveStartTime(child.pid) orelse continue;
+        if (start == child.start) return true;
+    }
+    return false;
+}
+
+pub fn mayDelegate(self: *LaunchGrants, peer: u32, kind: Kind, uid: ?u32) bool {
+    if (kind != .isolated or !self.isIsolatedSupervisor(peer)) return false;
+    if (uid) |requested| {
+        // Pinned WebViewZygote passes FIRST_ISOLATED_UID..Integer.MAX_VALUE.
+        const app_id = requested % 100000;
+        return requested >= 99000 and requested <= std.math.maxInt(i32) and app_id >= 90000 and app_id <= 99999;
+    }
+    return true;
+}
+
 fn isolatedUid(self: *LaunchGrants, user: u32) Failure!u32 {
     // ProcessList's global isolated range. App-zygote ranges (90000..98999)
     // belong to their own allocator; host exec does not consume them.
     var app_id: u32 = 99000;
     while (app_id <= 99999) : (app_id += 1) {
         const uid = user * 100000 + app_id;
-        var used = false;
-        for (self.grants.items) |grant| {
-            if (grant.ticket.uid == uid) {
-                used = true;
-                break;
-            }
-        }
-        if (!used) return uid;
+        if (uid > std.math.maxInt(i32)) return error.Exhausted;
+        if (!self.uidReserved(uid)) return uid;
     }
     return error.Exhausted;
 }
@@ -110,6 +160,11 @@ pub fn bind(self: *LaunchGrants, supervisor: u32, id: u64, child_pid: i32) Failu
     if (grant.revoked or grant.child != null or child_pid <= 0) return error.Stale;
     const child = self.inspect(child_pid) catch return error.Invalid;
     if (!child.alive or child.parent != grant.supervisor_pid) return error.Denied;
+    // A kernel process has one immutable Android identity, including while a
+    // revoked grant keeps its UID quarantined until that process exits.
+    for (self.grants.items) |other| {
+        if (other.child) |bound| if (bound.pid == child.pid and bound.start == child.start) return error.Denied;
+    }
     grant.child = child;
 }
 
@@ -260,4 +315,57 @@ test "PID binding, one-use claim, revocation and isolated UID quarantine" {
     _ = try authority.revoke(1, replacement.id);
     authority.collect();
     try testing.expectEqual(@as(usize, 0), authority.grants.items.len);
+}
+
+test "requested UIDs preserve package/user ownership and reserve pending isolated IDs" {
+    var authority: LaunchGrants = .{ .gpa = std.testing.allocator, .io = std.testing.io };
+    defer authority.deinit();
+    const pid = std.os.linux.getpid();
+    const normal = try authority.reserveForUid(1, pid, .app, "fixture", "fixture", 110042, 1, 110042);
+    try std.testing.expectEqual(@as(u32, 110042), normal.uid);
+    try std.testing.expectError(error.Denied, authority.reserveForUid(1, pid, .app, "fixture", "fixture", 110042, 2, 110043));
+    try std.testing.expectError(error.Denied, authority.reserveForUid(1, pid, .app, "fixture", "fixture", 110042, 2, 10042));
+    const isolated = try authority.reserveForUid(1, pid, .isolated, "fixture", "fixture:one", 110042, 3, 199321);
+    try std.testing.expectEqual(@as(u32, 199321), isolated.uid);
+    try std.testing.expectError(error.Exhausted, authority.reserveForUid(1, pid, .isolated, "fixture", "fixture:two", 110042, 4, 199321));
+    try std.testing.expectError(error.Denied, authority.reserveForUid(1, pid, .isolated, "fixture", "fixture:two", 110042, 4, 99321));
+    try std.testing.expectError(error.Denied, authority.reserveForUid(1, pid, .isolated, "fixture", "fixture:two", 110042, 4, 110042));
+    _ = try authority.revoke(1, isolated.id);
+    const reused = try authority.reserveForUid(1, pid, .isolated, "fixture", "fixture:two", 110042, 4, 199321);
+    try std.testing.expect(reused.id != isolated.id);
+    try std.testing.expectError(error.Denied, authority.reserveForUid(1, pid, .webview_controller, "provider", "webview_zygote", 10042, 5, 1000));
+    try std.testing.expectError(error.Denied, authority.reserveForUid(1, pid, .webview_controller, "provider", "webview_zygote", 110042, 5, 1053));
+}
+
+test "controller authority is scoped, authenticated and revoked with its process" {
+    const io = std.testing.io;
+    var authority: LaunchGrants = .{ .gpa = std.testing.allocator, .io = io };
+    defer authority.deinit();
+    var child = try std.process.spawn(io, .{
+        .argv = &.{ "/bin/sh", "-c", "read release" },
+        .stdin = .pipe,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    });
+    defer child.kill(io);
+    const ticket = try authority.reserveForUid(1, std.os.linux.getpid(), .webview_controller, "provider", "webview_zygote", 10042, 1, 1053);
+    try authority.bind(1, ticket.id, child.id.?);
+    try std.testing.expect(!authority.mayDelegate(3, .isolated, 99001));
+    const claim_result = try authority.claim(&ticket.token, "provider", child.id.?, 3);
+    try std.testing.expectEqual(@as(u32, 1053), claim_result.uid);
+    try std.testing.expectEqual(@as(u32, 10042), claim_result.package_uid);
+    try std.testing.expect(authority.mayDelegate(3, .isolated, null));
+    try std.testing.expect(authority.mayDelegate(3, .isolated, 99001));
+    try std.testing.expect(authority.mayDelegate(3, .isolated, 199001));
+    for ([_]Kind{ .app, .system, .webview_controller }) |kind|
+        try std.testing.expect(!authority.mayDelegate(3, kind, null));
+    try std.testing.expect(!authority.mayDelegate(3, .isolated, 10042));
+    try std.testing.expect(!authority.mayDelegate(3, .isolated, 90000));
+    try std.testing.expect(!authority.mayDelegate(4, .isolated, 99001));
+    const other = try authority.reserve(1, std.os.linux.getpid(), .isolated, "provider", "other", 10042, 2);
+    try std.testing.expectError(error.Denied, authority.bind(1, other.id, child.id.?));
+    _ = try authority.revoke(1, ticket.id);
+    try std.testing.expect(!authority.mayDelegate(3, .isolated, 99001));
+    // Revocation changes authority, not the identity of a still-living process.
+    try std.testing.expectEqual(@as(?u32, 1053), authority.liveUid(child.id.?));
 }

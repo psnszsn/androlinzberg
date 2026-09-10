@@ -1093,6 +1093,35 @@ acceptance remain open. The earlier intermittent Chromium frame-rate-hint issue
 is not claimed fixed by this gate.
 
 
+### Requested launch UIDs and scoped process supervisors (2026-09-10)
+
+The broker's AZKB v9 launch protocol accepts a requested UID and Android user,
+checks ordinary UIDs against its own package registry, and reserves isolated UIDs
+without reusing pending or revoked-but-living identities. A process cannot bind
+multiple launch identities. Existing ordinary service allocation remains supported.
+
+A separately authenticated WebView controller identity (UID 1053) can supervise
+only isolated children for already registered packages. It cannot grant app,
+system or further controller identities. Real nested namespace tests verify a
+provider controller launching a renderer with a different effective package,
+revocation of both Binder connections and UID quarantine until actual exit.
+
+The native control-socket check combines active broker system authority with
+SO_PEERPIDFD liveness before and after authorization. Neither the outer Linux
+UID nor retained metadata for a revoked process confers authority. Tests cover
+live and dead peers, death during authorization, requested UID/user mismatches,
+allocation collisions and the JNI boundary from both app and system processes.
+
+Validation: native broker/NDK/C++ tests and focused framework/system tests pass.
+The full `-j10 install jvm-test system-test integration-test webview-test
+webview-ui-test webview-overlay-test stock-desktop-launcher-test
+stock-session-loss-test binder-test binder-broker-test binder-cpp-test ndk-test
+build-tools-test cpp-audit graph-audit` gate passes with 28 fresh APK cases,
+91 APK actions and 24 WebView/desktop actions, all without structured issues or
+fresh failure artifacts. Local AOSP archives and pins are unchanged and current.
+This establishes process-launch authority; stock Process.start/startWebView
+transport, execution and final acceptance remain unfinished.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

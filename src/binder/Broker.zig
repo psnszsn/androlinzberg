@@ -637,6 +637,7 @@ fn serveLoop(peer: *Peer) ServeError!void {
             .set_property => try handleSetProperty(peer, header, body),
             .reserve_package_uid => try handleReservePackageUid(peer, header, body),
             .process_uid => try handleProcessUid(peer, header, body),
+            .system_process => try handleSystemProcess(peer, header, body),
             .reserve_launch => try handleReserveLaunch(peer, header, body),
             .bind_launch => try handleBindLaunch(peer, header, body),
             .revoke_launch => try handleRevokeLaunch(peer, header, body),
@@ -669,7 +670,7 @@ fn handleHello(peer: *Peer, header: Client.Message.Header, body: []const u8) Ser
     defer b.mutex.unlock(io);
     if (b.launches.claim(cookie, package, peer.pid, peer.id)) |claim| {
         peer.role = switch (claim.kind) {
-            .app => .app,
+            .app, .webview_controller => .app,
             .isolated => .isolated,
             .system => .system,
         };
@@ -775,10 +776,38 @@ fn launchFailure(err: LaunchGrants.Failure) Server.Message.ServiceResult.Status 
     };
 }
 
+/// Control authorization differs from process_uid metadata: disconnected or
+/// revoked-but-living processes cannot retain system authority. The consumer
+/// must also bind this query to the actual socket peer's kernel lifetime.
+fn handleSystemProcess(peer: *Peer, header: Client.Message.Header, body: []const u8) ServeError!void {
+    if (body.len != @sizeOf(i32)) return protocolError(peer, "malformed system_process");
+    const pid = std.mem.readInt(i32, body[0..4], .little);
+    const b = peer.broker;
+    b.mutex.lockUncancelable(b.io);
+    defer b.mutex.unlock(b.io);
+    var authorized = false;
+    if (pid > 0) if (b.launches.liveStartTime(pid)) |start| {
+        var peers = b.peers.valueIterator();
+        while (peers.next()) |candidate| {
+            const other = candidate.*;
+            if (!other.alive or !other.hello_done or other.pid != pid or other.kernel_start_time != start or
+                other.role != .system or other.android_uid != Client.system_uid) continue;
+            other.out_mutex.lockUncancelable(b.io);
+            const closing = other.closing;
+            other.out_mutex.unlock(b.io);
+            if (!closing) {
+                authorized = true;
+                break;
+            }
+        }
+    };
+    peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, @as(Server.Message.ServiceResult.Status, if (authorized) .ok else .denied), ObjectRef.null_ref, "" }));
+}
+
 fn handleReserveLaunch(peer: *Peer, header: Client.Message.Header, body: []const u8) ServeError!void {
     const req = takeStruct(Client.Message.ReserveLaunch, body) catch return protocolError(peer, "malformed reserve_launch");
     const rest = body[@sizeOf(Client.Message.ReserveLaunch)..];
-    if (@as(usize, req.package_len) + req.process_len != rest.len or req.kind > 2)
+    if (@as(usize, req.package_len) + req.process_len != rest.len or req.kind > 3)
         return protocolError(peer, "malformed reserve_launch");
     const package = try readName(peer, rest[0..req.package_len], req.package_len);
     const process = try readName(peer, rest[req.package_len..], req.process_len);
@@ -786,13 +815,21 @@ fn handleReserveLaunch(peer: *Peer, header: Client.Message.Header, body: []const
     b.mutex.lockUncancelable(b.io);
     defer b.mutex.unlock(b.io);
     var result: Server.Message.LaunchResult = .{ .status = .denied };
-    if (peer.role == .system) {
-        const kind: LaunchGrants.Kind = @fromBackingInt(@intCast(req.kind));
-        const uid = if (kind == .system) @as(?u32, Client.system_uid) else try assignPackageUidLocked(b, package);
-        if (uid) |package_uid| {
-            if (b.launches.reserve(peer.id, peer.pid, kind, package, process, package_uid, req.sequence)) |ticket| {
-                result = .{ .status = .ok, .id = ticket.id, .uid = ticket.uid, .token = ticket.token };
-            } else |err| result.status = launchFailure(err);
+    const kind: LaunchGrants.Kind = @fromBackingInt(@intCast(req.kind));
+    const requested: ?u32 = if (req.requested_uid == std.math.maxInt(u32)) null else req.requested_uid;
+    if (peer.role == .system or b.launches.mayDelegate(peer.id, kind, requested)) {
+        const app_id = if (kind == .system) @as(?u32, Client.system_uid) else if (peer.role == .system) try assignPackageUidLocked(b, package) else b.packages.get(package); // Delegation cannot create package identities.
+        if (app_id) |id| {
+            if (req.user_id > @as(u32, std.math.maxInt(i32)) / 100000 or
+                (kind == .system and req.user_id != 0))
+            {
+                result.status = .denied;
+            } else {
+                const package_uid = req.user_id * 100000 + id;
+                if (b.launches.reserveForUid(peer.id, peer.pid, kind, package, process, package_uid, req.sequence, requested)) |ticket| {
+                    result = .{ .status = .ok, .id = ticket.id, .uid = ticket.uid, .token = ticket.token };
+                } else |err| result.status = launchFailure(err);
+            }
         } else result.status = .exhausted;
     }
     peer.enqueue(try b.encode(Server.serveLaunchResult, .{ header.request_id, result }));
@@ -805,7 +842,7 @@ fn handleBindLaunch(peer: *Peer, header: Client.Message.Header, body: []const u8
     b.mutex.lockUncancelable(b.io);
     defer b.mutex.unlock(b.io);
     var status: Server.Message.ServiceResult.Status = .denied;
-    if (peer.role == .system) {
+    if (peer.role == .system or b.launches.isIsolatedSupervisor(peer.id)) {
         status = if (b.launches.bind(peer.id, req.id, req.pid)) |_| .ok else |err| launchFailure(err);
     }
     peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, status, ObjectRef.null_ref, "" }));
@@ -818,7 +855,7 @@ fn handleRevokeLaunch(peer: *Peer, header: Client.Message.Header, body: []const 
     b.mutex.lockUncancelable(b.io);
     defer b.mutex.unlock(b.io);
     var status: Server.Message.ServiceResult.Status = .denied;
-    if (peer.role == .system) {
+    if (peer.role == .system or b.launches.isIsolatedSupervisor(peer.id)) {
         if (b.launches.revoke(peer.id, id)) |claimed_peer| {
             status = .ok;
             if (claimed_peer) |peer_id| if (b.peers.get(peer_id)) |child| child.requestClose();

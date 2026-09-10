@@ -332,6 +332,7 @@ pub fn build(b: *std.Build) void {
     // library independently (including its connectivity JNI alias).
     binder_ndk.root_module.linkSystemLibrary("egl", .{ .needed = true });
     binder_ndk.root_module.linkSystemLibrary("gbm", .{ .needed = true });
+    binder_ndk.root_module.addCSourceFile(.{ .file = b.path("src/native/binder/ProcessPeer.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     b.step("binder-ndk", "Build libbinder_ndk.so (native NDK binder ABI)")
         .dependOn(&binder_ndk.step);
 
@@ -963,7 +964,19 @@ pub fn build(b: *std.Build) void {
     const launch_probe_options = b.addOptions();
     launch_probe_options.addOptionPath("path", launch_probe.getEmittedBin());
     binder_broker_tests.root_module.addOptions("launch_probe", launch_probe_options);
-    b.step("binder-broker-test", "Run broker protocol unit tests").dependOn(&run_binder_broker_tests.step);
+    const process_peer_test = b.addExecutable(.{
+        .name = "process-peer-test",
+        .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true }),
+    });
+    process_peer_test.root_module.addCSourceFiles(.{
+        .files = &.{ "src/native/binder/ProcessPeer.c", "tests/native/ProcessPeerTest.c" },
+        .flags = &.{ "-std=c11", "-UNDEBUG", "-Wall", "-Wextra", "-Werror" },
+    });
+    const run_process_peer_test = b.addRunArtifact(process_peer_test);
+    b.step("process-peer-test", "Verify process control socket peer lifetime").dependOn(&run_process_peer_test.step);
+    const broker_test_step = b.step("binder-broker-test", "Run broker protocol unit tests");
+    broker_test_step.dependOn(&run_binder_broker_tests.step);
+    broker_test_step.dependOn(&run_process_peer_test.step);
     // Loaded in the provider class loader so stock JNI_OnLoad resolves its classes.
     const webview_support = b.addLibrary(.{
         .name = "webviewchromium_plat_support",

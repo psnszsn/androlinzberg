@@ -4290,9 +4290,33 @@ export fn azk_binder_bootstrap_identity(package_z: [*:0]const u8, system_value: 
     return @intCast(r.uid);
 }
 
-fn bsReserveLaunch(env: JNIEnvPtr, cls: jni.jclass, pkg: jni.jstring, process: jni.jstring, isolated: jni.jboolean, sequence: jni.jlong) callconv(.c) jni.jstring {
+extern fn azk_binder_is_system_socket_peer(fd: c_int, authorize: *const fn (?*anyopaque, c_int) callconv(.c) c_int, context: ?*anyopaque) c_int;
+
+fn authorizeSystemProcess(context: ?*anyopaque, pid: c_int) callconv(.c) c_int {
+    const r: *Runtime = @ptrCast(@alignCast(context orelse return 0));
+    var body: [@sizeOf(i32)]u8 = undefined;
+    std.mem.writeInt(i32, &body, pid, .little);
+    const call = r.serviceRequest(.system_process, &body);
+    defer r.destroyPending(call);
+    return @intFromBool(!call.failed and call.svc_status == .ok);
+}
+
+fn bsIsSystemSocketPeer(env: JNIEnvPtr, cls: jni.jclass, descriptor: jni.jobject) callconv(.c) jni.jboolean {
     _ = cls;
-    if (pkg == null or process == null or sequence < 0) {
+    if (descriptor == null or getenv("AZK_BINDER_SOCKET") == null) return jni.JNI_FALSE;
+    const fw = g_fw orelse return jni.JNI_FALSE;
+    const fd = env.*.*.CallIntMethod.?(env, descriptor, fw.fd_get_int);
+    if (env.*.*.ExceptionCheck.?(env) != 0 or fd < 0) return jni.JNI_FALSE;
+    return @intFromBool(azk_binder_is_system_socket_peer(fd, &authorizeSystemProcess, Runtime.get()) != 0);
+}
+
+fn bsReserveLaunch(env: JNIEnvPtr, cls: jni.jclass, pkg: jni.jstring, process: jni.jstring, isolated: jni.jboolean, sequence: jni.jlong) callconv(.c) jni.jstring {
+    return bsReserveProcessLaunch(env, cls, pkg, process, if (isolated != 0) 1 else 0, sequence, 0, -1);
+}
+
+fn bsReserveProcessLaunch(env: JNIEnvPtr, cls: jni.jclass, pkg: jni.jstring, process: jni.jstring, kind: jni.jint, sequence: jni.jlong, user: jni.jint, uid: jni.jint) callconv(.c) jni.jstring {
+    _ = cls;
+    if (pkg == null or process == null or sequence < 0 or kind < 0 or kind > 3 or user < 0 or uid < -1) {
         throwException(env, "java/lang/IllegalArgumentException", "invalid launch request");
         return null;
     }
@@ -4308,7 +4332,7 @@ fn bsReserveLaunch(env: JNIEnvPtr, cls: jni.jclass, pkg: jni.jstring, process: j
     }
     var body: std.ArrayList(u8) = .empty;
     defer body.deinit(alloc);
-    const req: Client.Message.ReserveLaunch = .{ .kind = if (isolated != 0) 1 else 0, .package_len = @intCast(package.len), .process_len = @intCast(process_name.len), .sequence = @intCast(sequence) };
+    const req: Client.Message.ReserveLaunch = .{ .kind = @intCast(kind), .user_id = @intCast(user), .requested_uid = if (uid == -1) std.math.maxInt(u32) else @intCast(uid), .package_len = @intCast(package.len), .process_len = @intCast(process_name.len), .sequence = @intCast(sequence) };
     body.appendSlice(alloc, std.mem.asBytes(&req)) catch @panic("oom");
     body.appendSlice(alloc, package) catch @panic("oom");
     body.appendSlice(alloc, process_name) catch @panic("oom");
@@ -4542,6 +4566,8 @@ pub fn registerBinderFrameworkNatives(env_opaque: ?*anyopaque) c_int {
         jm("assignedUid", "()I", &bsAssignedUid),
         jm("reservePackageUid", "(Ljava/lang/String;)I", &bsReservePackageUid),
         jm("reserveLaunch", "(Ljava/lang/String;Ljava/lang/String;ZJ)Ljava/lang/String;", &bsReserveLaunch),
+        jm("reserveProcessLaunch", "(Ljava/lang/String;Ljava/lang/String;IJII)Ljava/lang/String;", &bsReserveProcessLaunch),
+        jm("isSystemSocketPeer", "(Ljava/io/FileDescriptor;)Z", &bsIsSystemSocketPeer),
         jm("bindLaunch", "(JI)V", &bsBindLaunch),
         jm("revokeLaunch", "(J)Z", &bsRevokeLaunch),
     };

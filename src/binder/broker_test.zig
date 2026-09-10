@@ -1783,3 +1783,132 @@ test "kernel namespaces reject stolen cookies and supervised peers keep real iso
     try testing.expectEqual(ticket.uid, replacement.uid);
     try testing.expect(replacement.id != ticket.id);
 }
+
+fn launchReply(peer: *Peer) !Server.Message.LaunchResult {
+    const message = try peer.next();
+    defer testing.allocator.free(message.fds);
+    try testing.expectEqual(Server.Message.Tag.launch_result, message.header.tag);
+    return fixedStruct(Server.Message.LaunchResult, message.body);
+}
+
+fn statusReply(peer: *Peer) !Server.Message.ServiceResult.Status {
+    const message = try peer.next();
+    defer testing.allocator.free(message.fds);
+    try testing.expectEqual(Server.Message.Tag.service_result, message.header.tag);
+    return (try serviceResult(message.body)).status;
+}
+
+fn uidReply(peer: *Peer) !u32 {
+    const message = try peer.next();
+    defer testing.allocator.free(message.fds);
+    try testing.expectEqual(Server.Message.Tag.package_uid_result, message.header.tag);
+    const result = try fixedStruct(Server.Message.PackageUidResult, message.body);
+    try testing.expectEqual(Server.Message.PackageUidResult.Status.ok, result.status);
+    return result.uid;
+}
+
+test "explicit launch UIDs preserve broker package ownership and per-user isolation" {
+    const io = testing.io;
+    const h = try Harness.start(testing.allocator, io);
+    defer h.stop(testing.allocator, io);
+    var owner: Peer = undefined;
+    try owner.connect(io, h.path, system_cookie);
+    defer owner.close();
+    try owner.expectWelcome();
+    const package = "dev.artzig.explicit";
+    try owner.client.serveReservePackageUid(1, package);
+    const package_uid = try uidReply(&owner);
+    try owner.client.serveReserveLaunchForUid(2, 0, package, "worker", 1, 1, package_uid + 100000);
+    const app = try launchReply(&owner);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.ok, app.status);
+    try testing.expectEqual(package_uid + 100000, app.uid);
+    for ([_]u32{ package_uid, package_uid + 100001, 199000, 1000 }) |wrong| {
+        try owner.client.serveReserveLaunchForUid(3, 0, package, "worker", 1, 1, wrong);
+        try testing.expectEqual(Server.Message.ServiceResult.Status.denied, (try launchReply(&owner)).status);
+    }
+    try owner.client.serveReserveLaunchForUid(4, 1, package, "worker", 1, 1, 199009);
+    const isolated = try launchReply(&owner);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.ok, isolated.status);
+    try testing.expectEqual(@as(u32, 199009), isolated.uid);
+    try owner.client.serveReserveLaunchForUid(5, 1, package, "worker", 2, 1, 199009);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.exhausted, (try launchReply(&owner)).status);
+    try owner.client.serveReserveLaunchForUid(6, 1, package, "worker", 1, 0, 199009);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.denied, (try launchReply(&owner)).status);
+    try owner.client.serveRevokeLaunch(7, isolated.id);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.ok, try statusReply(&owner));
+    try owner.client.serveReserveLaunchForUid(8, 1, package, "worker", 3, 1, 199009);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.ok, (try launchReply(&owner)).status);
+    try owner.client.serveReserveLaunchForUid(9, 0, package, "worker", 1, std.math.maxInt(u32), null);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.denied, (try launchReply(&owner)).status);
+}
+
+test "real system and WebView supervisors lose authority while live UIDs stay quarantined" {
+    const io = testing.io;
+    const h = try Harness.start(testing.allocator, io);
+    defer h.stop(testing.allocator, io);
+    var owner: Peer = undefined;
+    try owner.connect(io, h.path, system_cookie);
+    defer owner.close();
+    try owner.expectWelcome();
+    try owner.client.serveSystemProcess(1, owner.welcome.pid);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.ok, try statusReply(&owner));
+    try owner.client.serveSystemProcess(2, std.math.maxInt(i32));
+    try testing.expectEqual(Server.Message.ServiceResult.Status.denied, try statusReply(&owner));
+    try owner.client.serveReservePackageUid(3, "dev.artzig.renderer");
+    _ = try uidReply(&owner);
+    for ([_]u32{ 2, 3 }) |kind| {
+        const package = if (kind == 2) "android" else "dev.artzig.provider";
+        const uid: u32 = if (kind == 2) 1000 else 1053;
+        try owner.client.serveReserveLaunchForUid(4, kind, package, "supervisor", 1, 0, uid);
+        const ticket = try launchReply(&owner);
+        try testing.expectEqual(Server.Message.ServiceResult.Status.ok, ticket.status);
+        try testing.expectEqual(uid, ticket.uid);
+        var uid_buffer: [16]u8 = undefined;
+        var child = try std.process.spawn(io, .{
+            .argv = &.{ @import("launch_probe").path, h.path, if (kind == 2) "system-grant" else "controller", package, try std.fmt.bufPrint(&uid_buffer, "{d}", .{uid}) },
+            .stdin = .pipe,
+            .stdout = .pipe,
+            .stderr = .inherit,
+        });
+        defer child.kill(io);
+        var buffer: [128]u8 = undefined;
+        var output = child.stdout.?.readerStreaming(io, &buffer);
+        try testing.expectEqualStrings("ready\n", try output.interface.takeDelimiterInclusive('\n'));
+        try owner.client.serveBindLaunch(5, ticket.id, child.id.?);
+        try testing.expectEqual(Server.Message.ServiceResult.Status.ok, try statusReply(&owner));
+        try child.stdin.?.writeStreamingAll(io, &ticket.token);
+        try child.stdin.?.writeStreamingAll(io, "\n");
+        try testing.expectEqualStrings("authenticated\n", try output.interface.takeDelimiterInclusive('\n'));
+        try owner.client.serveSystemProcess(6, child.id.?);
+        try testing.expectEqual(@as(Server.Message.ServiceResult.Status, if (kind == 2) .ok else .denied), try statusReply(&owner));
+        var renderer_pid: ?i32 = null;
+        if (kind == 3) {
+            const line = try output.interface.takeDelimiterInclusive('\n');
+            try testing.expect(std.mem.startsWith(u8, line, "delegated "));
+            renderer_pid = try std.fmt.parseInt(i32, line[10 .. line.len - 1], 10);
+            try owner.client.serveProcessUid(7, renderer_pid.?);
+            try testing.expectEqual(@as(u32, 99009), try uidReply(&owner));
+            try owner.client.serveSystemProcess(8, renderer_pid.?);
+            try testing.expectEqual(Server.Message.ServiceResult.Status.denied, try statusReply(&owner));
+        }
+        try owner.client.serveRevokeLaunch(9, ticket.id);
+        try testing.expectEqual(Server.Message.ServiceResult.Status.ok, try statusReply(&owner));
+        try owner.client.serveSystemProcess(10, child.id.?);
+        try testing.expectEqual(Server.Message.ServiceResult.Status.denied, try statusReply(&owner));
+        try owner.client.serveProcessUid(11, child.id.?);
+        try testing.expectEqual(uid, try uidReply(&owner));
+        if (renderer_pid) |pid| {
+            try child.stdin.?.writeStreamingAll(io, "\n");
+            try testing.expectEqualStrings("revoked\n", try output.interface.takeDelimiterInclusive('\n'));
+            try owner.client.serveProcessUid(12, pid);
+            try testing.expectEqual(@as(u32, 99009), try uidReply(&owner));
+            try owner.client.serveReserveLaunchForUid(13, 1, "dev.artzig.renderer", "renderer", 2, 0, 99009);
+            try testing.expectEqual(Server.Message.ServiceResult.Status.exhausted, (try launchReply(&owner)).status);
+            // Allow the controller to reap its nested child before it exits.
+            try child.stdin.?.writeStreamingAll(io, "\n\n");
+            try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, try child.wait(io));
+            try owner.client.serveReserveLaunchForUid(14, 1, "dev.artzig.renderer", "renderer", 3, 0, 99009);
+            try testing.expectEqual(Server.Message.ServiceResult.Status.ok, (try launchReply(&owner)).status);
+        }
+    }
+}

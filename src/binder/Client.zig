@@ -24,7 +24,7 @@ out: *Writer,
 /// First 4 bytes of every frame ("AZKB" as little-endian u32).
 pub const magic: u32 = 0x424B5A41;
 /// Bumped for every incompatible wire change.
-pub const version: u16 = 8;
+pub const version: u16 = 9;
 
 /// Android uid of the trusted system process (AOSP `Process.SYSTEM_UID`).
 pub const system_uid: u32 = 1000;
@@ -162,6 +162,7 @@ pub const Message = struct {
         revoke_launch,
         /// Kernel PID; returns PackageUidResult for an authenticated live process.
         process_uid,
+        system_process,
         _,
     };
 
@@ -173,8 +174,10 @@ pub const Message = struct {
         kind: u32, // LaunchGrants.Kind, selected by an authenticated supervisor
         package_len: u32,
         process_len: u32,
-        _pad: u32 = 0,
+        user_id: u32 = 0,
         sequence: u64,
+        requested_uid: u32 = std.math.maxInt(u32), // automatic allocation
+        _pad: u32 = 0,
     };
     pub const BindLaunch = extern struct { id: u64, pid: i32, _pad: u32 = 0 };
 
@@ -423,8 +426,12 @@ pub fn serveSetProperty(c: *const Client, request_id: u64, name: []const u8, val
 }
 
 pub fn serveReserveLaunch(c: *const Client, request_id: u64, kind: u32, package: []const u8, process: []const u8, sequence: u64) Writer.Error!void {
+    return c.serveReserveLaunchForUid(request_id, kind, package, process, sequence, 0, null);
+}
+
+pub fn serveReserveLaunchForUid(c: *const Client, request_id: u64, kind: u32, package: []const u8, process: []const u8, sequence: u64, user: u32, uid: ?u32) Writer.Error!void {
     try c.serveMessageHeader(.{ .tag = .reserve_launch, .request_id = request_id, .bytes_len = @intCast(@sizeOf(OutMessage.ReserveLaunch) + package.len + process.len) });
-    try c.out.writeStruct(OutMessage.ReserveLaunch{ .kind = kind, .package_len = @intCast(package.len), .process_len = @intCast(process.len), .sequence = sequence }, .little);
+    try c.out.writeStruct(OutMessage.ReserveLaunch{ .kind = kind, .package_len = @intCast(package.len), .process_len = @intCast(process.len), .sequence = sequence, .user_id = user, .requested_uid = uid orelse std.math.maxInt(u32) }, .little);
     try c.out.writeAll(package);
     try c.out.writeAll(process);
     try c.out.flush();
@@ -444,6 +451,12 @@ pub fn serveRevokeLaunch(c: *const Client, request_id: u64, id: u64) Writer.Erro
 
 pub fn serveProcessUid(c: *const Client, request_id: u64, pid: i32) Writer.Error!void {
     try c.serveMessageHeader(.{ .tag = .process_uid, .request_id = request_id, .bytes_len = @sizeOf(i32) });
+    try c.out.writeInt(i32, pid, .little);
+    try c.out.flush();
+}
+
+pub fn serveSystemProcess(c: *const Client, request_id: u64, pid: i32) Writer.Error!void {
+    try c.serveMessageHeader(.{ .tag = .system_process, .request_id = request_id, .bytes_len = @sizeOf(i32) });
     try c.out.writeInt(i32, pid, .little);
     try c.out.flush();
 }
