@@ -596,6 +596,49 @@ InputTargetChanged, with bounded retries; rejected steps remain in the journal.
 The regression and full suite passed without weakening stale-target validation
 or ignoring runtime issues.
 
+### Stock File and real native library paths (2026-09-10)
+
+Removed the last java.io.File patch. The boot class now matches the pinned AOSP
+source byte-for-byte. The old exists-only whitelist advertised libraries without
+backing files, including an unavailable 32-bit ABI and OpenSLES. Native startup
+now creates real library aliases in its owned system layout, targeting installed
+compatibility libraries and the actual host math, zlib and GLES ELF files.
+Dynamic-loader lookup identifies host files without guessing distribution paths
+or exposing linker scripts. Runtime teardown removes the aliases with the owned
+system layout, preserving their backing files.
+
+The shared native file resolver and both ART native loaders resolve
+/system/lib64 to that directory. The stock APK loader discovers it through
+java.library.path. File, Os, NIO, absolute System.load and System.loadLibrary now
+agree on the same files. Unavailable libraries retain ordinary missing-file and
+UnsatisfiedLinkError behavior. No new graphics, audio or media backend was added.
+
+The resource regression checks all 15 library aliases, directory enumeration,
+ELF64 headers, byte digests, inode/size agreement, original PathClassLoader lookup
+and actual loading. It also checks missing 32-bit, OpenSLES and unknown libraries
+through File, NIO, file opening and native loading. The standalone ART certificate
+and cleanup regression still passes with no configured platform library aliases.
+
+ART was rebuilt from the isolated checkout and repinned to
+`N-V-__8AAI64Sw04d93e1ikkJiC8r15azJMqL59bhVMVArLS`, archive SHA-256
+`01eb26296581af49b0d951f939596b10a81da0fba8ff676ef3e14b1b9a8ec443`. Packaging
+restored the checkout. The framework archive and pin remain at the stock-loader
+checkpoint above; both local archives are current.
+
+Validation passed: focused framework/resource tests (-j24), NewPipe launch,
+and the complete -j10 gate (`install data-partition-test system-certificates-test
+build-tools-test cpp-audit graph-audit jvm-test system-test integration-test
+webview-test webview-ui-test stock-desktop-launcher-test stock-session-loss-test
+binder-test binder-broker-test graphics-budget-test surface-fence-test
+surfaceflinger-composition-test`). All 28 fresh APK cases and the WebView/desktop
+tests contain 107 captured steps with zero structured runtime issues. All five
+session-loss tests and joined-launcher storage passed. The WebView paused frame
+and desktop modal screenshot were inspected.
+
+Process remains the one modified static client source. The four server stubs,
+isolated/external service implementation and remaining graphics acceptance are
+still open; this checkpoint does not mark the completion plan finished.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

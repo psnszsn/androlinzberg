@@ -4,7 +4,9 @@
 //! overlay. All other entries resolve to the original runtime distribution.
 const std = @import("std");
 
-pub fn create(a: std.mem.Allocator, io: std.Io, runtime_root: []const u8, data_root: []const u8) ![]const u8 {
+pub const Library = struct { name: []const u8, path: []const u8 };
+
+pub fn create(a: std.mem.Allocator, io: std.Io, runtime_root: []const u8, data_root: []const u8, libraries: []const Library) ![]const u8 {
     try std.Io.Dir.cwd().createDirPath(io, data_root);
     var nonce: [16]u8 = undefined;
     io.random(&nonce);
@@ -17,6 +19,16 @@ pub fn create(a: std.mem.Allocator, io: std.Io, runtime_root: []const u8, data_r
     const security = try std.fs.path.join(a, &.{ etc, "security" });
     try overlayLevel(a, io, try std.fs.path.join(a, &.{ runtime_root, "etc", "security" }), security, "cacerts");
     try std.Io.Dir.cwd().createDir(io, try std.fs.path.join(a, &.{ security, "cacerts" }), .default_dir);
+    // The platform projection contains real native implementations, separately
+    // from ART's own lib64. Do not advertise a 32-bit ABI or absent libraries.
+    const lib64 = try std.fs.path.join(a, &.{ path, "platform/lib64" });
+    try std.Io.Dir.cwd().createDirPath(io, lib64);
+    for (libraries) |library| {
+        if (library.name.len == 0 or std.mem.indexOfScalar(u8, library.name, '/') != null or
+            !std.mem.endsWith(u8, library.name, ".so")) return error.InvalidLibraryName;
+        const target = try std.Io.Dir.cwd().realPathFileAlloc(io, library.path, a);
+        try std.Io.Dir.cwd().symLink(io, target, try std.fs.path.join(a, &.{ lib64, library.name }), .{});
+    }
     return path;
 }
 

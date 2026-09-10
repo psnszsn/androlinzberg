@@ -62,6 +62,44 @@ internal object StockResourcePathSmoke {
         check(!File("/system/etc/font_fallback.xml.unmapped").exists())
         check(!Files.exists(Path.of("/system/framework/framework-res.apk.unmapped")))
 
+        val libraryNames = setOf("libc.so", "libdl.so", "libstdc++.so", "libEGL.so",
+            "libbinder.so", "libbinder_ndk.so", "libaaudio.so", "libandroid.so", "libmediandk.so",
+            "libjnigraphics.so", "liblog.so", "libm.so", "libz.so", "libGLESv2.so", "libGLESv3.so")
+        val libraryDirectory = File("/system/lib64")
+        check(libraryDirectory.isDirectory)
+        check(checkNotNull(libraryDirectory.list()).toSet() == libraryNames)
+        for (name in libraryNames) {
+            val logical = File(libraryDirectory, name)
+            val physical = File(checkNotNull(System.getenv("ANDROID_ROOT")), "platform/lib64/$name").canonicalFile
+            check(logical.exists() && logical.isFile && logical.canRead())
+            check(logical.length() > 0 && logical.length() == physical.length())
+            check(Os.stat(logical.path).st_ino == Os.stat(physical.path).st_ino)
+            check(Files.size(logical.toPath()) == physical.length())
+            FileInputStream(logical).use { input ->
+                val header = ByteArray(5)
+                check(input.read(header) == 5)
+                check(header.contentEquals(byteArrayOf(0x7f, 0x45, 0x4c, 0x46, 2))) { "not ELF64: $logical" }
+            }
+            check(digest(logical.path).contentEquals(digest(physical.path)))
+        }
+        for (absent in listOf("/system/lib/libc.so", "/system/lib/libdl.so",
+            "/system/lib64/libOpenSLES.so", "/system/lib64/libnot_a_platform_library.so")) {
+            check(!File(absent).exists() && !Files.exists(Path.of(absent)))
+            check(runCatching { FileInputStream(absent).close() }.exceptionOrNull() is java.io.FileNotFoundException)
+            check(runCatching { System.load(absent) }.exceptionOrNull() is UnsatisfiedLinkError)
+        }
+        val apkLoader = dalvik.system.PathClassLoader("", ClassLoader.getSystemClassLoader().parent)
+        for (name in listOf("c", "dl", "m", "z", "EGL", "GLESv2", "GLESv3", "android", "jnigraphics")) {
+            check(apkLoader.findLibrary(name) == "/system/lib64/lib$name.so")
+        }
+        check(apkLoader.findLibrary("OpenSLES") == null)
+        // Absolute Android filenames must be usable by the original Runtime.load,
+        // not merely pass existence checks. These libraries have no JNI_OnLoad.
+        for (name in listOf("m", "z", "GLESv2")) {
+            System.load("/system/lib64/lib$name.so")
+            System.loadLibrary(name)
+        }
+
         val apk = ApkAssets.loadFromPath(AssetManager.FRAMEWORK_APK_PATH)
         try {
             check(apk.assetPath == AssetManager.FRAMEWORK_APK_PATH)
@@ -101,6 +139,6 @@ internal object StockResourcePathSmoke {
         check(StatFs("/data").blockSizeLong == expectedBlock)
         check(SQLiteGlobal.getDefaultPageSize() ==
             SystemProperties.getInt("debug.sqlite.pagesize", expectedBlock.toInt()))
-        println("stock-resource-paths: PASS original names, real bytes/metadata, APK identity, fonts and SQLite partition probe")
+        println("stock-resource-paths: PASS original names, real bytes/metadata and ELF library loading, APK identity, fonts and SQLite partition probe")
     }
 }

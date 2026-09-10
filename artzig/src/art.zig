@@ -15,6 +15,7 @@ pub const jstring = jni.jstring;
 pub const jmethodID = jni.jmethodID;
 pub const jint = jni.jint;
 pub const DataPartition = @import("data_partition.zig");
+pub const SystemLibrary = @import("system_root.zig").Library;
 
 pub const Error = error{
     RuntimeTreeNotFound,
@@ -71,7 +72,9 @@ pub const HostLoader = struct {
     }
 
     fn dlopen(path: ?[*:0]const u8, flags: c_int, library_path: ?[*:0]const u8) callconv(.c) ?*anyopaque {
-        const p = path orelse return host.dlopen(null, flags);
+        const original = path orelse return host.dlopen(null, flags);
+        const p = @import("host_paths.zig").azk_host_path(original) orelse return null;
+        defer @import("host_paths.zig").azk_host_path_release(original, p);
         const name = std.mem.span(p);
         const host_flags = flags | if (std.mem.endsWith(u8, name, "libjavacrypto.so"))
             @as(c_int, 0x8) // RTLD_DEEPBIND
@@ -191,6 +194,8 @@ pub const BionicLoader = struct {
         }
         last_was_bionic = is_guest;
         if (is_guest) return dlopen_fn(path, flags);
+        const mapped = if (path) |p| @import("host_paths.zig").azk_host_path(p) orelse return null else null;
+        defer if (path) |p| @import("host_paths.zig").azk_host_path_release(p, mapped);
         // Conscrypt statically embeds BoringSSL, whose public symbol names
         // overlap with a host OpenSSL already present in many processes.
         // Prefer this DSO's own definitions or its SSL objects can call into
@@ -199,7 +204,7 @@ pub const BionicLoader = struct {
             (if (std.mem.endsWith(u8, std.mem.span(p), "libjavacrypto.so")) @as(c_int, 0x8) else 0) // RTLD_DEEPBIND
         else
             0;
-        if (host.dlopen(path, host_flags)) |handle| return handle;
+        if (host.dlopen(mapped, host_flags)) |handle| return handle;
         // ART asks for its built-in JNI libraries by soname. Since the runtime
         // is relocatable, resolve a failed bare name against <root>/lib64.
         if (path) |p| if (host_lib_dir) |dir| {
@@ -247,6 +252,9 @@ pub const Options = struct {
     /// Populated from ca_bundle before VM creation. Disable only when root already
     /// supplies the desired Android system certificate directory.
     system_root_overlay: bool = true,
+    /// Real implementations exposed under /system/lib64 by the native file and
+    /// library loaders. Empty for standalone ART; no synthetic File.exists.
+    system_libraries: []const SystemLibrary = &.{},
     /// Optional libart.so overlay. Other runtime libraries and data continue
     /// to resolve from `root`.
     libart_path: ?[]const u8 = null,
@@ -309,7 +317,7 @@ pub const Runtime = struct {
         errdefer if (data_partition) |partition| partition.release(io);
 
         const system_root_overlay = if (opts.system_root_overlay)
-            @import("system_root.zig").create(a, io, root, data_dir) catch return Error.SystemRootCreationFailed
+            @import("system_root.zig").create(a, io, root, data_dir, opts.system_libraries) catch return Error.SystemRootCreationFailed
         else
             null;
         errdefer if (system_root_overlay) |path| std.Io.Dir.cwd().deleteTree(io, path) catch {};

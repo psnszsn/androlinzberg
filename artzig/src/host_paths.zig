@@ -39,6 +39,13 @@ pub export fn azk_host_path(original: [*:0]const u8) callconv(.c) ?[*:0]const u8
         null;
     if (replacement) |value|
         return (std.heap.c_allocator.dupeSentinel(u8, value, 0) catch return null).ptr;
+    if (relative(path, "/system/lib64")) |suffix| {
+        const root = configured("ANDROID_ROOT") orelse return original;
+        const translated = std.fmt.allocPrintSentinel(std.heap.c_allocator, "{s}/platform/lib64{s}", .{
+            std.mem.trimEnd(u8, root, "/"), suffix,
+        }, 0) catch return null;
+        return translated.ptr;
+    }
     if (fontRelative(path)) |suffix| {
         const root = configured("ARTZIG_FONT_DIR") orelse return original;
         const translated = std.fmt.allocPrintSentinel(std.heap.c_allocator, "{s}/{s}", .{
