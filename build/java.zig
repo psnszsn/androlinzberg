@@ -21,6 +21,7 @@ pub const Result = struct {
     classpath_jar: LazyPath,
     compat_config: LazyPath,
     app_context_jar: LazyPath,
+    platform_api_classes: LazyPath,
     framework_odex: LazyPath,
     framework_vdex: LazyPath,
     /// Test dex whose kotlin.KotlinVersion must shadow the host copy.
@@ -482,10 +483,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     runtime_jar.addDirectoryArg(input_resources_dir);
     runtime_jar.addArg(".");
 
-    // HostedApkClassLoader keeps framework classes parent-first but lets an
-    // APK's kotlin.* definitions shadow the compiler-pinned host stdlib. Give
-    // dex2oat that same compiler view; the full framework.jar remains the
-    // stored runtime context used for freshness validation.
+    // APK compilation sees the same public namespace as the runtime platform
+    // parent. Stored contexts still validate the complete implementation jar.
+    const platform_api = b.addSystemCommand(&.{"python3"});
+    platform_api.addFileArg(b.path("tools/platform-api-jar.py"));
+    platform_api.addFileArg(classes_jar);
+    const platform_api_classes = platform_api.addOutputFileArg("platform-api-classes.jar");
     const app_context_d8 = b.addSystemCommand(&.{ "java", "-Xmx2048M", "-cp" });
     app_context_d8.addFileArg(aosp.path("prebuilts/r8/r8.jar"));
     app_context_d8.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", "35", "--lib" });
@@ -494,6 +497,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     app_context_d8.addFileArg(aosp.path("external/kotlinc/lib/kotlin-stdlib.jar"));
     app_context_d8.addArg("--output");
     const app_context_jar = app_context_d8.addOutputFileArg("framework-app-context.jar");
+    app_context_d8.addFileArg(platform_api_classes);
+    app_context_d8.addArg("--lib");
     app_context_d8.addFileArg(classes_jar);
 
     // Android's framework jars are dexpreopted into the system image. Build an adjacent hosted
@@ -535,8 +540,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     dexopt.run.setName("dex2oat framework.jar (speed)");
     d8.addFileArg(aosp.path("external/kotlinc/lib/kotlin-stdlib.jar"));
 
-    // A tiny app dex used to verify that APK-bundled kotlin.* classes win over
-    // the host's pinned stdlib without making the rest of the APK child-first.
+    // An APK library fixture exercises stock parent, delegate-last, and
+    // explicitly declared shared-library resolution across private runtimes.
     const fixture_javac = b.addSystemCommand(&.{"javac"});
     fixture_javac.addPrefixedDirectoryArg("--system=", sysmod_dir);
     fixture_javac.addArgs(&.{ "-source", "21", "-target", "21", "-d" });
@@ -544,16 +549,42 @@ pub fn build(b: *std.Build, o: Options) Result {
     fixture_javac.addFileArg(b.path("testdata/kotlin-shadow/kotlin/KotlinVersion.java"));
     fixture_javac.addFileArg(b.path("testdata/kotlin-shadow/fixture/NewerKotlinCaller.java"));
 
+    const fixture_kotlinc = command.create(b);
+    fixture_kotlinc.addFileArg(aosp.path("external/kotlinc/bin/kotlinc"));
+    fixture_kotlinc.addArgs(&.{ "-no-jdk", "-no-stdlib", "-no-reflect", "-jvm-target", "21", "-classpath" });
+    fixture_kotlinc.addJoinedPaths(":", &.{ core_plus, kotlin_stdlib, classes_jar });
+    fixture_kotlinc.addArg("-d");
+    const fixture_platform_classes = fixture_kotlinc.addOutputDirectoryArg("platform-shadow-classes");
+    fixture_kotlinc.addFileArg(b.path("testdata/kotlin-shadow/fixture/PlatformReference.kt"));
+    kotlinc_inputs.addInputs(fixture_kotlinc.run);
+
+    // Bundle the actual pinned platform class, rather than inventing an Android
+    // replacement for the fixture. A stock loader must preserve platform identity
+    // even when an APK accidentally includes these byte-identical definitions.
+    const fixture_platform_copy = extractJarPackage(
+        b,
+        classes_jar,
+        "android/net/Uri*.class",
+        "platform-shadow-original-classes",
+    );
     const fixture_jar = b.addSystemCommand(&.{ "jar", "--create", "--file" });
     const fixture_classes_jar = fixture_jar.addOutputFileArg("kotlin-shadow-classes.jar");
     fixture_jar.addArg("-C");
     fixture_jar.addDirectoryArg(fixture_classes);
+    fixture_jar.addArg(".");
+    fixture_jar.addArg("-C");
+    fixture_jar.addDirectoryArg(fixture_platform_classes);
+    fixture_jar.addArg(".");
+    fixture_jar.addArg("-C");
+    fixture_jar.addDirectoryArg(fixture_platform_copy);
     fixture_jar.addArg(".");
 
     const fixture_d8 = b.addSystemCommand(&.{ "java", "-Xmx512M", "-cp" });
     fixture_d8.addFileArg(aosp.path("prebuilts/r8/r8.jar"));
     fixture_d8.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", "35", "--lib" });
     fixture_d8.addFileArg(core_plus);
+    fixture_d8.addArg("--lib");
+    fixture_d8.addFileArg(classes_jar);
     fixture_d8.addArg("--output");
     const kotlin_shadow_fixture = fixture_d8.addOutputFileArg("kotlin-shadow.jar");
     fixture_d8.addFileArg(fixture_classes_jar);
@@ -570,6 +601,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         .classpath_jar = classpath_jar,
         .compat_config = compat_config,
         .app_context_jar = app_context_jar,
+        .platform_api_classes = platform_api_classes,
         .framework_odex = framework_odex,
         .framework_vdex = framework_vdex,
         .kotlin_shadow_fixture = kotlin_shadow_fixture,

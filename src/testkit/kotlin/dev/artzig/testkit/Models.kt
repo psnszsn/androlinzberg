@@ -197,6 +197,11 @@ data class AccessibilityState(
     }
 }
 
+/** A rejected action with complete, clean diagnostics. Callers may recover from
+ * a known transient rejection while retaining the original recorded step. */
+class StepActionException internal constructor(val result: StepResult) :
+    AssertionError("test-control action failed: ${result.json}")
+
 data class StepResult(
     val ok: Boolean,
     val action: JsonObject,
@@ -214,12 +219,16 @@ data class StepResult(
         get() = AccessibilityState.fromDiagnostics(diagnostics)
 
     fun requireClean(): StepResult {
-        if (!ok || diagnostics.issues.isNotEmpty()) {
+        if (diagnostics.issues.isNotEmpty()) {
             val detail = diagnostics.issues.joinToString { "${it.kind}: ${it.owner}.${it.member}: ${it.detail}" }
-            throw AssertionError(detail.ifEmpty { "test-control action failed: $json" })
+            throw AssertionError(detail)
         }
         if (rawLog.contains("FATAL EXCEPTION:") || rawLog.contains("Fatal signal ")) {
             throw AssertionError("fatal runtime output after action:\n$rawLog")
+        }
+        if (!ok) {
+            if (actionError != null && diagnosticError == null) throw StepActionException(this)
+            throw AssertionError("test-control action failed: $json")
         }
         return this
     }

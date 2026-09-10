@@ -61,10 +61,13 @@ death. Keep cleanup exceptions covered when changing these exit paths.
 
 ## APK class loading
 
-The hosted APK class loader loads framework and runtime API classes from the
-parent first. APK implementation libraries, including Kotlin and Chromium, load
-from the APK first, with parent fallback for absent classes. This keeps bundled
-library versions together while preserving shared Android API class identities.
+APK loaders use the original Android PathClassLoader or the manifest's
+DelegateLastClassLoader. Their platform parent shares Android API identities
+while keeping host implementation dependencies private. APKs supply their own
+Kotlin, Chromium and other libraries, or obtain them through explicitly declared
+shared libraries. Missing APK dependencies fail with Android's normal class
+lookup errors; the host compiler's standard library is not an implicit fallback.
+Framework implementation classes retain access to their own pinned dependencies.
 
 Run this test after a class-loading or JVM-interface change:
 

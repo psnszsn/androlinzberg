@@ -219,7 +219,7 @@ public final class FrameworkCompatSmoke {
         /** The real LoadedApk over the installed fixture: the AOSP
          * ActivityThread.getPackageInfo cache, the class loader
          * (ApplicationLoaders -> patched ClassLoaderFactory ->
-         * HostedApkClassLoader under the system loader), resources through the
+         * stock PathClassLoader under the public platform loader), resources through the
          * real ResourcesManager, the per-package data directory installd's role
          * created at install, and makeApplication ordering (instantiate, then
          * attach; onCreate is the bind step's). */
@@ -245,12 +245,11 @@ public final class FrameworkCompatSmoke {
             require(apk.packageName == "org.example" && apk.appDir == appInfo.sourceDir, "LoadedApk identity")
             // The fixture is resources-only (no FLAG_HAS_CODE): AOSP then builds
             // the default loader over an empty code path rather than the
-            // manifest class loader (an APK with code gets HostedApkClassLoader;
-            // ApkHost's boot casts to it).
+            // manifest class loader.
             require(appInfo.flags and android.content.pm.ApplicationInfo.FLAG_HAS_CODE == 0, "fixture has no code")
             val cl = apk.classLoader
-            require(cl is dalvik.system.PathClassLoader && cl !is HostedApkClassLoader, "no-code package gets the default loader: " + cl)
-            require(cl.parent === ClassLoader.getSystemClassLoader(), "APK loader parent is the system loader: " + cl.parent + " vs " + ClassLoader.getSystemClassLoader() + " (ctx " + Thread.currentThread().contextClassLoader + ")")
+            require(cl.javaClass === dalvik.system.PathClassLoader::class.java, "no-code package gets the stock default loader: " + cl)
+            require(cl.parent === ClassLoader.getSystemClassLoader().parent, "APK loader parent is the public platform loader: " + cl.parent)
             require(cl.loadClass("android.app.Activity") === android.app.Activity::class.java, "framework parent-first")
             val ceDir = android.os.Environment.getDataUserCePackageDirectory(null, 0, "org.example")
             require(apk.dataDirFile == ceDir, "per-package data dir: " + apk.dataDirFile + " vs " + ceDir)

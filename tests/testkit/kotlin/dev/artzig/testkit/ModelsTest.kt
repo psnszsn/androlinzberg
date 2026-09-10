@@ -115,6 +115,28 @@ class ModelsTest {
         }
     }
 
+    @Test
+    fun actionRejectionIsTypedOnlyWithCleanCompleteDiagnostics() {
+        val rejection = stepResult(Diagnostics(JsonObject(), emptyList(), emptyList())).copy(
+            ok = false,
+            actionError = JsonObject().apply {
+                addProperty("error", "dev.artzig.androlinzberg.test1.NoMatch")
+            },
+        )
+        assertTrue(assertFailsWith<StepActionException> { rejection.requireClean() }.result === rejection)
+        val issue = RuntimeIssue(3, "runtime_exception", "android.view.View", "draw", "broken", "main")
+        val unsafe = listOf(
+            rejection.copy(diagnostics = Diagnostics(JsonObject(), emptyList(), listOf(issue))),
+            rejection.copy(diagnosticError = "diagnostic transport failed"),
+            rejection.copy(rawLog = "FATAL EXCEPTION: main"),
+            rejection.copy(rawLog = "Fatal signal 11"),
+        )
+        for (result in unsafe) {
+            val failure = assertFailsWith<AssertionError> { result.requireClean() }
+            assertTrue(failure !is StepActionException, "Runtime failures must not become recoverable rejections")
+        }
+    }
+
     private fun stepResult(diagnostics: Diagnostics, rawLog: String = ""): StepResult {
         val mark = Mark("epoch", 1, 1, 1)
         return StepResult(

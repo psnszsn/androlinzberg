@@ -262,6 +262,9 @@ pub const Options = struct {
     ca_bundle: ?[]const u8 = null,
     /// -Djava.class.path
     classpath: []const []const u8 = &.{},
+    /// Optional public platform view, constructed around the implementation
+    /// classpath by native ART before publishing the system class loader.
+    platform_class_loader: ?[]const u8 = null,
     /// Directories searched by System.loadLibrary (-Djava.library.path).
     library_path: []const []const u8 = &.{},
     /// Extra -X / -D options passed verbatim.
@@ -361,6 +364,9 @@ pub const Runtime = struct {
         if (opts.classpath.len > 0) {
             const cp = try std.mem.join(a, ":", opts.classpath);
             try options.append(a, try std.fmt.allocPrintSentinel(a, "-Djava.class.path={s}", .{cp}, 0));
+        }
+        if (opts.platform_class_loader) |name| {
+            try options.append(a, try std.fmt.allocPrintSentinel(a, "-Dartzig.platform.classloader={s}", .{name}, 0));
         }
         if (opts.library_path.len > 0) {
             const lp = try std.mem.join(a, ":", opts.library_path);

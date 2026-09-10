@@ -481,6 +481,7 @@ fn bootHeadless(init: std.process.Init) !Headless {
     // without the bionic loader there is no <root>/lib64 fallback.
     var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
         .classpath = &.{framework_jar},
+        .platform_class_loader = "dev.artzig.HostedPlatformClassLoader",
         .data_partition = try dataPartitionOptions(init),
         .data_dir = if (getenv("ARTZIG_RUNTIME_CACHE_DIR")) |cache| std.mem.span(cache) else null,
         .system_root_overlay = true,
@@ -532,6 +533,7 @@ fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8) !Headless {
     configureFonts(init);
     var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
         .classpath = &.{framework_jar},
+        .platform_class_loader = "dev.artzig.HostedPlatformClassLoader",
         .data_partition = try dataPartitionOptions(init),
         .data_dir = if (getenv("ARTZIG_RUNTIME_CACHE_DIR")) |cache| std.mem.span(cache) else null,
         .system_root_overlay = true,

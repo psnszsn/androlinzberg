@@ -548,6 +548,54 @@ contain 88 steps with zero structured issues; WebView and desktop add 19 steps
 with zero issues. All five session-loss cases passed, and the final WebView,
 desktop modal and NewPipe fullscreen frames were inspected.
 
+### Stock APK loaders and platform namespace (2026-09-10)
+
+ApplicationLoaders and ClassLoaderFactory now match the pinned originals. Removed
+HostedApkClassLoader and the package manager's injected loader name. The runtime
+installs an empty stock PathClassLoader above a platform API projection during
+ART bootstrap; application PathClassLoader and DelegateLastClassLoader instances
+remain original AOSP classes. Private host dependencies stay in the implementation
+loader. Native boot-first resolution preserves platform class identity even when
+an APK contains its own copy, including optimized const-class resolution.
+
+The compiler context contains unchanged platform API class bytes. ART records the
+actual backing archive for context/checksum validation. Tests require the default
+APK loader to map its speed-compiled OAT artifact, check parent-first and explicit
+delegate-last behavior, shared libraries, private Kotlin version isolation, and
+copied original android.net.Uri identity. The projection test compares every
+selected class byte and checks excluded classes against the runtime boundary.
+
+The exact static source inventory is 7,083 unchanged sources, one modified client
+(Process), 40 modified server sources and no missing reference files. The boot
+java.io.File patch remains separately open. The stub inventory remains four
+pending server entries and zero client entries. Process launch/isolation, server
+stub resolution and the remaining graphics acceptance work are still open.
+
+The framework archive is SHA-256
+`f7d12c5b81bc76272aa93ee6f61812072cc6ed29ab75cba7744895873f6afe2e`, pinned to
+`N-V-__8AAO3h806jgTmcUEd0vT1G-mD1rLm4jdaWw20fYIxa`. ART is SHA-256
+`2dc5df1ef4b4fa7a2c07182b3f986d7a1735a8ced5a17a7a8c6482c42c295564`, pinned to
+`N-V-__8AAGy8Sw1BaCW8Ecm_hr2FqhGOFxT00zphHLFBXf4r`. Both archives were rebuilt
+sequentially from the isolated checkout, which packaging restored.
+
+Validation: focused `classloader-jvm-test` (-j24), NewPipe launch, 23 testkit unit
+tests and the complete -j10 gate (`install data-partition-test
+system-certificates-test build-tools-test cpp-audit graph-audit jvm-test
+system-test integration-test webview-test webview-ui-test
+stock-desktop-launcher-test stock-session-loss-test binder-test
+binder-broker-test`). All 28 fresh APK cases, WebView and desktop tests produced
+110 captured steps with zero structured runtime issues; the five session-loss
+results and joined-launcher storage check passed. WebView's paused frame and the
+desktop modal screenshot were inspected. Successful APK cases retain step and
+log evidence, without failure screenshots.
+
+A NewPipe control overlay auto-hide race initially rejected a stale Pause target.
+The testkit now distinguishes an action rejection with complete clean diagnostics
+from runtime/diagnostic failure. The test reacquires controls only for NoMatch or
+InputTargetChanged, with bounded retries; rejected steps remain in the journal.
+The regression and full suite passed without weakening stale-target validation
+or ignoring runtime issues.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

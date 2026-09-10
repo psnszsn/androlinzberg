@@ -1126,12 +1126,28 @@ pub fn build(b: *std.Build) void {
     native_test_step.dependOn(&launcher_check.step);
     native_test_step.dependOn(&cpp_audit.step);
 
+    // Compile the library-version fixture through the same projected/stored
+    // context as real APKs, then require the stock loader to map its artifact.
+    const loader_dexopt = @import("build/command.zig").create(b);
+    setApplicationEnvironment(loader_dexopt, application_tree);
+    loader_dexopt.addArg("bash");
+    loader_dexopt.addFileArg(b.path("tools/dexopt-apk.sh"));
+    loader_dexopt.addDirectoryArg(application_tree.path(b, "bin/art"));
+    loader_dexopt.addFileArg(java.kotlin_shadow_fixture);
+    loader_dexopt.addFileArg(application_tree.path(b, "framework/framework.jar"));
+    const loader_cache = loader_dexopt.addOutputDirectoryArg("loader-dexopt-cache");
+    loader_dexopt.addFileArg(java.app_context_jar);
+    loader_dexopt.run.setName("compile stock APK loader fixture (speed)");
+
     const jvm_test_run = @import("build/command.zig").create(b);
     setApplicationEnvironment(jvm_test_run, application_tree);
     jvm_test_run.addFileArg(application_tree.path(b, "bin/androlinzberg"));
     jvm_test_run.addArg("--javatest");
     jvm_test_run.addFileArg(java.kotlin_shadow_fixture);
+    jvm_test_run.addFileArg(java.classes_jar);
+    jvm_test_run.addFileArg(java.platform_api_classes);
     jvm_test_run.setEnvironment("AZK_TEST_CLASS", "dev.artzig.KotlinClassLoaderSmoke");
+    jvm_test_run.setPathEnvironment("ARTZIG_RUNTIME_CACHE_DIR", loader_cache);
     // Hermetic: a nonexistent WAYLAND_DISPLAY keeps the session's clipboard
     // monitor off the developer's real desktop clipboard (empty falls back
     // to wayland-0).
@@ -1139,6 +1155,8 @@ pub fn build(b: *std.Build) void {
     jvm_test_run.run.setName("run JVM integration tests");
     const jvm_test_step = b.step("jvm-test", "Run JVM and Kotlin class-loading integration tests");
     jvm_test_step.dependOn(&jvm_test_run.run.step);
+    b.step("classloader-jvm-test", "Verify stock APK loaders, platform identity and mapped AOT code")
+        .dependOn(&jvm_test_run.run.step);
     @import("build/task_shell.zig").addGeometryTests(b, aosp_dep, jvm_test_step);
     const intent_policy = @import("build/command.zig").create(b);
     setApplicationEnvironment(intent_policy, application_tree);

@@ -232,7 +232,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/UnsupportedApplicationThread.kt",
     "src/java/dev/artzig/system/HostedBootstrapPermissionEnforcer.kt",
     "src/java/dev/artzig/window/HostedWindowLogging.kt",
-    "src/java/dev/artzig/HostedApkClassLoader.kt",
+    "src/java/dev/artzig/HostedPlatformClassLoader.kt",
     "src/java/dev/artzig/HostedDesktopIntents.kt",
     "src/java/dev/artzig/JvmExitSmoke.kt",
     "src/java/dev/artzig/systemtest/RuntimeCrashSystemSmoke.kt",

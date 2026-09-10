@@ -2,6 +2,7 @@ package dev.artzig.integration
 
 import dev.artzig.testkit.ApkRule
 import dev.artzig.testkit.AppSession
+import dev.artzig.testkit.StepActionException
 import dev.artzig.testkit.LaunchSize
 import dev.artzig.testkit.WaitKind
 import java.nio.file.Path
@@ -313,16 +314,29 @@ private fun AppSession.enterPlayerFullscreen() {
 }
 
 private fun AppSession.pausePlayer() {
-    repeat(30) {
-        if (isVisible(description = "Pause")) {
-            click(description = "Pause", settle = WaitKind.FRAME_PRESENTED)
-            waitFor(description = "Play")
-            return
-        }
+    repeat(5) {
+        revealPlayerControls()
         if (isVisible(description = "Play")) return
-        Thread.sleep(100)
+        try {
+            click(description = "Pause", settle = WaitKind.FRAME_PRESENTED)
+        } catch (failure: StepActionException) {
+            // The overlay can auto-hide between observation and dispatch. These
+            // two rejections send no click; reacquire controls and a fresh target.
+            // StepActionException requires complete diagnostics with no runtime
+            // issues or fatal output. Every rejected attempt remains in JSONL.
+            val error = failure.result.actionError?.takeIf { it.isJsonObject }?.asJsonObject
+            val code = error?.get("error")?.asString
+            val reason = error?.getAsJsonObject("parameters")?.get("reason")?.asString
+            if (code != "dev.artzig.androlinzberg.test1.NoMatch" &&
+                !(code == "dev.artzig.androlinzberg.test1.InputUnavailable" && reason == "InputTargetChanged")) {
+                throw failure
+            }
+            return@repeat
+        }
+        waitFor(description = "Play")
+        return
     }
-    throw AssertionError("player did not expose its play/pause control")
+    throw AssertionError("player did not retain its play/pause control for input")
 }
 
 /** The live YouTube feed can return a transient extraction error. Retry that

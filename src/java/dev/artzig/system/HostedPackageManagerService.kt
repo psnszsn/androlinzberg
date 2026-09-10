@@ -165,15 +165,6 @@ class HostedPackageManagerService(desktopWindows: Boolean = false,
         }
         parsed.setSigningDetails(signing.result)
         if (system) parsed.setSystem(true).setPrivileged(true)
-        // Host seam (source note: installd creates the app data directories at
-        // install; ContextImpl only creates subdirectories underneath). The
-        // framework rides the app classpath here rather than the boot
-        // classpath, so an APK's bundled implementation libraries must win
-        // over the host's copies: packages load through HostedApkClassLoader unless the
-        // manifest chose a class loader (ClassLoaderFactory knows the name).
-        if (parsed.classLoaderName == null) {
-            (parsed as com.android.internal.pm.parsing.pkg.PackageImpl).setClassLoaderName("dev.artzig.HostedApkClassLoader")
-        }
         // PackageAbiHelperImpl.deriveNativeLibraryPaths always supplies a native
         // search path, even for an APK without native code. The launcher supplies
         // its extracted ABI directory when present; direct installs get the host's

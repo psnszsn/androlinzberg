@@ -1,0 +1,224 @@
+From: artzig host adaptation <artzig@localhost>
+Subject: ART: install and resolve the hosted platform API projection
+
+Create the API parent during bootstrap, preserving stock application loaders.
+Export the same platform namespaces through ART's boot-first lookup so stock
+DelegateLastClassLoader and optimized dex references share platform identities.
+Definitions keep their backing loader; private host libraries remain private.
+Standalone ART and dex2oat do not enable this optional runtime layout.
+
+diff --git a/runtime/runtime.cc b/runtime/runtime.cc
+--- a/runtime/runtime.cc
++++ b/runtime/runtime.cc
+@@ -988,7 +988,95 @@
+   CHECK(system_class_loader != nullptr)
+       << (soa.Self()->IsExceptionPending() ? soa.Self()->GetException()->Dump() : "<null>");
+ 
++  // The hosted framework keeps its private implementation dependencies outside
++  // the APK parent namespace. Install the platform view during runtime bootstrap,
++  // leaving ApplicationLoaders and ClassLoaderFactory unchanged. Standalone ART
++  // and dex2oat do not request this optional host layout.
++  ScopedLocalRef<jobject> selected(soa.Env(),
++      soa.AddLocalReference<jobject>(system_class_loader));
++  std::string platform_loader_name;
++  const std::string prefix = "artzig.platform.classloader=";
++  for (const std::string& property : runtime->GetProperties()) {
++    if (property.compare(0, prefix.size(), prefix) == 0) {
++      platform_loader_name = property.substr(prefix.size());
++    }
++  }
++  if (!platform_loader_name.empty()) {
++    JNIEnv* env = soa.Env();
++    auto check_bootstrap = [&]() REQUIRES_SHARED(Locks::mutator_lock_) {
++      CHECK(!soa.Self()->IsExceptionPending())
++          << "Hosted platform class-loader bootstrap: "
++          << soa.Self()->GetException()->Dump();
++    };
++    ScopedLocalRef<jclass> loader_class(env, env->GetObjectClass(selected.get()));
++    check_bootstrap();
++    jmethodID load_class = env->GetMethodID(
++        loader_class.get(), "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;");
++    check_bootstrap();
++    ScopedLocalRef<jstring> name(env, env->NewStringUTF(platform_loader_name.c_str()));
++    check_bootstrap();
++    ScopedLocalRef<jclass> platform_class(env, static_cast<jclass>(
++        env->CallObjectMethod(selected.get(), load_class, name.get())));
++    check_bootstrap();
++    CHECK(platform_class.get() != nullptr);
++    jmethodID platform_ctor = env->GetMethodID(
++        platform_class.get(), "<init>", "(Ljava/lang/ClassLoader;)V");
++    check_bootstrap();
++    ScopedLocalRef<jobject> platform(env,
++        env->NewObject(platform_class.get(), platform_ctor, selected.get()));
++    check_bootstrap();
++    ScopedLocalRef<jstring> path_class_name(env, env->NewStringUTF("dalvik.system.PathClassLoader"));
++    check_bootstrap();
++    ScopedLocalRef<jclass> path_class(env, static_cast<jclass>(
++        env->CallObjectMethod(selected.get(), load_class, path_class_name.get())));
++    check_bootstrap();
++    jmethodID path_ctor = env->GetMethodID(
++        path_class.get(), "<init>", "(Ljava/lang/String;Ljava/lang/ClassLoader;)V");
++    check_bootstrap();
++    ScopedLocalRef<jstring> empty(env, env->NewStringUTF(""));
++    check_bootstrap();
++    ScopedLocalRef<jobject> system(env,
++        env->NewObject(path_class.get(), path_ctor, empty.get(), platform.get()));
++    check_bootstrap();
++    ScopedLocalRef<jstring> holder_name(env, env->NewStringUTF("java.lang.ClassLoader$SystemClassLoader"));
++    check_bootstrap();
++    ScopedLocalRef<jclass> holder(env, static_cast<jclass>(
++        env->CallObjectMethod(selected.get(), load_class, holder_name.get())));
++    check_bootstrap();
++    jfieldID loader_field = env->GetStaticFieldID(
++        holder.get(), "loader", "Ljava/lang/ClassLoader;");
++    check_bootstrap();
++    env->SetStaticObjectField(holder.get(), loader_field, system.get());
++    check_bootstrap();
++    // Use the facade's own export list for native boot-first lookups as well.
++    // This keeps DelegateLastClassLoader and ART's optimized lookup consistent
++    // without placing the host's private dependencies on the boot class path.
++    jfieldID prefixes_field = env->GetStaticFieldID(
++        platform_class.get(), "prefixes", "[Ljava/lang/String;");
++    check_bootstrap();
++    ScopedLocalRef<jobjectArray> prefixes(env, static_cast<jobjectArray>(
++        env->GetStaticObjectField(platform_class.get(), prefixes_field)));
++    check_bootstrap();
++    std::vector<std::string> descriptors;
++    for (jsize i = 0; i < env->GetArrayLength(prefixes.get()); ++i) {
++      ScopedLocalRef<jstring> prefix_name(env, static_cast<jstring>(
++          env->GetObjectArrayElement(prefixes.get(), i)));
++      check_bootstrap();
++      const char* chars = env->GetStringUTFChars(prefix_name.get(), nullptr);
++      check_bootstrap();
++      std::string descriptor_prefix = "L" + std::string(chars);
++      env->ReleaseStringUTFChars(prefix_name.get(), chars);
++      std::replace(descriptor_prefix.begin(), descriptor_prefix.end(), '.', '/');
++      descriptors.push_back(std::move(descriptor_prefix));
++    }
++    jobject implementation = env->NewGlobalRef(selected.get());
++    check_bootstrap();
++    runtime->SetHostedPlatformClassPath(implementation, std::move(descriptors));
++    selected.reset(system.release());
++  }
++
+   ScopedAssertNoThreadSuspension sants(__FUNCTION__);
++  system_class_loader = soa.Decode<mirror::Object>(selected.get());
+   jobject g_system_class_loader =
+       runtime->GetJavaVM()->AddGlobalRef(soa.Self(), system_class_loader);
+   soa.Self()->SetClassLoaderOverride(g_system_class_loader);
+diff --git a/runtime/runtime.h b/runtime/runtime.h
+--- a/runtime/runtime.h
++++ b/runtime/runtime.h
+@@ -304,6 +304,27 @@
+   // Returns the system ClassLoader which represents the CLASSPATH.
+   EXPORT jobject GetSystemClassLoader() const;
+ 
++  // Optional host platform projection. The global reference is owned by the
++  // VM's JNI global table, just like system_class_loader_. Installed once during
++  // bootstrap, before application threads can request platform classes.
++  void SetHostedPlatformClassPath(jobject implementation, std::vector<std::string> prefixes) {
++    hosted_platform_prefixes_ = std::move(prefixes);
++    hosted_platform_implementation_ = implementation;
++  }
++
++  jobject GetHostedPlatformClassLoader(std::string_view descriptor) const {
++    if (hosted_platform_implementation_ == nullptr) {
++      return nullptr;
++    }
++    for (const std::string& prefix : hosted_platform_prefixes_) {
++      if (descriptor.compare(0, prefix.size(), prefix) == 0) {
++        return hosted_platform_implementation_;
++      }
++    }
++    return nullptr;
++  }
++
++
+   // Attaches the calling native thread to the runtime.
+   EXPORT bool AttachCurrentThread(const char* thread_name,
+                                   bool as_daemon,
+@@ -1343,6 +1364,8 @@
+ 
+   // As returned by ClassLoader.getSystemClassLoader().
+   jobject system_class_loader_;
++  jobject hosted_platform_implementation_ = nullptr;
++  std::vector<std::string> hosted_platform_prefixes_;
+ 
+   // If true, then we dump the GC cumulative timings on shutdown.
+   bool dump_gc_performance_on_shutdown_;
+diff --git a/runtime/class_linker.cc b/runtime/class_linker.cc
+--- a/runtime/class_linker.cc
++++ b/runtime/class_linker.cc
+@@ -3206,6 +3206,33 @@
+ 
+ }  // namespace
+ 
++// Hosted platform definitions retain their original implementation loader, but
++// Android's boot-first lookup must also see them before APK dex files (including
++// DelegateLastClassLoader's native fast path). Re-entry searches the backing PCL
++// normally, so its private dependencies never become platform exports.
++ObjPtr<mirror::Class> ClassLinker::FindClassInHostedPlatformClassPath(
++    Thread* self, const char* descriptor, size_t descriptor_length) {
++  static thread_local bool resolving_platform = false;
++  if (resolving_platform) {
++    return nullptr;
++  }
++  jobject implementation = Runtime::Current()->GetHostedPlatformClassLoader(
++      std::string_view(descriptor, descriptor_length));
++  if (implementation == nullptr) {
++    return nullptr;
++  }
++  StackHandleScope<1> hs(self);
++  Handle<mirror::ClassLoader> loader = hs.NewHandle(
++      self->DecodeJObject(implementation)->AsClassLoader());
++  resolving_platform = true;
++  ObjPtr<mirror::Class> result = FindClass(self, descriptor, descriptor_length, loader);
++  resolving_platform = false;
++  if (result == nullptr && self->IsExceptionPending()) {
++    FilterDexFileCaughtExceptions(self, this);
++  }
++  return result;
++}
++
+ // Finds the class in the boot class loader.
+ // If the class is found the method returns the resolved class. Otherwise it returns null.
+ bool ClassLinker::FindClassInBootClassLoaderClassPath(Thread* self,
+@@ -3233,6 +3260,9 @@
+       FilterDexFileCaughtExceptions(self, this);
+     }
+   }
++  if (pair.second == nullptr) {
++    *result = FindClassInHostedPlatformClassPath(self, descriptor, descriptor_length);
++  }
+   // The boot classloader is always a known lookup.
+   return true;
+ }
+@@ -3323,6 +3353,11 @@
+                          *pair.first,
+                          *pair.second);
+     } else {
++      ObjPtr<mirror::Class> platform =
++          FindClassInHostedPlatformClassPath(self, descriptor, descriptor_length);
++      if (platform != nullptr || self->IsExceptionPending()) {
++        return platform;
++      }
+       // The boot class loader is searched ahead of the application class loader, failures are
+       // expected and will be wrapped in a ClassNotFoundException. Use the pre-allocated error to
+       // trigger the chaining with a proper stack trace.
+diff --git a/runtime/class_linker.h b/runtime/class_linker.h
+--- a/runtime/class_linker.h
++++ b/runtime/class_linker.h
+@@ -1183,6 +1183,13 @@
+       REQUIRES_SHARED(Locks::mutator_lock_)
+       REQUIRES(!Locks::dex_lock_);
+ 
++  // Resolve an exported host platform class while preserving its implementation
++  // loader and private dependencies. No Java dispatch is needed on compiler threads.
++  ObjPtr<mirror::Class> FindClassInHostedPlatformClassPath(
++      Thread* self, const char* descriptor, size_t descriptor_length)
++      REQUIRES_SHARED(Locks::mutator_lock_)
++      REQUIRES(!Locks::dex_lock_);
++
+   // Finds the class in the boot class loader.
+   // If the class is found the method updates `result`.
+   // The method always returns true, to notify to the caller the
