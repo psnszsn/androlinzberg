@@ -8,6 +8,10 @@
             .url = "file:aosp/androlinzberg-aosp-android-16.0.0_r1.tar.gz",
             .hash = "N-V-__8AAEBS9U7lF2noWWVjw_xsjFjmP8muuObielJwA3_K",
         },
+        .webview = .{
+            .url = "file:aosp/androlinzberg-webview-140.0.7339.15.tar.gz",
+            .hash = "N-V-__8AAF1whxNdNKACWB1dSoSDGefcMMlNxw5Ttc9ZdbzL",
+        },
         .artzig = .{ .path = "artzig" },
         .wayland = .{
             .url = "https://codeberg.org/ifreund/zig-wayland/archive/3b5004a124b399839865f28ae99425a2dd4815f3.tar.gz",

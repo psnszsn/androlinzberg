@@ -43,6 +43,12 @@ zig build -j10 cpp-audit
 - Stock WebView platform-support JNI loads in the provider class loader through
   `src/platform/webview_support.zig`. The original HWUI functor manager owns
   callback lifetime and the original GL drawable records and draws the functor.
+  The unchanged AOSP WebView 140.0.7339.15 APK is independently pinned by the
+  `.webview` dependency; framework sources remain Android 16 r1. Production
+  retains upstream flags. The overlay regression enables WebViewSurfaceControl
+  through the provider's original developer UI and IPC in temporary test data.
+  This provider fixes the previously diagnosed zero-cadence frame-rate hint;
+  [provenance and validation](webview-frame-rate-hints.md) are recorded separately.
   The original SurfaceControl callbacks and NDK transactions now reach the
   existing compositor. `webview-overlay-test` verifies platform H.264 decoding,
   actual overlay creation and buffer updates, SurfaceControl completion callbacks

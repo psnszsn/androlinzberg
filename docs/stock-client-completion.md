@@ -5,15 +5,50 @@ Baseline: `3339fdf8`, inspected on 2026-09-09 after fetching `praz/main`.
 This continues [stock-client-migration.md](stock-client-migration.md) after the
 completed [Wayland task-window cutover](wayland-task-windows.md).
 
-Current verified code: `2a76eac9` (2026-09-10). The live audit has zero stubs and
+Current baseline: `6751dc2f` plus the provider checkpoint below (2026-09-10).
+The live audit has zero stubs and
 zero modified static client sources: 7,066 selected static AOSP sources match
 their reference files, with 62 server adaptations recorded separately. Original
 Process.start and Process.startWebView work through hosted exec services.
-The complete fresh-cache acceptance run passes at that revision. The bundled
-provider still has a diagnosed [frame-rate hint defect](webview-frame-rate-hints.md)
-that must not be reported as repaired by the framework migration.
+The complete fresh-cache acceptance run passes at `2a76eac9`; a final fresh run
+with the native fixes and independently pinned WebView 140 remains to be done.
+The provider upgrade resolves the diagnosed
+[frame-rate hint defect](webview-frame-rate-hints.md) through upstream code.
 
 ## Implementation checkpoints
+
+### Independently pinned WebView 140 (2026-09-10)
+
+The runtime now installs the unchanged official AOSP WebView 140.0.7339.15 APK
+from commit `27d78d3db63b2dbe56d1136b7cefc502ca50548d`. The framework reference
+stays Android 16 r1. This provider guards zero frame intervals before converting
+them to a frame-rate hint, resolving Chromium 133's intermittent invalid-rate
+transaction failure without weakening original SurfaceComposerClient validation.
+
+`aosp/package-webview.py` validates the exact APK size, SHA-256 and Git blob,
+then creates a deterministic, atomic third local archive with provenance.
+Two runs produced byte-identical archives and the original archived APK; invalid
+input preserved the existing output. The archive SHA-256 is
+`ff78ad3c60e851a5ff3d217d3a2d16074f453f1814a4c4bbd105b54996e9918d`, pinned to
+`N-V-__8AAF1whxNdNKACWB1dSoSDGefcMMlNxw5Ttc9ZdbzL`. Framework and ART archives
+remain current at the native checkpoint below. See [packaging](../aosp/README.md#webview-provider).
+
+Upstream production flags remain unchanged. Chromium 140 defaults overlays off;
+the overlay regression enables WebViewSurfaceControl through the original
+developer UI, service and content-provider readback before initializing WebView.
+The existing shot harness now supports temporary Android data/cache directories,
+used by both WebView graphical tests. The setting cannot persist into user data.
+Native overlay creation, buffer updates, completion acknowledgements and correct
+playing/paused pixels remain required.
+
+The two-phase `-j10` gate passed: `install webview-test webview-ui-test
+webview-overlay-test stock-cold-launch-test`, then `integration-test jvm-test
+system-test native-test egl-test cpp-audit graph-audit build-tools-test`.
+This includes original WebView Zygote preload/isolated launch, renderer lifetime,
+HTML/JavaScript/cookies/input and graphical media. All 28 APK cases produced 88
+clean actions; the graphical WebView cases added 15 clean actions. Screenshots
+were inspected. Evidence: `/tmp/stock-provider-140-gate-1.log` (exit 0) and
+`/tmp/stock-provider-update/`. Final acceptance from a new worktree remains open.
 
 ### Native client queries and Android EGL buffer import (2026-09-10)
 

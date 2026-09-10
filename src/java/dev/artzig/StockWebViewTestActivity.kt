@@ -4,8 +4,71 @@ package dev.artzig
 class StockWebViewTestActivity : android.app.Activity() {
     private lateinit var webView: android.webkit.WebView
     private val tracePath = System.getenv("AZK_WEBVIEW_TRACE_OUT")
+    private val configureOverlays = System.getenv("AZK_WEBVIEW_CONFIGURE_OVERLAYS") == "1"
+    private lateinit var startWebView: android.widget.Button
+    private val setupHandler = android.os.Handler(android.os.Looper.getMainLooper())
     override fun onCreate(state: android.os.Bundle?) {
         super.onCreate(state)
+        if (configureOverlays && state?.getBoolean("webViewStarted") != true) {
+            // Exercise Chromium's supported UI and provider IPC in isolated test
+            // data. Production provider defaults and framework callers stay stock.
+            setContentView(android.widget.LinearLayout(this).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                addView(android.widget.Button(this@StockWebViewTestActivity).apply {
+                    text = "Configure WebView overlays"
+                    setOnClickListener {
+                        startActivity(android.content.Intent("com.android.webview.SHOW_DEV_UI")
+                            .setPackage("com.android.webview").putExtra("fragment-id", 2))
+                    }
+                })
+                startWebView = android.widget.Button(this@StockWebViewTestActivity).apply {
+                    text = "Start WebView"
+                    setOnClickListener {
+                        isEnabled = false
+                        text = "Waiting for WebView overlay setting"
+                        waitForOverlaySetting(android.os.SystemClock.uptimeMillis() + 15_000)
+                    }
+                }
+                addView(startWebView)
+            })
+            return
+        }
+        initializeWebView()
+    }
+
+    override fun onSaveInstanceState(state: android.os.Bundle) {
+        super.onSaveInstanceState(state)
+        state.putBoolean("webViewStarted", ::webView.isInitialized)
+    }
+
+    private fun waitForOverlaySetting(deadline: Long) {
+        if (isDestroyed || ::webView.isInitialized) return
+        val component = android.content.ComponentName("com.android.webview",
+            "org.chromium.android_webview.devui.DeveloperModeState")
+        var enabled = false
+        if (packageManager.getComponentEnabledSetting(component) ==
+            android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+            contentResolver.query(android.net.Uri.parse(
+                "content://com.android.webview.DeveloperModeContentProvider/flag-overrides"),
+                null, null, null, null).use { cursor ->
+                checkNotNull(cursor)
+                val name = cursor.getColumnIndexOrThrow("flagName")
+                val state = cursor.getColumnIndexOrThrow("flagState")
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(name) == "WebViewSurfaceControl") enabled = cursor.getInt(state) != 0
+                }
+            }
+        }
+        if (enabled) {
+            initializeWebView()
+        } else if (android.os.SystemClock.uptimeMillis() < deadline) {
+            setupHandler.postDelayed({ waitForOverlaySetting(deadline) }, 100)
+        } else {
+            error("Chromium did not publish the selected WebViewSurfaceControl override")
+        }
+    }
+
+    private fun initializeWebView() {
         webView = android.webkit.WebView(this)
         webView.settings.javaScriptEnabled = true
         webView.settings.mediaPlaybackRequiresUserGesture = false
@@ -67,7 +130,8 @@ class StockWebViewTestActivity : android.app.Activity() {
         webView.loadDataWithBaseURL("https://webview.example/", html, "text/html", "UTF-8", null)
     }
     override fun onDestroy() {
-        if (tracePath != null && !isChangingConfigurations && android.webkit.TracingController.getInstance().isTracing) {
+        setupHandler.removeCallbacksAndMessages(null)
+        if (::webView.isInitialized && tracePath != null && !isChangingConfigurations && android.webkit.TracingController.getInstance().isTracing) {
             android.webkit.TracingController.getInstance().stop(null, java.util.concurrent.Executor { it.run() })
         }
         if (::webView.isInitialized) webView.destroy()

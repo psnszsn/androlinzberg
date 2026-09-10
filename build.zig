@@ -133,6 +133,7 @@ pub fn build(b: *std.Build) void {
     // package hash, which changes whenever the selected source closure changes.
     const aosp_dep = b.dependency("aosp", .{});
     const aosp = aosp_dep.path("");
+    const webview_dep = b.dependency("webview", .{});
     const artzig_dep = b.dependency("artzig", .{ .target = target, .optimize = optimize });
     const art_mod = artzig_dep.module("art");
     const identity_tests = b.addSystemCommand(&.{"env"});
@@ -1039,7 +1040,7 @@ pub fn build(b: *std.Build) void {
         .framework_vdex = java.framework_vdex,
         .framework_resources = java.resources.apk,
         .download_provider = java.download_provider,
-        .webview_provider = aosp.path(b, "external/chromium-webview/133.0.6943.137/x86_64/webview.apk"),
+        .webview_provider = webview_dep.path("webview.apk"),
         .desktop_transfer_provider = java.desktop_transfer_provider,
     });
     b.getInstallStep().dependOn(&b.addInstallDirectory(.{
@@ -1488,6 +1489,7 @@ pub fn build(b: *std.Build) void {
     const webview_ui = @import("build/command.zig").create(b);
     setApplicationEnvironment(webview_ui, application_tree);
     webview_ui.setEnvironment("WLR_RENDERER", "gles2");
+    webview_ui.setEnvironment("SHOT_ISOLATED_DATA", "1");
     webview_ui.setPathEnvironment("AZK_TESTKIT_ROOT", testkit_tree.getDirectory());
     webview_ui.setPathEnvironment("AZK_TEST_SEAT", surface_server.getEmittedBin());
     webview_ui.addArg("bash");
@@ -1502,11 +1504,13 @@ pub fn build(b: *std.Build) void {
     const webview_overlay = @import("build/command.zig").create(b);
     setApplicationEnvironment(webview_overlay, application_tree);
     webview_overlay.setEnvironment("WLR_RENDERER", "gles2");
+    webview_overlay.setEnvironment("SHOT_ISOLATED_DATA", "1");
     webview_overlay.setPathEnvironment("AZK_TESTKIT_ROOT", testkit_tree.getDirectory());
     webview_overlay.setPathEnvironment("AZK_TEST_SEAT", surface_server.getEmittedBin());
     webview_overlay.setEnvironment("AZK_WEBVIEW_VIDEO_SOURCE", "avc");
     webview_overlay.setEnvironment("AZK_WEBVIEW_TRACE_OUT", "zig-out/test-results/webview-overlay/rendering-trace.json");
     webview_overlay.setEnvironment("AZK_WEBVIEW_REQUIRE_OVERLAY", "1");
+    webview_overlay.setEnvironment("AZK_WEBVIEW_CONFIGURE_OVERLAYS", "1");
     webview_overlay.addArg("bash");
     webview_overlay.addFileArg(b.path("tools/shot.sh"));
     webview_overlay.addArg("zig-out/test-results/webview-overlay/screenshot.png");

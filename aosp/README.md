@@ -154,6 +154,37 @@ The scripts replace each output atomically only after packaging and cleanup
 succeed. On an error or interruption they remove the temporary archive and
 attempt to restore every applied patch before exiting.
 
+## WebView provider
+
+The runtime installs the unchanged official AOSP WebView **140.0.7339.15** APK
+from `platform/external/chromium-webview` commit
+`27d78d3db63b2dbe56d1136b7cefc502ca50548d`, path
+`140.0.7339.15/x86_64/webview.apk` ([original artifact](https://android.googlesource.com/platform/external/chromium-webview/+/27d78d3db63b2dbe56d1136b7cefc502ca50548d/140.0.7339.15/x86_64/webview.apk)).
+This provider has its own package pin; it does not change the Android 16 r1
+framework reference. The older provider in that reference is no longer installed.
+
+Download the original artifact, then package it locally:
+
+```sh
+python3 aosp/package-webview.py --apk /absolute/path/to/webview.apk
+```
+
+The script verifies the APK's 327,642,777-byte size, SHA-256
+`04b161c3e5cd125068e41633d60b027f9c96f46fbd5ae79a0b4e86eb71ea01af` and Git blob
+`0b8ea7c8f0961d1d84392830021673ec037f5215`. It atomically writes the deterministic
+`aosp/androlinzberg-webview-140.0.7339.15.tar.gz`, containing `webview.apk` and
+`SOURCE.json`. Its SHA-256 is
+`ff78ad3c60e851a5ff3d217d3a2d16074f453f1814a4c4bbd105b54996e9918d`; the `.webview`
+dependency in `build.zig.zon` pins the extracted package to
+`N-V-__8AAF1whxNdNKACWB1dSoSDGefcMMlNxw5Ttc9ZdbzL`.
+Reproduction was checked with two byte-identical archives and an archived APK
+checksum; invalid input leaves an existing output untouched.
+
+Copy this third archive alongside the framework and ART archives when preparing
+a new worktree. The provider retains upstream production defaults. The optional
+overlay regression uses Chromium's supported developer setting only inside
+temporary test data; see [the provider defect and its resolution](../docs/webview-frame-rate-hints.md).
+
 ## Refresh the Zig package hashes
 
 The SDK-sandbox client/interface closure comes from

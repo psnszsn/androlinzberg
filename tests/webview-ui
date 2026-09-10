@@ -8,6 +8,19 @@ trap 'kill "$seat_pid" 2>/dev/null || true; wait "$seat_pid" 2>/dev/null || true
 read -r -t 10 seat_ready <&"${WEBVIEW_SEAT[0]}"
 [[ "$seat_ready" == ready ]]
 tools/azk-test --timeout 60 wait ready >/dev/null
+# Newer Chromium keeps WebView overlays behind its supported developer setting.
+# Change it only through its UI and service in this harness's isolated data.
+if [[ "${AZK_WEBVIEW_CONFIGURE_OVERLAYS:-0}" == 1 ]]; then
+  tools/azk-test step click --text "CONFIGURE WEBVIEW OVERLAYS" --settle idle >/dev/null
+  tools/azk-test step click --text OK --settle idle >/dev/null
+  tools/azk-test --timeout 60 wait exists --id com.android.webview:id/flag_search_bar >/dev/null
+  tools/azk-test step type --id com.android.webview:id/flag_search_bar 'WebViewSurfaceControl not' --settle idle >/dev/null
+  tools/azk-test step click --id com.android.webview:id/flag_toggle --settle idle >/dev/null
+  tools/azk-test step click --text Enabled --settle idle >/dev/null
+  tools/azk-test step key --id com.android.webview:id/flag_search_bar Back --settle idle >/dev/null
+  tools/azk-test --timeout 30 wait exists --text "START WEBVIEW" >/dev/null
+  tools/azk-test step click --text "START WEBVIEW" --settle idle >/dev/null
+fi
 tools/azk-test --timeout 60 wait exists --text "WebView input verified" >/dev/null
 tools/azk-test --timeout 60 wait exists --text "Count: 0" >/dev/null
 tools/azk-test diagnose | python3 -c 'import json,sys; d=json.load(sys.stdin); issues=d["diagnostics"]["runtime"]["issues"]; assert not issues, issues'

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check Chromium 133's actual decoder/overlay path, alongside UI pixel checks."""
+"""Check Chromium's actual decoder/overlay path, alongside UI pixel checks."""
 import collections
 import json
 import sys

@@ -7,6 +7,7 @@
 # when testing clients that present EGL buffers. In --test mode the harness
 # exposes AZK_TEST_SOCKET, runs the test after the socket appears, and writes
 # <out>.a11y.json, <out>.log, and <out>.steps.jsonl beside the screenshot.
+# SHOT_ISOLATED_DATA=1 gives --test a temporary Android data/cache directory.
 # SHOT_COMPOSITOR=labwc selects a stacking desktop instead of Cage's kiosk.
 # SHOT_LABWC_CONFIG optionally supplies an isolated compositor configuration.
 # SHOT_LABWC_BINARY selects a protocol fixture binary for labwc test variants.
@@ -38,6 +39,12 @@ COMPOSITOR_DIR=
 export SHOT_RUNNER_MODE=$RUNNER_MODE
 if [[ -n $TEST_EXECUTABLE ]]; then
   CONTROL_DIR=$(mktemp -d "$XDG_RUNTIME_DIR/azk-shot.XXXXXX")
+  if [[ ${SHOT_ISOLATED_DATA:-0} == 1 ]]; then
+    export ARTZIG_DATA_DIR="$CONTROL_DIR/android-data"
+    export ARTZIG_RUNTIME_CACHE_DIR="$CONTROL_DIR/runtime-cache"
+    export DOWNLOAD_CACHE="$ARTZIG_DATA_DIR/cache"
+    export EXTERNAL_STORAGE="$ARTZIG_DATA_DIR/external"
+  fi
   export AZK_TEST_SOCKET="$CONTROL_DIR/control.sock"
   export SHOT_TEST_EXECUTABLE=$TEST_EXECUTABLE
   STEM=${OUT%.*}
