@@ -1433,6 +1433,8 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/core/java/com/android/internal/os/SystemServerClassLoaderFactory.java");
     try c.file("$FB/core/java/com/android/internal/os/WrapperInit.java");
     try c.file("$FB/core/java/com/android/internal/os/Zygote.java");
+    try c.file("$FB/core/java/com/android/internal/os/ChildZygoteInit.java");
+    try c.file("$FB/core/java/com/android/internal/os/WebViewZygoteInit.java");
     try c.file("$FB/core/java/com/android/internal/os/ZygoteArguments.java");
     try c.file("$FB/core/java/com/android/internal/os/ZygoteCommandBuffer.java");
     try c.file("$FB/core/java/com/android/internal/os/ZygoteConfig.java");

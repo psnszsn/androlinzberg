@@ -57,10 +57,31 @@ object ProcessInspection {
         System.err.println("AZK pending frame diagnostics at $now\n${text.toString().take(65536)}")
     }
 
+    /** Observe attachment without queueing behind provider/Application startup.
+     * ActivityThread publishes its instance through a volatile field; AMS then
+     * confirms attachment independently of finishAttachApplication. UI work still
+     * belongs to the original main Looper, and the registry gates it on readiness. */
+    fun observeActivityMainStartup() {
+        if (!enabled || Process.isIsolated()) return
+        Thread({
+            val deadline = android.os.SystemClock.uptimeMillis() + 5000
+            while (android.os.SystemClock.uptimeMillis() < deadline) {
+                val thread = android.app.ActivityThread.currentActivityThread()
+                if (thread != null && android.app.ActivityManager.getService().runningAppProcesses
+                        ?.any { it.pid == Process.myPid() && it.uid == Process.myUid() } == true) {
+                    register(thread.applicationThread)
+                    return@Thread
+                }
+                Thread.sleep(5)
+            }
+            error("ActivityThread.main did not attach for process inspection")
+        }, "process-inspection-startup").apply { isDaemon = true; start() }
+    }
+
+    @Synchronized
     fun register(application: android.app.IApplicationThread) {
         if (!enabled || registered) return
-        check(Looper.myLooper() == Looper.getMainLooper())
-        val handler = Handler.createAsync(Looper.getMainLooper())
+        val handler = Handler.createAsync(checkNotNull(Looper.getMainLooper()))
         val endpoint = object : IProcessInspection.Stub() {
             override fun runtimeDiagnostics(afterLog: Long, afterIssue: Long): String {
                 enforceSystem()

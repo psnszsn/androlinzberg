@@ -56,6 +56,7 @@ object StockColdLaunchSmoke {
         val info = checkNotNull(packages.getApplicationInfo(pkg, 0L, 0))
         check(info.uid in Process.FIRST_APPLICATION_UID..Process.LAST_APPLICATION_UID)
         check(BinderSession.reservePackageUid(pkg) == info.uid)
+        dev.artzig.StockProcessLaunchSmoke.run(info)
         val grammar = android.app.IGrammaticalInflectionManager.Stub.asInterface(
             android.os.ServiceManager.getService(Context.GRAMMATICAL_INFLECTION_SERVICE))
         grammar.setRequestedApplicationGrammaticalGender(pkg, 0,

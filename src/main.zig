@@ -265,6 +265,28 @@ pub fn main(init: std.process.Init) !void {
             if (binder) |*session| try session.awaitSystemReady();
             try runFrameworkMain(&headless.rt, "dev.artzig.AppProcess", &.{});
             return;
+        } else if (std.mem.eql(u8, args[i], "--runtime-process") and i + 1 < args.len) {
+            // A stock Process.start request, executed under a one-use broker
+            // grant. RuntimeProcess calls original RuntimeInit.applicationInit.
+            if (getenv("AZK_LAUNCH_CREDENTIAL") == null) return error.MissingRuntimeLaunchGrant;
+            i += 1;
+            const app_apk = args[i];
+            if (!std.fs.path.isAbsolute(app_apk)) return error.RuntimeApkPathMustBeAbsolute;
+            // Consume bounded setup before ART startup or any service calls. The
+            // parent may hold the AMS lock while writing this pipe and awaiting PID.
+            var setup_buffer: [4096]u8 = undefined;
+            var setup_reader = std.Io.File.stdin().readerStreaming(init.io, &setup_buffer);
+            const setup_size = try setup_reader.interface.takeInt(u32, .big);
+            if (setup_size == 0 or setup_size > 524288) return error.InvalidRuntimeSetupSize;
+            const setup = try init.arena.allocator().allocSentinel(u8, setup_size, 0);
+            try setup_reader.interface.readSliceAll(setup);
+            _ = setenv("ARTZIG_APK", try init.arena.allocator().dupeSentinel(u8, app_apk, 0), 1);
+            try ensureSession(init, &binder, join_dir, try taskPresentation(init.minimal.environ, false));
+            const role = try runtime_identity.testRole(init.minimal.environ);
+            var headless = try bootHeadlessApk(init, app_apk, role);
+            defer headless.rt.releaseProcessState();
+            try runFrameworkMain(&headless.rt, "dev.artzig.RuntimeProcess", &.{setup});
+            return;
         } else if (std.mem.eql(u8, args[i], "--inspect-apk-package")) {
             if (i + 2 != args.len) return error.InvalidApkPackageInspectionArguments;
             var headless = try bootHeadless(init, .metadata);

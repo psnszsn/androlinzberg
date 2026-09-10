@@ -24,9 +24,10 @@ pub fn prepare(init: std.process.Init, library: *std.DynLib, role: Role, apk: ?[
     }
     if (env("AZK_BINDER_SOCKET") == null) return null;
     const a = init.arena.allocator();
-    const package = if (role == .system) "android" else package: {
+    const package = package: {
         if (env("AZK_LAUNCH_CREDENTIAL") != null)
             break :package env("AZK_BINDER_PACKAGE") orelse return error.MissingLaunchPackage;
+        if (role == .system) break :package "android";
         if (env("AZK_BINDER_PACKAGE")) |name| break :package name;
         if (apk) |path| break :package try inspectPackage(init, path);
         break :package try std.fmt.allocPrint(a, "anonymous.{d}", .{std.os.linux.getpid()});

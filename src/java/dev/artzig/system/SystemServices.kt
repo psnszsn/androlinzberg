@@ -25,22 +25,9 @@ internal object SystemServices {
     private const val TAG = "SystemServer"
     private external fun nativeCreateMediaExtractorService(): android.os.IBinder
 
-    /** App-process hosts this session spawned, destroyed when the system process exits. */
-    private val spawnedProcesses = java.util.concurrent.CopyOnWriteArrayList<Process>()
-
     @JvmStatic
     fun start(context: Context, stockWindows: StockWindowServices, onBootComplete: () -> Unit) {
         com.android.server.HostedBootTasks.start()
-        // Auto-spawned service hosts must not outlive the session. Each host
-        // also exits on broker disconnect (HostedBinderRuntime), but destroy
-        // any survivors when the system process itself goes down.
-        Runtime.getRuntime().addShutdownHook(
-            Thread {
-                for (process in spawnedProcesses) {
-                    if (process.isAlive) process.destroy()
-                }
-            },
-        )
         android.os.ServiceManager.addService(Context.INPUT_METHOD_SERVICE, HostedInputMethodManagerService(context))
         android.os.ServiceManager.addService(
             Context.ACCESSIBILITY_SERVICE,
@@ -89,7 +76,8 @@ internal object SystemServices {
             com.android.server.compat.PlatformCompatNative(platformCompat))
         val activityManager = HostedActivityManagerService(context)
         activityManager.platformCompat = platformCompat
-        activityManager.processLauncher = sessionProcessLauncher(activityManager)
+        val processLauncher = HostedZygoteService(packageManager, activityManager::dispatchProcessExit)
+        activityManager.processLauncher = processLauncher.serviceLauncher()
         activityManager.packageService = packageManager
         android.os.ServiceManager.addService(Context.ACTIVITY_SERVICE, activityManager, true,
             android.os.IServiceManager.DUMP_FLAG_PRIORITY_CRITICAL or android.os.IServiceManager.DUMP_FLAG_PRIORITY_NORMAL or
@@ -323,81 +311,4 @@ internal object SystemServices {
         stockWindows.bootCompleted()
     }
 
-    /**
-     * Spawns `<launcher> --join <session-dir> --app-process <apk>` so a
-     * service in a package with no running process gets one. The launcher and
-     * session directory come from the environment the launcher gave us.
-     */
-    private fun sessionProcessLauncher(activityManager: HostedActivityManagerService): HostedProcessStarts.Launcher<android.content.pm.ApplicationInfo>? {
-        val sessionDir = System.getenv("AZK_BINDER_SESSION_DIR") ?: return null
-        val launcher = System.getenv("AZK_LAUNCHER_EXE") ?: return null
-        return HostedProcessStarts.Launcher<android.content.pm.ApplicationInfo> { request, onExit ->
-            val (packageName, processName) = request.key
-            var launchId = 0L
-            try {
-                val credential = dev.artzig.BinderSession.reserveLaunch(packageName, processName,
-                    request.key.isolated, request.sequence).split(':', limit = 3)
-                check(credential.size == 3 && credential[2].length == 64)
-                launchId = credential[0].toLong()
-                val launchUid = credential[1].toInt()
-                val builder = ProcessBuilder(launcher, "--join", sessionDir, "--app-process", request.apkPath)
-                    .redirectOutput(ProcessBuilder.Redirect.INHERIT)
-                    .redirectError(ProcessBuilder.Redirect.INHERIT)
-                // Never hand the system identity to an app process: with the
-                // system cookie an APK could reconnect as uid 1000 and claim
-                // the system service names.
-                builder.environment().remove("AZK_BINDER_SYSTEM_COOKIE")
-                builder.environment().remove("AZK_BINDER_COOKIE")
-                builder.environment()["AZK_BINDER_PACKAGE"] = packageName
-                builder.environment()["AZK_LAUNCH_CREDENTIAL"] = credential[2]
-                builder.environment()["AZK_LAUNCH_UID"] = launchUid.toString()
-                builder.environment()["AZK_APP_PROCESS_NAME"] = processName
-                builder.environment()["AZK_APP_START_SEQUENCE"] = request.sequence.toString()
-                // Chromium's Android seccomp policy rejects glibc's optional rseq
-                // registration. Disable it before exec, retaining all other tunables.
-                val tunables = builder.environment()["GLIBC_TUNABLES"].orEmpty().split(':')
-                    .filter { it.isNotEmpty() && !it.startsWith("glibc.pthread.rseq=") }
-                builder.environment()["GLIBC_TUNABLES"] = (tunables + "glibc.pthread.rseq=0").joinToString(":")
-                val child = builder.start()
-                val childPid: Int
-                try {
-                    // Pinned UNIXProcess keeps the kernel child handle in its
-                    // private final pid field; Android's Process API has no pid().
-                    childPid = child.javaClass.getDeclaredField("pid").apply { isAccessible = true }.getInt(child)
-                    dev.artzig.BinderSession.bindLaunch(launchId, childPid)
-                    child.outputStream.use { gate -> gate.write(1); gate.flush() }
-                } catch (failure: Throwable) {
-                    child.destroy()
-                    throw failure
-                }
-                spawnedProcesses.add(child)
-                try {
-                    Thread({
-                        child.waitFor()
-                        try { dev.artzig.BinderSession.revokeLaunch(launchId) }
-                        finally {
-                            spawnedProcesses.remove(child)
-                            activityManager.dispatchProcessExit(onExit)
-                        }
-                    }, "app-exit-${request.sequence}").apply { isDaemon = true; start() }
-                } catch (failure: Throwable) {
-                    child.destroy()
-                    spawnedProcesses.remove(child)
-                    throw failure
-                }
-                Log.i(TAG, "spawning $processName start=${request.sequence}")
-                object : HostedProcessStarts.Child {
-                    override val identity = HostedProcessStarts.Identity(childPid, launchUid)
-                    override fun terminate() {
-                        child.destroy()
-                        dev.artzig.BinderSession.revokeLaunch(launchId)
-                    }
-                }
-            } catch (t: Throwable) {
-                if (launchId != 0L) runCatching { dev.artzig.BinderSession.revokeLaunch(launchId) }
-                Log.w(TAG, "cannot spawn process for " + packageName, t)
-                null
-            }
-        }
-    }
 }

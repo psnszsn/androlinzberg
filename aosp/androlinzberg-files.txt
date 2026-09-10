@@ -4595,6 +4595,8 @@ F aosp frameworks/base/core/java/com/android/internal/os/SafeZipPathValidatorCal
 F aosp frameworks/base/core/java/com/android/internal/os/StatsdHiddenApiUsageLogger.java
 F aosp frameworks/base/core/java/com/android/internal/os/WrapperInit.java
 F aosp frameworks/base/core/java/com/android/internal/os/Zygote.java
+F aosp frameworks/base/core/java/com/android/internal/os/ChildZygoteInit.java
+F aosp frameworks/base/core/java/com/android/internal/os/WebViewZygoteInit.java
 F aosp frameworks/base/core/java/com/android/internal/os/ZygoteArguments.java
 F aosp frameworks/base/core/java/com/android/internal/os/ZygoteCommandBuffer.java
 F aosp frameworks/base/core/java/com/android/internal/os/ZygoteConfig.java

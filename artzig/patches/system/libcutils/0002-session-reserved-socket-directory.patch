@@ -1,0 +1,36 @@
+From: artzig <artzig@localhost>
+Subject: [PATCH] sockets: resolve reserved endpoints in the hosted session
+
+--- a/socket_local_client_unix.cpp
++++ b/socket_local_client_unix.cpp
+@@ -80,17 +80,20 @@
+ #endif
+         break;
+ 
+-        case ANDROID_SOCKET_NAMESPACE_RESERVED:
+-            namelen = strlen(name) + strlen(ANDROID_RESERVED_SOCKET_PREFIX);
+-            /* unix_path_max appears to be missing on linux */
+-            if (namelen > sizeof(*p_addr) 
+-                    - offsetof(struct sockaddr_un, sun_path) - 1) {
+-                goto error;
+-            }
+-
+-            strcpy(p_addr->sun_path, ANDROID_RESERVED_SOCKET_PREFIX);
++        case ANDROID_SOCKET_NAMESPACE_RESERVED: {
++            // Hosted init owns a session-specific reserved socket directory.
++            // Keep LocalSocket/ZygoteProcess unchanged; no global /dev/socket
++            // authority or Android daemon is present in this host session.
++            const char* session = getenv("AZK_BINDER_SESSION_DIR");
++            const char* suffix = session ? "/sockets/" : "";
++            const char* prefix = session ? session : ANDROID_RESERVED_SOCKET_PREFIX;
++            namelen = strlen(name) + strlen(prefix) + strlen(suffix);
++            if (namelen >= sizeof(p_addr->sun_path)) goto error;
++            strcpy(p_addr->sun_path, prefix);
++            strcat(p_addr->sun_path, suffix);
+             strcat(p_addr->sun_path, name);
+-        break;
++            break;
++        }
+ 
+         case ANDROID_SOCKET_NAMESPACE_FILESYSTEM:
+             namelen = strlen(name);

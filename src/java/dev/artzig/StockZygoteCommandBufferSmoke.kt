@@ -57,6 +57,24 @@ internal object StockZygoteCommandBufferSmoke {
 
     fun run() {
         checkLaunchAuthority(false)
+        val protocol = dev.artzig.system.HostedZygoteProtocol
+        val parsed = protocol.parse(arrayOf("--runtime-args", "--setuid=10001", "--setgid=10001",
+            "--target-sdk-version=31", "--disabled-compat-changes=12,34", "framework.Entry", "雪/🙂"))
+        check(parsed.int("mUid") == 10001 && parsed.int("mTargetSdkVersion") == 31)
+        check(checkNotNull(parsed.value<LongArray>("mDisabledCompatChanges")).contentEquals(longArrayOf(12, 34)))
+        check(checkNotNull(parsed.value<Array<String>>("mRemainingArgs")).contentEquals(arrayOf("framework.Entry", "雪/🙂")))
+        check(runCatching { protocol.parse(arrayOf("--runtime-args", "--setuid=10001", "--setuid=10002", "framework.Entry")) }
+            .exceptionOrNull() is IllegalArgumentException)
+        check(runCatching { protocol.parse(arrayOf("--runtime-args", "framework.Entry", "雪".repeat(12000))) }
+            .exceptionOrNull() is IllegalArgumentException)
+        check(runCatching { protocol.read("2\n--runtime-args\n".byteInputStream()) }
+            .exceptionOrNull() is java.io.EOFException)
+        check(runCatching { protocol.read("invalid\n".byteInputStream()) }
+            .exceptionOrNull() is java.io.IOException)
+        val stream = "1\n--query-abi-list\n1\n--get-pid\n".byteInputStream()
+        check(checkNotNull(protocol.read(stream)).flag("mAbiListQuery"))
+        check(checkNotNull(protocol.read(stream)).flag("mPidQuery"))
+        check(protocol.read(stream) == null)
         val long = Long::class.javaPrimitiveType!!
         val int = Int::class.javaPrimitiveType!!
         val constructor = type.getDeclaredConstructor(Array<String>::class.java).apply { isAccessible = true }

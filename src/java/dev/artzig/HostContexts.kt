@@ -38,7 +38,14 @@ object HostContexts {
 
     /** Prepare assets, module initializers and local display services before thread attachment. */
     @JvmStatic
-    fun prepareApplicationEnvironment(frameworkRes: String) {
+    fun prepareApplicationEnvironment(frameworkRes: String) = prepareApplicationEnvironment(frameworkRes, true)
+
+    /** Original ActivityThread.main owns module initialization; invoking it here
+     * too would violate the mainline initializers' one-call contract. */
+    @JvmStatic fun prepareForActivityThreadMain(frameworkRes: String) =
+        prepareApplicationEnvironment(frameworkRes, false)
+
+    private fun prepareApplicationEnvironment(frameworkRes: String, initializeModules: Boolean) {
         // UI hosts enter through JNI init rather than RuntimeBootstrap.main.
         AssetManager.createSystemAssetsInZygoteLocked(false, frameworkRes)
         // ZygoteInit preloads the system font map before any process draws text.
@@ -53,7 +60,7 @@ object HostContexts {
         }
         synchronized(this) {
             if (!processServiceCacheInitialized) {
-                ActivityThread.initializeMainlineModules()
+                if (initializeModules) ActivityThread.initializeMainlineModules()
                 // AOSP ActivityThread.ApplicationThread.bindApplication seeds
                 // process-specific Binder references through this stock API.
                 android.os.ServiceManager.initServiceCache(emptyMap<String, android.os.IBinder>())

@@ -303,9 +303,12 @@ zig build -j10 cpp-audit
   remains unavailable.
 - `src/binder/runtime_init_jni.zig` connects stock RuntimeInit to the launcher's
   Kotlin entry dispatcher. Common initialization precedes target class
-  initialization. Hosted Binder workers start after the target claims its
-  virtual process identity, since the host cannot use Android OS UIDs for that
-  identity. The VM invocation exit hook and Binder disconnect path use the
+  initialization. Supervised APKs enter a Linux user namespace with their granted
+  Android UID/GID before ART starts; the broker authenticates the real child and
+  its one-use grant. Immutable libcore identity is installed before ART workers
+  start, including the logical system identity used by framework tool processes.
+  Socket control authorization checks active broker role and peer process lifetime,
+  rather than trusting UID metadata alone. The VM invocation exit hook and Binder disconnect path use the
   native `AndroidRuntime::exit` boundary in `AospJniBridge.cpp`, terminating
   with `_exit` without libc teardown. `std.Io` has no immediate self-termination
   operation; this Zig version's libc-linked `std.process.exit` runs destructors
@@ -316,6 +319,15 @@ zig build -j10 cpp-audit
   stock pre-handler and uncaught-handler sequence, replacing the detach-time
   dispatch used by AndroidRuntime. Hosted AM stores the resulting crash report
   before RuntimeInit kills the process and Binder death records its exit.
+- `HostedZygoteService` serves stock Process.start/ZygoteProcess requests through
+  a session-owned reserved socket mapped by libcutils. It reuses the original
+  argument parser, authenticates system peers, and execs real broker-authorized
+  children. Bounded setup crosses the startup pipe before ART initialization;
+  original RuntimeInit.applicationInit and ActivityThread.main then own SDK and
+  compatibility policy, the main Looper and application attachment. This runtime
+  does not fork a preloaded ART VM or share preload memory. Unsupported Android
+  specialization requests fail explicitly. The dedicated WebView Zygote and
+  Process.startWebView path remain unfinished.
 
 
 `src/platform/azk_pipewire.c` is a small PipeWire adapter. It contains the C

@@ -93,6 +93,7 @@ packager.PATCH_SERIES = framework_patches + (
     ("frameworks/av", patch_root / "frameworks-av/0003-ToneGenerator-use-existing-host-audio-output.patch"),
     ("frameworks/av", patch_root / "frameworks-av/0002-NDK-image-reader-without-deprecated-HIDL-token-service.patch"),
     ("system/core/libcutils", patch_root / "system/libcutils/0001-use-stock-memfd-operations-for-host-ndk-shared-memory.patch"),
+    ("system/core/libcutils", patch_root / "system/libcutils/0002-session-reserved-socket-directory.patch"),
     ("bionic", patch_root / "bionic/0001-reuse-missing-fortify-entry-points-on-host.patch"),
     (
         "frameworks/av",

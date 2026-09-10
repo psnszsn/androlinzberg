@@ -1122,6 +1122,60 @@ fresh failure artifacts. Local AOSP archives and pins are unchanged and current.
 This establishes process-launch authority; stock Process.start/startWebView
 transport, execution and final acceptance remain unfinished.
 
+### Stock Process.start and ActivityThread.main (2026-09-10)
+
+Process.start now uses the pinned ZygoteProcess client and ZygoteArguments/native
+command-buffer parser against a session-owned launch socket. The libcutils
+reserved-socket mapping sits below unchanged LocalSocket Java. Native peer-PID
+lifetime and active broker authority checks admit only authenticated system
+callers; the exec service validates the requested package, user and launch UID.
+
+AMS launches its captured activity/service requests through this stock client.
+Prepared start sequences retain defining APK metadata and death callbacks without
+re-entering the AMS lock from the socket worker. The supervisor starts a real
+child, binds its broker grant to that child, and releases its startup pipe. The
+child enters original RuntimeInit.applicationInit and ActivityThread.main, which
+own the target SDK, compatibility settings, main Looper, attachment and lifecycle
+transactions. Host resource preparation avoids repeating the original module
+initializers. The test adapter observes AMS attachment independently of blocked
+provider startup; it registers its endpoint off the main thread and leaves UI
+operations gated on AMS readiness and dispatched on the stock main Looper.
+
+This is an exec implementation of the launch protocol. There is no preloaded ART
+fork, shared preload memory or unspecialized-process pool. Requested wrappers,
+resource limits, supplementary Android groups, runtime-specialization flags and
+Android mount policies that this runtime cannot enforce fail explicitly. The
+dedicated WebView controller and Process.startWebView remain unfinished.
+
+The original parser has bounded framing and modified-UTF-8 allocation checks;
+no native command buffer remains allocated while a connection waits for input.
+Child setup travels over a bounded pipe before ART startup, preserving a valid
+large/Unicode argument payload whose JSON representation exceeds Linux's
+per-environment-string exec limit. Tests also cover malformed/duplicate parser
+arguments, real returned PID, kernel UID/GID, target SDK and wrong-package UID
+rejection. The cold-launch fixture proves starting-state inspection while a
+content provider deliberately blocks, then completes the stock lifecycle checks.
+
+The static source comparison records 7,065 unchanged sources, 62 modified server
+sources, one modified client (Process.startWebView), and no missing references.
+Original ChildZygoteInit and WebViewZygoteInit sources are selected for the next
+controller batch. The zero-stub inventory is unchanged. The current framework
+archive is SHA-256
+`0f6ee1bf08843c13c07f09492e76a7d599e96c05f148de358bc2602dc2640bbd`, pinned to
+`N-V-__8AALtC9U70CSztUR9u_B48US9JIMH63wrRg5R4ZWay`. ART remains SHA-256
+`aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c`;
+both local archives match their current pins.
+
+Validation passes with `-j24`: install and the cold-launch regression; with
+`-j10`: focused NewPipe launch, then install, JVM, system, full APK integration,
+WebView API/UI/overlay, desktop launcher, session loss, Binder/broker/C++, NDK,
+build-tools and source/graph audits. All 28 fresh APK cases contain 88 actions;
+WebView and desktop add 24 actions. Every captured action has zero structured
+runtime issues, with no fresh failure artifacts. WebView overlay and desktop
+screenshots were inspected. The earlier startup run also passed the framework
+module and system tests; its cold-launch inspection failures were fixed and
+rerun successfully before this gate.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

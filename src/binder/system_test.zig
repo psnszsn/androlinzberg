@@ -176,6 +176,7 @@ fn coldWindow(init: std.process.Init, args: []const []const u8) !void {
     try env.put(session_module.cookie_env, session.cookie);
     try env.put(session_module.system_cookie_env, session.system_cookie);
     try env.put(session_module.prop_area_env, session.prop_area_path);
+    try env.put("AZK_BINDER_SESSION_DIR", session.dir);
     try env.put("AZK_TEST_CLASS", "dev.artzig.window.StockColdLaunchSmoke");
     try env.put("AZK_BINDER_ROLE", "system");
     var client = try std.process.spawn(io, .{
