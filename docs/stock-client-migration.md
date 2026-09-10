@@ -5,12 +5,15 @@ records the 2026-09-09 baseline, remaining source differences, implementation
 batches and acceptance gates. Use it for new work; the milestones below retain
 their historical status and do not describe the current window stack.
 
-As of verified commit `2a76eac9` (2026-09-10), the continuation has zero tracked
+As of verified commit `34691109` (2026-09-10), the continuation is complete within
+its documented client/host boundary, with zero tracked
 stubs and zero modified static client sources. Stock Process.start,
 ActivityThread.main and Process.startWebView now use the hosted exec runtime.
-The complete fresh-cache acceptance matrix passes at that revision; the bundled
-provider's [frame-rate hint defect](webview-frame-rate-hints.md) remains open. This is not a
-claim of preloaded ART fork semantics or complete Android device capabilities.
+The complete fresh-cache acceptance matrix passes at that revision: all 28 APK
+cases and 323 captured UI actions are clean. The independently pinned official
+WebView 140 provider resolves the [frame-rate hint defect](webview-frame-rate-hints.md).
+All three local archives are current. This is not a claim of preloaded ART fork
+semantics, desktop-wide live wallpaper or complete Android device capabilities.
 
 Goal: every class an application process runs on is the verbatim AOSP class,
 except the seam that talks to PipeWire, Wayland, FFmpeg and EGL. That seam

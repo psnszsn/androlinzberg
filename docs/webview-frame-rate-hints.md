@@ -61,3 +61,8 @@ EGL and build audits. The two graphical WebView cases capture 15 additional clea
 actions, including the original developer UI setup. The gate is recorded in
 `/tmp/stock-provider-140-gate-1.log` (exit 0); provider packaging reproducibility
 and isolated probes are retained under `/tmp/stock-provider-update/`.
+
+The final fresh-worktree acceptance at `34691109` also passes with this APK:
+all 28 APK cases and 323 captured UI actions are clean, including the optional
+overlay path with its original native assertions. See the
+[complete acceptance record](stock-client-completion.md#final-acceptance-with-all-three-packages-2026-09-10).

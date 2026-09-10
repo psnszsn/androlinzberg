@@ -1,21 +1,103 @@
 # Post-Wayland stock-client completion
 
-Status: implementation in progress; verified checkpoints are recorded below.
+Status: required implementation and acceptance complete within the documented
+client/host boundary (2026-09-10). Capability limits are recorded below.
 Baseline: `3339fdf8`, inspected on 2026-09-09 after fetching `praz/main`.
 This continues [stock-client-migration.md](stock-client-migration.md) after the
 completed [Wayland task-window cutover](wayland-task-windows.md).
 
-Current baseline: `6751dc2f` plus the provider checkpoint below (2026-09-10).
-The live audit has zero stubs and
+Current verified code: `34691109` (2026-09-10). The live audit has zero stubs and
 zero modified static client sources: 7,066 selected static AOSP sources match
 their reference files, with 62 server adaptations recorded separately. Original
 Process.start and Process.startWebView work through hosted exec services.
-The complete fresh-cache acceptance run passes at `2a76eac9`; a final fresh run
-with the native fixes and independently pinned WebView 140 remains to be done.
+The complete fresh-cache acceptance run passes with the native fixes and
+independently pinned WebView 140: all 28 APK cases and 323 captured UI actions
+have empty structured runtime issue lists.
 The provider upgrade resolves the diagnosed
 [frame-rate hint defect](webview-frame-rate-hints.md) through upstream code.
 
 ## Implementation checkpoints
+
+The earlier checkpoints retain the findings and open items at their recorded
+revisions. The final acceptance below supersedes their historical status.
+
+### Final acceptance with all three packages (2026-09-10)
+
+Verified code revision `3469110994ead9af3648501588efeb696229f0b4` from a new
+detached checkout at `/tmp/stock-client-acceptance-34691109`. Its `.zig-cache`,
+`zig-pkg` and `zig-out` did not exist before the run. Copied and verified the
+framework, ART and WebView archives; normal dependency resolution, compilation
+and the complete acceptance matrix passed without the prior worktree's extracted
+packages or outputs. No shared cache was deleted or overridden.
+
+| Batch | Completed evidence |
+| --- | --- |
+| 0: packages and inventory | Three current, checksum-verified packages; deterministic packaging checks; exact compiled-source response and live jar recorded. |
+| 1: namespace cleanup | No client stubs or owned Android/internal substitutes; original resources, annotations, MessageQueue and Looper; JVM/APK regressions pass. |
+| 2: graphics/native clients | Original image and SurfaceControl APIs, queue/fence/resource-pressure checks, Android EGL imports and GPU readback; real WebView overlay updates, acknowledgements and playing/paused pixels. |
+| 3: service/runtime clients | Pinned client sources; service, storage, permissions, resources, TLS, ICU and loader checks; both original Process start APIs launch real isolated/ordinary processes. |
+| 4: final client stubs | Original ToneGenerator generates real audio through the existing output; original WallpaperService binding/Engine APIs and unavailable-presentation behavior are tested. |
+| 5: service instances | Named/repeated/shared/external bindings, original APK code identity, kernel UID credentials, failed attachment, restart, notification ownership and revocation tests pass. |
+| 6: server stub resolution | All four server stub entries resolved; original query/archive types and explicit hosted package/user authority; snapshot, archive/install and per-user behavior tested. |
+| 7: final acceptance | Fresh full matrix passes in 1,159 seconds; audits, 28 APK cases, 323 clean UI actions and rendering screenshots verified. |
+
+The full target matrix below ran with the pinned NewPipe APK, host Mesa
+EGL/GBM/VAAPI/Vulkan paths and `AZK_TEST_REQUIRE_EGL=1`, through the development
+shell. `AZK_WINDOW_BACKEND` and `AZK_TASK_WINDOWS` were unset to exercise defaults.
+
+```sh
+zig build -j10 install integration-test jvm-test native-test system-test \
+  binder-test binder-broker-test binder-cpp-test ndk-test gui-test \
+  graphics-buffer-test graphics-budget-test renderengine-test \
+  surfaceflinger-service-test surfaceflinger-output-test surfaceflinger-composition-test \
+  input-dispatcher-test input-surfaceflinger-test surface-wayland-test \
+  surface-fence-test surface-pacing-test surface-drag-icon-test \
+  wayland-output-test wayland-unit-test stock-window-boot-test stock-cold-launch-test \
+  stock-task-wayland-test stock-desktop-launcher-test stock-task-desktop-test \
+  stock-task-output-test stock-task-desktop-legacy-test \
+  stock-task-desktop-suspension-test stock-task-tablet-test stock-video-test \
+  stock-ime-test stock-clipboard-test stock-drag-test stock-drag-pressure-test \
+  stock-session-loss-test webview-test webview-ui-test webview-overlay-test \
+  bionic-loader-test build-tools-test cpp-audit graph-audit image-queue-jvm-test \
+  process-app-data-test data-partition-test egl-test framework-module-test
+```
+
+All 28 APK cases have fresh artifacts and 88 clean actions. Other UI groups add
+235 actions: video 4, desktop launcher 16, IME 22, WebView 3, WebView overlay 12,
+drag pressure 116, drag 41 and clipboard 21. Every record has an empty structured
+runtime issue list; there are no failure artifacts. WebView default and overlay
+video frames and the desktop modal screenshot were inspected. Native overlay
+callbacks and playing/paused pixel assertions pass. Both stock Process APIs pass
+real PID/parent, kernel UID/GID, SDK, large Unicode argument, data-visibility and
+wrong-UID checks. The NDK audit finds all 135 required reference A* exports.
+
+The fresh source comparison records 7,066 unchanged selected static inputs,
+zero modified clients, 62 server adaptations and zero missing references.
+Regenerating the stub audit against this exact live jar still reports zero stubs
+and pending budget zero. The jar is
+`.zig-cache/o/91a57290a92fb91b72f629a2e3684b6a/framework-classes.jar`, SHA-256
+`2d2ddf564d607b240a9de5ebd223657b1ee48541859d21f25875dba439f6861a`.
+
+| Local archive | SHA-256 |
+| --- | --- |
+| Framework Android 16 r1 | `186b5431047677671c3eaec0ba89390d9fe4cc450d5910a2dc7fcce227cad7a8` |
+| ART Android 16 r1 | `aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c` |
+| WebView 140.0.7339.15 | `ff78ad3c60e851a5ff3d217d3a2d16074f453f1814a4c4bbd105b54996e9918d` |
+
+The installed WebView APK independently matches its original SHA-256
+`04b161c3e5cd125068e41633d60b027f9c96f46fbd5ae79a0b4e86eb71ea01af`.
+Development evidence is `/tmp/stock-client-fresh-acceptance-2.log` (exit 0),
+its `.command`, `.manifest.json`, `.identity.json` and `.ui.json`, and the fresh
+checkout's `zig-out/test-results/` directory.
+
+Completion refers to the selected stock client and tested hosted contracts.
+Zygote uses exec, without fork-based sharing of preloaded ART state; ordinary
+AMS service records, including Chromium renderers, use the primary launcher.
+The dedicated WebView controller has separate original preload and isolated
+launch coverage. Desktop-wide live-wallpaper presentation remains an unavailable
+policy/protocol capability. The previously documented software-IME, PiP,
+taskless-window, drag-format and HDR limits remain; full Android device/SELinux
+parity is not claimed. No new Wayland, PipeWire or FFmpeg backend was added.
 
 ### Independently pinned WebView 140 (2026-09-10)
 
