@@ -910,6 +910,49 @@ process through stdin and requires successful exit. The focused system test and
 combined JVM/system/APK/WebView/Binder/native gate pass. Both AOSP archives remain
 current: this fix changes build wiring, not their source contents.
 
+### Service binding lifetime and restart (2026-09-10)
+
+Service records now exist before process attachment. Non-auto-create bindings
+remain dormant until a start or auto-create binding needs the service. Every bind
+is retained, including repeated filters and multiple services on one dispatcher;
+unbind and client death release all matching connections. Stock application
+attachment sends service creation, all pending bindings, then queued starts in
+order. An early unbind suppresses delivery and retires an unneeded isolated child
+after its pending attachment and destruction complete. Failed attachment releases
+pending bindings and process authority.
+
+An unshared isolated service record has its own process-generation key, so a
+replacement cannot reuse a predecessor still executing onDestroy. Shared services
+retain their shared process key. Restartable process death preserves bindings,
+clears stale published Binders, and schedules replacement using the pinned
+restart settings/defaults. Start bookkeeping preserves sticky null-intent starts,
+non-sticky termination, redelivery/retry flags, stopSelf IDs and task-removal IDs.
+
+The independently signed APK regressions cover dormant and repeated bindings,
+create/bind/start ordering, early unbind held at a real Binder startup gate,
+deliberate Application.onCreate failure, replacement during blocked onDestroy,
+real process death/reconnect and sticky/non-sticky/redelivery results. The original
+framework task-removal test caught an incorrect start-ID increment during this
+batch; the implementation was corrected to reuse the last ID, as ActiveServices
+does. The existing cross-process service test now checks reconnection and the old
+Binder remaining dead rather than expecting onBindingDied for restartable death.
+
+Validation passed with `-j10`: `install jvm-test system-test integration-test
+webview-test webview-ui-test webview-overlay-test stock-desktop-launcher-test
+stock-session-loss-test binder-test binder-broker-test binder-cpp-test ndk-test
+build-tools-test cpp-audit graph-audit`. All 28 fresh APK cases and 112 captured UI
+actions have zero structured runtime issues; overlay callbacks, playing/paused
+pixels and the paused screenshot passed. Both archives and pins are unchanged.
+
+One earlier overlay run exposed an intermittent pinned-provider issue: Chromium
+133 sent an infinite frame-rate hint, stock SurfaceControl rejected the entire
+transaction, and its completion acknowledgement never arrived. The trace test
+correctly failed even though the screenshot and structured issues were clean.
+The focused and repeated full gates passed without weakening that check. This
+frame-rate-hint failure remains open; it is not claimed fixed by this checkpoint.
+Batch 5 also retains broader shared-process/client-death coverage to complete.
+The stock Process restoration and final fresh-cache acceptance remain open.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

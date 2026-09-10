@@ -9,7 +9,7 @@ internal class HostedProcessStarts<M>(
     private val finished: (Request<M>, Failure?) -> Unit,
 ) {
     data class Key(val packageName: String, val processName: String,
-        val userId: Int = 0, val isolated: Boolean = false)
+        val userId: Int = 0, val isolated: Boolean = false, val isolatedInstance: Long = 0)
     /** The owner supplies captured metadata; the supervisor never mutates it. */
     data class Request<M>(val key: Key, val apkPath: String, val sequence: Long,
         val metadata: M?)

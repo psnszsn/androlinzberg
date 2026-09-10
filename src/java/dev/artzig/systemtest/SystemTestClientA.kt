@@ -1686,13 +1686,14 @@ internal object SystemTestClientA {
         Thread.sleep(300)
         check(disconnected.count == 1L && bindingDied.count == 1L, "unbound connection stays silent")
         val reconnected = CountDownLatch(1)
+        val serviceRestarted = CountDownLatch(1)
         val disconnected2 = CountDownLatch(1)
         val died2 = CountDownLatch(1)
         val connection2 = object : ServiceConnection {
             var again: dev.artzig.binder.IBinderTestService? = null
             override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
                 again = dev.artzig.binder.IBinderTestService.Stub.asInterface(service)
-                reconnected.countDown()
+                if (reconnected.count == 0L) serviceRestarted.countDown() else reconnected.countDown()
             }
             override fun onServiceDisconnected(name: ComponentName?) { disconnected2.countDown() }
             override fun onBindingDied(name: ComponentName?) { died2.countDown() }
@@ -1705,15 +1706,19 @@ internal object SystemTestClientA {
         wifiService.acquireMulticastLock(dyingWifiOwner, "remote-owner", null, context.packageName)
         check(wifi.isMulticastEnabled, "remote Binder owns a multicast lease")
         // Ask the service host to exit: the live connection observes the death.
-        connection2.again?.exit()
+        val oldService = checkNotNull(connection2.again)
+        oldService.exit()
         check(disconnected2.await(30, TimeUnit.SECONDS), "onServiceDisconnected on host death")
-        check(died2.await(30, TimeUnit.SECONDS), "onBindingDied on host death")
+        check(serviceRestarted.await(30, TimeUnit.SECONDS), "auto-create binding reconnects after process death")
+        check(died2.count == 1L, "restartable death is not onBindingDied")
+        check(checkNotNull(connection2.again).add(20, 22) == 42, "replacement service executes calls")
+        context.unbindService(connection2)
         val wifiDeathDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
         while (wifi.isMulticastEnabled && System.nanoTime() < wifiDeathDeadline) Thread.sleep(10)
         check(!wifi.isMulticastEnabled, "remote Binder death clears its multicast lease")
         var dead = false
         try {
-            connection2.again?.add(1, 1)
+            oldService.add(1, 1)
         } catch (e: android.os.DeadObjectException) {
             dead = true
         }

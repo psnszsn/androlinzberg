@@ -98,19 +98,48 @@ class HostedActivityManagerService(private val context: android.content.Context?
 
     private data class ServiceInstance(val userId: Int, val name: ComponentName)
 
-    private inner class ServiceRecord(val name: ComponentName, val instance: ServiceInstance,
-        val entry: android.content.pm.ServiceInfo) {
+    private class ServiceStart(val taskRemoved: Boolean, val id: Int, val intent: Intent?) {
+        var deliveryCount = 0
+        var doneExecutingCount = 0
+        var deliveredTime = 0L
+        fun arguments(): android.app.ServiceStartArgs {
+            var flags = 0
+            if (deliveryCount > 1) flags = flags or android.app.Service.START_FLAG_RETRY
+            if (doneExecutingCount > 0) flags = flags or android.app.Service.START_FLAG_REDELIVERY
+            return android.app.ServiceStartArgs(taskRemoved, id, flags, intent)
+        }
+    }
+
+    private inner class ServiceRecord(val target: BindingTarget) {
+        val name get() = target.name
+        val instance get() = target.instance
+        val entry get() = target.info
         val token: IBinder = Binder()
         var app: ProcessRecord? = null
         var created = false
+        var pending = false
+        val pendingStarts = ArrayList<ServiceStart>()
+        val deliveredStarts = ArrayList<ServiceStart>()
+        var callStart = false
+        var stopIfKilled = false
+        var restartTime = 0L
+        var restartDelay = 0L
+        var nextRestartTime = 0L
+        var crashCount = 0
+        var restarter: Runnable? = null
         var startRequested = false
         var lastStartId = 0
+        fun nextStartId(): Int {
+            lastStartId++
+            if (lastStartId < 1) lastStartId = 1
+            return lastStartId
+        }
         /** ServiceRecord.foregroundId/isForeground: the posted foreground notification, 0 when none. */
         var foregroundId = 0
         var isForeground = false
         var foregroundServiceType = 0
         val bindings = LinkedHashMap<FilterComparison, IntentBindRecord>()
-        val connections = LinkedHashMap<IBinder, ConnectionRecord>()
+        val connections = ArrayList<ConnectionRecord>()
     }
 
     private class IntentBindRecord(val intent: Intent) {
@@ -400,6 +429,10 @@ class HostedActivityManagerService(private val context: android.content.Context?
     private val servicesByComponent = LinkedHashMap<ServiceInstance, ServiceRecord>()
     private val servicesByToken = LinkedHashMap<IBinder, ServiceRecord>()
     private val destroyingServices = LinkedHashMap<IBinder, ServiceRecord>()
+    // ActiveServices.mServiceConnections retains every bind for a dispatcher,
+    // including terminal connections until its explicit unbind/client death.
+    private val serviceConnections = LinkedHashMap<IBinder, MutableList<ConnectionRecord>>()
+    private var nextIsolatedServiceInstance = 1L
     private class PendingWork(val ready: () -> Unit, val failed: () -> Unit = {})
     /** Bind/start operations waiting for a package's process to attach. */
     private val pendingByPackage = LinkedHashMap<String, MutableList<PendingWork>>()
@@ -722,7 +755,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
         for (record in processes.values) {
             val controller = record.windowProcess ?: continue
             record.hasClientActivities = servicesByToken.values.any { service ->
-                service.app === record && service.connections.values.any {
+                service.app === record && service.connections.any {
                     it.client !== record && !it.client.removed && it.client.windowProcess?.hasActivities() == true
                 }
             }
@@ -855,6 +888,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
             buildList {
                 if (!record.key.isolated) addAll(pendingByPackage.remove(record.packageName) ?: emptyList())
                 addAll(pendingByProcess.remove(record.key) ?: emptyList())
+                for (service in servicesByComponent.values.toList()) {
+                    if (service.pending && service.target.process == record.key) bringUpServiceLocked(service)
+                }
             }
         }
         if (record.windowProcess != null) {
@@ -915,7 +951,6 @@ class HostedActivityManagerService(private val context: android.content.Context?
     }
 
     private fun handleProcessDied(record: ProcessRecord) {
-        val notify = ArrayList<Pair<ConnectionRecord, ServiceRecord>>()
         synchronized(lock) {
             if (processes[record.binder] !== record) return
             record.removed = true
@@ -957,21 +992,29 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 if (remaining.isEmpty()) stockTaskLocal.onUidInactive(record.uid)
                 else stockTaskLocal.onUidProcStateChanged(record.uid, remaining.minOf { it.reportedProcState })
             }
-            // Services hosted by the dead process: tell every connection (ActiveServices.killServicesLocked).
+            // ActiveServices.killServicesLocked first releases the dead client's
+            // own bindings, then resets hosted services and retains restartable ones.
+            val owned = serviceConnections.values.flatten().filter { it.client === record }
+            for (connection in owned) removeConnectionLocked(connection)
             val dead = servicesByComponent.values.filter { it.app === record }
             for (service in dead) {
-                for (connection in service.connections.values) notify.add(connection to service)
-                servicesByComponent.remove(service.instance)
-                servicesByToken.remove(service.token)
-                if (service.isForeground && service.foregroundId != 0) {
-                    notificationService?.cancelForegroundServiceNotification(service.name.packageName, service.foregroundId)
+                service.app = null
+                service.created = false
+                service.pending = false
+                for (binding in service.bindings.values) {
+                    binding.binder = null
+                    binding.received = false
+                    binding.requested = false
+                    binding.hasBound = false
+                    binding.doRebind = false
                 }
+                if (record.exitReason == android.app.ApplicationExitInfo.REASON_CRASH) service.crashCount++
+                for (connection in service.connections) {
+                    try { connection.conn.connected(service.name, null, false) } catch (_: RemoteException) { }
+                }
+                if (!record.ready || !scheduleServiceRestartLocked(service)) bringDownServiceLocked(service)?.invoke()
             }
-            // Connections owned by the dead process are dropped.
-            for (service in servicesByComponent.values) {
-                val owned = service.connections.values.filter { it.client === record }
-                for (connection in owned) removeConnectionLocked(connection)
-            }
+            for (service in owned.map { it.record }.distinct()) bringDownIfNeededLocked(service)?.invoke()
             // ContentProviderHelper.cleanupAppInLaunchingProvidersLocked keys
             // waiting providers by their launching process, including siblings.
             providersByAuthority.values.filter { it.app === record }.forEach { it.dead = true }
@@ -986,13 +1029,6 @@ class HostedActivityManagerService(private val context: android.content.Context?
             }
         }
         updateWindowProcessStates()
-        for ((connection, service) in notify) {
-            try {
-                connection.conn.connected(service.name, null, true)
-            } catch (e: RemoteException) {
-                // The client is gone too; its own death handling cleans up.
-            }
-        }
         Log.i(TAG, "process died: " + record.packageName + " pid=" + record.pid)
         processObservers.died(record.pid, record.uid)
         val remainingState = uidProcessState(record.uid)
@@ -1132,6 +1168,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
         if (failure != null) {
             Log.e(TAG, "Process start ${request.sequence} failed: ${key.processName}: $failure")
             pendingByProcess.remove(key)?.forEach { it.failed() }
+            for (service in servicesByComponent.values.toList()) {
+                if (service.pending && service.target.process == key) bringDownServiceLocked(service)?.invoke()
+            }
             if (!key.isolated && key.processName == key.packageName)
                 pendingByPackage.remove(key.packageName)?.forEach { it.failed() }
             for (waiters in providerWaiters.values)
@@ -1182,20 +1221,19 @@ class HostedActivityManagerService(private val context: android.content.Context?
             ownerUid, entry.exported) == android.content.pm.PackageManager.PERMISSION_GRANTED
     }
 
-    private fun serviceForLocked(process: ProcessRecord, entry: android.content.pm.ServiceInfo,
-        name: ComponentName = ComponentName(process.packageName, entry.name),
-        instance: ServiceInstance = ServiceInstance(UserHandle.getUserId(process.uid), name)): ServiceRecord {
-        return servicesByComponent.getOrPut(instance) {
-            ServiceRecord(name, instance, entry).also {
-                it.app = process
-                servicesByToken[it.token] = it
-            }
+    private fun serviceForLocked(target: BindingTarget): ServiceRecord {
+        return servicesByComponent.getOrPut(target.instance) {
+            // AOSP stores an isolated ProcessRecord on the ServiceRecord. A new
+            // unshared service must not reuse its predecessor during onDestroy.
+            val key = if (target.process.isolated && !target.sharedProcess)
+                target.process.copy(isolatedInstance = nextIsolatedServiceInstance++) else target.process
+            ServiceRecord(target.copy(process = key)).also { servicesByToken[it.token] = it }
         }
     }
 
-    private class BindingTarget(val info: android.content.pm.ServiceInfo,
+    private data class BindingTarget(val info: android.content.pm.ServiceInfo,
         val name: ComponentName, val instance: ServiceInstance, val process: HostedProcessStarts.Key,
-        val intent: Intent)
+        val intent: Intent, val sharedProcess: Boolean)
 
     /** Pinned ActiveServices.retrieveServiceLocked and getProcessNameForService:
      * class callbacks, instance identity and process sharing are separate names.
@@ -1227,7 +1265,8 @@ class HostedActivityManagerService(private val context: android.content.Context?
             else -> info.processName + ":" + instance.className
         }
         return BindingTarget(info, name, ServiceInstance(userId, instance),
-            HostedProcessStarts.Key(info.applicationInfo.packageName, processName, userId, isolated), bindingIntent)
+            HostedProcessStarts.Key(info.applicationInfo.packageName, processName, userId, isolated), bindingIntent,
+            shared || privateShared)
     }
 
     private fun bringUpServiceProcessLocked(target: BindingTarget): Boolean {
@@ -1278,48 +1317,153 @@ class HostedActivityManagerService(private val context: android.content.Context?
         callingUid: Int,
         service: Intent,
         callingPackage: String?,
-        allowSpawn: Boolean = true,
     ): PostStart {
         val targetInfo = packageService?.resolveServiceInfo(service) ?: return PostStart(null, null, 0)
         if (!checkAccessLocked(targetInfo, targetInfo.applicationInfo.uid, callingUid))
             return PostStart(null, null, -1)
-        val resolved = resolveServiceLocked(service, callingPackage) ?: run {
-            val info = packageService?.resolveServiceInfo(service)
-            val pkg = info?.packageName
-            val processName = info?.processName ?: pkg
-            if (allowSpawn && pkg != null && processName != null &&
-                (processes.values.any { it.packageName == pkg && it.processName == processName } ||
-                    bringUpProcessLocked(pkg, processName))) {
-                pendingByProcess.getOrPut(HostedProcessStarts.Key(pkg, processName)) { ArrayList() }.add(PendingWork({
-                    // allowSpawn=false on replay: the process has attached, so a
-                    // still-unresolved service is genuinely absent, not un-spawned.
-                    val p = synchronized(lock) { doStartLocked(callingUid, service, callingPackage, false) }
-                    p.schedule?.invoke()
-                }))
-                val name = service.component
-                    ?: packageService?.resolveServiceInfo(service)
-                        ?.let { ComponentName(it.packageName, it.name) }
-                return PostStart(null, name, 2)
-            }
-            Log.w(TAG, "startService: no process hosts " + service)
-            return PostStart(null, null, 0)
-        }
-        val (process, entry) = resolved
-        if (!checkAccessLocked(entry, process.uid, callingUid)) return PostStart(null, null, -1)
-        val record = serviceForLocked(process, entry)
+        val target = bindingTarget(targetInfo, service, 0, null,
+            callingPackage ?: targetInfo.packageName, UserHandle.getUserId(targetInfo.applicationInfo.uid))
+        val record = serviceForLocked(target)
         record.startRequested = true
-        val startId = ++record.lastStartId
-        val create = !record.created
-        record.created = true
+        record.stopIfKilled = false
+        record.pendingStarts.add(ServiceStart(false, record.nextStartId(), Intent(service)))
+        unscheduleServiceRestartLocked(record, callingUid)
+        val accepted = bringUpServiceLocked(record)
         updateWindowProcessStates()
-        return PostStart({
-            if (create) process.thread.scheduleCreateService(record.token, entry, null, process.reportedProcState)
-            process.thread.scheduleServiceArgs(
-                record.token,
-                android.content.pm.ParceledListSlice(listOf(android.app.ServiceStartArgs(false, startId, 0, service))),
-            )
-        }, record.name, 1)
+        return PostStart(null, if (accepted) record.name else null, if (accepted) 1 else 0)
     }
+
+    /** ActiveServices.bringUpServiceLocked / realStartServiceLocked: retain the
+     * record before process attachment and order create, all bindings, then starts.
+     * As in AOSP, send these one-way thread transactions while holding AMS's lock
+     * so concurrent unbind/start calls cannot overtake service creation. */
+    private fun bringUpServiceLocked(record: ServiceRecord): Boolean {
+        if (servicesByToken[record.token] !== record) return false
+        if (record.restarter != null) return true
+        if (!record.created) {
+            if (!serviceNeededLocked(record) && !record.pending) return true
+            val app = processes.values.firstOrNull { it.ready && it.key == record.target.process }
+            if (app == null) {
+                record.pending = true
+                if (processes.values.any { it.key == record.target.process } ||
+                    bringUpServiceProcessLocked(record.target)) return true
+                record.pending = false
+                bringDownServiceLocked(record)?.invoke()
+                return false
+            }
+            record.app = app
+            record.pending = false
+            record.created = true
+            record.restartTime = android.os.SystemClock.uptimeMillis()
+            if (record.startRequested && record.callStart && record.pendingStarts.isEmpty())
+                record.pendingStarts.add(ServiceStart(false, record.nextStartId(), null))
+            try { app.thread.scheduleCreateService(record.token, record.entry, null, app.reportedProcState) }
+            catch (_: RemoteException) { handleProcessDied(app); return true }
+        }
+        for (binding in record.bindings.values) requestServiceBindingLocked(record, binding)
+        val app = record.app ?: return true
+        sendServiceStartsLocked(record, app)
+        bringDownIfNeededLocked(record)?.invoke()
+        return true
+    }
+
+    private fun sendServiceStartsLocked(record: ServiceRecord, app: ProcessRecord) {
+        if (record.pendingStarts.isEmpty()) return
+        val count = record.pendingStarts.size
+        val arguments = ArrayList<android.app.ServiceStartArgs>()
+        for (start in record.pendingStarts) {
+            if (start.intent == null && count > 1) continue
+            start.deliveredTime = android.os.SystemClock.uptimeMillis()
+            start.deliveryCount++
+            record.deliveredStarts.add(start)
+            arguments.add(start.arguments())
+        }
+        record.pendingStarts.clear()
+        try { app.thread.scheduleServiceArgs(record.token, android.content.pm.ParceledListSlice(arguments)) }
+        catch (_: RemoteException) { handleProcessDied(app) }
+    }
+
+    /** ActiveServices.scheduleServiceRestartLocked's start redelivery and backoff.
+     * Original ActivityManagerConstants reads these settings; the host process
+     * graph uses the same keys/defaults without importing Android's zygote/AMS. */
+    private fun scheduleServiceRestartLocked(record: ServiceRecord): Boolean {
+        val now = android.os.SystemClock.uptimeMillis()
+        val constants = android.util.KeyValueListParser(',')
+        val identity = Binder.clearCallingIdentity()
+        try {
+            constants.setString(context?.let { android.provider.Settings.Global.getString(
+                it.contentResolver, android.provider.Settings.Global.ACTIVITY_MANAGER_CONSTANTS) })
+        } catch (_: IllegalArgumentException) { /* Original constants retain defaults for bad input. */ }
+        finally { Binder.restoreCallingIdentity(identity) }
+        var duration = constants.getLong("service_restart_duration", 1_000)
+        var reset = constants.getLong("service_reset_run_duration", 60_000)
+        var canceled = false
+        for (start in record.deliveredStarts.asReversed()) {
+            if (start.intent == null) continue
+            if (start.deliveryCount < 3 && start.doneExecutingCount < 6) {
+                record.pendingStarts.add(0, start)
+                val elapsed = (now - start.deliveredTime) * 2
+                duration = maxOf(duration, elapsed)
+                reset = maxOf(reset, elapsed)
+            } else canceled = true
+        }
+        record.deliveredStarts.clear()
+        if (record.startRequested && (record.stopIfKilled || canceled) && record.pendingStarts.isEmpty())
+            record.startRequested = false
+        if (!serviceNeededLocked(record)) return false
+        val persistent = record.entry.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_PERSISTENT != 0
+        if (!persistent && record.crashCount >= constants.getInt("service_crash_max_retry", 16)) return false
+        record.restartDelay = when {
+            persistent -> 0
+            record.restartDelay == 0L -> duration
+            record.crashCount > 1 -> constants.getLong("service_crash_restart_duration", 30 * 60_000) * (record.crashCount - 1)
+            now > record.restartTime + reset -> duration
+            else -> maxOf(duration, record.restartDelay * constants.getInt("service_restart_duration_factor", 4))
+        }
+        record.nextRestartTime = now + record.restartDelay
+        val spacing = constants.getLong("service_min_restart_time_between", 10_000)
+        if (!persistent) for (other in servicesByComponent.values.filter { it.restarter != null }
+            .sortedBy { it.nextRestartTime }) {
+            if (record.nextRestartTime >= other.nextRestartTime - spacing &&
+                record.nextRestartTime < other.nextRestartTime + spacing)
+                record.nextRestartTime = other.nextRestartTime + spacing
+        }
+        record.restartDelay = record.nextRestartTime - now
+        if (record.isForeground && record.foregroundId != 0)
+            notificationService?.cancelForegroundServiceNotification(record.name.packageName, record.foregroundId)
+        val restart = Runnable {
+            synchronized(lock) {
+                record.restarter = null
+                if (servicesByToken[record.token] === record) {
+                    if (serviceNeededLocked(record)) bringUpServiceLocked(record)
+                    else bringDownServiceLocked(record)?.invoke()
+                }
+            }
+        }
+        record.restarter?.let { importanceHandler.removeCallbacks(it) }
+        record.restarter = restart
+        importanceHandler.postAtTime(restart, record.nextRestartTime)
+        return true
+    }
+
+    private fun unscheduleServiceRestartLocked(record: ServiceRecord, callingUid: Int) {
+        if (record.restarter != null || callingUid != record.entry.applicationInfo.uid) record.restartDelay = 0
+        record.restarter?.let { importanceHandler.removeCallbacks(it) }
+        record.restarter = null
+    }
+
+    private fun requestServiceBindingLocked(record: ServiceRecord, binding: IntentBindRecord) {
+        val app = record.app ?: return
+        if (!record.created || binding.requested || record.connections.none { it.binding === binding }) return
+        if (binding.received && !binding.doRebind) return
+        val rebind = binding.doRebind
+        binding.requested = true
+        binding.hasBound = true
+        binding.doRebind = false
+        try { app.thread.scheduleBindService(record.token, binding.intent, rebind, app.reportedProcState, 0) }
+        catch (_: RemoteException) { handleProcessDied(app) }
+    }
+
 
     /** ActiveServices.cleanUpServices: task removal stops FLAG_STOP_WITH_TASK
      * services and delivers onTaskRemoved to other started services. ActiveServices
@@ -1328,16 +1472,6 @@ class HostedActivityManagerService(private val context: android.content.Context?
     fun cleanUpServices(userId: Int, component: ComponentName, baseIntent: Intent) {
         val intent = Intent(baseIntent)
         val callbacks = synchronized(lock) {
-            for ((key, work) in pendingByProcess) {
-                if (key.packageName != component.packageName || key.userId != userId) continue
-                work.add(PendingWork({
-                    val pending = synchronized(lock) {
-                        cleanUpServicesLocked(userId, component.packageName, intent, key.processName)
-                    }
-                    pending.forEach { it() }
-                    updateWindowProcessStates()
-                }))
-            }
             cleanUpServicesLocked(userId, component.packageName, intent)
         }
         callbacks.forEach { it() }
@@ -1355,13 +1489,11 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 record.startRequested = false
                 bringDownIfNeededLocked(record)?.let(callbacks::add)
             } else {
-                val app = record.app ?: continue
-                val args = android.content.pm.ParceledListSlice(listOf(
-                    android.app.ServiceStartArgs(true, record.lastStartId, 0, Intent(baseIntent))))
-                callbacks.add {
-                    try { app.thread.scheduleServiceArgs(record.token, args) }
-                    catch (_: RemoteException) { /* Dead peers are removed by Binder death. */ }
-                }
+                val start = ServiceStart(true, record.lastStartId, Intent(baseIntent))
+                val app = record.app
+                if (app == null) { record.pendingStarts.add(start); continue }
+                record.pendingStarts.add(start)
+                sendServiceStartsLocked(record, app)
             }
         }
         return callbacks
@@ -1389,7 +1521,11 @@ class HostedActivityManagerService(private val context: android.content.Context?
             val record = servicesByComponent[ServiceInstance(UserHandle.getCallingUserId(),
                 className ?: return false)] ?: return false
             if (record.token != token) return false
-            if (startId >= 0 && startId != record.lastStartId) return false
+            if (startId >= 0) {
+                val delivered = record.deliveredStarts.indexOfFirst { !it.taskRemoved && it.id == startId }
+                if (delivered >= 0) record.deliveredStarts.subList(0, delivered + 1).clear()
+                if (startId != record.lastStartId) return false
+            }
             record.startRequested = false
             schedule = bringDownIfNeededLocked(record)
         }
@@ -1459,7 +1595,6 @@ class HostedActivityManagerService(private val context: android.content.Context?
         instanceName: String?,
         resolvedType: String?,
         userId: Int,
-        allowSpawn: Boolean = true,
     ): PostBind {
         if (instanceName != null && service.component == null) throw IllegalArgumentException(
             "Can't use custom instance name '$instanceName' without expicit component in Intent")
@@ -1475,58 +1610,17 @@ class HostedActivityManagerService(private val context: android.content.Context?
         if (!checkAccessLocked(info, info.applicationInfo.uid, callingUid))
             return PostBind(null, null, false, null, -1)
         val target = bindingTarget(info, service, flags, instanceName, callingPackage, userId)
-        val readyProcess = processes.values.firstOrNull { it.ready && it.key == target.process }
-        val process = readyProcess ?: run {
-            val autoCreate = flags and android.content.Context.BIND_AUTO_CREATE.toLong() != 0L
-            if (allowSpawn && autoCreate && (processes.values.any { it.key == target.process } ||
-                    bringUpServiceProcessLocked(target))) {
-                pendingByProcess.getOrPut(target.process) { ArrayList() }.add(PendingWork({
-                    val p = synchronized(lock) {
-                        doBindLocked(client, callingUid, service, connection, flags, callingPackage,
-                            instanceName, resolvedType, userId, false)
-                    }
-                    if (p.status != -1) applyPostBind(p, connection)
-                }, {
-                    try { connection.connected(target.name, null, true) }
-                    catch (_: RemoteException) { }
-                }))
-                return PostBind(null, null, false, null, 2)
-            }
-            Log.w(TAG, "bindService: no process hosts $service")
-            return PostBind(null, null, false, null, 0)
-        }
-        val entry = target.info
-        val record = serviceForLocked(process, entry, target.name, target.instance)
+        val record = serviceForLocked(target)
         val comparison = FilterComparison(target.intent)
         val binding = record.bindings.getOrPut(comparison) { IntentBindRecord(target.intent) }
-        record.connections[connection.asBinder()] =
-            ConnectionRecord(connection, client, record, binding, flags)
-        val autoCreate = (flags and android.content.Context.BIND_AUTO_CREATE.toLong()) != 0L
-        val create = autoCreate && !record.created
-        if (create) record.created = true
+        val retained = ConnectionRecord(connection, client, record, binding, flags)
+        record.connections.add(retained)
+        serviceConnections.getOrPut(connection.asBinder()) { ArrayList() }.add(retained)
+        if (flags and android.content.Context.BIND_AUTO_CREATE.toLong() != 0L)
+            unscheduleServiceRestartLocked(record, callingUid)
+        if (!bringUpServiceLocked(record)) return PostBind(null, null, false, null, 0)
         updateWindowProcessStates()
-        if (binding.received) {
-            // Already published; deliver the retained binder (null -> onNullBinding)
-            // and, if the service asked to rebind on the previous unbind, schedule it.
-            var schedule: (() -> Unit)? = null
-            if (binding.doRebind && !binding.requested && record.created) {
-                binding.requested = true
-                binding.doRebind = false
-                schedule = { process.thread.scheduleBindService(record.token, binding.intent, true, process.reportedProcState, 0) }
-            }
-            return PostBind(schedule, record.name, true, binding.binder, 1)
-        }
-        if (!binding.requested && record.created) {
-            binding.requested = true
-            val rebind = binding.doRebind
-            binding.doRebind = false
-            return PostBind({
-                if (create) process.thread.scheduleCreateService(record.token, entry, null, process.reportedProcState)
-                process.thread.scheduleBindService(record.token, binding.intent, rebind, process.reportedProcState, 0)
-            }, record.name, false, null, 1)
-        }
-        // Bound but the service is not up yet (no BIND_AUTO_CREATE): waits for creation.
-        return PostBind(null, record.name, false, null, 1)
+        return PostBind(null, record.name, binding.received, binding.binder, 1)
     }
 
     /** ActiveServices.bindServiceLocked flag privileges, before any service/process mutation. */
@@ -1598,15 +1692,11 @@ class HostedActivityManagerService(private val context: android.content.Context?
 
     override fun unbindService(connection: IServiceConnection?): Boolean {
         connection ?: return false
-        var schedule: (() -> Unit)? = null
         synchronized(lock) {
-            val record = servicesByComponent.values.firstOrNull { it.connections.containsKey(connection.asBinder()) }
-                ?: return false
-            val connectionRecord = record.connections[connection.asBinder()] ?: return false
-            removeConnectionLocked(connectionRecord)
-            schedule = bringDownIfNeededLocked(record)
+            val connections = serviceConnections[connection.asBinder()]?.toList() ?: return false
+            for (retained in connections) removeConnectionLocked(retained)
+            for (record in connections.map { it.record }.distinct()) bringDownIfNeededLocked(record)?.invoke()
         }
-        schedule?.invoke()
         updateWindowProcessStates()
         return true
     }
@@ -1614,9 +1704,13 @@ class HostedActivityManagerService(private val context: android.content.Context?
     /** ActiveServices.removeConnectionLocked: last connection on a binding unbinds it. */
     private fun removeConnectionLocked(connection: ConnectionRecord) {
         val record = connection.record
-        record.connections.remove(connection.conn.asBinder())
+        record.connections.remove(connection)
+        serviceConnections[connection.conn.asBinder()]?.let {
+            it.remove(connection)
+            if (it.isEmpty()) serviceConnections.remove(connection.conn.asBinder())
+        }
         val binding = connection.binding
-        val bindingInUse = record.connections.values.any { it.binding === binding }
+        val bindingInUse = record.connections.any { it.binding === binding }
         if (!bindingInUse && binding.hasBound) {
             binding.hasBound = false
             binding.requested = false
@@ -1634,7 +1728,30 @@ class HostedActivityManagerService(private val context: android.content.Context?
 
     /** ActiveServices.bringDownServiceIfNeededLocked. */
     private fun bringDownIfNeededLocked(record: ServiceRecord): (() -> Unit)? {
-        if (record.startRequested || record.connections.isNotEmpty()) return null
+        if (serviceNeededLocked(record) || record.pending) return null
+        return bringDownServiceLocked(record)
+    }
+
+    private fun serviceNeededLocked(record: ServiceRecord): Boolean = record.startRequested ||
+        record.connections.any { it.flags and android.content.Context.BIND_AUTO_CREATE.toLong() != 0L }
+
+    private fun bringDownServiceLocked(record: ServiceRecord): (() -> Unit)? {
+        if (servicesByToken[record.token] !== record) return null
+        record.pending = false
+        unscheduleServiceRestartLocked(record, record.entry.applicationInfo.uid)
+        record.pendingStarts.clear()
+        record.deliveredStarts.clear()
+        for (connection in record.connections) {
+            try { connection.conn.connected(record.name, null, true) } catch (_: RemoteException) { }
+        }
+        for (binding in record.bindings.values) {
+            if (binding.hasBound) {
+                binding.hasBound = false
+                binding.requested = false
+                try { record.app?.thread?.scheduleUnbindService(record.token, binding.intent) }
+                catch (_: RemoteException) { }
+            }
+        }
         servicesByComponent.remove(record.instance)
         servicesByToken.remove(record.token)
         // bringDownServiceLocked: a foreground service's notification goes with it.
@@ -1642,7 +1759,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
             notificationService?.cancelForegroundServiceNotification(record.name.packageName, record.foregroundId)
             record.isForeground = false
         }
-        val app = record.app ?: return null
+        val app = record.app?.takeIf { record.created } ?: return null
         destroyingServices[record.token] = record
         Log.d(TAG, "Stopping service ${record.instance} in ${app.pid}")
         return {
@@ -1663,9 +1780,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
             val binding = record.bindings[comparison] ?: return
             binding.binder = service
             binding.received = true
-            binding.requested = false
-            binding.hasBound = true
-            for (connection in record.connections.values) {
+            // requested/hasBound were set when scheduleBindService was sent.
+            // A publish racing an unbind must not resurrect that binding.
+            for (connection in record.connections) {
                 if (connection.binding === binding) deliveries.add(connection.conn to record.name)
             }
         }
@@ -1681,7 +1798,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
         synchronized(lock) {
             val record = servicesByToken[token ?: return] ?: return
             intent ?: return
-            record.bindings[FilterComparison(intent)]?.doRebind = true
+            val binding = record.bindings[FilterComparison(intent)] ?: return
+            binding.doRebind = true
+            requestServiceBindingLocked(record, binding)
         }
     }
 
@@ -1689,14 +1808,40 @@ class HostedActivityManagerService(private val context: android.content.Context?
         // ActiveServices.serviceDoneExecutingLocked removes the destroying
         // record before OomAdjuster retires an isolated process with no services.
         // Wait for the stock onDestroy acknowledgement, not merely the unbind call.
-        if (type != android.app.ActivityThread.SERVICE_DONE_EXECUTING_STOP) return
         synchronized(lock) {
-            val service = destroyingServices[token] ?: return
+            val service = (if (type == android.app.ActivityThread.SERVICE_DONE_EXECUTING_STOP)
+                destroyingServices[token] else servicesByToken[token]) ?: return
             val app = service.app ?: return
             // A one-way Binder callback has caller PID zero. The service
             // token and authenticated UID identify the completing owner.
             if (app.uid != Binder.getCallingUid())
                 throw SecurityException("Service completion from an unrelated UID")
+            if (type == android.app.ActivityThread.SERVICE_DONE_EXECUTING_START) {
+                service.callStart = true
+                val start = service.deliveredStarts.firstOrNull {
+                    it.id == startId && it.taskRemoved == (res == android.app.Service.START_TASK_REMOVED_COMPLETE)
+                }
+                when (res) {
+                    android.app.Service.START_STICKY_COMPATIBILITY, android.app.Service.START_STICKY -> {
+                        service.deliveredStarts.remove(start)
+                        service.stopIfKilled = false
+                    }
+                    android.app.Service.START_NOT_STICKY -> {
+                        service.deliveredStarts.remove(start)
+                        if (service.lastStartId == startId) service.stopIfKilled = true
+                    }
+                    android.app.Service.START_REDELIVER_INTENT -> if (start != null) {
+                        start.deliveryCount = 0
+                        start.doneExecutingCount++
+                        service.stopIfKilled = true
+                    }
+                    android.app.Service.START_TASK_REMOVED_COMPLETE -> service.deliveredStarts.remove(start)
+                    else -> throw IllegalArgumentException("Unknown service start result: $res")
+                }
+                if (res == android.app.Service.START_STICKY_COMPATIBILITY) service.callStart = false
+                return
+            }
+            if (type != android.app.ActivityThread.SERVICE_DONE_EXECUTING_STOP) return
             destroyingServices.remove(token)
             Log.d(TAG, "Service destroyed ${service.instance} in ${app.pid}: isolated=${app.key.isolated}")
             if (app.key.isolated && servicesByComponent.values.none { it.app === app } &&
@@ -2258,8 +2403,8 @@ class HostedActivityManagerService(private val context: android.content.Context?
         synchronized(lock) {
             servicesByComponent.values.take(maxNum).map { r ->
                 android.app.ActivityManager.RunningServiceInfo().apply {
-                    service = r.name; pid = r.app?.pid ?: 0; uid = r.app?.uid ?: 0
-                    process = r.app?.processName; started = r.startRequested; clientCount = r.connections.size
+                    service = r.name; pid = r.app?.pid ?: 0; uid = r.entry.applicationInfo.uid
+                    process = r.target.process.processName; started = r.startRequested; clientCount = r.connections.size
                 }
             }.toMutableList<android.app.ActivityManager.RunningServiceInfo?>()
         }

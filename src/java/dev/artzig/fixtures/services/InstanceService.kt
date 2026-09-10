@@ -13,14 +13,29 @@ import android.os.Process
  * same name cannot satisfy the service creation/class-loader regression. */
 open class InstanceService : Service() {
     private val events = ArrayList<String>()
+    @Volatile private var lastStartFlags = 0
+    @Volatile private var lastStartId = 0
+    @Volatile private var destroyObserver: IBinder? = null
     private val transport = object : Binder() {
         override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+            if (code == FIRST_CALL_TRANSACTION + 2) {
+                android.os.Handler(mainLooper).postDelayed({ Process.killProcess(Process.myPid()) }, 100)
+                reply!!.writeNoException()
+                return true
+            }
+            if (code == FIRST_CALL_TRANSACTION + 1) {
+                destroyObserver = data.readStrongBinder()
+                reply!!.writeNoException()
+                return true
+            }
             if (code != FIRST_CALL_TRANSACTION) return super.onTransact(code, data, reply, flags)
             val appOps = com.android.internal.app.IAppOpsService.Stub.asInterface(data.readStrongBinder())
             val op = appOps.startOperation(Binder(), android.app.AppOpsManager.OP_CAMERA,
                 Process.myUid(), packageName, null, false, false, "isolated service contract", false, 0, -1)
             val result = Bundle().apply {
                 putInt("appOp", op.opMode)
+                putInt("startFlags", lastStartFlags)
+                putInt("startId", lastStartId)
                 putString("mainStack", android.os.Looper.getMainLooper().thread.stackTrace.joinToString("\n"))
                 putInt("uid", Process.myUid())
                 putInt("kernelUid", android.system.Os.getuid())
@@ -52,7 +67,39 @@ open class InstanceService : Service() {
         return true
     }
     override fun onRebind(intent: Intent) { synchronized(events) { events.add("rebind") } }
-    override fun onDestroy() { synchronized(events) { events.add("destroy") }; super.onDestroy() }
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        lastStartFlags = flags
+        lastStartId = startId
+        synchronized(events) { events.add("start:${intent?.action}:$startId") }
+        return when (intent?.action) {
+            "sticky" -> START_STICKY
+            "redeliver" -> START_REDELIVER_INTENT
+            else -> START_NOT_STICKY
+        }
+    }
+    override fun onDestroy() {
+        synchronized(events) { events.add("destroy") }
+        destroyObserver?.let { observer ->
+            val data = Parcel.obtain(); val reply = Parcel.obtain()
+            try { observer.transact(IBinder.FIRST_CALL_TRANSACTION, data, reply, 0); reply.readException() }
+            finally { data.recycle(); reply.recycle() }
+        }
+        super.onDestroy()
+    }
 }
 class OtherService : InstanceService()
 class ExternalService : InstanceService()
+
+/** The gate is a real allowed Binder service, so the driver can hold onCreate
+ * before finishAttachApplication without timers or framework test hooks. */
+class FixtureApplication : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        if (getProcessName().endsWith(":attach_failure")) error("deliberate service attachment failure")
+        if (!getProcessName().endsWith(":early_cancel")) return
+        val gate = checkNotNull(android.os.ServiceManager.waitForService("dev.artzig.test.a.service-startup"))
+        val data = Parcel.obtain(); val reply = Parcel.obtain()
+        try { gate.transact(IBinder.FIRST_CALL_TRANSACTION, data, reply, 0); reply.readException() }
+        finally { data.recycle(); reply.recycle() }
+    }
+}
