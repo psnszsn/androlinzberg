@@ -75,6 +75,8 @@ pub fn main(init: std.process.Init) !void {
     try watchdog.concurrent(io, watch, .{ io, &expired });
     defer watchdog.cancel(io);
 
+    try signalOutput(io, &env, launcher);
+
     var fixture_install = try spawnPeer(io, &env, launcher, "dev.artzig.systemtest.ServiceFixtureInstallSmoke", "android");
     if (!expectExit(io, &fixture_install, "service fixture install")) return error.SystemTestFailed;
 
@@ -201,6 +203,47 @@ fn spawnPeer(
         .stdout = .inherit,
         .stderr = .inherit,
     });
+}
+
+// Exercise the production ART/platform DSO combination. A marker in a named
+// Java thread and SignalCatcher's final acknowledgement prove the whole dump
+// path, rather than only resolving PaletteWriteCrashThreadStacks.
+fn signalOutput(io: Io, env: *std.process.Environ.Map, launcher: []const u8) !void {
+    try env.put("AZK_TEST_CLASS", "dev.artzig.systemtest.RuntimeSignalSystemSmoke");
+    try env.put("AZK_BINDER_PACKAGE", "dev.artzig.test.a");
+    var child = try std.process.spawn(io, .{
+        .argv = &.{ launcher, "--javatest" },
+        .environ_map = env,
+        .stdin = .pipe,
+        .stdout = .inherit,
+        .stderr = .pipe,
+    });
+    defer child.kill(io);
+    peer_pids[0].store(child.id.?, .release);
+    defer peer_pids[0].store(0, .release);
+    var buffer: [64 * 1024]u8 = undefined;
+    var reader = child.stderr.?.readerStreaming(io, &buffer);
+    var threads = false;
+    var named = false;
+    var completed = false;
+    while (true) {
+        const line = reader.interface.takeDelimiterInclusive('\n') catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => return err,
+        };
+        try Io.File.stderr().writeStreamingAll(io, line);
+        threads = threads or std.mem.indexOf(u8, line, "DALVIK THREADS (") != null;
+        named = named or std.mem.indexOf(u8, line, "stock-signal-regression") != null;
+        if (!completed and std.mem.indexOf(u8, line, "Wrote stack traces to tombstoned") != null) {
+            if (!threads or !named) return error.IncompleteSignalStackDump;
+            completed = true;
+            try child.stdin.?.writeStreamingAll(io, &.{1});
+            child.stdin.?.close(io);
+            child.stdin = null;
+        }
+    }
+    if (!expectExit(io, &child, "SIGQUIT stack output") or !completed)
+        return error.SignalStackOutputFailed;
 }
 
 fn expectExit(io: Io, child: *std.process.Child, name: []const u8) bool {

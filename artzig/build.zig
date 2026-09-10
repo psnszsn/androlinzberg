@@ -53,6 +53,18 @@ pub fn build(b: *std.Build) void {
     // genrules ported to Zig (operator_out, mterp, asm_defines, vendored aconfig): no Soong out/ needed
     art_opts.generated = @import("build/genrules.zig").build(b, .{ .vendor = aosp, .art_opts = art_opts });
     const art_gen = @import("build/gen/art.zig").build(b, art_opts);
+    // PaletteWriteCrashThreadStacks consumes LogMessage's std::ostream. Keep
+    // original logging with this DSO's static libc++ locale/facet identities,
+    // as the platform island and RenderEngine do. The stock version script
+    // keeps these implementation symbols private to libartpalette.
+    art_gen.libartpalette.root_module.addIncludePath(aosp.path(b, "system/libbase/include"));
+    art_gen.libartpalette.root_module.addIncludePath(aosp.path(b, "system/logging/liblog/include"));
+    art_gen.libartpalette.root_module.addIncludePath(aosp.path(b, "external/fmtlib/include"));
+    art_gen.libartpalette.root_module.addCSourceFiles(.{
+        .root = aosp,
+        .files = &.{ "system/libbase/logging.cpp", "system/libbase/threads.cpp" },
+        .flags = &.{ "-std=gnu++20", "-D_GNU_SOURCE", "-D_FILE_OFFSET_BITS=64", "-D_LARGEFILE64_SOURCE" },
+    });
     const host_paths = b.addLibrary(.{ .name = "artzig-host-paths", .linkage = .static, .root_module = b.createModule(.{
         .root_source_file = b.path("src/host_paths.zig"),
         .target = target,

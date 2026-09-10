@@ -896,6 +896,20 @@ are unchanged and current because this checkpoint changes only owned host code.
 Linux user namespaces provide kernel identities, not full Android filesystem,
 network or SELinux confinement.
 
+### ART stack-output boundary (2026-09-10)
+
+SIGQUIT exposed a native crash while PaletteWriteCrashThreadStacks wrote its
+std::ostream across DSOs with separate static libc++ runtimes. libartpalette now
+compiles the pinned libbase logging and thread sources locally, following the
+existing RenderEngine boundary. Its stock version script keeps implementation
+symbols private; no ART, Java or Palette source was changed.
+
+The system regression sends real SIGQUIT, requires a complete ART dump containing
+a named Java thread and SignalCatcher's final acknowledgement, then releases the
+process through stdin and requires successful exit. The focused system test and
+combined JVM/system/APK/WebView/Binder/native gate pass. Both AOSP archives remain
+current: this fix changes build wiring, not their source contents.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

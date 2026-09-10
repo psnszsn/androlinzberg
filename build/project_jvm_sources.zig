@@ -233,6 +233,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/HostedDesktopIntents.kt",
     "src/java/dev/artzig/JvmExitSmoke.kt",
     "src/java/dev/artzig/systemtest/RuntimeCrashSystemSmoke.kt",
+    "src/java/dev/artzig/systemtest/RuntimeSignalSystemSmoke.kt",
     "src/java/dev/artzig/KotlinClassLoaderSmoke.kt",
     "src/java/dev/artzig/NdkBridgeTest.kt",
     "src/java/dev/artzig/NetProbe.kt",
