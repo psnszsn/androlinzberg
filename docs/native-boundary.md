@@ -283,24 +283,22 @@ zig build -j10 cpp-audit
 - StrictJarFile reuses the pinned ZIP JNI and Java signature verifier. V1
   signature verification, certificate tracking, and signature-stripping checks
   therefore retain the stock behavior without a repository-owned verifier.
-- Stock HardwareBuffer and GraphicBuffer use the GBM-backed AHardwareBuffer
-  ownership in `platform_abi.zig`. `HardwareBufferParcel.kt` writes the pinned
-  Flattenable/GraphicBuffer envelope with a host mapper payload; Binder carries
-  the DMA-BUF descriptor and recipients import it into GBM. Imported allocations
-  preserve IDs and survive sender closure. Canvas locking uses pinned ACanvas
-  functions with the actual mapping stride and full-buffer origin. Patch 29
-  selects RGBA explicitly for Android RGBA buffers on the BGRA-native Skia
-  build. This layer supports the existing single-plane, single-layer formats;
-  it does not implement an Android gralloc service or SurfaceFlinger.
+- Stock HardwareBuffer and GraphicBuffer use the pinned libui ownership and
+  serialization code with `graphics/HostGralloc.cpp` supplying GBM allocation
+  and import. Binder transports the native-handle DMA-BUF descriptors; imported
+  allocations preserve IDs and survive sender closure. Canvas locking uses
+  pinned ACanvas functions with the actual mapping stride and full-buffer origin.
+  Patch 29 selects RGBA explicitly for Android RGBA buffers on the BGRA-native
+  Skia build. The mapper supports the documented host formats and feeds both
+  stock BufferQueue and the hosted SurfaceFlinger service.
 - OverlayProperties reuses pinned JNI with generated GUI AIDL C++ parcelables.
   Its virtual-display defaults and parcel encoding are stock. Patch 30 marshals
   LUT sampling keys through a real JNI int array and propagates the pinned
   Java constructor's validation exception. The native Parcel interface carries
   nullable parcelable arrays and packed enum arrays without an alternate codec.
-- PixelCopy's pinned HWUI JNI reports SourceInvalid when the host's Java Surface
-  adapter has no ANativeWindow (patch 31). This prevents a null dereference in
-  RenderProxy and preserves stock Java callback handling; compositor readback
-  remains unavailable.
+- PixelCopy's HWUI JNI retains a null-native-window guard (patch 31), reporting
+  SourceInvalid through the original callback. Valid stock Surfaces provide
+  real ANativeWindow instances and use the existing HWUI readback path.
 - `src/binder/runtime_init_jni.zig` connects stock RuntimeInit to the launcher's
   Kotlin entry dispatcher. Common initialization precedes target class
   initialization. Supervised APKs enter a Linux user namespace with their granted
@@ -438,8 +436,8 @@ Zig behind a small C interface. Update this document and the build audit when
 you add an application-owned C++ file.
 
 The pinned GL/Ganesh RenderEngine is built by `build/renderengine.zig` and checked
-by `renderengine-test`. It shares libui, libgui, Skia and the Zig allocator;
-SurfaceFlinger service integration remains separate work. Its texture import
+by `renderengine-test`. It shares libui, libgui, Skia and the Zig allocator with
+the hosted SurfaceFlinger service. Its texture import
 uses the pinned Skia AHardwareBuffer utilities with a small DMA-BUF adaptation.
 `src/platform/graphics_egl.zig` owns explicit display references for HWUI,
 GLConsumer and RenderEngine, because Mesa does not reference-count repeated
@@ -453,7 +451,8 @@ and LayerFE preparation code. `surfaceflinger-frontend-test` reuses the 60 AOSP
 hierarchy/lifecycle tests; `surfaceflinger-composition-test` checks GPU pixels
 from isolated mirrored subtrees through LayerFE and RenderEngine. Both use the
 existing Binder test runner with a real authenticated session. The latter is a
-standalone composition fixture, with no SurfaceFlinger service or scheduler yet.
+standalone composition fixture; the service, scheduler and output integration
+have separate live coverage described below.
 
 `perfetto-test` checks real in-process tracing sessions and decoded packets.
 `host-composer-test` checks validation, GPU target/fence ownership, unsupported

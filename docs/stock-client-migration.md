@@ -5,6 +5,13 @@ records the 2026-09-09 baseline, remaining source differences, implementation
 batches and acceptance gates. Use it for new work; the milestones below retain
 their historical status and do not describe the current window stack.
 
+As of verified commit `2a76eac9` (2026-09-10), the continuation has zero tracked
+stubs and zero modified static client sources. Stock Process.start,
+ActivityThread.main and Process.startWebView now use the hosted exec runtime.
+Fresh-cache final acceptance and the bundled provider's
+[frame-rate hint defect](webview-frame-rate-hints.md) remain open. This is not a
+claim of preloaded ART fork semantics or complete Android device capabilities.
+
 Goal: every class an application process runs on is the verbatim AOSP class,
 except the seam that talks to PipeWire, Wayland, FFmpeg and EGL. That seam
 stays exactly as it is until everything else is stock. The hosted services in

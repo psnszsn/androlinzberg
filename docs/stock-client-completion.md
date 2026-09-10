@@ -5,6 +5,14 @@ Baseline: `3339fdf8`, inspected on 2026-09-09 after fetching `praz/main`.
 This continues [stock-client-migration.md](stock-client-migration.md) after the
 completed [Wayland task-window cutover](wayland-task-windows.md).
 
+Current verified code: `2a76eac9` (2026-09-10). The live audit has zero stubs and
+zero modified static client sources: 7,066 selected static AOSP sources match
+their reference files, with 62 server adaptations recorded separately. Original
+Process.start and Process.startWebView work through hosted exec services.
+The complete fresh-cache acceptance run remains in progress. The bundled
+provider also has a diagnosed [frame-rate hint defect](webview-frame-rate-hints.md)
+that must not be reported as repaired by the framework migration.
+
 ## Implementation checkpoints
 
 ### Package layout and baseline (2026-09-09)
