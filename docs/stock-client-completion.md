@@ -718,6 +718,41 @@ removed their owned session directories. The paused-overlay and desktop modal
 screenshots were inspected. Process, isolated/external service semantics, the
 two remaining server stubs and final fresh-cache acceptance remain open.
 
+### Persistent package-settings diagnostics (2026-09-10)
+
+Removed the PackageManagerService stub and all compiled references to it.
+Eleven server consumers now use the exact pinned constant values or an explicit
+settings-diagnostic operation. Original package-signature and legacy-permission
+parsers retain their control flow. Errors now reach the Android log, generated
+binary-event writer and append-only `system/uiderrors.txt` journal, including
+AOSP's timestamp, 0774 permissions and IOException handling. The former stub
+only wrote to the Android log. The host still has no logd reader; this checkpoint
+does not claim binary-event readback coverage.
+
+The new regression passes malformed XML through the original permission parser:
+unknown elements and missing names are journaled, a valid sibling permission is
+retained, repeated parsing appends without truncation, and file permissions match
+AOSP. The live jar contains no PackageManagerService class or references. The
+exact source inventory has 7,062 unchanged AOSP sources, 61 modified server
+sources, one modified client (Process) and no missing originals. PackageArchiver
+is the only pending stub; there are zero survivors and zero client stubs.
+
+The framework archive was rebuilt and pinned to
+`N-V-__8AAL_z805naCjy9okMtRAN5gl8XFF2KOAh2ddcm7IP`, SHA-256
+`b939d82c992320c20e885d7d4556f0dc9c034e3e23ea7a23b433cf3a84cf7be6`.
+Packaging restored the isolated checkout. ART is unchanged and both local
+archives are current.
+
+Validation passed: focused framework-module tests and source/build audits
+(-j24), followed by `install jvm-test system-test integration-test webview-test
+webview-ui-test webview-overlay-test stock-desktop-launcher-test
+stock-session-loss-test binder-test binder-broker-test build-tools-test cpp-audit
+graph-audit` (-j10). All 28 fresh APK cases contain 88 actions; including WebView
+and the desktop launcher, 112 captured actions have zero structured runtime
+issues and no fresh failure artifacts. All five session-loss cases passed and
+removed their owned directories. The archiver, Process, isolated/external
+service semantics and final fresh-cache acceptance remain open.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned
