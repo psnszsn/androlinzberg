@@ -1,5 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.artzig.fixtures.services">
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application android:name=".FixtureApplication" android:label="Service instance contracts" android:hasCode="true">
         <service android:name=".InstanceService" android:exported="true" android:isolatedProcess="true"
             android:allowSharedIsolatedProcess="true" android:process=":worker" />
@@ -8,5 +11,10 @@
         <service android:name=".ExternalService" android:exported="true" android:isolatedProcess="true"
             android:externalService="true" android:allowSharedIsolatedProcess="true" android:process=":external" />
         <service android:name=".ClientService" android:exported="true" android:process=":client" />
+        <service android:name=".ForegroundService" android:exported="true" android:process=":foreground"
+            android:foregroundServiceType="mediaPlayback" />
+        <service android:name=".OtherForegroundService" android:exported="true" android:process=":foreground"
+            android:foregroundServiceType="mediaPlayback" />
+        <service android:name=".NotificationObserverService" android:exported="true" android:process=":foreground" />
     </application>
 </manifest>

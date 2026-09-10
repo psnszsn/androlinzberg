@@ -143,3 +143,52 @@ class ClientService : Service() {
     }
     override fun onDestroy() { unbindService(connection); super.onDestroy() }
 }
+
+/** A sticky service only enters foreground on its explicit first start. The
+ * restart must repost the retained notification without another app request. */
+open class ForegroundService : Service() {
+    override fun onBind(intent: Intent): IBinder = object : Binder() {
+        override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+            if (code == FIRST_CALL_TRANSACTION) {
+                val stopFlags = data.readInt()
+                android.os.Handler(mainLooper).post { stopForeground(stopFlags) }
+            } else if (code == FIRST_CALL_TRANSACTION + 2) {
+                android.os.Handler(mainLooper).postDelayed({ Process.killProcess(Process.myPid()) }, 100)
+            } else return super.onTransact(code, data, reply, flags)
+            reply!!.writeNoException()
+            return true
+        }
+    }
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == "foreground") {
+            getSystemService(android.app.NotificationManager::class.java).createNotificationChannel(
+                android.app.NotificationChannel("service-restart", "Service restart", android.app.NotificationManager.IMPORTANCE_LOW))
+            startForeground(77, android.app.Notification.Builder(this, "service-restart")
+                .setSmallIcon(android.R.drawable.ic_media_play).setContentTitle("Service restart").build())
+        }
+        return START_STICKY
+    }
+    override fun onDestroy() {
+        sendBroadcast(Intent("dev.artzig.fixtures.FOREGROUND_DESTROYED").putExtra("service", javaClass.name))
+        super.onDestroy()
+    }
+}
+class OtherForegroundService : ForegroundService()
+
+/** A real same-package client can observe notifications after a service is
+ * destroyed, without bypassing NMS's package-ownership checks. */
+class NotificationObserverService : Service() {
+    override fun onBind(intent: Intent): IBinder = object : Binder() {
+        override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+            val manager = getSystemService(android.app.NotificationManager::class.java)
+            if (code == FIRST_CALL_TRANSACTION) {
+                reply!!.writeNoException()
+                reply.writeTypedArray(manager.activeNotifications, 0)
+            } else if (code == FIRST_CALL_TRANSACTION + 1) {
+                manager.cancelAll()
+                reply!!.writeNoException()
+            } else return super.onTransact(code, data, reply, flags)
+            return true
+        }
+    }
+}

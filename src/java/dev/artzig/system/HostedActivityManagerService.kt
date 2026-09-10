@@ -136,6 +136,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
         }
         /** ServiceRecord.foregroundId/isForeground: the posted foreground notification, 0 when none. */
         var foregroundId = 0
+        var foregroundNotification: android.app.Notification? = null
         var isForeground = false
         var foregroundServiceType = 0
         val bindings = LinkedHashMap<FilterComparison, IntentBindRecord>()
@@ -1322,7 +1323,6 @@ class HostedActivityManagerService(private val context: android.content.Context?
             val targetUser = serviceUser(service, callingUid, userId, callingPackage)
             doStartLocked(callingUid, service, callingPackage, resolvedType, targetUser)
         }
-        if (post.status == -1) throw SecurityException("startService denied")
         post.schedule?.invoke()
         return post.name
     }
@@ -1337,8 +1337,13 @@ class HostedActivityManagerService(private val context: android.content.Context?
         val targetInfo = packageService?.resolveService(service, resolvedType, 0L, userId)?.serviceInfo
             ?: return PostStart(null, null, 0)
         validateBindModes(targetInfo, service, 0, null, callingPackage ?: targetInfo.packageName, callingUid)
-        if (!checkAccessLocked(targetInfo, targetInfo.applicationInfo.uid, callingUid))
-            return PostStart(null, null, -1)
+        if (!checkAccessLocked(targetInfo, targetInfo.applicationInfo.uid, callingUid)) {
+            // ActiveServices.startServiceLocked returns the denial marker over
+            // Binder; original ContextImpl turns it into SecurityException.
+            val permission = if (!targetInfo.exported) "not exported from uid ${targetInfo.applicationInfo.uid}"
+                else targetInfo.permission ?: "private to package"
+            return PostStart(null, ComponentName("!", permission), -1)
+        }
         val target = bindingTarget(targetInfo, service, 0, null,
             callingPackage ?: targetInfo.packageName, userId)
         val record = serviceForLocked(target)
@@ -1377,6 +1382,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 record.pendingStarts.add(ServiceStart(false, record.nextStartId(), null))
             try { app.thread.scheduleCreateService(record.token, record.entry, null, app.reportedProcState) }
             catch (_: RemoteException) { handleProcessDied(app); return true }
+            // realStartServiceLocked reposts the retained foreground notification
+            // after create, with the new process PID, before bindings and starts.
+            postForegroundNotificationLocked(record)
         }
         for (binding in record.bindings.values) requestServiceBindingLocked(record, binding)
         val app = record.app ?: return true
@@ -1452,8 +1460,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 record.nextRestartTime = other.nextRestartTime + spacing
         }
         record.restartDelay = record.nextRestartTime - now
-        if (record.isForeground && record.foregroundId != 0)
-            notificationService?.cancelForegroundServiceNotification(record.name.packageName, record.foregroundId)
+        // scheduleServiceRestartLocked uses the same retained/shared notification
+        // policy as normal teardown, including a previous stopForeground(0).
+        cancelForegroundNotificationLocked(record)
         val restart = Runnable {
             synchronized(lock) {
                 record.restarter = null
@@ -1547,8 +1556,10 @@ class HostedActivityManagerService(private val context: android.content.Context?
             validateServiceCallerLocked(caller, service, "stopping")
             val targetUser = serviceUser(service, uid, userId, null)
             val info = packageService?.resolveService(service, resolvedType, 0L, targetUser)?.serviceInfo ?: return 0
-            // retrieveServiceLocked checks the existing record as well as a cold
-            // resolution; another UID must not stop a private running service.
+            // retrieveServiceLocked validates flags and access even when no
+            // service instance is running. External services require a bind.
+            validateBindModes(info, service, 0, null, info.packageName, uid)
+            if (!checkAccessLocked(info, info.applicationInfo.uid, uid)) return -1
             val component = ComponentName(info.applicationInfo.packageName, info.name)
             val record = servicesByComponent[ServiceInstance(targetUser, component)] ?: return 0
             if (!checkAccessLocked(record.entry, record.entry.applicationInfo.uid, uid)) return -1
@@ -1799,11 +1810,12 @@ class HostedActivityManagerService(private val context: android.content.Context?
         }
         servicesByComponent.remove(record.instance)
         servicesByToken.remove(record.token)
-        // bringDownServiceLocked: a foreground service's notification goes with it.
-        if (record.isForeground && record.foregroundId != 0) {
-            notificationService?.cancelForegroundServiceNotification(record.name.packageName, record.foregroundId)
-            record.isForeground = false
-        }
+        // bringDownServiceLocked also cancels a notification retained by
+        // stopForeground(0); DETACH has already cleared that association.
+        cancelForegroundNotificationLocked(record)
+        record.isForeground = false
+        record.foregroundId = 0
+        record.foregroundNotification = null
         val app = record.app?.takeIf { record.created } ?: return null
         destroyingServices[record.token] = record
         Log.d(TAG, "Stopping service ${record.instance} in ${app.pid}")
@@ -2449,7 +2461,16 @@ class HostedActivityManagerService(private val context: android.content.Context?
             servicesByComponent.values.take(maxNum).map { r ->
                 android.app.ActivityManager.RunningServiceInfo().apply {
                     service = r.name; pid = r.app?.pid ?: 0; uid = r.entry.applicationInfo.uid
-                    process = r.target.process.processName; started = r.startRequested; clientCount = r.connections.size
+                    process = r.target.process.processName; started = r.startRequested
+                    // ActiveServices.makeRunningServiceInfoLocked counts distinct
+                    // connection Binder keys, not repeated binds on one dispatcher.
+                    clientCount = r.connections.map { it.conn.asBinder() }.distinct().size
+                    foreground = r.isForeground; crashCount = r.crashCount
+                    if (r.isForeground) this.flags = this.flags or android.app.ActivityManager.RunningServiceInfo.FLAG_FOREGROUND
+                    if (r.startRequested) this.flags = this.flags or android.app.ActivityManager.RunningServiceInfo.FLAG_STARTED
+                    if (r.app?.pid == android.os.Process.myPid()) this.flags = this.flags or android.app.ActivityManager.RunningServiceInfo.FLAG_SYSTEM_PROCESS
+                    if (r.app != null && r.entry.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_PERSISTENT != 0)
+                        this.flags = this.flags or android.app.ActivityManager.RunningServiceInfo.FLAG_PERSISTENT_PROCESS
                 }
             }.toMutableList<android.app.ActivityManager.RunningServiceInfo?>()
         }
@@ -2548,35 +2569,57 @@ class HostedActivityManagerService(private val context: android.content.Context?
         targets.forEach { android.os.Process.killProcess(it) }
     }
     override fun updateServiceGroup(connection: IServiceConnection?, group: Int, importance: Int) {}
-    /**
-     * ActiveServices.setServiceForegroundInnerLocked: startForeground posts the
-     * notification with FLAG_FOREGROUND_SERVICE (ServiceRecord.postNotification);
-     * stopForeground removes it (STOP_FOREGROUND_REMOVE) or detaches it.
-     */
+    /** ServiceRecord.postNotification and ActiveServices cancellation policy.
+     * The host retains the Android notification across process death, while NMS
+     * owns its posted copy and its foreground flag. */
+    private fun postForegroundNotificationLocked(record: ServiceRecord) {
+        val app = record.app ?: return
+        val notification = record.foregroundNotification ?: return
+        if (record.isForeground) notificationService?.postForegroundServiceNotification(
+            record.name.packageName, record.entry.applicationInfo.uid, app.pid, record.foregroundId, notification)
+    }
+
+    private fun hasOtherForegroundNotificationLocked(record: ServiceRecord): Boolean =
+        servicesByToken.values.any { other -> other !== record && other.isForeground &&
+            other.instance.userId == record.instance.userId && other.name.packageName == record.name.packageName &&
+            other.foregroundId == record.foregroundId }
+
+    private fun cancelForegroundNotificationLocked(record: ServiceRecord) {
+        if (record.foregroundNotification == null || hasOtherForegroundNotificationLocked(record)) return
+        notificationService?.cancelForegroundServiceNotification(record.name.packageName, record.foregroundId)
+    }
+
+    /** ActiveServices.setServiceForegroundInnerLocked: retain, remove and detach
+     * have different notification lifetimes, including the pre-L legacy case. */
     override fun setServiceForeground(className: ComponentName?, token: IBinder?, id: Int, notification: android.app.Notification?, flags: Int, foregroundServiceType: Int): Unit = synchronized(lock) {
         val record = servicesByToken[token ?: return@synchronized] ?: return@synchronized
-        val pkg = record.name.packageName
-        val uid = record.app?.uid ?: Binder.getCallingUid()
         if (id != 0) {
             requireNotNull(notification) { "null notification" }
-            if (record.foregroundId != id && record.foregroundId != 0) {
-                notificationService?.cancelForegroundServiceNotification(pkg, record.foregroundId)
-            }
+            if (record.foregroundId != id) cancelForegroundNotificationLocked(record)
             notification.flags = notification.flags or android.app.Notification.FLAG_FOREGROUND_SERVICE
             record.foregroundId = id
+            record.foregroundNotification = notification
             record.isForeground = true
             record.foregroundServiceType = if (foregroundServiceType == android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST)
                 record.entry.foregroundServiceType else foregroundServiceType
-            notificationService?.postForegroundServiceNotification(pkg, uid, Binder.getCallingPid(), id, notification)
+            postForegroundNotificationLocked(record)
         } else if (record.isForeground) {
+            if (flags and android.app.Service.STOP_FOREGROUND_REMOVE != 0) {
+                cancelForegroundNotificationLocked(record)
+                record.foregroundId = 0
+                record.foregroundNotification = null
+            } else if (record.entry.applicationInfo.targetSdkVersion >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                // ActiveServices.dropFgsNotificationStateLocked keeps the flag
+                // while another foreground service owns the same notification.
+                if (!hasOtherForegroundNotificationLocked(record))
+                    notificationService?.detachForegroundServiceNotification(record.name.packageName, record.foregroundId)
+                if (flags and android.app.Service.STOP_FOREGROUND_DETACH != 0) {
+                    record.foregroundId = 0
+                    record.foregroundNotification = null
+                }
+            }
             record.isForeground = false
             record.foregroundServiceType = 0
-            if (flags and android.app.Service.STOP_FOREGROUND_REMOVE != 0) {
-                notificationService?.cancelForegroundServiceNotification(pkg, record.foregroundId)
-            } else if (flags and android.app.Service.STOP_FOREGROUND_DETACH != 0) {
-                notificationService?.detachForegroundServiceNotification(pkg, record.foregroundId)
-            }
-            record.foregroundId = 0
         }
         updateWindowProcessStates()
     }

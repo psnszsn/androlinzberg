@@ -69,7 +69,9 @@ internal object ServiceInstancesSystemSmoke {
                 setOf("$PACKAGE.InstanceService", "$PACKAGE.OtherService"))
             val records = manager.getServices(100, 0).filter { it.process == "${context.packageName}:ishared:$instance" }
             check(records.map { it.pid }.distinct().size == 1)
-            check(records.single { it.service.className.endsWith(".InstanceService") }.clientCount == 3)
+            // AOSP reports two dispatcher Binder keys, while all three bind
+            // records (including both active intent filters) remain retained.
+            check(records.single { it.service.className.endsWith(".InstanceService") }.clientCount == 2)
             awaitCondition("Both retained filters should reach onBind") {
                 snapshot(first.second).getStringArrayList("events") == arrayListOf("create", "bind", "bind")
             }
@@ -188,6 +190,130 @@ internal object ServiceInstancesSystemSmoke {
         }
     }
 
+    private fun foregroundNotifications(context: Context) {
+        val manager = android.app.ActivityManager.getService()
+        val observerConnection = Connection()
+        check(context.bindService(Intent().setClassName(PACKAGE, "$PACKAGE.NotificationObserverService"),
+            observerConnection, Context.BIND_AUTO_CREATE))
+        var observer = checkNotNull(observerConnection.connected.poll(30, TimeUnit.SECONDS)).second
+        fun notifications(): List<android.service.notification.StatusBarNotification> {
+            val data = Parcel.obtain(); val reply = Parcel.obtain()
+            try {
+                check(observer.transact(IBinder.FIRST_CALL_TRANSACTION, data, reply, 0)); reply.readException()
+                return checkNotNull(reply.createTypedArray(android.service.notification.StatusBarNotification.CREATOR)).filter { it.id == 77 }
+            } finally { data.recycle(); reply.recycle() }
+        }
+        fun stopForeground(service: IBinder, flags: Int) {
+            val data = Parcel.obtain(); val reply = Parcel.obtain()
+            try {
+                data.writeInt(flags)
+                check(service.transact(IBinder.FIRST_CALL_TRANSACTION, data, reply, 0)); reply.readException()
+            } finally { data.recycle(); reply.recycle() }
+        }
+        fun clearNotifications() {
+            val data = Parcel.obtain(); val reply = Parcel.obtain()
+            try { check(observer.transact(IBinder.FIRST_CALL_TRANSACTION + 1, data, reply, 0)); reply.readException() }
+            finally { data.recycle(); reply.recycle() }
+        }
+        val foregroundFlag = android.app.Notification.FLAG_FOREGROUND_SERVICE
+        val intent = Intent("foreground").setClassName(PACKAGE, "$PACKAGE.ForegroundService")
+        try {
+            for (mode in intArrayOf(0, android.app.Service.STOP_FOREGROUND_DETACH, android.app.Service.STOP_FOREGROUND_REMOVE)) {
+                val destroyed = java.util.concurrent.CountDownLatch(1)
+                val receiver = object : android.content.BroadcastReceiver() {
+                    override fun onReceive(context: Context, intent: Intent) {
+                        if (intent.getStringExtra("service") == "$PACKAGE.ForegroundService") destroyed.countDown()
+                    }
+                }
+                context.registerReceiver(receiver, android.content.IntentFilter("dev.artzig.fixtures.FOREGROUND_DESTROYED"), Context.RECEIVER_EXPORTED)
+                val connection = Connection()
+                var bound = false
+                try {
+                    check(context.bindService(intent, connection, 0)); bound = true
+                    check(context.startService(intent) == intent.component)
+                    var service = checkNotNull(connection.connected.poll(30, TimeUnit.SECONDS)).second
+                    awaitCondition("startForeground must post a notification") { notifications().size == 1 }
+                    val first = notifications().single()
+                    val running = manager.getServices(100, 0).single { it.service == intent.component }
+                    val firstPid = running.pid
+                    check(running.foreground && running.started && running.clientCount == 1)
+                    check(running.flags and android.app.ActivityManager.RunningServiceInfo.FLAG_FOREGROUND != 0)
+                    check(running.flags and android.app.ActivityManager.RunningServiceInfo.FLAG_STARTED != 0)
+                    check(first.uid == context.packageManager.getApplicationInfo(PACKAGE, 0).uid)
+                    check(first.initialPid == firstPid && first.notification.flags and foregroundFlag != 0)
+                    if (mode == 0) {
+                        kill(service)
+                        check(connection.disconnected.await(10, TimeUnit.SECONDS))
+                        service = checkNotNull(connection.connected.poll(30, TimeUnit.SECONDS)).second
+                        observer = checkNotNull(observerConnection.connected.poll(30, TimeUnit.SECONDS)).second
+                        awaitCondition("Sticky restart must repost the notification with the replacement PID") {
+                            val current = notifications().singleOrNull()
+                            current != null && current.initialPid != firstPid &&
+                                current.initialPid == manager.getServices(100, 0).single { it.service == intent.component }.pid
+                        }
+                        check(notifications().single().notification.flags and foregroundFlag != 0)
+                    }
+                    stopForeground(service, mode)
+                    awaitCondition("stopForeground must apply its notification flags") {
+                        val current = notifications().singleOrNull()
+                        if (mode == android.app.Service.STOP_FOREGROUND_REMOVE) current == null
+                        else current != null && current.notification.flags and foregroundFlag == 0
+                    }
+                    check(context.stopService(intent))
+                    context.unbindService(connection); bound = false
+                    check(destroyed.await(15, TimeUnit.SECONDS)) { "Foreground service onDestroy was not observed" }
+                    if (mode == android.app.Service.STOP_FOREGROUND_DETACH) {
+                        check(notifications().size == 1) { "Detached notification must survive service destruction" }
+                        clearNotifications()
+                    }
+                    awaitCondition("Associated notification must leave with its destroyed service") { notifications().isEmpty() }
+                } finally {
+                    context.stopService(intent)
+                    if (bound) context.unbindService(connection)
+                    context.unregisterReceiver(receiver)
+                }
+            }
+
+            // Two service records may intentionally share one notification ID.
+            // Removing one record's foreground state must preserve the other's.
+            val otherIntent = Intent("foreground").setClassName(PACKAGE, "$PACKAGE.OtherForegroundService")
+            val firstConnection = Connection(); val secondConnection = Connection()
+            check(context.bindService(intent, firstConnection, 0))
+            check(context.bindService(otherIntent, secondConnection, 0))
+            try {
+                check(context.startService(intent) != null && context.startService(otherIntent) != null)
+                val first = checkNotNull(firstConnection.connected.poll(30, TimeUnit.SECONDS)).second
+                val second = checkNotNull(secondConnection.connected.poll(30, TimeUnit.SECONDS)).second
+                awaitCondition("Both services must reach foreground before sharing is tested") {
+                    manager.getServices(100, 0).filter { it.service == intent.component || it.service == otherIntent.component }
+                        .let { it.size == 2 && it.all { record -> record.foreground } }
+                }
+                stopForeground(first, android.app.Service.STOP_FOREGROUND_REMOVE)
+                awaitCondition("First service must leave foreground") {
+                    !manager.getServices(100, 0).single { it.service == intent.component }.foreground
+                }
+                check(notifications().single().notification.flags and foregroundFlag != 0)
+                check(context.startService(intent) != null)
+                awaitCondition("First service must reenter foreground") {
+                    manager.getServices(100, 0).single { it.service == intent.component }.foreground
+                }
+                stopForeground(first, 0)
+                awaitCondition("First service must drop its foreground state while retaining the notification") {
+                    !manager.getServices(100, 0).single { it.service == intent.component }.foreground
+                }
+                check(notifications().single().notification.flags and foregroundFlag != 0) {
+                    "Another foreground owner must retain the shared notification flag"
+                }
+                stopForeground(second, android.app.Service.STOP_FOREGROUND_REMOVE)
+                awaitCondition("Last foreground owner must remove its notification") { notifications().isEmpty() }
+            } finally {
+                context.stopService(intent); context.stopService(otherIntent)
+                context.unbindService(firstConnection); context.unbindService(secondConnection)
+            }
+        } finally { context.unbindService(observerConnection) }
+        println("Foreground services: real restart PID, retained/detached/removed notifications and shared IDs passed")
+    }
+
     private fun clientDeathReleasesChild(context: Context) {
         val connection = Connection()
         check(context.bindService(Intent().setClassName(PACKAGE, "$PACKAGE.ClientService"),
@@ -259,6 +385,7 @@ internal object ServiceInstancesSystemSmoke {
         pendingCancellationAndFailure(context)
         replacementDuringDestroy(context)
         restartAndStartResults(context)
+        foregroundNotifications(context)
         clientDeathReleasesChild(context)
         val connections = ArrayList<Connection>()
         val deaths = ArrayList<Pair<IBinder, java.util.concurrent.CountDownLatch>>()
@@ -325,6 +452,9 @@ internal object ServiceInstancesSystemSmoke {
             check(runCatching {
                 context.startService(Intent().setClassName(PACKAGE, "$PACKAGE.ExternalService"))
             }.exceptionOrNull() is SecurityException)
+            check(runCatching {
+                context.stopService(Intent().setClassName(PACKAGE, "$PACKAGE.ExternalService"))
+            }.exceptionOrNull() is SecurityException)
             val external = bind("ExternalService", "external",
                 Context.BIND_AUTO_CREATE.toLong() or Context.BIND_EXTERNAL_SERVICE_LONG)
             check(external.first == ComponentName(context.packageName, "$PACKAGE.ExternalService:external"))
@@ -349,5 +479,7 @@ internal object ServiceFixtureInstallSmoke {
             "dev.artzig.fixtures.services")
         android.app.ActivityThread.getPackageManager().grantRuntimePermission(
             "dev.artzig.fixtures.services", android.Manifest.permission.CAMERA, 0)
+        android.app.ActivityThread.getPackageManager().grantRuntimePermission(
+            "dev.artzig.fixtures.services", android.Manifest.permission.POST_NOTIFICATIONS, 0)
     }
 }

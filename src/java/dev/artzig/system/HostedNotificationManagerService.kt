@@ -78,14 +78,18 @@ class HostedNotificationManagerService : android.app.INotificationManager.Stub()
         checkCallerIsSystemOrSameApp(pkg)
         requireNotNull(pkg) { "pkg must not be null" }
         requireNotNull(notification) { "Notification must not be null" }
-        val uid = uidOf(pkg)
-        val pid = Binder.getCallingPid()
+        enqueueNotification(pkg, opPkg, tag, id, notification, UserHandle.USER_SYSTEM,
+            uidOf(pkg), Binder.getCallingPid())
+    }
+
+    private fun enqueueNotification(pkg: String, opPkg: String?, tag: String?, id: Int,
+        notification: Notification, userId: Int, uid: Int, pid: Int) {
         // NMS.fixNotification: a pre-O app posts on the default channel.
         var channelId = notification.channelId
         if (channelId == null && targetSdkOf(pkg) < android.os.Build.VERSION_CODES.O) {
             channelId = NotificationChannel.DEFAULT_CHANNEL_ID
         }
-        val sbn = StatusBarNotification(pkg, opPkg, id, tag, uid, pid, notification, UserHandle(UserHandle.USER_SYSTEM), null, System.currentTimeMillis())
+        val sbn = StatusBarNotification(pkg, opPkg, id, tag, uid, pid, notification, UserHandle(userId), null, System.currentTimeMillis())
         synchronized(lock) {
             val prefs = prefsLocked(pkg)
             val channel = channelId?.let { prefs.channels[it] }
@@ -148,7 +152,9 @@ class HostedNotificationManagerService : android.app.INotificationManager.Stub()
     internal fun postForegroundServiceNotification(pkg: String, uid: Int, pid: Int, id: Int, notification: Notification) {
         val ident = Binder.clearCallingIdentity()
         try {
-            enqueueNotificationWithTag(pkg, pkg, null, id, notification, UserHandle.USER_SYSTEM)
+            // NotificationManagerInternal receives the service owner's UID and
+            // live process PID explicitly; Binder's caller here is system_server.
+            enqueueNotification(pkg, pkg, null, id, notification.clone(), UserHandle.getUserId(uid), uid, pid)
         } finally {
             Binder.restoreCallingIdentity(ident)
         }

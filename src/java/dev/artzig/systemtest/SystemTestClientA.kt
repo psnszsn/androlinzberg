@@ -467,6 +467,12 @@ internal object SystemTestClientA {
             check(!bindingManager.unbindService(coldConnection), "denied cold binding is not retained")
             check(runCatching { context.startService(cold) }.exceptionOrNull() is SecurityException,
                 "cold $serviceClass start denied before spawning")
+            val denial = bindingManager.startService(callerThread, cold, null, false, context.packageName, null, 0)
+            val info = context.packageManager.getServiceInfo(checkNotNull(cold.component), 0)
+            val reason = if (!info.exported) "not exported from uid ${info.applicationInfo.uid}" else info.permission
+            check(denial == ComponentName("!", checkNotNull(reason)), "Binder startService preserves the AOSP permission marker")
+            check(bindingManager.stopService(callerThread, cold, null, 0) == -1,
+                "cold $serviceClass stop preserves permission denial")
         }
         check(bindingManager.runningAppProcesses.none { it.processName in listOf(
             "dev.artzig.test.b:private_cold", "dev.artzig.test.b:permission_cold") },

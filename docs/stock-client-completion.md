@@ -1055,6 +1055,44 @@ methods, foreground-service restart notification handling and final acceptance
 remain open. The stub inventory remains zero.
 
 
+
+### Foreground-service restart and notification ownership (2026-09-10)
+
+The hosted service record now retains its foreground notification and reposts
+it after process recreation with the replacement PID. NotificationManager
+receives the service owner's UID and actual process PID, and owns a separate
+notification copy. Stop-foreground behavior follows the pinned SDK-dependent
+rules: removal deletes the notification, detachment leaves it after service
+destruction, and ordinary foreground exit retains its association until teardown.
+Cancellation and flag removal preserve a notification shared by another active
+foreground service, including restart scheduling.
+
+RunningServiceInfo now reports foreground state, the corresponding state flags
+and crash count. Its client count follows the original connection-Binder map:
+repeated binds through one dispatcher retain separate binding records but count
+as one client. Start-service permission failures return the original Binder
+ComponentName marker; stock ContextImpl still raises SecurityException. Cold
+stop requests validate permissions and external-service flags before looking
+for a running instance.
+
+The independently signed APK fixtures verify actual crash/restart and the new
+notification PID, remove/detach/retain lifetimes, onDestroy delivery and shared
+notification IDs. A same-package observer checks NotificationManager through
+its real permission boundary. Existing binding, isolated UID, external identity,
+failed-attach, repeated-binding and client-death regressions remain passing.
+The complete `-j10 install jvm-test system-test integration-test webview-test
+webview-ui-test webview-overlay-test stock-desktop-launcher-test
+stock-session-loss-test binder-test binder-broker-test binder-cpp-test ndk-test
+build-tools-test cpp-audit graph-audit` gate passes: 28 fresh APK cases, 88 APK
+actions and 24 WebView/desktop actions, all with empty structured issue lists
+and no fresh failure artifacts.
+
+Both local AOSP archives and their pins remain unchanged and current from the
+native-identity checkpoint. Process.start/startWebView implementation and final
+acceptance remain open. The earlier intermittent Chromium frame-rate-hint issue
+is not claimed fixed by this gate.
+
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned
