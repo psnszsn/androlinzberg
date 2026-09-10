@@ -5595,6 +5595,8 @@ F aosp packages/modules/StatsD/service/java/com/android/server/stats/StatsCompan
 F aosp packages/modules/StatsD/service/java/com/android/server/stats/StatsManagerService.java
 F aosp frameworks/base/services/core/java/com/android/server/pm/Installer.java
 F aosp frameworks/base/services/core/java/com/android/server/pm/PackageSetting.java
+F aosp frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java
+F aosp frameworks/base/services/core/java/com/android/server/pm/AppStateHelper.java
 F aosp frameworks/base/services/core/java/com/android/server/pm/SettingBase.java
 F aosp frameworks/base/services/core/java/com/android/server/pm/permission/LegacyPermissionDataProvider.java
 F aosp frameworks/base/services/core/java/com/android/server/EventLogTags.logtags

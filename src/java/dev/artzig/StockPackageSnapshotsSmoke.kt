@@ -76,6 +76,7 @@ internal object StockPackageSnapshotsSmoke {
         val internal = Class.forName("android.content.pm.HostedPackageManagerInternal")
             .getConstructor(dev.artzig.system.HostedPackageManagerService::class.java)
             .newInstance(packages) as PackageManagerInternal
+        check(internal.packageArchiver === packages.getPackageArchiver())
         state.userState.setStopped(false)
         state.transientState.setUsesLibraryFiles(listOf("before"))
         val snapshot = internal.snapshot() as HostedPackageSnapshot
@@ -88,6 +89,11 @@ internal object StockPackageSnapshotsSmoke {
         val flags = (PackageManager.MATCH_DIRECT_BOOT_AWARE or PackageManager.MATCH_DIRECT_BOOT_UNAWARE).toLong()
         fun matches(view: HostedPackageSnapshot) = view.componentResolver.queryServices(view, intent, null, flags, 0)
         check(matches(snapshot).orEmpty().isNotEmpty())
+        check(snapshot.getApplicationInfo(packageName, 0L, 0)?.uid == manifestUid)
+        check(snapshot.getApplicationInfo(packageName, 0L, 123) == null)
+        check(snapshot.getPackageUid(packageName, 0L, 123) == -1)
+        check(snapshot.queryHomeActivities(packageName, 123).isEmpty())
+        check(!snapshot.hasUnarchiveReceiver("missing.fixture", 0))
 
         state.appId = beforeUid + 1
         (state.pkg as com.android.internal.pm.parsing.pkg.PackageImpl).setUid(manifestUid + 1)
@@ -102,6 +108,22 @@ internal object StockPackageSnapshotsSmoke {
         check(checkNotNull(after.getPackage(packageName)).uid == manifestUid + 1)
         check(checkNotNull(before.pkg).isSignedWithPlatformKey == signed)
         check(checkNotNull(afterState.pkg).isSignedWithPlatformKey != signed)
+        val platformFlag = android.content.pm.ApplicationInfo.PRIVATE_FLAG_SIGNED_WITH_PLATFORM_KEY
+        check((before.privateFlags and platformFlag != 0) == signed)
+        check((afterState.privateFlags and platformFlag != 0) != signed)
+        check(snapshot.getApplicationInfo(packageName, 0L, 0)?.uid == manifestUid)
+        check(after.getApplicationInfo(packageName, 0L, 0) == null)
+        check(afterState.getUserStateOrDefault(0).dataExists())
+        check(after.getApplicationInfo(packageName, PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong(), 0)?.uid == manifestUid + 1)
+        val ceInode = state.userState.ceDataInode
+        val deInode = state.userState.deDataInode
+        state.userState.setCeDataInode(0)
+        state.userState.setDeDataInode(0)
+        check(packages.snapshotPackages().getApplicationInfo(packageName,
+            PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong(), 0) == null)
+        check(after.getApplicationInfo(packageName, PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong(), 0)?.uid == manifestUid + 1)
+        state.userState.setCeDataInode(ceInode)
+        state.userState.setDeDataInode(deInode)
         check(before.getUserStateOrDefault(0).isInstalled)
         check(before.getStateForUser(UserHandle.SYSTEM).isInstalled)
         check(before.userStates.get(0).isInstalled)
@@ -110,5 +132,36 @@ internal object StockPackageSnapshotsSmoke {
         check(afterState.transientState.usesLibraryFiles == listOf("after"))
         check(matches(snapshot).orEmpty().isNotEmpty())
         check(matches(after).orEmpty().isEmpty())
+        verifyCrossUserSnapshots(packages, state)
+    }
+
+    private fun verifyCrossUserSnapshots(packages: dev.artzig.system.HostedPackageManagerService,
+        state: dev.artzig.system.HostedPackageState) {
+        val uid = state.appId
+        check(uid >= Process.FIRST_APPLICATION_UID)
+        val full = android.Manifest.permission.INTERACT_ACROSS_USERS_FULL
+        val partial = android.Manifest.permission.INTERACT_ACROSS_USERS
+        state.grantedPermissions.remove(full)
+        state.grantedPermissions.remove(partial)
+        val denied = packages.snapshotPackages()
+        denied.enforceCrossUserPermission(uid, 0, true, true, "same user")
+        check(runCatching { denied.enforceCrossUserPermission(uid, 10, false, true, "query") }
+            .exceptionOrNull() is SecurityException)
+        state.grantedPermissions.add(partial)
+        val limited = packages.snapshotPackages()
+        limited.enforceCrossUserPermission(uid, 10, false, true, "query")
+        check(runCatching { limited.enforceCrossUserPermission(uid, 10, true, true, "archive") }
+            .exceptionOrNull() is SecurityException)
+        state.grantedPermissions.add(full)
+        packages.snapshotPackages().enforceCrossUserPermission(uid, 10, true, true, "archive")
+        check(runCatching { denied.enforceCrossUserPermission(uid, 10, false, true, "query") }
+            .exceptionOrNull() is SecurityException)
+        val restricted = HostedPackageSnapshot(emptyMap(), denied.componentResolver,
+            setOf(0), emptyMap(), setOf(0))
+        check(runCatching { restricted.enforceCrossUserPermission(Process.SHELL_UID, 0, true, true, "archive") }
+            .exceptionOrNull() is SecurityException)
+        restricted.enforceCrossUserPermission(Process.SYSTEM_UID, 10, true, true, "archive")
+        check(runCatching { restricted.enforceCrossUserPermission(Process.SYSTEM_UID, -1, true, true, "archive") }
+            .exceptionOrNull() is IllegalArgumentException)
     }
 }

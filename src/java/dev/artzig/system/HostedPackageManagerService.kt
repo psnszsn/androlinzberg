@@ -49,7 +49,7 @@ import java.io.File
  * Anything not overridden here fails loudly through
  * [PackageManagerServiceBase].
  */
-class HostedPackageManagerService(userManager: UserManagerInternal, desktopWindows: Boolean = false,
+class HostedPackageManagerService(private val userManager: UserManagerInternal, desktopWindows: Boolean = false,
     private val reservePackageUid: ((String) -> Int)? = null,
     private val packageBroadcast: (Intent, Int) -> Unit = { intent, user ->
         (android.app.ActivityThread.currentActivityThread().systemContext as android.content.Context)
@@ -307,6 +307,15 @@ class HostedPackageManagerService(userManager: UserManagerInternal, desktopWindo
             pkg.usesPermissions.mapTo(LinkedHashSet()) { it.name },
             LinkedHashSet(),
         )
+        // AppDataHelper records installd's CE/DE inode results in PackageSetting.
+        // The host already created these directories; retain their real inode
+        // identities so stock MATCH_UNINSTALLED/MATCH_ARCHIVED queries can tell
+        // retained application data from a complete removal.
+        val parsed = pkg as PackageImpl
+        val ceDirectory = File(parsed.baseAppDataCredentialProtectedDirForSystemUser, pkg.packageName)
+        val deDirectory = File(parsed.baseAppDataDeviceProtectedDirForSystemUser, pkg.packageName)
+        if (ceDirectory.isDirectory) state.userState.setCeDataInode(android.system.Os.stat(ceDirectory.path).st_ino)
+        if (deDirectory.isDirectory) state.userState.setDeDataInode(android.system.Os.stat(deDirectory.path).st_ino)
         for (permission in pkg.permissions) {
             val existing = permissionDefs[permission.name]
             if (existing != null && existing.owner.packageName != pkg.packageName) {
@@ -452,7 +461,39 @@ class HostedPackageManagerService(userManager: UserManagerInternal, desktopWindo
     /** ComputerEngine's package and resolver snapshots must describe the same
      * registry revision. Never return the live service as PackageDataSnapshot. */
     fun snapshotPackages(): HostedPackageSnapshot = synchronized(lock) {
-        HostedPackageSnapshot(packages.mapValues { (_, state) -> state.snapshot() }, componentResolver.snapshot())
+        val users = userManager.userIds.toSet()
+        HostedPackageSnapshot(packages.mapValues { (_, state) -> state.snapshot() }, componentResolver.snapshot(),
+            users, packages.values.filter { it.appId >= 0 }.associate { it.appId to it.grantedPermissions.toSet() },
+            users.filterTo(HashSet()) { userManager.hasUserRestriction(android.os.UserManager.DISALLOW_DEBUGGING_FEATURES, it) })
+    }
+
+    private var archiver: com.android.server.pm.PackageArchiver? = null
+
+    fun getPackageArchiver(): com.android.server.pm.PackageArchiver = synchronized(lock) {
+        archiver ?: com.android.server.pm.PackageArchiver(
+            android.app.ActivityThread.currentActivityThread().systemContext, this,
+            com.android.server.FgThread.getHandler(), userManager).also { archiver = it }
+    }
+
+    /** PackageArchiver.storeArchiveState: validate and mutate one registry revision
+     * atomically; full PMS Settings and its separate lock do not exist here. */
+    @Throws(PackageManager.NameNotFoundException::class)
+    fun storePackageArchiveState(packageName: String, archiveState: com.android.server.pm.pkg.ArchiveState,
+        userId: Int) = synchronized(lock) {
+        val state = packages[packageName]
+        if (!userManager.exists(userId) || state == null || !state.getUserStateOrDefault(userId).isInstalled) {
+            throw PackageManager.NameNotFoundException("Package $packageName not found.")
+        }
+        state.setArchiveState(userId, archiveState)
+        Unit
+    }
+
+    /** PackageArchiver.clearArchiveState removes metadata before deleting icons. */
+    fun clearPackageArchiveState(packageName: String, userId: Int): Boolean = synchronized(lock) {
+        val state = packages[packageName] ?: return false
+        if (!userManager.exists(userId) || state.getUserStateOrDefault(userId).archiveState == null) return false
+        state.setArchiveState(userId, null)
+        true
     }
 
     /** PackageManagerLocal uses the same stock state-copy rules as Computer. */

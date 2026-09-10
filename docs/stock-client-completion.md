@@ -753,6 +753,54 @@ issues and no fresh failure artifacts. All five session-loss cases passed and
 removed their owned directories. The archiver, Process, isolated/external
 service semantics and final fresh-cache acceptance remain open.
 
+### Original package archiver and zero stubs (2026-09-10)
+
+Compiled the pinned PackageArchiver and AppStateHelper and deleted the final
+stub. ActivityStarter again calls the original archiver API. Its server patch
+connects captured package/resolver state, the shared user authority and atomic
+archive-state mutations to the hosted package manager. Original archive
+eligibility, caller checks, icon decoding and archived-activity matching remain
+in AOSP. Full installer-session creation and uninstall transactions require an
+absent installer backend and report a structured unsupported operation; this
+checkpoint does not claim working archive/install transactions.
+
+Package snapshots now capture cross-user grants and shell restrictions. Package
+flags come from original PackageInfoUtils, and installation records the actual
+CE/DE directory inodes, as AOSP's AppDataHelper does after installd creates data.
+Stock MATCH_UNINSTALLED_PACKAGES queries consequently distinguish retained data
+from complete removal. Archive changes and later permission/flag/data changes
+do not alter already-captured snapshots.
+
+The regression covers archived versus installed state, component and user
+matching, caller rejection, original PNG icon decoding, atomic store/clear,
+retained versus absent data, cross-user permission levels and shell restrictions.
+The installer-boundary diagnostic is tested explicitly; a real installer
+transaction remains unavailable. The original full closure reaches 1,006
+sources, 64 AIDL inputs and 210 blockers in the absent PMS/AMS graph.
+
+The regenerated audit has zero stubs, zero pending entries and zero survivors.
+The exact live source inventory contains 7,063 unchanged AOSP sources, 62
+modified server sources, one modified client (Process), and no missing originals.
+The live jar contains the original archiver with its documented server seams,
+and no Computer, PackageManagerService or UserManagerService replacement classes.
+
+The framework archive was rebuilt and pinned to
+`N-V-__8AAFca9U75Ixb8tuJrLVJxQqtV0wnE7dxWKuRfDcKM`, SHA-256
+`8c4d52c890fea2c97d56e93bae8a8e78878ca5473fae8f8c25728a0125e06ceb`.
+Packaging restored the isolated checkout. ART remains SHA-256
+`01eb26296581af49b0d951f939596b10a81da0fba8ff676ef3e14b1b9a8ec443`;
+both local archives are current.
+
+Validation passed: focused framework-module tests and source/build audits
+(-j24), then `install jvm-test system-test integration-test webview-test
+webview-ui-test webview-overlay-test stock-desktop-launcher-test
+stock-session-loss-test binder-test binder-broker-test build-tools-test cpp-audit
+graph-audit` (-j10). All 28 fresh APK cases contain 88 actions; including WebView
+and the desktop launcher, 112 actions have zero structured runtime issues and
+no fresh failure artifacts. Process, isolated/external service semantics and
+final fresh-cache acceptance remain open; an empty stub inventory is not plan
+completion.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

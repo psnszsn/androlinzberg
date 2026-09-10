@@ -326,6 +326,8 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/security/advancedprotection/AdvancedProtectionManager.java");
     try c.file("$MU/java/com/android/modules/utils/HandlerExecutor.java");
     try c.file("$FB/services/core/java/com/android/server/pm/PackageSetting.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageArchiver.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/AppStateHelper.java");
     try c.file("$FB/services/core/java/com/android/server/pm/SettingBase.java");
     try c.file("$FB/services/core/java/com/android/server/pm/permission/LegacyPermissionDataProvider.java");
     try c.file("$FB/services/core/java/com/android/server/uri/UriMetricsHelper.java");

@@ -82,6 +82,7 @@ framework_patches = tuple(
         (71, "-AssetsProvider-resolve-platform-archive-below-client.patch"),
         (72, "-package-resolvers-use-captured-state-and-user-authority.patch"),
         (73, "-package-settings-diagnostics-without-pms-stub.patch"),
+        (74, "-stock-package-archiver-with-hosted-authority.patch"),
     )
 )
 

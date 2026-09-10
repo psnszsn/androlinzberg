@@ -193,23 +193,56 @@ object StockOptionalWmServicesSmoke {
         }
         val component = ComponentName(packageName, "$packageName.ArchivedActivity")
         val intent = Intent(Intent.ACTION_MAIN).setComponent(component)
-        fun result(value: Intent = intent, userId: Int = 0) =
-            HostedPackageArchiving.resolveMissingActivity(packages.snapshotPackages(), value, userId)
+        val archiver = packages.getPackageArchiver()
+        check(archiver === packages.getPackageArchiver())
+        check(packages.getPackageStateInternal("android")!!.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM != 0)
+        check(!archiver.isAppArchivable("android", android.os.UserHandle.SYSTEM))
+        fun archived(value: Intent = intent, userId: Int = 0) =
+            archiver.isIntentResolvedToArchivedApp(value, userId)
         check(!PackageArchiver.isArchived(state.userState))
-        check(result() == ActivityManager.START_CLASS_NOT_FOUND)
+        check(!archived())
         state.userState.setInstalled(false)
         check(!PackageArchiver.isArchived(state.userState))
         state.userState.setArchiveState(ArchiveState(
             listOf(ArchiveState.ArchiveActivityInfo("Fixture", component, null, null)), "Fixture installer", 1L))
         check(PackageArchiver.isArchived(state.userState))
-        check(result(Intent(Intent.ACTION_MAIN)) == ActivityManager.START_CLASS_NOT_FOUND)
-        check(result(Intent(intent).setClassName(packageName, "$packageName.OtherActivity")) == ActivityManager.START_CLASS_NOT_FOUND)
-        check(result(Intent(intent).setPackage("missing.fixture")) == ActivityManager.START_CLASS_NOT_FOUND)
-        check(result(userId = 10) == ActivityManager.START_CLASS_NOT_FOUND)
-        unsupported("PackageArchiver", "requestUnarchiveOnActivityStart") { result() }
+        check(archived())
+        check(!archived(Intent(Intent.ACTION_MAIN)))
+        check(!archived(Intent(intent).setClassName(packageName, "$packageName.OtherActivity")))
+        check(!archived(Intent(intent).setPackage("missing.fixture")))
+        check(!archived(userId = 10))
+        check(archiver.requestUnarchiveOnActivityStart(intent, null, 0, uid) == ActivityManager.START_CLASS_NOT_FOUND)
+        check(archiver.requestUnarchiveOnActivityStart(intent, "missing.fixture", 0, uid) == ActivityManager.START_PERMISSION_DENIED)
+        unsupported("PackageArchiver", "requestUnarchive") { HostedPackageArchiving.requireBackend("requestUnarchive") }
+        val iconFile = java.io.File.createTempFile("archive-icon-", ".png",
+            java.io.File(checkNotNull(System.getenv("AZK_BINDER_SESSION_DIR"))))
+        val icon = android.graphics.Bitmap.createBitmap(32, 32, android.graphics.Bitmap.Config.ARGB_8888)
+        try {
+            icon.eraseColor(android.graphics.Color.GREEN)
+            iconFile.outputStream().use { check(icon.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) }
+            state.userState.setArchiveState(ArchiveState(listOf(ArchiveState.ArchiveActivityInfo(
+                "Fixture", component, iconFile.toPath(), null)), "Fixture installer", 1L))
+            val decoded = checkNotNull(archiver.getArchivedAppIcon(packageName, android.os.UserHandle.SYSTEM, packageName))
+            check(decoded.width > 0 && decoded.height > 0)
+            check(decoded.getPixel(decoded.width / 2, decoded.height / 2) ushr 24 != 0)
+            decoded.recycle()
+        } finally {
+            icon.recycle()
+            check(iconFile.delete())
+        }
+        val capturedArchive = packages.snapshotPackages()
+        val archiveState = checkNotNull(state.userState.archiveState)
+        check(runCatching { packages.storePackageArchiveState(packageName, archiveState, 0) }
+            .exceptionOrNull() is android.content.pm.PackageManager.NameNotFoundException)
         state.userState.setInstalled(true)
+        packages.storePackageArchiveState(packageName, archiveState, 0)
+        check(runCatching { packages.storePackageArchiveState(packageName, archiveState, 10) }
+            .exceptionOrNull() is android.content.pm.PackageManager.NameNotFoundException)
         check(!PackageArchiver.isArchived(state.userState))
-        check(result() == ActivityManager.START_CLASS_NOT_FOUND)
+        check(!archived())
+        check(packages.clearPackageArchiveState(packageName, 0))
+        check(!packages.clearPackageArchiveState(packageName, 0))
+        check(PackageArchiver.isArchived(capturedArchive.getPackageStateInternal(packageName)!!.getUserStateOrDefault(0)))
 
         val launcher = HostedLauncherAppsService(context, packages, HostedPermissions(packages))
         fun shortcut(callerUid: Int, callerPackage: String) = launcher.startShortcut(

@@ -12,6 +12,7 @@ import com.android.internal.pm.parsing.pkg.AndroidPackageInternal
 import com.android.server.pm.InstallSource
 import com.android.server.pm.PackageKeySetData
 import com.android.server.pm.PackageSetting
+import com.android.server.pm.setHostedArchiveState
 import com.android.server.pm.permission.LegacyPermissionState
 import com.android.server.pm.pkg.AndroidPackage
 import com.android.server.pm.pkg.PackageStateInternal
@@ -53,6 +54,10 @@ class HostedPackageState(
     /** The hosted user uses the stock setting's change-tracked state. */
     @JvmField val userState = setting.getOrCreateUserState(0)
     private var snapshotManifest: com.android.internal.pm.parsing.pkg.PackageImpl? = null
+
+    internal fun setArchiveState(userId: Int, archiveState: com.android.server.pm.pkg.ArchiveState?) {
+        setting.setHostedArchiveState(archiveState, userId)
+    }
 
     /** PackageSetting.snapshot supplies the stock user/keyset/transient-state
      * copy rules. PackageImpl's original parcel form captures the manifest and
@@ -96,6 +101,8 @@ class HostedPackageState(
             override fun getAppId(): Int = capturedAppId
             override fun getPkg(): AndroidPackageInternal = manifest
             override fun getAndroidPackage(): AndroidPackage = manifest
+            override fun getFlags(): Int = com.android.server.pm.parsing.PackageInfoUtils.appInfoFlags(manifest, source)
+            override fun getPrivateFlags(): Int = com.android.server.pm.parsing.PackageInfoUtils.appInfoPrivateFlags(manifest, source)
             override fun getUserStates(): SparseArray<out PackageUserStateInternal> = capturedSetting.userStates
             override fun getUserStateOrDefault(userId: Int): PackageUserStateInternal =
                 capturedSetting.getUserStateOrDefault(userId)
@@ -116,8 +123,10 @@ class HostedPackageState(
     override fun getSigningDetails(): SigningDetails = pkg.signingDetails
     override fun getSigningInfo(): SigningInfo = SigningInfo(pkg.signingDetails)
     override fun getInstallSource(): InstallSource = setting.installSource
-    override fun getFlags(): Int = 0
-    override fun getPrivateFlags(): Int = 0
+    // ScanPackageUtils derives these flags before constructing PackageSetting.
+    // Archive eligibility reads them directly, including the system-app bit.
+    override fun getFlags(): Int = com.android.server.pm.parsing.PackageInfoUtils.appInfoFlags(pkg, this)
+    override fun getPrivateFlags(): Int = com.android.server.pm.parsing.PackageInfoUtils.appInfoPrivateFlags(pkg, this)
     override fun getUserStates(): SparseArray<out PackageUserStateInternal> = setting.userStates
     override fun getLegacyPermissionState(): LegacyPermissionState = setting.legacyPermissionState
     override fun getRealName(): String? = null
