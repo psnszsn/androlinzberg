@@ -4206,9 +4206,8 @@ fn bsAssignedUid(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) jni.jint {
     _ = env;
     _ = cls;
     if (Runtime.instance) |r| return @intCast(r.uid);
-    // No broker configured for this process (e.g. a standalone JVM test): report
-    // -1 so Process.myUid falls back to its constant. Otherwise connect (a
-    // broker-backed process's uid is broker-assigned) and return the uid.
+    // Standalone ART has no hosted Binder identity. Original Process.myUid
+    // obtains its Linux UID from libcore; callers of this hosted API see -1.
     if (getenv("AZK_BINDER_SOCKET") == null) return -1;
     return @intCast(Runtime.get().uid);
 }
@@ -4225,6 +4224,15 @@ pub fn hostedUidForPid(pid: i32) ?u32 {
     defer r.destroyPending(call);
     if (call.failed or call.package_uid.status != .ok) return null;
     return call.package_uid.uid;
+}
+
+// Ordinary local-socket credential JNI uses this authenticated process view;
+// unknown native peers retain the original SO_PEERCRED tuple.
+export fn azk_binder_map_peer_credentials(pid: i32, uid: *u32, gid: *u32) callconv(.c) void {
+    if (hostedUidForPid(pid)) |mapped| {
+        uid.* = mapped;
+        gid.* = mapped;
+    }
 }
 
 fn bsReservePackageUid(env: JNIEnvPtr, cls: jni.jclass, pkg: jni.jstring) callconv(.c) jni.jint {
@@ -4259,11 +4267,27 @@ fn bsReservePackageUid(env: JNIEnvPtr, cls: jni.jclass, pkg: jni.jstring) callco
     return -1;
 }
 
-// Runs before ART/application library initialization, outside a JNI FastNative.
-// The connection authenticates the immutable kernel identity selected at exec.
-export fn azk_binder_authenticate_launch() callconv(.c) i32 {
-    if (getenv("AZK_LAUNCH_CREDENTIAL") == null) return 0;
-    return @intCast(Runtime.get().uid);
+// Authenticate the final package/role before ART or any identity cache exists.
+// CriticalNative libcore getters receive only the resulting immutable UID/GID.
+export fn azk_binder_bootstrap_identity(package_z: [*:0]const u8, system_value: c_int) callconv(.c) i32 {
+    const package = std.mem.span(package_z);
+    const system = system_value != 0;
+    if (package.len == 0 or package.len > Client.limits.max_name_len) return -1;
+    Runtime.connect_mu.lockUncancelable(g_io);
+    defer Runtime.connect_mu.unlock(g_io);
+    if (Runtime.instance) |r| {
+        if (r.is_system != system or (!system and !std.mem.eql(u8, r.package, package))) return -1;
+        return @intCast(r.uid);
+    }
+    const owned = alloc.dupe(u8, package) catch return -1;
+    if (g_identity_pkg) |old| alloc.free(old);
+    g_identity_pkg = owned;
+    g_identity_is_system = system;
+    g_has_identity_override = true;
+    const r = Runtime.connect() catch return -1;
+    Runtime.instance = r;
+    if (r.is_system != system or (!system and !std.mem.eql(u8, r.package, package))) return -1;
+    return @intCast(r.uid);
 }
 
 fn bsReserveLaunch(env: JNIEnvPtr, cls: jni.jclass, pkg: jni.jstring, process: jni.jstring, isolated: jni.jboolean, sequence: jni.jlong) callconv(.c) jni.jstring {

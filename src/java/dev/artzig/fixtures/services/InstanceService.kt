@@ -32,6 +32,11 @@ open class InstanceService : Service() {
             val appOps = com.android.internal.app.IAppOpsService.Stub.asInterface(data.readStrongBinder())
             val op = appOps.startOperation(Binder(), android.app.AppOpsManager.OP_CAMERA,
                 Process.myUid(), packageName, null, false, false, "isolated service contract", false, 0, -1)
+            // Read actual procfs bytes, independently of the Android identity
+            // APIs, to keep this a kernel-user-namespace regression.
+            val kernelStatus = java.io.File("/proc/self/status").readLines()
+            fun kernelId(field: String): Int = kernelStatus.single { it.startsWith("$field:") }
+                .split(Regex("\\s+"))[1].toInt()
             val result = Bundle().apply {
                 putInt("appOp", op.opMode)
                 putInt("startFlags", lastStartFlags)
@@ -39,8 +44,8 @@ open class InstanceService : Service() {
                 putString("mainStack", android.os.Looper.getMainLooper().thread.stackTrace.joinToString("\n"))
                 putInt("uid", Process.myUid())
                 putInt("callerUidForPid", Process.getUidForPid(Binder.getCallingPid()))
-                putInt("kernelUid", android.system.Os.getuid())
-                putInt("kernelGid", android.system.Os.getgid())
+                putInt("kernelUid", kernelId("Uid"))
+                putInt("kernelGid", kernelId("Gid"))
                 putInt("pid", Process.myPid())
                 putInt("ownerUid", applicationInfo.uid)
                 putString("package", packageName)

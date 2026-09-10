@@ -1,0 +1,139 @@
+Subject: [PATCH] libcore: preserve authenticated identity below stock Java
+
+The hosted launcher installs its broker-authenticated identity before ART.
+CriticalNative getters only read memory. Native socket queries map known peers.
+Trusted hosted VMs retain their immutable identity across same-ID setters and
+reject changes; real namespace children and unconfigured ART use kernel setters.
+
+--- a/luni/src/main/native/libcore_io_Linux.cpp
++++ b/luni/src/main/native/libcore_io_Linux.cpp
+@@ -70,6 +70,7 @@
+ #include "AsynchronousCloseMonitor.h"
+ #include "ExecStrings.h"
+ #include "JniConstants.h"
++#include "process_identity.h"
+ #include "JniException.h"
+ #include "NetworkUtilities.h"
+ #include "Portability.h"
+@@ -1424,15 +1425,15 @@
+ }
+ 
+ static jint Linux_nativeGetegid() {
+-    return getegid();
++    return azk_process_getegid();
+ }
+ 
+ static jint Linux_nativeGeteuid() {
+-    return geteuid();
++    return azk_process_geteuid();
+ }
+ 
+ static jint Linux_nativeGetgid() {
+-    return getgid();
++    return azk_process_getgid();
+ }
+ 
+ static jstring Linux_getenv(JNIEnv* env, jobject, jstring javaName) {
+@@ -1581,6 +1582,9 @@
+     throwErrnoException(env, "getsockopt");
+     return NULL;
+   }
++  if (level == SOL_SOCKET && option == SO_PEERCRED) {
++    azk_process_map_credentials(u.pid, &u.uid, &u.gid);
++  }
+   return makeStructUcred(env, u);
+ }
+ 
+@@ -1593,7 +1597,7 @@
+ }
+ 
+ static jint Linux_nativeGetuid() {
+-    return getuid();
++    return azk_process_getuid();
+ }
+ 
+ static jbyteArray Linux_getxattr(JNIEnv* env, jobject, jstring javaPath,
+@@ -2402,6 +2406,14 @@
+ }
+ 
+ static void Linux_setegid(JNIEnv* env, jobject, jint egid) {
++    const int identityResult = azk_process_check_gid_change(egid, egid, 0);
++    if (identityResult != 0) {
++        if (identityResult < 0) {
++            errno = -identityResult;
++            throwErrnoException(env, "setegid");
++        }
++        return;
++    }
+     throwIfMinusOne(env, "setegid", TEMP_FAILURE_RETRY(setegid(egid)));
+ }
+ 
+@@ -2418,10 +2430,26 @@
+ }
+ 
+ static void Linux_seteuid(JNIEnv* env, jobject, jint euid) {
++    const int identityResult = azk_process_check_uid_change(euid, euid, 0);
++    if (identityResult != 0) {
++        if (identityResult < 0) {
++            errno = -identityResult;
++            throwErrnoException(env, "seteuid");
++        }
++        return;
++    }
+     throwIfMinusOne(env, "seteuid", TEMP_FAILURE_RETRY(seteuid(euid)));
+ }
+ 
+ static void Linux_setgid(JNIEnv* env, jobject, jint gid) {
++    const int identityResult = azk_process_check_gid_change(gid, gid, 0);
++    if (identityResult != 0) {
++        if (identityResult < 0) {
++            errno = -identityResult;
++            throwErrnoException(env, "setgid");
++        }
++        return;
++    }
+     throwIfMinusOne(env, "setgid", TEMP_FAILURE_RETRY(setgid(gid)));
+ }
+ 
+@@ -2430,10 +2458,26 @@
+ }
+ 
+ static void Linux_setregid(JNIEnv* env, jobject, jint rgid, int egid) {
++    const int identityResult = azk_process_check_gid_change(rgid, egid, 1);
++    if (identityResult != 0) {
++        if (identityResult < 0) {
++            errno = -identityResult;
++            throwErrnoException(env, "setregid");
++        }
++        return;
++    }
+     throwIfMinusOne(env, "setregid", TEMP_FAILURE_RETRY(setregid(rgid, egid)));
+ }
+ 
+ static void Linux_setreuid(JNIEnv* env, jobject, jint ruid, int euid) {
++    const int identityResult = azk_process_check_uid_change(ruid, euid, 1);
++    if (identityResult != 0) {
++        if (identityResult < 0) {
++            errno = -identityResult;
++            throwErrnoException(env, "setreuid");
++        }
++        return;
++    }
+     throwIfMinusOne(env, "setreuid", TEMP_FAILURE_RETRY(setreuid(ruid, euid)));
+ }
+ 
+@@ -2528,6 +2572,14 @@
+ }
+ 
+ static void Linux_setuid(JNIEnv* env, jobject, jint uid) {
++    const int identityResult = azk_process_check_uid_change(uid, uid, 0);
++    if (identityResult != 0) {
++        if (identityResult < 0) {
++            errno = -identityResult;
++            throwErrnoException(env, "setuid");
++        }
++        return;
++    }
+     throwIfMinusOne(env, "setuid", TEMP_FAILURE_RETRY(setuid(uid)));
+ }
+ 

@@ -65,6 +65,33 @@ pub fn build(b: *std.Build) void {
         .files = &.{ "system/libbase/logging.cpp", "system/libbase/threads.cpp" },
         .flags = &.{ "-std=gnu++20", "-D_GNU_SOURCE", "-D_FILE_OFFSET_BITS=64", "-D_LARGEFILE64_SOURCE" },
     });
+    // Extend the pinned libjavacore export map with the host's pre-VM setter.
+    // Keep every original export and the original local-symbol restrictions.
+    const identity_exports = b.addSystemCommand(&.{
+        "python3", "-c",
+        \\import pathlib, sys
+        \\source = pathlib.Path(sys.argv[1]).read_text()
+        \\marker = "  global:" + chr(10)
+        \\assert source.count(marker) == 1
+        \\pathlib.Path(sys.argv[2]).write_text(source.replace(marker, marker + "    azk_process_identity_initialize;" + chr(10), 1))
+    });
+    identity_exports.addFileArg(aosp.path(b, "libcore/libjavacore.map"));
+    art_gen.libjavacore.setVersionScript(identity_exports.addOutputFileArg("libjavacore-host.map"));
+    const process_identity = b.addLibrary(.{ .name = "artzig-process-identity", .linkage = .static, .root_module = b.createModule(.{
+        .root_source_file = b.path("src/process_identity.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .pic = true,
+    }) });
+    art_gen.libjavacore.root_module.linkLibrary(process_identity);
+    const identity_test = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/process_identity.zig"),
+        .target = target,
+        .optimize = optimize,
+    }) });
+    b.addNamedLazyPath("process-identity-test-bin", identity_test.getEmittedBin());
+    b.step("process-identity-test", "Verify native identity initialization and immutable getters").dependOn(&b.addRunArtifact(identity_test).step);
     const host_paths = b.addLibrary(.{ .name = "artzig-host-paths", .linkage = .static, .root_module = b.createModule(.{
         .root_source_file = b.path("src/host_paths.zig"),
         .target = target,

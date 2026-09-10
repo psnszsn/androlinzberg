@@ -53,6 +53,7 @@ pub fn main(init: std.process.Init) !void {
     // Everything else uses production session metadata, cold starts, output
     // drains, service ownership and bounded shutdown.
     try env.put("AZK_TEST_CLASS", "dev.artzig.systemtest.SystemTestServer");
+    try env.put("AZK_BINDER_ROLE", "system");
     const session_env: std.process.Environ = .{ .block = try env.createPosixBlock(gpa, .{}) };
     defer session_env.block.deinit(gpa);
     const session_module = @import("session.zig");
@@ -176,6 +177,7 @@ fn coldWindow(init: std.process.Init, args: []const []const u8) !void {
     try env.put(session_module.system_cookie_env, session.system_cookie);
     try env.put(session_module.prop_area_env, session.prop_area_path);
     try env.put("AZK_TEST_CLASS", "dev.artzig.window.StockColdLaunchSmoke");
+    try env.put("AZK_BINDER_ROLE", "system");
     var client = try std.process.spawn(io, .{
         .argv = &.{ args[2], "--javatest", args[5] },
         .environ_map = &env,
@@ -196,6 +198,7 @@ fn spawnPeer(
 ) !std.process.Child {
     try env.put("AZK_TEST_CLASS", class_name);
     try env.put("AZK_BINDER_PACKAGE", package);
+    try env.put("AZK_BINDER_ROLE", if (std.mem.eql(u8, package, "android")) "system" else "app");
     return std.process.spawn(io, .{
         .argv = &.{ launcher, "--javatest" },
         .environ_map = env,
@@ -210,6 +213,7 @@ fn spawnPeer(
 // path, rather than only resolving PaletteWriteCrashThreadStacks.
 fn signalOutput(io: Io, env: *std.process.Environ.Map, launcher: []const u8) !void {
     try env.put("AZK_TEST_CLASS", "dev.artzig.systemtest.RuntimeSignalSystemSmoke");
+    try env.put("AZK_BINDER_ROLE", "app");
     try env.put("AZK_BINDER_PACKAGE", "dev.artzig.test.a");
     var child = try std.process.spawn(io, .{
         .argv = &.{ launcher, "--javatest" },

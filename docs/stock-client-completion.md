@@ -1004,6 +1004,57 @@ final focused gate. Both AOSP archives remain unchanged and current. The Java
 Process identity/start adaptation and final acceptance are still open.
 
 
+
+### Native process identity and startup (2026-09-10)
+
+Process.myUid and its SDK-sandbox annotation now match the pinned original;
+compiled bytecode calls Os.getuid directly. The launcher authenticates its
+package and role before creating ART and installs an immutable UID/GID in
+libcore. CriticalNative identity getters perform no Binder requests. Stock
+LocalSocket and Os.getsockoptUcred queries use the same authenticated native
+peer mapping; unknown Linux peers retain their kernel credentials.
+
+Trusted framework VMs use authenticated logical identities. Supervised APK
+children retain their real kernel user-namespace UID/GID; the signed service
+fixture now verifies those IDs by reading procfs bytes independently of the
+mapped APIs. Same-ID setters succeed, attempted identity changes are rejected,
+and actual namespace children and standalone ART retain kernel setter behavior.
+Negative Process.setUid/setGid arguments return failure instead of trapping in
+an unsigned conversion.
+
+APK package discovery uses the original ApkLiteParseUtils in a separate parser
+VM with public read-only properties and no Binder credentials. Explicit launch
+roles replace late identity selection. The launcher establishes ART's signal
+mask before creating native workers, preserving SIGQUIT stack dumps. The
+libjavacore export map retains its original JNI exports and exposes only the
+additional pre-VM initializer; identity helpers remain private.
+
+The full `-j10 install jvm-test system-test integration-test webview-test
+webview-ui-test webview-overlay-test stock-desktop-launcher-test
+stock-session-loss-test stock-task-output-test system-certificates-test
+binder-test binder-broker-test binder-cpp-test ndk-test build-tools-test
+cpp-audit graph-audit` gate passes. All 28 APK cases have fresh artifacts and
+89 captured actions with empty structured issue lists; WebView, overlays and
+the desktop launcher add 24 clean actions. Native identity initialization and
+setter tests, original socket APIs, permission denial, real service processes,
+metadata-only startup and SIGQUIT output are covered. No fresh failure artifact
+remains. This successful run does not resolve the earlier intermittent Chromium
+frame-rate-hint finding.
+
+Both archives were rebuilt sequentially and their local checksums verified.
+ART is SHA-256
+`aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c`,
+pinned to `N-V-__8AAFy_Sw3fTP2p_29yYUTLwLIfAFVUAabWYBO97HQb`.
+The framework is SHA-256
+`0e54d08c4b76386ec97b2181b755fa72d43aba498827ff56119276d2c8c61d5b`,
+pinned to `N-V-__8AAO0Z9U5E5bBwa_fDt0t3LShts1KKmx4HSZ0eQvcE`.
+Normal builds verified both package hashes without modifying extracted caches.
+The exact static source response file identifies 7,063 unchanged AOSP sources,
+62 modified server sources and one modified client, Process. Its two launch
+methods, foreground-service restart notification handling and final acceptance
+remain open. The stub inventory remains zero.
+
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

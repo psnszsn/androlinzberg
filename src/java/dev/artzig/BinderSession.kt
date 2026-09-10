@@ -1,16 +1,14 @@
 /* artzig host seam: process binder identity and lifecycle.
  *
- * Replaces the hosted HostedBinderRuntime.bootstrap / exitProcessOnDisconnect /
- * assignedUid. The real android.os binder stack connects to the broker lazily
- * on first use; a process calls setIdentity before that first use to name itself
- * and choose the system vs app role (otherwise the AZK_BINDER_* environment
- * decides). The natives are registered by libbinder_ndk (framework_jni.zig).
+ * The launcher authenticates its package and role before creating ART. Java
+ * bootstrap code may confirm the same identity, but cannot change it after
+ * native connection. These natives are registered by libbinder_ndk.
  */
 package dev.artzig
 
 object BinderSession {
-    /** Names this process to the broker and selects the system or app role.
-     * Must be called before the first binder use. */
+    /** Confirms the launcher's immutable package and role. Standalone embeddings
+     * may configure them before their first Binder connection. */
     @JvmStatic external fun setIdentity(pkg: String, isSystem: Boolean)
 
     /** After this call, losing the broker connection exits the process. */

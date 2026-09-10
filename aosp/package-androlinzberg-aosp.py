@@ -83,6 +83,7 @@ framework_patches = tuple(
         (72, "-package-resolvers-use-captured-state-and-user-authority.patch"),
         (73, "-package-settings-diagnostics-without-pms-stub.patch"),
         (74, "-stock-package-archiver-with-hosted-authority.patch"),
+        (75, "-local-socket-authenticated-process-credentials.patch"),
     )
 )
 

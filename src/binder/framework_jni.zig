@@ -540,10 +540,22 @@ fn procSetArgV0Native(env: JNIEnvPtr, _: jni.jclass, text: jni.jstring) callconv
     _ = linux.prctl(@backingInt(linux.PR.SET_NAME), @intFromPtr(&name), 0, 0, 0);
 }
 fn procSetUid(_: JNIEnvPtr, _: jni.jclass, uid: jni.jint) callconv(.c) jni.jint {
-    return if (linux.errno(linux.setuid(@intCast(uid))) == .SUCCESS) 0 else -1;
+    // Process.setUid: immutable authenticated identity in a trusted hosted
+    // VM; actual user-namespace children use the original kernel operation.
+    if (ndk.hostedUidForPid(linux.getpid())) |assigned| {
+        if (assigned != linux.getuid() or assigned != linux.geteuid())
+            return if (@as(u32, @bitCast(uid)) == assigned) 0 else -1;
+    }
+    return if (linux.errno(linux.setuid(@bitCast(uid))) == .SUCCESS) 0 else -1;
 }
 fn procSetGid(_: JNIEnvPtr, _: jni.jclass, gid: jni.jint) callconv(.c) jni.jint {
-    return if (linux.errno(linux.setgid(@intCast(gid))) == .SUCCESS) 0 else -1;
+    // Process.setGid: immutable authenticated identity in a trusted hosted
+    // VM; actual user-namespace children use the original kernel operation.
+    if (ndk.hostedUidForPid(linux.getpid())) |assigned| {
+        if (assigned != linux.getgid() or assigned != linux.getegid())
+            return if (@as(u32, @bitCast(gid)) == assigned) 0 else -1;
+    }
+    return if (linux.errno(linux.setgid(@bitCast(gid))) == .SUCCESS) 0 else -1;
 }
 fn procGetUidForName(_: JNIEnvPtr, _: jni.jclass, _: jni.jstring) callconv(.c) jni.jint {
     return -1; // no Android account database on this host

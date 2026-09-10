@@ -135,6 +135,9 @@ pub fn build(b: *std.Build) void {
     const aosp = aosp_dep.path("");
     const artzig_dep = b.dependency("artzig", .{ .target = target, .optimize = optimize });
     const art_mod = artzig_dep.module("art");
+    const identity_tests = b.addSystemCommand(&.{"env"});
+    identity_tests.addFileArg(artzig_dep.namedLazyPath("process-identity-test-bin"));
+    b.step("process-identity-test", "Verify immutable authenticated native identity").dependOn(&identity_tests.step);
     const certificate_tests = b.addSystemCommand(&.{"env"});
     certificate_tests.addFileArg(artzig_dep.namedLazyPath("system-certificates-test-bin"));
     certificate_tests.addDirectoryArg(artzig_dep.namedLazyPath("art-runtime"));
@@ -776,6 +779,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    exe.root_module.addCSourceFile(.{ .file = b.path("src/native/LauncherSignals.c"), .flags = &.{ "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror" } });
     if (host_libc) |root| exe.root_module.addRPath(b.graph.cwdRelativePath(b.fmt("{s}/lib", .{root})));
     exe.root_module.linkSystemLibrary("fontconfig", .{ .needed = true }); // platform/fonts.zig
 
@@ -1170,6 +1174,7 @@ pub fn build(b: *std.Build) void {
     jvm_test_run.run.setName("run JVM integration tests");
     const jvm_test_step = b.step("jvm-test", "Run JVM and Kotlin class-loading integration tests");
     jvm_test_step.dependOn(&jvm_test_run.run.step);
+    jvm_test_step.dependOn(&identity_tests.step);
     b.step("classloader-jvm-test", "Verify stock APK loaders, platform identity and mapped AOT code")
         .dependOn(&jvm_test_run.run.step);
     @import("build/task_shell.zig").addGeometryTests(b, aosp_dep, jvm_test_step);
@@ -1214,6 +1219,7 @@ pub fn build(b: *std.Build) void {
     task_output.addPrefixedFileArg("--probe-file-arg=", buffer_jni_test.getEmittedBin());
     task_output.addArg("--probe-arg=--task-outputs");
     task_output.setEnvironment("AZK_TEST_CLASS", "dev.artzig.SurfaceBufferSmoke");
+    task_output.setEnvironment("AZK_BINDER_ROLE", "system");
     task_output.setEnvironment("AZK_WINDOW_BACKEND", "stock");
     task_output.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
     task_output.addArg("--output");

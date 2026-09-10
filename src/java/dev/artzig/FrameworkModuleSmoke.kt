@@ -692,6 +692,11 @@ internal object FrameworkModuleSmoke {
                 server.accept().use { peer ->
                     check(peer.peerCredentials.pid == android.os.Process.myPid())
                     check(peer.peerCredentials.uid == android.system.Os.getuid())
+                    check(peer.peerCredentials.gid == android.system.Os.getgid())
+                    val credentials = android.system.Os.getsockoptUcred(peer.fileDescriptor,
+                        android.system.OsConstants.SOL_SOCKET, android.system.OsConstants.SO_PEERCRED)
+                    check(credentials.pid == android.os.Process.myPid())
+                    check(credentials.uid == android.system.Os.getuid() && credentials.gid == android.system.Os.getgid())
                     client.outputStream.write(byteArrayOf(3, 4, 5))
                     val bytes = ByteArray(3)
                     java.io.DataInputStream(peer.inputStream).readFully(bytes)

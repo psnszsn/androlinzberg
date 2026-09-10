@@ -9,6 +9,31 @@ import java.util.concurrent.atomic.AtomicReference
 
 internal object ProcessBoundaryChecks {
     fun local() {
+        val uid = dev.artzig.BinderSession.assignedUid()
+        check(uid == Process.myUid() && uid == android.system.Os.getuid() && uid == android.system.Os.geteuid())
+        check(uid == android.system.Os.getgid() && uid == android.system.Os.getegid())
+        check(Process.getUidForPid(Process.myPid()) == uid)
+        android.system.Os.setuid(uid)
+        android.system.Os.seteuid(uid)
+        android.system.Os.setgid(uid)
+        android.system.Os.setegid(uid)
+        android.system.Os.setreuid(-1, uid)
+        android.system.Os.setregid(uid, -1)
+        check(Process.setUid(uid) == 0 && Process.setGid(uid) == 0)
+        check(Process.setUid(-1) == -1 && Process.setGid(-1) == -1)
+        for (change in listOf<() -> Unit>(
+            { android.system.Os.setuid(0) }, { android.system.Os.seteuid(0) },
+            { android.system.Os.setgid(0) }, { android.system.Os.setegid(0) },
+            { android.system.Os.setreuid(0, -1) }, { android.system.Os.setregid(-1, 0) },
+        )) check(runCatching(change).exceptionOrNull() is android.system.ErrnoException)
+        check(Process.setUid(0) == -1 && Process.setGid(0) == -1)
+        if (uid != Process.SYSTEM_UID) {
+            check(Process.setUid(Process.SYSTEM_UID) == -1 && Process.setGid(Process.SYSTEM_UID) == -1)
+            check(runCatching { android.system.Os.setuid(Process.SYSTEM_UID) }.exceptionOrNull() is android.system.ErrnoException)
+            check(runCatching { android.system.Os.setgid(Process.SYSTEM_UID) }.exceptionOrNull() is android.system.ErrnoException)
+        }
+        check(Process.myUid() == uid && android.system.Os.geteuid() == uid)
+
         procParsing()
         procQueries()
         processHistory()

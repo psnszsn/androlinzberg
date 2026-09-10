@@ -6,6 +6,7 @@ const fonts = @import("platform/fonts.zig");
 const test_control = @import("test_control.zig");
 const host_natives = @import("host_natives");
 const apk_optimizer = @import("apk_optimizer");
+extern "c" fn azk_art_prepare_signals() c_int;
 extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
 extern "c" fn dlopen(path: [*:0]const u8, flags: c_int) ?*anyopaque;
@@ -17,6 +18,7 @@ fn monotonicMs() i64 {
     return ts.sec * 1000 + @divTrunc(ts.nsec, 1_000_000);
 }
 const art = @import("art");
+const runtime_identity = @import("runtime_identity.zig");
 // force the azk_codec C-ABI exports (ffmpeg MediaCodec backend) into the binary
 comptime {
     _ = @import("azk_codec");
@@ -258,14 +260,20 @@ pub fn main(init: std.process.Init) !void {
             // Windowless, but with the bionic loader and the APK's native
             // libraries configured, so an auto-spawned service that loads an
             // NDK library works exactly as it does in the UI process.
-            var headless = try bootHeadlessApk(init, apk_abs);
+            var headless = try bootHeadlessApk(init, apk_abs, .app);
             defer headless.rt.releaseProcessState();
             if (binder) |*session| try session.awaitSystemReady();
             try runFrameworkMain(&headless.rt, "dev.artzig.AppProcess", &.{});
             return;
+        } else if (std.mem.eql(u8, args[i], "--inspect-apk-package")) {
+            if (i + 2 != args.len) return error.InvalidApkPackageInspectionArguments;
+            var headless = try bootHeadless(init, .metadata);
+            defer headless.rt.releaseProcessState();
+            try runtime_identity.printPackage(&headless.rt, init.io, args[i + 1]);
+            return;
         } else if (std.mem.eql(u8, args[i], "--system-server")) {
             // Spawned by session.zig inside a session; never starts one itself.
-            var headless = try bootHeadless(init);
+            var headless = try bootHeadless(init, .system);
             defer headless.rt.releaseProcessState();
             try runFrameworkMain(&headless.rt, "dev.artzig.system.SystemServer", &.{});
             return;
@@ -288,7 +296,8 @@ pub fn main(init: std.process.Init) !void {
                 if (!std.fs.path.isAbsolute(fixture_apk)) return error.TestApkPathMustBeAbsolute;
                 _ = setenv("ARTZIG_APK", try init.arena.allocator().dupeSentinel(u8, fixture_apk, 0), 1);
             }
-            var headless = if (test_apk) |fixture_apk| try bootHeadlessApk(init, fixture_apk) else try bootHeadless(init);
+            const role = try runtime_identity.testRole(init.minimal.environ);
+            var headless = if (test_apk) |fixture_apk| try bootHeadlessApk(init, fixture_apk, role) else try bootHeadless(init, role);
             defer headless.rt.releaseProcessState();
             if (binder) |*session| try session.awaitSystemReady();
             const rt = &headless.rt;
@@ -323,7 +332,7 @@ pub fn main(init: std.process.Init) !void {
         if (binder) |*session| {
             _ = setenv(binder_session.system_cookie_env, try arena.dupeSentinel(u8, session.system_cookie, 0), 1);
         }
-        var headless = try bootHeadlessApk(init, path);
+        var headless = try bootHeadlessApk(init, path, if (binder != null) .system else .app);
         defer headless.rt.releaseProcessState();
         if (binder) |*session| try session.awaitSystemReady();
         var desktop_control: ?test_control.Server = null;
@@ -369,6 +378,7 @@ fn taskPresentation(environ: std.process.Environ, apk_launch: bool) !bool {
 /// inherited (`AZK_BINDER_SOCKET` set) or joined with `--join`, and exports
 /// the socket and app cookie so every child process joins the same session.
 fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_dir: ?[]const u8, present_tasks: bool) !void {
+    if (azk_art_prepare_signals() != 0) return error.RuntimeSignalMaskFailed;
     const arena = init.arena.allocator();
     if (join_dir) |dir| {
         const info = try joinSession(init, dir);
@@ -471,13 +481,15 @@ fn runFrameworkMain(runtime: *art.Runtime, class_name: []const u8, arguments: []
     try runtime.runMain("dev.artzig.RuntimeBootstrap", bootstrap_args);
 }
 
-fn bootHeadless(init: std.process.Init) !Headless {
+fn bootHeadless(init: std.process.Init, role: runtime_identity.Role) !Headless {
+    if (azk_art_prepare_signals() != 0) return error.RuntimeSignalMaskFailed;
     const arena = init.arena.allocator();
     const tree = try installTree(init);
     const runtime_overlay_dir = try std.fs.path.join(arena, &.{ tree, "lib", "art" });
     const island_path = try std.fs.path.join(arena, &.{ tree, "lib", "libandroid_platform.so" });
     var lib = try std.DynLib.open(island_path);
     try bindPlatformIo(&lib, init.io);
+    const identity = try runtime_identity.prepare(init, &lib, role, null);
     const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
     const hwui = try lookupHwuiBridges(&lib);
     const looper_poll = lib.lookup(host_natives.LooperPollStateFn, "azk_looper_poll_state") orelse return error.SymbolNotFound;
@@ -492,6 +504,7 @@ fn bootHeadless(init: std.process.Init) !Headless {
     // without the bionic loader there is no <root>/lib64 fallback.
     var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
         .classpath = &.{framework_jar},
+        .process_identity = identity,
         .platform_class_loader = "dev.artzig.HostedPlatformClassLoader",
         .data_partition = try dataPartitionOptions(init),
         .data_dir = if (getenv("ARTZIG_RUNTIME_CACHE_DIR")) |cache| std.mem.span(cache) else null,
@@ -518,7 +531,8 @@ fn bootHeadless(init: std.process.Init) !Headless {
 /// setup to the UI path minus the window, so APK NDK libraries load the same
 /// way. The island is dlopened RTLD_GLOBAL so the bionic linker sees platform
 /// symbols while relocating APK libraries.
-fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8) !Headless {
+fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8, role: runtime_identity.Role) !Headless {
+    if (azk_art_prepare_signals() != 0) return error.RuntimeSignalMaskFailed;
     const arena = init.arena.allocator();
     const tree = try installTree(init);
     const runtime_root = (try locateRuntimeRoot(init, tree)) orelse
@@ -542,16 +556,11 @@ fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8) !Headless {
     const hwui = try lookupHwuiBridges(&lib);
     const looper_poll = lib.lookup(host_natives.LooperPollStateFn, "azk_looper_poll_state") orelse return error.SymbolNotFound;
 
-    // libbinder_ndk is the same DSO the platform/ART bridge will use. Complete
-    // grant authentication before ART can initialize client identity caches.
-    if (init.minimal.environ.getPosix("AZK_LAUNCH_CREDENTIAL") != null) {
-        const Authenticate = *const fn () callconv(.c) i32;
-        const authenticate = lib.lookup(Authenticate, "azk_binder_authenticate_launch") orelse return error.SymbolNotFound;
-        if (authenticate() < 0) return error.LaunchAuthenticationFailed;
-    }
+    const identity = try runtime_identity.prepare(init, &lib, role, apk_abs);
     configureFonts(init);
     var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
         .classpath = &.{framework_jar},
+        .process_identity = identity,
         .platform_class_loader = "dev.artzig.HostedPlatformClassLoader",
         .data_partition = try dataPartitionOptions(init),
         .data_dir = if (getenv("ARTZIG_RUNTIME_CACHE_DIR")) |cache| std.mem.span(cache) else null,

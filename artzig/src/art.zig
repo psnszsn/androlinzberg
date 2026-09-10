@@ -23,6 +23,7 @@ pub const Error = error{
     SystemRootCreationFailed,
     DataPartitionCreationFailed,
     SystemCertificateInstallationFailed,
+    ProcessIdentityInstallationFailed,
     LibartLoadFailed,
     SymbolNotFound,
     VmCreationFailed,
@@ -239,7 +240,12 @@ pub const BionicLoader = struct {
     };
 };
 
+pub const ProcessIdentity = @import("process_identity_library.zig").Identity;
+
 pub const Options = struct {
+    /// Authenticated Android identity, installed in libcore before VM creation.
+    /// Unconfigured standalone ART retains its real Linux UID/GID.
+    process_identity: ?ProcessIdentity = null,
     /// Optional loader for native libraries; must outlive the runtime.
     native_loader: ?*const NativeLoader = null,
     /// Route System.loadLibrary through bionic_translation's linker (implies
@@ -295,6 +301,7 @@ pub const Runtime = struct {
     system_root_overlay: ?[]const u8,
     data_partition: ?@import("data_partition.zig").Partition,
     certificate_library: ?@import("system_certificates.zig").Library,
+    identity_library: ?@import("process_identity_library.zig").Library,
 
     const CreateFn = *const fn (**JavaVM, *?*anyopaque, *anyopaque) callconv(.c) jint;
 
@@ -342,6 +349,15 @@ pub const Runtime = struct {
             _ = certificate_library.?.install(a, io, ca_bundle, certificates) catch |err| {
                 std.log.err("unable to install system certificates from {s}: {t}", .{ ca_bundle, err });
                 return Error.SystemCertificateInstallationFailed;
+            };
+        }
+
+        var identity_library: ?@import("process_identity_library.zig").Library = null;
+        errdefer if (identity_library) |identity| identity.close();
+        if (opts.process_identity) |identity| {
+            identity_library = @import("process_identity_library.zig").Library.open(a, root, identity) catch |err| {
+                std.log.err("unable to initialize authenticated process identity: {t}", .{err});
+                return Error.ProcessIdentityInstallationFailed;
             };
         }
 
@@ -425,6 +441,7 @@ pub const Runtime = struct {
             .system_root_overlay = system_root_overlay,
             .data_partition = data_partition,
             .certificate_library = certificate_library,
+            .identity_library = identity_library,
         };
     }
 
@@ -433,6 +450,7 @@ pub const Runtime = struct {
         _ = self.vm.*.*.DestroyJavaVM.?(self.vm);
         self.lib.close();
         if (self.certificate_library) |crypto| crypto.close();
+        if (self.identity_library) |identity| identity.close();
         if (self.system_root_overlay) |path| std.Io.Dir.cwd().deleteTree(self.io, path) catch {};
         if (self.data_partition) |partition| partition.release(self.io);
         self.arena.deinit();
