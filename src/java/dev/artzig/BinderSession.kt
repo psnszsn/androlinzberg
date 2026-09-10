@@ -22,4 +22,9 @@ object BinderSession {
     /** System-only install boundary: allocate the identity before starting an app.
      * The broker returns the same uid when that package connects later. */
     @JvmStatic external fun reservePackageUid(packageName: String): Int
+    /** Supervisor-only one-use exec credential. Contains a secret; never log it. */
+    @JvmStatic external fun reserveLaunch(packageName: String, processName: String,
+        isolated: Boolean, sequence: Long): String
+    @JvmStatic external fun bindLaunch(id: Long, childPid: Int)
+    @JvmStatic external fun revokeLaunch(id: Long): Boolean
 }

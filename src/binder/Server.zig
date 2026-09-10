@@ -71,6 +71,7 @@ pub const Message = struct {
         property_changed,
         /// Body is a PackageUidResult; answers `reserve_package_uid`.
         package_uid_result,
+        launch_result,
         _,
     };
 
@@ -84,8 +85,16 @@ pub const Message = struct {
         pub const Role = enum(u32) {
             app = 0,
             system = 1,
+            isolated = 2,
             _,
         };
+    };
+
+    pub const LaunchResult = extern struct {
+        status: ServiceResult.Status,
+        uid: u32 = 0,
+        id: u64 = 0,
+        token: [64]u8 = @splat(0),
     };
 
     pub const PackageUidResult = extern struct {
@@ -183,6 +192,12 @@ pub fn serveProtocolError(s: *const Server, reason: []const u8) Writer.Error!voi
 
 pub fn servePackageUidResult(s: *const Server, request_id: u64, result: OutMessage.PackageUidResult) Writer.Error!void {
     try s.serveMessageHeader(.{ .tag = .package_uid_result, .bytes_len = @sizeOf(OutMessage.PackageUidResult), .request_id = request_id });
+    try s.out.writeStruct(result, .little);
+    try s.out.flush();
+}
+
+pub fn serveLaunchResult(s: *const Server, request_id: u64, result: OutMessage.LaunchResult) Writer.Error!void {
+    try s.serveMessageHeader(.{ .tag = .launch_result, .bytes_len = @sizeOf(OutMessage.LaunchResult), .request_id = request_id });
     try s.out.writeStruct(result, .little);
     try s.out.flush();
 }

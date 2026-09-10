@@ -1657,3 +1657,114 @@ test "service registration policy filters every lookup and dump priority" {
         try testing.expectEqual(@as(i32, @intFromBool(mask & 17 != 0)), std.mem.readInt(i32, payload.data[4..8], .little));
     }
 }
+
+test "only the authenticated supervisor can reserve or bind a launch" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const h = try Harness.start(gpa, io);
+    defer h.stop(gpa, io);
+    var owner: Peer = undefined;
+    try owner.connect(io, h.path, system_cookie);
+    defer owner.close();
+    try owner.expectWelcome();
+    var app: Peer = undefined;
+    try app.connect(io, h.path, cookie);
+    defer app.close();
+    try app.expectWelcome();
+    try app.client.serveReserveLaunch(1, 1, "fixture.package", "fixture.package:worker", 20);
+    const denied = try app.next();
+    defer gpa.free(denied.fds);
+    try testing.expectEqual(Server.Message.Tag.launch_result, denied.header.tag);
+    const denied_result = try fixedStruct(Server.Message.LaunchResult, denied.body);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.denied, denied_result.status);
+    try testing.expectEqual(@as(u64, 0), denied_result.id);
+    try owner.client.serveReserveLaunch(2, 1, "fixture.package", "fixture.package:worker", 20);
+    const reserved = try owner.next();
+    defer gpa.free(reserved.fds);
+    const ticket = try fixedStruct(Server.Message.LaunchResult, reserved.body);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.ok, ticket.status);
+    try testing.expectEqual(@as(u32, 99000), ticket.uid);
+    try app.client.serveBindLaunch(3, ticket.id, owner.welcome.pid);
+    const bind_denied = try app.next();
+    defer gpa.free(bind_denied.fds);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.denied, (try serviceResult(bind_denied.body)).status);
+    try owner.client.serveBindLaunch(4, ticket.id, owner.welcome.pid);
+    const wrong_pid = try owner.next();
+    defer gpa.free(wrong_pid.fds);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.denied, (try serviceResult(wrong_pid.body)).status);
+    try owner.client.serveRevokeLaunch(5, ticket.id);
+    const revoked = try owner.next();
+    defer gpa.free(revoked.fds);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.ok, (try serviceResult(revoked.body)).status);
+}
+
+test "kernel namespaces reject stolen cookies and supervised peers keep real isolated UIDs" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const h = try Harness.start(gpa, io);
+    defer h.stop(gpa, io);
+    const probe = @import("launch_probe").path;
+    // No grant exists for these processes. A stolen ordinary/system cookie
+    // fails both directly and after fork/exec or creation of another namespace.
+    for ([_][]const u8{ "ordinary", "system", "descendant", "nested" }) |mode| {
+        var child = try std.process.spawn(io, .{
+            .argv = &.{ probe, h.path, mode, "dev.artzig.victim", "99000" },
+            .stdin = .pipe,
+            .stdout = .pipe,
+            .stderr = .inherit,
+        });
+        defer child.kill(io);
+        var buf: [128]u8 = undefined;
+        var out = child.stdout.?.readerStreaming(io, &buf);
+        try testing.expectEqualStrings("ready\n", try out.interface.takeDelimiterInclusive('\n'));
+        try child.stdin.?.writeStreamingAll(io, if (std.mem.eql(u8, mode, "ordinary")) cookie else system_cookie);
+        try child.stdin.?.writeStreamingAll(io, "\n");
+        const term = try child.wait(io);
+        try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, term);
+    }
+
+    var owner: Peer = undefined;
+    try owner.connect(io, h.path, system_cookie);
+    defer owner.close();
+    try owner.expectWelcome();
+    const package = "dev.artzig.renderer";
+    try owner.client.serveReserveLaunch(1, 1, package, "dev.artzig.renderer:one", 90);
+    const reserved = try owner.next();
+    defer gpa.free(reserved.fds);
+    const ticket = try fixedStruct(Server.Message.LaunchResult, reserved.body);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.ok, ticket.status);
+    var uid_buffer: [16]u8 = undefined;
+    const uid = try std.fmt.bufPrint(&uid_buffer, "{d}", .{ticket.uid});
+    var child = try std.process.spawn(io, .{
+        .argv = &.{ probe, h.path, "grant", package, uid },
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    });
+    defer child.kill(io);
+    var buf: [128]u8 = undefined;
+    var out = child.stdout.?.readerStreaming(io, &buf);
+    try testing.expectEqualStrings("ready\n", try out.interface.takeDelimiterInclusive('\n'));
+    try owner.client.serveBindLaunch(2, ticket.id, child.id.?);
+    const bound = try owner.next();
+    defer gpa.free(bound.fds);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.ok, (try serviceResult(bound.body)).status);
+    try child.stdin.?.writeStreamingAll(io, &ticket.token);
+    try child.stdin.?.writeStreamingAll(io, "\n");
+    try testing.expectEqualStrings("authenticated\n", try out.interface.takeDelimiterInclusive('\n'));
+    try owner.client.serveRevokeLaunch(3, ticket.id);
+    const revoked = try owner.next();
+    defer gpa.free(revoked.fds);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.ok, (try serviceResult(revoked.body)).status);
+    try owner.client.serveReserveLaunch(4, 1, package, "dev.artzig.renderer:two", 91);
+    const next = try owner.next();
+    defer gpa.free(next.fds);
+    try testing.expect((try fixedStruct(Server.Message.LaunchResult, next.body)).uid != ticket.uid);
+    child.kill(io);
+    try owner.client.serveReserveLaunch(5, 1, package, "dev.artzig.renderer:one", 92);
+    const reused = try owner.next();
+    defer gpa.free(reused.fds);
+    const replacement = try fixedStruct(Server.Message.LaunchResult, reused.body);
+    try testing.expectEqual(ticket.uid, replacement.uid);
+    try testing.expect(replacement.id != ticket.id);
+}

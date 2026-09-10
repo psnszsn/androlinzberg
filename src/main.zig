@@ -178,6 +178,16 @@ fn applySessionStorage(init: std.process.Init, storage: binder_session.Storage) 
 }
 
 pub fn main(init: std.process.Init) !void {
+    if (init.minimal.environ.getPosix("AZK_LAUNCH_UID")) |raw_uid| {
+        if (init.minimal.environ.getPosix("AZK_LAUNCH_CREDENTIAL") == null) return error.MissingLaunchCredential;
+        try @import("binder/ProcessNamespace.zig").enter(init.io, try std.fmt.parseInt(u32, raw_uid, 10));
+        // The trusted supervisor binds its real child handle before releasing
+        // this gate. No ART or application native constructor runs beforehand.
+        var released: [1]u8 = undefined;
+        const count = try std.Io.File.stdin().readStreaming(init.io, &.{&released});
+        if (count != 1 or released[0] != 1) return error.LaunchAuthorizationLost;
+    }
+
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     // Session supervisor trampoline: establish child ownership before executing
     // a service. exec failure becomes EOF on the child's readiness pipe.
@@ -531,6 +541,13 @@ fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8) !Headless {
     const hwui = try lookupHwuiBridges(&lib);
     const looper_poll = lib.lookup(host_natives.LooperPollStateFn, "azk_looper_poll_state") orelse return error.SymbolNotFound;
 
+    // libbinder_ndk is the same DSO the platform/ART bridge will use. Complete
+    // grant authentication before ART can initialize client identity caches.
+    if (init.minimal.environ.getPosix("AZK_LAUNCH_CREDENTIAL") != null) {
+        const Authenticate = *const fn () callconv(.c) i32;
+        const authenticate = lib.lookup(Authenticate, "azk_binder_authenticate_launch") orelse return error.SymbolNotFound;
+        if (authenticate() < 0) return error.LaunchAuthenticationFailed;
+    }
     configureFonts(init);
     var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
         .classpath = &.{framework_jar},

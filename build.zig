@@ -947,7 +947,18 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    const launch_probe = b.addExecutable(.{
+        .name = "binder-launch-probe",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/binder/launch_probe.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
     const run_binder_broker_tests = b.addRunArtifact(binder_broker_tests);
+    const launch_probe_options = b.addOptions();
+    launch_probe_options.addOptionPath("path", launch_probe.getEmittedBin());
+    binder_broker_tests.root_module.addOptions("launch_probe", launch_probe_options);
     b.step("binder-broker-test", "Run broker protocol unit tests").dependOn(&run_binder_broker_tests.step);
     // Loaded in the provider class loader so stock JNI_OnLoad resolves its classes.
     const webview_support = b.addLibrary(.{

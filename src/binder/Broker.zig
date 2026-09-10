@@ -24,6 +24,8 @@ const assert = std.debug.assert;
 const Client = @import("Client.zig");
 const Server = @import("Server.zig");
 const Connection = @import("Connection.zig");
+const LaunchGrants = @import("LaunchGrants.zig");
+const ProcessNamespace = @import("ProcessNamespace.zig");
 const prop_area = @import("prop_area.zig");
 const ObjectRef = Client.ObjectRef;
 const ObjectEntry = Client.ObjectEntry;
@@ -47,6 +49,8 @@ packages: std.StringHashMapUnmanaged(u32) = .empty,
 /// (source note: init's property_service).
 props: prop_area.Area,
 next_app_uid: u32,
+launches: LaunchGrants,
+user_namespace: Io.File.INode,
 shutting_down: bool = false,
 peers: std.AutoHashMapUnmanaged(u32, *Peer) = .empty,
 next_peer_id: u32 = 1,
@@ -79,6 +83,7 @@ const write_buffer_len = 64 * 1024;
 /// Keep the service-name cap within the largest UTF-16 IServiceManager reply.
 pub const ResourceLimits = struct {
     peers: usize = 64,
+    launches: usize = 1024,
     objects: usize = 65536,
     peer_objects: usize = 16384,
     services: usize = 1024,
@@ -241,6 +246,7 @@ pub fn init(gpa: Allocator, io: Io, options: Options) !*Broker {
     var props = try prop_area.Area.create(io, options.prop_area_path);
     errdefer props.deinit();
     try seedProperties(&props);
+    const user_namespace = try ProcessNamespace.identity(io, @intCast(std.os.linux.getpid()));
     const address = try net.UnixAddress.init(socket_path);
     const listener = try address.listen(io, .{ .kernel_backlog = options.kernel_backlog });
     b.* = .{
@@ -253,7 +259,9 @@ pub fn init(gpa: Allocator, io: Io, options: Options) !*Broker {
         .props = props,
         .delivery_limits = options.delivery_limits,
         .resource_limits = options.resource_limits,
+        .user_namespace = user_namespace,
         .next_app_uid = options.first_app_uid,
+        .launches = .{ .gpa = gpa, .io = io, .limit = options.resource_limits.launches },
     };
     return b;
 }
@@ -374,6 +382,7 @@ pub fn deinit(b: *Broker) void {
     const io = b.io;
     b.listener.deinit(io);
     b.props.deinit();
+    b.launches.deinit();
     Io.Dir.cwd().deleteFile(io, b.socket_path) catch {};
     var objects = b.objects.valueIterator();
     while (objects.next()) |o| o.*.deinit(gpa);
@@ -625,6 +634,9 @@ fn serveLoop(peer: *Peer) ServeError!void {
             .list_services => try handleList(peer, header),
             .set_property => try handleSetProperty(peer, header, body),
             .reserve_package_uid => try handleReservePackageUid(peer, header, body),
+            .reserve_launch => try handleReserveLaunch(peer, header, body),
+            .bind_launch => try handleBindLaunch(peer, header, body),
+            .revoke_launch => try handleRevokeLaunch(peer, header, body),
             _ => return protocolError(peer, "unknown message tag"),
         }
     }
@@ -652,18 +664,37 @@ fn handleHello(peer: *Peer, header: Client.Message.Header, body: []const u8) Ser
     if (std.mem.indexOfScalar(u8, package, 0) != null) return protocolError(peer, "malformed hello");
     b.mutex.lockUncancelable(io);
     defer b.mutex.unlock(io);
-    if (std.mem.eql(u8, cookie, b.system_cookie)) {
-        peer.role = .system;
-        peer.android_uid = Client.system_uid;
-        peer.package = try gpa.dupe(u8, "android");
-    } else if (std.mem.eql(u8, cookie, b.cookie)) {
-        if (package.len == 0) return protocolError(peer, "app peer without a package name");
-        peer.role = .app;
-        peer.android_uid = try assignPackageUidLocked(b, package) orelse
-            return protocolError(peer, "application uid range exhausted");
-        peer.package = try gpa.dupe(u8, package);
-    } else {
-        return protocolError(peer, "bad launch cookie");
+    if (b.launches.claim(cookie, package, peer.pid, peer.id)) |claim| {
+        peer.role = switch (claim.kind) {
+            .app => .app,
+            .isolated => .isolated,
+            .system => .system,
+        };
+        peer.android_uid = claim.uid;
+        peer.package = try gpa.dupe(u8, claim.package);
+    } else |_| {
+        // Trusted host launchers share the broker's user namespace. Every APK
+        // namespace (including fork/exec descendants and nested namespaces)
+        // requires a PID-bound grant; shared cookies cannot restore an app or
+        // system role there. A directly bound PID also cannot fall back before
+        // entering its namespace or after its grant has been revoked.
+        const user_namespace = ProcessNamespace.identity(io, peer.pid) catch
+            return protocolError(peer, "cannot authenticate peer namespace");
+        if (user_namespace != b.user_namespace or b.launches.isBoundProcess(peer.pid))
+            return protocolError(peer, "peer requires a supervised launch grant");
+        if (std.mem.eql(u8, cookie, b.system_cookie)) {
+            peer.role = .system;
+            peer.android_uid = Client.system_uid;
+            peer.package = try gpa.dupe(u8, "android");
+        } else if (std.mem.eql(u8, cookie, b.cookie)) {
+            if (package.len == 0) return protocolError(peer, "app peer without a package name");
+            peer.role = .app;
+            peer.android_uid = try assignPackageUidLocked(b, package) orelse
+                return protocolError(peer, "application uid range exhausted");
+            peer.package = try gpa.dupe(u8, package);
+        } else {
+            return protocolError(peer, "bad launch cookie");
+        }
     }
     peer.hello_done = true;
     peer.enqueue(try b.encode(Server.serveWelcome, .{Server.Message.Welcome{
@@ -701,6 +732,66 @@ fn handleReservePackageUid(peer: *Peer, header: Client.Message.Header, package: 
     else
         .{ .status = .exhausted };
     peer.enqueue(try b.encode(Server.servePackageUidResult, .{ header.request_id, result }));
+}
+
+fn launchFailure(err: LaunchGrants.Failure) Server.Message.ServiceResult.Status {
+    return switch (err) {
+        error.Exhausted, error.OutOfMemory => .exhausted,
+        error.Stale => .not_found,
+        error.Denied, error.Invalid => .denied,
+    };
+}
+
+fn handleReserveLaunch(peer: *Peer, header: Client.Message.Header, body: []const u8) ServeError!void {
+    const req = takeStruct(Client.Message.ReserveLaunch, body) catch return protocolError(peer, "malformed reserve_launch");
+    const rest = body[@sizeOf(Client.Message.ReserveLaunch)..];
+    if (@as(usize, req.package_len) + req.process_len != rest.len or req.kind > 2)
+        return protocolError(peer, "malformed reserve_launch");
+    const package = try readName(peer, rest[0..req.package_len], req.package_len);
+    const process = try readName(peer, rest[req.package_len..], req.process_len);
+    const b = peer.broker;
+    b.mutex.lockUncancelable(b.io);
+    defer b.mutex.unlock(b.io);
+    var result: Server.Message.LaunchResult = .{ .status = .denied };
+    if (peer.role == .system) {
+        const kind: LaunchGrants.Kind = @fromBackingInt(@intCast(req.kind));
+        const uid = if (kind == .system) @as(?u32, Client.system_uid) else try assignPackageUidLocked(b, package);
+        if (uid) |package_uid| {
+            if (b.launches.reserve(peer.id, peer.pid, kind, package, process, package_uid, req.sequence)) |ticket| {
+                result = .{ .status = .ok, .id = ticket.id, .uid = ticket.uid, .token = ticket.token };
+            } else |err| result.status = launchFailure(err);
+        } else result.status = .exhausted;
+    }
+    peer.enqueue(try b.encode(Server.serveLaunchResult, .{ header.request_id, result }));
+}
+
+fn handleBindLaunch(peer: *Peer, header: Client.Message.Header, body: []const u8) ServeError!void {
+    if (body.len != @sizeOf(Client.Message.BindLaunch)) return protocolError(peer, "malformed bind_launch");
+    const req = takeStruct(Client.Message.BindLaunch, body) catch return protocolError(peer, "malformed bind_launch");
+    const b = peer.broker;
+    b.mutex.lockUncancelable(b.io);
+    defer b.mutex.unlock(b.io);
+    var status: Server.Message.ServiceResult.Status = .denied;
+    if (peer.role == .system) {
+        status = if (b.launches.bind(peer.id, req.id, req.pid)) |_| .ok else |err| launchFailure(err);
+    }
+    peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, status, ObjectRef.null_ref, "" }));
+}
+
+fn handleRevokeLaunch(peer: *Peer, header: Client.Message.Header, body: []const u8) ServeError!void {
+    if (body.len != @sizeOf(u64)) return protocolError(peer, "malformed revoke_launch");
+    const id = std.mem.readInt(u64, body[0..8], .little);
+    const b = peer.broker;
+    b.mutex.lockUncancelable(b.io);
+    defer b.mutex.unlock(b.io);
+    var status: Server.Message.ServiceResult.Status = .denied;
+    if (peer.role == .system) {
+        if (b.launches.revoke(peer.id, id)) |claimed_peer| {
+            status = .ok;
+            if (claimed_peer) |peer_id| if (b.peers.get(peer_id)) |child| child.requestClose();
+        } else |err| status = launchFailure(err);
+    }
+    peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, status, ObjectRef.null_ref, "" }));
 }
 
 /// Registry policy: the system process may claim any name; an app may only
@@ -1886,6 +1977,8 @@ fn removePeer(b: *Broker, peer: *Peer) void {
         }
     }
     for (dead_calls.items) |id| b.finishDelivery(id);
+
+    b.launches.disconnected(peer.id);
 
     // Registry names, waiters and notification callbacks.
     b.purgeServiceCallbacks(peer.id);

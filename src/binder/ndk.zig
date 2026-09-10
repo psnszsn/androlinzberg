@@ -604,7 +604,7 @@ const AIBinder_DeathRecipient = struct {
 
 // ------------------------------------------------------------------- Runtime
 
-const PendingKind = enum { reply, service, package_uid };
+const PendingKind = enum { reply, service, package_uid, launch };
 
 const PendingCall = struct {
     mu: Io.Mutex = .init,
@@ -623,6 +623,7 @@ const PendingCall = struct {
     svc_ref: ObjectRef = ObjectRef.null_ref,
     svc_names: []u8 = &.{},
     package_uid: Server.Message.PackageUidResult = .{ .status = .denied },
+    launch: Server.Message.LaunchResult = .{ .status = .denied },
     // nested transactions the broker routed to the thread parked here:
     nested: std.ArrayListUnmanaged(*Incoming) = .empty,
 };
@@ -767,7 +768,10 @@ const Runtime = struct {
         var anon_buf: [64]u8 = undefined;
         var cookie: []const u8 = undefined;
         var package: []const u8 = undefined;
-        if (g_has_identity_override) {
+        if (getenv("AZK_LAUNCH_CREDENTIAL")) |credential| {
+            cookie = credential;
+            package = getenv("AZK_BINDER_PACKAGE") orelse return error.NoLaunchPackage;
+        } else if (g_has_identity_override) {
             // dev.artzig.BinderSession.setIdentity chose the package and role.
             package = g_identity_pkg orelse "";
             cookie = if (g_identity_is_system) (system_cookie orelse app_cookie) else app_cookie;
@@ -809,6 +813,9 @@ const Runtime = struct {
         const wbody = r.conn.reader.interface.readAlloc(alloc, wh.bytes_len) catch return error.BadHello;
         defer alloc.free(wbody);
         const welcome = std.mem.bytesToValue(Server.Message.Welcome, wbody[0..@sizeOf(Server.Message.Welcome)]);
+        if (getenv("AZK_LAUNCH_CREDENTIAL") != null and
+            (welcome.uid != std.os.linux.getuid() or welcome.uid != std.os.linux.getgid()))
+            return error.LaunchIdentityMismatch;
         r.peer_id = welcome.peer_id;
         r.pid = welcome.pid;
         r.uid = welcome.uid;
@@ -979,6 +986,23 @@ const Runtime = struct {
                     c.mu.lockUncancelable(g_io);
                     c.failed = c.kind != .package_uid;
                     c.package_uid = result;
+                    c.done = true;
+                    c.cv.signal(g_io);
+                    c.mu.unlock(g_io);
+                }
+            },
+            .launch_result => {
+                if (body.len != @sizeOf(Server.Message.LaunchResult)) return false;
+                var reader: Io.Reader = .fixed(body);
+                const result = reader.takeStruct(Server.Message.LaunchResult, .little) catch return false;
+                r.mu.lockUncancelable(g_io);
+                const call = r.pending.fetchRemove(header.request_id);
+                r.mu.unlock(g_io);
+                if (call) |kv| {
+                    const c = kv.value;
+                    c.mu.lockUncancelable(g_io);
+                    c.failed = c.kind != .launch;
+                    c.launch = result;
                     c.done = true;
                     c.cv.signal(g_io);
                     c.mu.unlock(g_io);
@@ -1648,7 +1672,11 @@ const Runtime = struct {
     }
 
     fn serviceRequest(r: *Runtime, tag: Client.Message.Tag, body_extra: []const u8) *PendingCall {
-        const call = r.preparePending(if (tag == .reserve_package_uid) .package_uid else .service);
+        const call = r.preparePending(switch (tag) {
+            .reserve_package_uid => .package_uid,
+            .reserve_launch => .launch,
+            else => .service,
+        });
         return r.serviceRequestPrepared(tag, body_extra, call);
     }
 
@@ -4215,6 +4243,92 @@ fn bsReservePackageUid(env: JNIEnvPtr, cls: jni.jclass, pkg: jni.jstring) callco
     return -1;
 }
 
+// Runs before ART/application library initialization, outside a JNI FastNative.
+// The connection authenticates the immutable kernel identity selected at exec.
+export fn azk_binder_authenticate_launch() callconv(.c) i32 {
+    if (getenv("AZK_LAUNCH_CREDENTIAL") == null) return 0;
+    return @intCast(Runtime.get().uid);
+}
+
+fn bsReserveLaunch(env: JNIEnvPtr, cls: jni.jclass, pkg: jni.jstring, process: jni.jstring, isolated: jni.jboolean, sequence: jni.jlong) callconv(.c) jni.jstring {
+    _ = cls;
+    if (pkg == null or process == null or sequence < 0) {
+        throwException(env, "java/lang/IllegalArgumentException", "invalid launch request");
+        return null;
+    }
+    const package_chars = env.*.*.GetStringUTFChars.?(env, pkg, null) orelse return null;
+    defer env.*.*.ReleaseStringUTFChars.?(env, pkg, package_chars);
+    const process_chars = env.*.*.GetStringUTFChars.?(env, process, null) orelse return null;
+    defer env.*.*.ReleaseStringUTFChars.?(env, process, process_chars);
+    const package = std.mem.span(package_chars);
+    const process_name = std.mem.span(process_chars);
+    if (package.len == 0 or process_name.len == 0 or package.len > Client.limits.max_name_len or process_name.len > Client.limits.max_name_len) {
+        throwException(env, "java/lang/IllegalArgumentException", "invalid launch name");
+        return null;
+    }
+    var body: std.ArrayList(u8) = .empty;
+    defer body.deinit(alloc);
+    const req: Client.Message.ReserveLaunch = .{ .kind = if (isolated != 0) 1 else 0, .package_len = @intCast(package.len), .process_len = @intCast(process_name.len), .sequence = @intCast(sequence) };
+    body.appendSlice(alloc, std.mem.asBytes(&req)) catch @panic("oom");
+    body.appendSlice(alloc, package) catch @panic("oom");
+    body.appendSlice(alloc, process_name) catch @panic("oom");
+    const r = Runtime.get();
+    const call = r.serviceRequest(.reserve_launch, body.items);
+    defer r.destroyPending(call);
+    if (call.failed) {
+        throwRuntime(env, "broker disconnected while reserving launch");
+        return null;
+    }
+    if (call.launch.status != .ok) {
+        throwException(env, if (call.launch.status == .denied) "java/lang/SecurityException" else "java/lang/IllegalStateException", "launch reservation rejected");
+        return null;
+    }
+    var buffer: [128]u8 = undefined;
+    const value = std.fmt.bufPrintSentinel(&buffer, "{d}:{d}:{s}", .{ call.launch.id, call.launch.uid, &call.launch.token }, 0) catch unreachable;
+    return env.*.*.NewStringUTF.?(env, value.ptr);
+}
+
+fn bsBindLaunch(env: JNIEnvPtr, cls: jni.jclass, id: jni.jlong, pid: jni.jint) callconv(.c) void {
+    _ = cls;
+    if (id <= 0 or pid <= 0) {
+        throwException(env, "java/lang/IllegalArgumentException", "invalid child process");
+        return;
+    }
+    const body: Client.Message.BindLaunch = .{ .id = @intCast(id), .pid = pid };
+    const r = Runtime.get();
+    const call = r.serviceRequest(.bind_launch, std.mem.asBytes(&body));
+    defer r.destroyPending(call);
+    if (call.failed) {
+        throwRuntime(env, "broker disconnected while authorizing child");
+        return;
+    }
+    if (call.svc_status != .ok) throwException(env, "java/lang/SecurityException", "child process does not match launch authority");
+}
+
+fn bsRevokeLaunch(env: JNIEnvPtr, cls: jni.jclass, id: jni.jlong) callconv(.c) jni.jboolean {
+    _ = cls;
+    if (id <= 0) {
+        throwException(env, "java/lang/IllegalArgumentException", "invalid launch id");
+        return jni.JNI_FALSE;
+    }
+    const wire_id: u64 = @intCast(id);
+    const r = Runtime.get();
+    const call = r.serviceRequest(.revoke_launch, std.mem.asBytes(&wire_id));
+    defer r.destroyPending(call);
+    if (call.failed) {
+        throwRuntime(env, "broker disconnected while revoking launch");
+        return jni.JNI_FALSE;
+    }
+    return switch (call.svc_status) {
+        .ok => jni.JNI_TRUE,
+        .not_found => jni.JNI_FALSE,
+        else => blk: {
+            throwException(env, "java/lang/SecurityException", "launch is owned by another supervisor");
+            break :blk jni.JNI_FALSE;
+        },
+    };
+}
+
 // ----- registration --------------------------------------------------------
 
 fn jm(name: [*:0]const u8, sig: [*:0]const u8, ptr: anytype) jni.JNINativeMethod {
@@ -4387,6 +4501,9 @@ pub fn registerBinderFrameworkNatives(env_opaque: ?*anyopaque) c_int {
         jm("setExitOnDisconnect", "()V", &bsSetExitOnDisconnect),
         jm("assignedUid", "()I", &bsAssignedUid),
         jm("reservePackageUid", "(Ljava/lang/String;)I", &bsReservePackageUid),
+        jm("reserveLaunch", "(Ljava/lang/String;Ljava/lang/String;ZJ)Ljava/lang/String;", &bsReserveLaunch),
+        jm("bindLaunch", "(JI)V", &bsBindLaunch),
+        jm("revokeLaunch", "(J)Z", &bsRevokeLaunch),
     };
     if (env.*.*.RegisterNatives.?(env, bs_cls, &bs_methods, bs_methods.len) != 0) return -1;
 

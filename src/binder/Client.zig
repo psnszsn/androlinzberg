@@ -24,7 +24,7 @@ out: *Writer,
 /// First 4 bytes of every frame ("AZKB" as little-endian u32).
 pub const magic: u32 = 0x424B5A41;
 /// Bumped for every incompatible wire change.
-pub const version: u16 = 6;
+pub const version: u16 = 7;
 
 /// Android uid of the trusted system process (AOSP `Process.SYSTEM_UID`).
 pub const system_uid: u32 = 1000;
@@ -157,6 +157,9 @@ pub const Message = struct {
         /// Empty body. Return routing credit after transaction, property,
         /// release or death callbacks and cleanup. Sync calls must reply first.
         delivery_done,
+        reserve_launch,
+        bind_launch,
+        revoke_launch,
         _,
     };
 
@@ -164,6 +167,15 @@ pub const Message = struct {
     /// * cookie: [cookie_len]u8
     /// * package: [package_len]u8 — the Android package name the peer runs;
     ///   empty only for the system process (whose package is "android").
+    pub const ReserveLaunch = extern struct {
+        kind: u32, // LaunchGrants.Kind, selected by an authenticated supervisor
+        package_len: u32,
+        process_len: u32,
+        _pad: u32 = 0,
+        sequence: u64,
+    };
+    pub const BindLaunch = extern struct { id: u64, pid: i32, _pad: u32 = 0 };
+
     pub const Hello = extern struct {
         cookie_len: u32,
         package_len: u32,
@@ -405,6 +417,26 @@ pub fn serveSetProperty(c: *const Client, request_id: u64, name: []const u8, val
     }, .little);
     try c.out.writeAll(name);
     try c.out.writeAll(value);
+    try c.out.flush();
+}
+
+pub fn serveReserveLaunch(c: *const Client, request_id: u64, kind: u32, package: []const u8, process: []const u8, sequence: u64) Writer.Error!void {
+    try c.serveMessageHeader(.{ .tag = .reserve_launch, .request_id = request_id, .bytes_len = @intCast(@sizeOf(OutMessage.ReserveLaunch) + package.len + process.len) });
+    try c.out.writeStruct(OutMessage.ReserveLaunch{ .kind = kind, .package_len = @intCast(package.len), .process_len = @intCast(process.len), .sequence = sequence }, .little);
+    try c.out.writeAll(package);
+    try c.out.writeAll(process);
+    try c.out.flush();
+}
+
+pub fn serveBindLaunch(c: *const Client, request_id: u64, id: u64, pid: i32) Writer.Error!void {
+    try c.serveMessageHeader(.{ .tag = .bind_launch, .request_id = request_id, .bytes_len = @sizeOf(OutMessage.BindLaunch) });
+    try c.out.writeStruct(OutMessage.BindLaunch{ .id = id, .pid = pid }, .little);
+    try c.out.flush();
+}
+
+pub fn serveRevokeLaunch(c: *const Client, request_id: u64, id: u64) Writer.Error!void {
+    try c.serveMessageHeader(.{ .tag = .revoke_launch, .request_id = request_id, .bytes_len = @sizeOf(u64) });
+    try c.out.writeInt(u64, id, .little);
     try c.out.flush();
 }
 

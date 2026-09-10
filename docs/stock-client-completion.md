@@ -835,6 +835,34 @@ captured actions; WebView and desktop journals bring the total to 113 actions,
 all without structured runtime issues or fresh failure artifacts. No AOSP package
 inputs changed; both archives and their pins remain at the previous checkpoint.
 
+### Supervised process credentials and kernel identities (2026-09-10)
+
+Ordinary APK processes launched by hosted AMS now reserve a one-use broker
+credential, enter a Linux user namespace, wait for their supervisor to bind the
+credential to the kernel child PID, and authenticate before ART starts. The
+broker captures package, process, start sequence and UID; claims check the peer's
+kernel PID and process start time. Application peers cannot reserve, bind or
+revoke grants. Credentials are not accepted twice or for another package/PID.
+The internal wire version is now 7.
+
+The isolated UID allocator uses the original global 99000–99999 range and keeps
+revoked identities unavailable until process death. Real subprocess regressions
+exercise isolated authentication and UID reuse. They also reject inherited app
+and system cookies in a foreign user namespace, an exec descendant, and a nested
+namespace. Ordinary supervised APK launches exercise the same handshake in the
+system and APK tests. Named/isolated/external service execution and the remaining
+stock Process restoration are still open; the subprocess authority test alone
+is not an isolated Android service launch. User namespaces here supply kernel
+UID/GID identity, not Android filesystem, network or SELinux confinement.
+
+The broad -j10 gate passed: `install jvm-test system-test integration-test
+webview-test webview-ui-test webview-overlay-test stock-desktop-launcher-test
+stock-session-loss-test binder-test binder-broker-test binder-cpp-test ndk-test
+build-tools-test cpp-audit graph-audit`. All 28 fresh APK cases passed with 91
+captured actions; WebView and desktop journals bring the total to 115 actions,
+all without structured runtime issues or fresh failure artifacts. No AOSP package
+inputs changed; both archives and pins remain at the archiver checkpoint.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

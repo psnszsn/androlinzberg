@@ -331,7 +331,13 @@ internal object SystemServices {
         val launcher = System.getenv("AZK_LAUNCHER_EXE") ?: return null
         return HostedProcessStarts.Launcher { request, onExit ->
             val (packageName, processName) = request.key
+            var launchId = 0L
             try {
+                val credential = dev.artzig.BinderSession.reserveLaunch(packageName, processName,
+                    false, request.sequence).split(':', limit = 3)
+                check(credential.size == 3 && credential[2].length == 64)
+                launchId = credential[0].toLong()
+                val launchUid = credential[1].toInt()
                 val builder = ProcessBuilder(launcher, "--join", sessionDir, "--app-process", request.apkPath)
                     .redirectOutput(ProcessBuilder.Redirect.INHERIT)
                     .redirectError(ProcessBuilder.Redirect.INHERIT)
@@ -340,6 +346,8 @@ internal object SystemServices {
                 // the system service names.
                 builder.environment().remove("AZK_BINDER_SYSTEM_COOKIE")
                 builder.environment()["AZK_BINDER_PACKAGE"] = packageName
+                builder.environment()["AZK_LAUNCH_CREDENTIAL"] = credential[2]
+                builder.environment()["AZK_LAUNCH_UID"] = launchUid.toString()
                 builder.environment()["AZK_APP_PROCESS_NAME"] = processName
                 builder.environment()["AZK_APP_START_SEQUENCE"] = request.sequence.toString()
                 // Chromium's Android seccomp policy rejects glibc's optional rseq
@@ -348,10 +356,21 @@ internal object SystemServices {
                     .filter { it.isNotEmpty() && !it.startsWith("glibc.pthread.rseq=") }
                 builder.environment()["GLIBC_TUNABLES"] = (tunables + "glibc.pthread.rseq=0").joinToString(":")
                 val child = builder.start()
+                try {
+                    // Pinned UNIXProcess keeps the kernel child handle in its
+                    // private final pid field; Android's Process API has no pid().
+                    val childPid = child.javaClass.getDeclaredField("pid").apply { isAccessible = true }.getInt(child)
+                    dev.artzig.BinderSession.bindLaunch(launchId, childPid)
+                    child.outputStream.use { gate -> gate.write(1); gate.flush() }
+                } catch (failure: Throwable) {
+                    child.destroy()
+                    throw failure
+                }
                 spawnedProcesses.add(child)
                 try {
                     Thread({
                         child.waitFor()
+                        dev.artzig.BinderSession.revokeLaunch(launchId)
                         spawnedProcesses.remove(child)
                         activityManager.dispatchProcessExit(onExit)
                     }, "app-exit-${request.sequence}").apply { isDaemon = true; start() }
@@ -362,9 +381,13 @@ internal object SystemServices {
                 }
                 Log.i(TAG, "spawning $processName start=${request.sequence}")
                 object : HostedProcessStarts.Child {
-                    override fun terminate() { child.destroy() }
+                    override fun terminate() {
+                        child.destroy()
+                        dev.artzig.BinderSession.revokeLaunch(launchId)
+                    }
                 }
             } catch (t: Throwable) {
+                if (launchId != 0L) runCatching { dev.artzig.BinderSession.revokeLaunch(launchId) }
                 Log.w(TAG, "cannot spawn process for " + packageName, t)
                 null
             }
