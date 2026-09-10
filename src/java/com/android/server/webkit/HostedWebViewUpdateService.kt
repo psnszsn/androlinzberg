@@ -19,13 +19,15 @@ import dev.artzig.system.HostedPermissions
 /**
  * Source: WebViewUpdateService's Binder facade and SystemImpl. The original
  * Impl2 owns selection, signature/version validation, repairs and preparation
- * ordering. SystemImpl cannot be used directly: this host has no WebView zygote,
- * shared RELRO creator or PinnerService. Those are optional loading optimizations;
- * Chromium loads its regular library in each application process.
+ * ordering. SystemImpl cannot be used directly: the exec-based WebView controller
+ * needs its selected provider at the hosted launch boundary, and this host has
+ * no shared RELRO creator or PinnerService. Chromium loads its regular library
+ * in each exec child; the controller runs the original provider preload.
  */
 class HostedWebViewUpdateService(
     private val context: Context,
     private val permissions: HostedPermissions,
+    private val providerChanged: (ApplicationInfo) -> Unit,
 ) : IWebViewUpdateService.Stub(), SystemInterface {
     private val providers = readProviders()
     private val impl = WebViewUpdateServiceImpl2(this)
@@ -78,7 +80,12 @@ class HostedWebViewUpdateService(
     override fun getDefaultWebViewPackage(): WebViewProviderInfo = impl.defaultWebViewPackage
 
     override fun getWebViewPackages(): Array<WebViewProviderInfo> = providers.clone()
-    override fun onWebViewProviderChanged(packageInfo: PackageInfo): Int = 0 // No RELRO creators were started.
+    override fun onWebViewProviderChanged(packageInfo: PackageInfo): Int {
+        providerChanged(checkNotNull(packageInfo.applicationInfo))
+        WebViewZygote::class.java.getDeclaredMethod("onWebViewProviderChanged", PackageInfo::class.java)
+            .apply { isAccessible = true }.invoke(null, packageInfo)
+        return 0 // No RELRO creators were started.
+    }
     override fun getFactoryPackageVersion(packageName: String): Long =
         context.packageManager.getPackageInfo(packageName, PackageManager.MATCH_FACTORY_ONLY).longVersionCode
     override fun getUserChosenWebViewProvider(): String? =
@@ -106,7 +113,7 @@ class HostedWebViewUpdateService(
         WebViewFactoryProvider.isCompatibleImplementationPackage(packageInfo)
     override fun getPackageInfoForProviderAllUsers(configInfo: WebViewProviderInfo): List<UserPackage> =
         UserPackage.getPackageInfosAllUsers(context, configInfo.packageName, PACKAGE_FLAGS)
-    override fun ensureZygoteStarted() {} // Optional prewarm; normal provider loading is in-process.
+    override fun ensureZygoteStarted() { WebViewZygote.getProcess() }
     override fun pinWebviewIfRequired(appInfo: ApplicationInfo) {} // No configured pin quota.
 
     private fun readProviders(): Array<WebViewProviderInfo> {

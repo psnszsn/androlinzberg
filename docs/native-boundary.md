@@ -326,8 +326,16 @@ zig build -j10 cpp-audit
   original RuntimeInit.applicationInit and ActivityThread.main then own SDK and
   compatibility policy, the main Looper and application attachment. This runtime
   does not fork a preloaded ART VM or share preload memory. Unsupported Android
-  specialization requests fail explicitly. The dedicated WebView Zygote and
-  Process.startWebView path remain unfinished.
+  specialization requests fail explicitly. `HostedWebViewZygote` runs the
+  original provider preload in a dedicated UID-1053 exec controller and serves
+  stock Process.startWebView requests for broker-authorized isolated children.
+  Before ART starts, `native/ProcessAppData.c` masks the session CE/DE roots in
+  a private mount namespace, drops capabilities and sets no-new-privileges;
+  public provider APKs remain readable. Children inherit that restricted view,
+  but initialize their own VM. Shared ART profile groups and GWP-ASan protection
+  are not implemented. Hosted AMS currently starts its service processes through
+  the primary exec service; it does not route Chromium renderer service records
+  through the dedicated controller.
 
 
 `src/platform/azk_pipewire.c` is a small PipeWire adapter. It contains the C

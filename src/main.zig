@@ -7,6 +7,7 @@ const test_control = @import("test_control.zig");
 const host_natives = @import("host_natives");
 const apk_optimizer = @import("apk_optimizer");
 extern "c" fn azk_art_prepare_signals() c_int;
+extern "c" fn azk_process_isolate_app_data(root: [*:0]const u8) c_int;
 extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
 extern "c" fn dlopen(path: [*:0]const u8, flags: c_int) ?*anyopaque;
@@ -183,6 +184,15 @@ pub fn main(init: std.process.Init) !void {
     if (init.minimal.environ.getPosix("AZK_LAUNCH_UID")) |raw_uid| {
         if (init.minimal.environ.getPosix("AZK_LAUNCH_CREDENTIAL") == null) return error.MissingLaunchCredential;
         try @import("binder/ProcessNamespace.zig").enter(init.io, try std.fmt.parseInt(u32, raw_uid, 10));
+        if (init.minimal.environ.getPosix("AZK_RUNTIME_MASK_APP_DATA")) |mask| {
+            if (!std.mem.eql(u8, mask, "1") or !std.mem.eql(u8, raw_uid, "1053")) return error.InvalidChildZygoteIdentity;
+            const root = init.minimal.environ.getPosix("ARTZIG_DATA_DIR") orelse return error.MissingApplicationDataRoot;
+            const status = azk_process_isolate_app_data(root.ptr);
+            if (status != 0) {
+                std.debug.print("child zygote app-data isolation failed: errno {d}\n", .{status});
+                return error.ChildZygoteAppDataIsolationFailed;
+            }
+        }
         // The trusted supervisor binds its real child handle before releasing
         // this gate. No ART or application native constructor runs beforehand.
         var released: [1]u8 = undefined;

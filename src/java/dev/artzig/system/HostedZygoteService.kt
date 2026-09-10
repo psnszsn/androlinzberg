@@ -25,8 +25,9 @@ import java.util.concurrent.Semaphore
  * ActivityThread entry and lifecycle transactions remain responsible for their
  * contracts. Prepared starts avoid re-entering AMS while it waits on its socket. */
 internal class HostedZygoteService(
-    private val packages: HostedPackageManagerService,
+    private val packages: HostedPackageManagerService?,
     private val dispatchExit: (() -> Unit) -> Unit,
+    private val controller: HostedWebViewZygote? = null,
 ) : AutoCloseable {
     private val session = checkNotNull(System.getenv("AZK_BINDER_SESSION_DIR"))
     private val executable = checkNotNull(System.getenv("AZK_LAUNCHER_EXE"))
@@ -38,6 +39,8 @@ internal class HostedZygoteService(
     private var exemptions = emptyArray<String>()
     private var logRate = 0
     private var statsRate = 0
+    @Volatile private var webViewProvider: ApplicationInfo? = null
+    private val stopped = java.util.concurrent.CountDownLatch(1)
     @Volatile private var closed = false
     private val socketFile = File(File(session, "sockets"), "zygote")
     private val server: LocalServerSocket
@@ -66,19 +69,25 @@ internal class HostedZygoteService(
     }
 
     init {
-        check(socketFile.parentFile!!.isDirectory || socketFile.parentFile!!.mkdirs())
-        val descriptor = Os.socket(OsConstants.AF_UNIX, OsConstants.SOCK_STREAM or OsConstants.SOCK_CLOEXEC, 0)
-        try {
-            Os.bind(descriptor, UnixSocketAddress.createFileSystem(socketFile.path))
-            Os.listen(descriptor, 16)
-            server = LocalServerSocket(descriptor)
-        } catch (failure: Throwable) { Os.close(descriptor); throw failure }
+        if (controller != null) server = LocalServerSocket(controller.socketName)
+        else {
+            check(socketFile.parentFile!!.isDirectory || socketFile.parentFile!!.mkdirs())
+            val descriptor = Os.socket(OsConstants.AF_UNIX, OsConstants.SOCK_STREAM or OsConstants.SOCK_CLOEXEC, 0)
+            try {
+                Os.bind(descriptor, UnixSocketAddress.createFileSystem(socketFile.path))
+                Os.listen(descriptor, 16)
+                server = LocalServerSocket(descriptor)
+            } catch (failure: Throwable) { Os.close(descriptor); throw failure }
+        }
         Thread(::accept, "process-launch-listener").apply { isDaemon = true; start() }
         Runtime.getRuntime().addShutdownHook(Thread(::close, "process-launch-shutdown"))
     }
 
+    fun selectWebViewProvider(info: ApplicationInfo) { webViewProvider = ApplicationInfo(info) }
+    fun awaitClosed() { stopped.await() }
+
     fun serviceLauncher() = HostedProcessStarts.Launcher<ApplicationInfo> { request, onExit ->
-        val info = request.metadata ?: packages.getApplicationInfo(request.key.packageName, 0, request.key.userId)
+        val info = request.metadata ?: checkNotNull(packages).getApplicationInfo(request.key.packageName, 0, request.key.userId)
             ?: return@Launcher null
         val kind = if (request.key.isolated) BinderSession.LaunchKind.ISOLATED else BinderSession.LaunchKind.APP
         val grant = Grant(BinderSession.reserveLaunchForUid(request.key.packageName, request.key.processName,
@@ -125,7 +134,7 @@ internal class HostedZygoteService(
             val arguments = HostedZygoteProtocol.read(input) ?: return
             if (!BinderSession.isSystemSocketPeer(peer.fileDescriptor)) return
             when {
-                arguments.flag("mAbiListQuery") -> writeText(output, Build.SUPPORTED_ABIS.joinToString(","))
+                arguments.flag("mAbiListQuery") -> writeText(output, controller?.abiList ?: Build.SUPPORTED_ABIS.joinToString(","))
                 arguments.flag("mPidQuery") -> writeText(output, AndroidProcess.myPid().toString())
                 arguments.flag("mBootCompleted") -> {
                     dalvik.system.VMRuntime.bootCompleted()
@@ -151,6 +160,8 @@ internal class HostedZygoteService(
                     // exec children initialize their own VM instead of sharing pages.
                     output.writeInt(1)
                 }
+                arguments.value<String>("mPreloadApp") != null && controller != null ->
+                    controller.preload(peer, checkNotNull(arguments.value("mPreloadApp")), output)
                 else -> {
                     val child = try {
                         arguments.applyPolicy(peer.peerCredentials)
@@ -173,8 +184,9 @@ internal class HostedZygoteService(
         require(uid >= AndroidProcess.SYSTEM_UID && arguments.int("mGid") == uid)
         val entry = checkNotNull(arguments.value<Array<String>>("mRemainingArgs"))
         require(entry.isNotEmpty())
-        if (arguments.flag("mStartChildZygote")) throw dev.artzig.ArtzigTestDiagnostics.unsupported(
-            "HostedZygoteService", "startChildZygote", "Dedicated child-zygote exec setup is not configured")
+        if (arguments.flag("mStartChildZygote")) return launchWebViewController(arguments, entry)
+        if (controller != null) return launchWebViewChild(arguments, entry)
+        val packages = checkNotNull(packages)
         val packageName = arguments.value<String>("mPackageName") ?: if (uid == AndroidProcess.SYSTEM_UID) "android"
             else packages.getPackagesForUid(uid)?.singleOrNull() ?: throw IllegalArgumentException("No unique package for requested UID")
         val processName = arguments.value<String>("mNiceName") ?: packageName
@@ -200,13 +212,7 @@ internal class HostedZygoteService(
         val grant = pending?.grant ?: Grant(BinderSession.reserveLaunchForUid(packageName, processName,
             kind, sequence, UserHandle.getUserId(uid), uid))
         try {
-            val config = synchronized(policyLock) {
-                JSONObject().put("targetSdk", arguments.int("mTargetSdkVersion"))
-                    .put("entry", JSONArray(entry.toList()))
-                    .put("disabledCompat", JSONArray(arguments.value<LongArray>("mDisabledCompatChanges")?.toList() ?: emptyList<Long>()))
-                    .put("exemptions", JSONArray(exemptions.toList()))
-                    .put("logRate", logRate).put("statsRate", statsRate)
-            }
+            val config = configuration(arguments, entry)
             val child = spawn(pending?.request?.apkPath ?: info.sourceDir, packageName, processName,
                 sequence, kind, grant, config) { pending?.onExit?.let(dispatchExit) }
             pending?.child = child
@@ -214,13 +220,67 @@ internal class HostedZygoteService(
         } catch (failure: Throwable) { BinderSession.revokeLaunch(grant.id); throw failure }
     }
 
-    private fun validateSpecialization(arguments: HostedZygoteProtocol.Arguments) {
+    private fun launchWebViewController(arguments: HostedZygoteProtocol.Arguments, entry: Array<String>): Child {
+        require(controller == null && entry[0] == HostedWebViewZygote.ENTRY &&
+            arguments.int("mUid") == AndroidProcess.WEBVIEW_ZYGOTE_UID)
+        val info = checkNotNull(webViewProvider) { "No selected WebView provider" }
+        // Validate the pinned child-zygote socket, ABI and range before exec.
+        HostedWebViewZygote(info, entry.copyOfRange(1, entry.size))
+        require(arguments.flag("mBindMountAppDataDirs"))
+        // AOSP requests this GID solely for shared ART profiles. Hosted exec
+        // caches already belong to the mapped owner; no additional kernel group
+        // or cross-UID Android profile sharing is configured here.
+        validateSpecialization(arguments, intArrayOf(UserHandle.getSharedAppGid(UserHandle.getAppId(info.uid))),
+            allowAppDataMount = true, allowGwp = true)
+        val name = arguments.value<String>("mNiceName") ?: "webview_zygote"
+        val kind = BinderSession.LaunchKind.WEBVIEW_CONTROLLER
+        val grant = Grant(BinderSession.reserveLaunchForUid(info.packageName, name, kind, 0, 0,
+            AndroidProcess.WEBVIEW_ZYGOTE_UID))
+        try {
+            val config = configuration(arguments, entry)
+                .put("webViewProvider", HostedWebViewZygote.encodeApplication(info))
+            return spawn(info.sourceDir, info.packageName, name, 0, kind, grant, config) {}
+        } catch (failure: Throwable) { BinderSession.revokeLaunch(grant.id); throw failure }
+    }
+
+    private fun launchWebViewChild(arguments: HostedZygoteProtocol.Arguments, entry: Array<String>): Child {
+        val controller = checkNotNull(controller)
+        val uid = arguments.int("mUid")
+        controller.requireChild(uid)
+        validateSpecialization(arguments, allowGwp = true)
+        val packageName = checkNotNull(arguments.value<String>("mPackageName")) { "Missing effective package" }
+        val name = arguments.value<String>("mNiceName") ?: packageName
+        val sequence = entry.drop(1).lastOrNull { it.startsWith("seq=") }?.substring(4)?.toLong() ?: 0L
+        val kind = BinderSession.LaunchKind.ISOLATED
+        val grant = Grant(BinderSession.reserveLaunchForUid(packageName, name, kind, sequence,
+            UserHandle.getUserId(uid), uid))
+        try {
+            return spawn(controller.provider.sourceDir, packageName, name, sequence, kind, grant,
+                configuration(arguments, entry)) {}
+        } catch (failure: Throwable) { BinderSession.revokeLaunch(grant.id); throw failure }
+    }
+
+    private fun configuration(arguments: HostedZygoteProtocol.Arguments, entry: Array<String>): JSONObject =
+        synchronized(policyLock) {
+            JSONObject().put("targetSdk", arguments.int("mTargetSdkVersion"))
+                .put("entry", JSONArray(entry.toList()))
+                .put("disabledCompat", JSONArray(arguments.value<LongArray>("mDisabledCompatChanges")?.toList() ?: emptyList<Long>()))
+                .put("exemptions", JSONArray(exemptions.toList()))
+                .put("logRate", logRate).put("statsRate", statsRate)
+        }
+
+    private fun validateSpecialization(arguments: HostedZygoteProtocol.Arguments,
+        allowedGids: IntArray? = null, allowAppDataMount: Boolean = false, allowGwp: Boolean = false) {
+        // Pinned SpecializeCommon ignores unsupported android_mallopt GWP-ASan
+        // initialization, then removes these bits before ART setup. The host
+        // allocator has no GWP-ASan implementation; no protection is advertised.
+        val optionalFlags = if (allowGwp) com.android.internal.os.Zygote.GWP_ASAN_LEVEL_MASK else 0
         val unsupported = when {
             arguments.value<String>("mInvokeWith") != null -> "invoke-with wrappers"
             arguments.value<Any>("mRLimits") != null -> "per-child resource limits"
-            arguments.value<IntArray>("mGids")?.isNotEmpty() == true -> "supplementary Android groups"
-            arguments.int("mRuntimeFlags") != 0 -> "runtime specialization flags"
-            arguments.int("mMountExternal") != 0 || arguments.flag("mBindMountAppDataDirs") ||
+            arguments.value<IntArray>("mGids")?.let { it.isNotEmpty() && !it.contentEquals(allowedGids) } == true -> "supplementary Android groups"
+            arguments.int("mRuntimeFlags") and optionalFlags.inv() != 0 -> "runtime specialization flags"
+            arguments.int("mMountExternal") != 0 || (arguments.flag("mBindMountAppDataDirs") && !allowAppDataMount) ||
                 arguments.flag("mBindMountAppStorageDirs") || arguments.flag("mBindMountSyspropOverrides") -> "Android mount specialization"
             arguments.value<Array<String>>("mPkgDataInfoList") != null || arguments.value<Array<String>>("mAllowlistedDataInfoList") != null -> "Android package data mount maps"
             arguments.value<String>("mInstructionSet")?.let { it != "x86_64" } == true -> "foreign instruction set"
@@ -238,6 +298,9 @@ internal class HostedZygoteService(
         environment.remove("AZK_BINDER_SYSTEM_COOKIE")
         environment.remove("AZK_BINDER_COOKIE")
         environment.remove("AZK_TEST_CLASS")
+        environment.remove("AZK_RUNTIME_MASK_APP_DATA")
+        if (kind == BinderSession.LaunchKind.WEBVIEW_CONTROLLER)
+            environment["AZK_RUNTIME_MASK_APP_DATA"] = "1"
         environment["AZK_BINDER_PACKAGE"] = packageName
         environment["AZK_BINDER_ROLE"] = if (kind == BinderSession.LaunchKind.SYSTEM) "system" else "app"
         environment["AZK_LAUNCH_CREDENTIAL"] = grant.secret
@@ -279,12 +342,14 @@ internal class HostedZygoteService(
         return child
     }
 
-    override fun close() {
+    @Synchronized override fun close() {
+        if (closed) return
         closed = true
-        server.close()
+        runCatching { server.close() }
         peers.forEach { runCatching { it.close() } }
         children.forEach { if (it.process.isAlive) it.process.destroy() }
-        socketFile.delete()
+        if (controller == null) socketFile.delete()
+        stopped.countDown()
     }
 
     private fun writeText(output: DataOutputStream, text: String) {

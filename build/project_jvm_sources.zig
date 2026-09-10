@@ -213,6 +213,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/RuntimeProcess.kt",
     "src/java/dev/artzig/system/HostedZygoteProtocol.kt",
     "src/java/dev/artzig/system/HostedZygoteService.kt",
+    "src/java/dev/artzig/system/HostedWebViewZygote.kt",
     "src/java/dev/artzig/HostedSocketAccounting.kt",
     "src/java/dev/artzig/ApplicationSharedMemoryBackend.kt",
     "src/java/dev/artzig/MemoryIntArrayBackend.kt",

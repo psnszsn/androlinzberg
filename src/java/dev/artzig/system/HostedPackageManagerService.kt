@@ -16,6 +16,7 @@ import android.content.pm.ResolveInfo
 import android.content.pm.ServiceInfo
 import android.content.pm.SigningDetails
 import android.os.Binder
+import android.os.Build
 import android.os.Process
 import android.os.UserHandle
 import android.util.Log
@@ -174,6 +175,7 @@ class HostedPackageManagerService(private val userManager: UserManagerInternal, 
             .setNativeLibraryRootDir(nativePath)
             .setNativeLibraryRootRequiresIsa(false)
         val pkg = parsed.hideAsFinal()
+        resolveNativeAbis(pkg as PackageImpl)
         createDataDirectories(pkg as PackageImpl, system)
         val app = callingUid != Process.SYSTEM_UID && callingUid != Process.ROOT_UID
         // PMS allocates the appId at install, before ATMS resolves its first
@@ -216,6 +218,49 @@ class HostedPackageManagerService(private val userManager: UserManagerInternal, 
         packageMonitors.notifyPackageAddedForNewUsers(pkg.packageName, uid, intArrayOf(0),
             intArrayOf(), false, 0, null, com.android.internal.os.BackgroundThread.getHandler())
         return pkg.packageName
+    }
+
+    /** PackageAbiHelperImpl.derivePackageAbi's scan path. The full helper depends
+     * on PackageManagerService and Android partition/extraction paths absent here.
+     * Extraction belongs to the existing launcher/library installer; this service
+     * records ABI selection for stock PackageInfoUtils and process/zygote routing. */
+    private fun resolveNativeAbis(pkg: PackageImpl) {
+        com.android.server.pm.parsing.pkg.AndroidPackageUtils.createNativeLibraryHandle(pkg).use { handle ->
+            fun find(abis: Array<String>, allowNoMatch: Boolean): String? {
+                if (abis.isEmpty()) return null
+                val result = com.android.internal.content.NativeLibraryHelper.findSupportedAbi(handle, abis)
+                if (result >= 0) return abis[result]
+                if (result == PackageManager.NO_NATIVE_LIBRARIES ||
+                    (allowNoMatch && result == PackageManager.INSTALL_FAILED_NO_MATCHING_ABIS)) return null
+                throw IllegalArgumentException("Native ABI scan failed for ${pkg.packageName}: $result")
+            }
+            var primary: String?
+            var secondary: String? = null
+            if (pkg.isMultiArch) {
+                val forceMatch = android.content.pm.Flags.forceMultiArchNativeLibsMatch() &&
+                    pkg.targetSdkVersion >= Build.VERSION_CODES.VANILLA_ICE_CREAM
+                val abi32 = find(Build.SUPPORTED_32_BIT_ABIS, !forceMatch)
+                val abi64 = find(Build.SUPPORTED_64_BIT_ABIS, !forceMatch)
+                primary = abi64 ?: abi32
+                if (abi32 != null && abi64 != null) {
+                    if (pkg.is32BitAbiPreferred) { primary = abi32; secondary = abi64 }
+                    else secondary = abi32
+                }
+            } else {
+                val bitcode = Build.SUPPORTED_64_BIT_ABIS.isNotEmpty() &&
+                    com.android.internal.content.NativeLibraryHelper.hasRenderscriptBitcode(handle)
+                require(!bitcode || Build.SUPPORTED_32_BIT_ABIS.isNotEmpty()) {
+                    "RenderScript bitcode requires a supported 32-bit ABI"
+                }
+                val abis = if (bitcode) Build.SUPPORTED_32_BIT_ABIS else Build.SUPPORTED_ABIS
+                primary = find(abis, false)
+                require(primary == null || !com.android.server.pm.parsing.pkg.AndroidPackageUtils.isLibrary(pkg)) {
+                    "Shared libraries with native code must be multiarch"
+                }
+                if (primary == null && bitcode) primary = abis.first()
+            }
+            pkg.setPrimaryCpuAbi(primary).setSecondaryCpuAbi(secondary)
+        }
     }
 
     /** Installs framework-res.apk as package "android" (boot, system process). */

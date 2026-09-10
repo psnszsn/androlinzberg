@@ -781,6 +781,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     exe.root_module.addCSourceFile(.{ .file = b.path("src/native/LauncherSignals.c"), .flags = &.{ "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror" } });
+    exe.root_module.addCSourceFile(.{ .file = b.path("src/native/ProcessAppData.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     if (host_libc) |root| exe.root_module.addRPath(b.graph.cwdRelativePath(b.fmt("{s}/lib", .{root})));
     exe.root_module.linkSystemLibrary("fontconfig", .{ .needed = true }); // platform/fonts.zig
 
@@ -974,9 +975,20 @@ pub fn build(b: *std.Build) void {
     });
     const run_process_peer_test = b.addRunArtifact(process_peer_test);
     b.step("process-peer-test", "Verify process control socket peer lifetime").dependOn(&run_process_peer_test.step);
+    const process_app_data_test = b.addExecutable(.{
+        .name = "process-app-data-test",
+        .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true }),
+    });
+    process_app_data_test.root_module.addCSourceFiles(.{
+        .files = &.{ "src/native/ProcessAppData.c", "tests/native/ProcessAppDataTest.c" },
+        .flags = &.{ "-std=c11", "-UNDEBUG", "-Wall", "-Wextra", "-Werror" },
+    });
+    const run_process_app_data_test = b.addRunArtifact(process_app_data_test);
+    b.step("process-app-data-test", "Verify child zygote app data isolation").dependOn(&run_process_app_data_test.step);
     const broker_test_step = b.step("binder-broker-test", "Run broker protocol unit tests");
     broker_test_step.dependOn(&run_binder_broker_tests.step);
     broker_test_step.dependOn(&run_process_peer_test.step);
+    broker_test_step.dependOn(&run_process_app_data_test.step);
     // Loaded in the provider class loader so stock JNI_OnLoad resolves its classes.
     const webview_support = b.addLibrary(.{
         .name = "webviewchromium_plat_support",

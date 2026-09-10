@@ -1176,6 +1176,61 @@ screenshots were inspected. The earlier startup run also passed the framework
 module and system tests; its cold-launch inspection failures were fixed and
 rerun successfully before this gate.
 
+### Stock Process.startWebView and provider preload (2026-09-10)
+
+Removed the final Process.java patch. There are now 7,066 selected static AOSP
+sources matching the pinned checkout; the remaining 62 modified static sources
+are server adaptations. There are zero modified client sources, zero missing
+reference files and zero tracked stubs. Final acceptance and a fresh-cache build
+remain open; source identity alone does not finish this plan.
+
+Stock WebViewZygote now starts a dedicated exec controller with actual kernel
+UID 1053. The controller reuses ChildZygoteInit argument handling and executes
+the original WebViewZygoteConnection provider/native preload, forwarding its
+actual status. Process.startWebView launches real isolated children only after
+successful preload and validates the requested UID range. The existing broker
+authenticates System control peers, authorizes the controller's limited launch
+role, and binds credentials to actual process lifetimes.
+
+The native startup boundary masks session credential/device-encrypted app data
+before ART or provider constructors run. It uses a private mount namespace,
+drops capabilities and sets no-new-privileges. Public APKs remain readable;
+nested isolated children inherit the hidden data roots and cannot unmount them
+or recover the original files through the parent's procfs root. Native tests
+also verify that private writes do not alter the parent's data.
+
+Original WebView routing exposed missing package ABI metadata. Hosted package
+installation now follows the pinned PackageAbiHelperImpl scan using the original
+NativeLibraryHelper and publishes primary/secondary ABI through PackageInfoUtils
+and package snapshots. Selection preserves multiarch, preferred 32-bit and
+RenderScript rules rather than hardcoding the selected provider's ABI.
+
+This is an exec implementation, without preloaded ART fork/shared pages, Android
+shared-profile supplementary groups or GWP-ASan protection. Ordinary hosted AMS
+service records, including Chromium renderer services, still use the primary
+exec launch path. The dedicated Process.startWebView API has separate live
+coverage; it is not evidence of inherited provider memory or full Android
+SELinux/device sandbox equivalence.
+
+The framework archive is SHA-256
+`c9c6d907bb3172ca1a872d523c7c7b2d9393500a781c5800e6daf5ded30fb739`, pinned to
+`N-V-__8AAHBE9U4uzlqu6wCrVZWNBKTFG47DJgYgcoRVy5Gi`. Packaging restored the
+isolated checkout. ART remains SHA-256
+`aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c`, pinned to
+`N-V-__8AAFy_Sw3fTP2p_29yYUTLwLIfAFVUAabWYBO97HQb`. Both local archive copies
+are current.
+
+Validation passed: native app-data isolation, stock cold launch, both original
+Process start APIs, focused NewPipe launch, full JVM/system/APK/WebView/overlay,
+desktop launcher, session-loss, Binder/C++/NDK and build/source audit gates.
+The Process tests verify real parent/PID/UID/GID, target SDK 31, large arguments
+with control and supplementary Unicode characters, data visibility and invalid
+UID rejection. All 28 fresh APK cases passed with 89 captured actions; WebView
+and desktop tests added 24 actions, all with empty structured issue lists and
+no fresh failure artifacts. WebView playing pixels and desktop modal screenshots
+were inspected. An earlier intermittent Chromium infinite frame-rate hint remains
+under investigation; this successful overlay run does not establish its repair.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

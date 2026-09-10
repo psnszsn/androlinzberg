@@ -280,7 +280,8 @@ internal object SystemServices {
         activityManagerAccess.setSystemReady()
         stockWindows.systemReady()
         manager.startBootPhase(trace, SystemService.PHASE_ACTIVITY_MANAGER_READY)
-        com.android.server.webkit.HostedWebViewUpdateService(context, hostedPermissions).start()
+        com.android.server.webkit.HostedWebViewUpdateService(context, hostedPermissions,
+            processLauncher::selectWebViewProvider).start()
         manager.startBootPhase(trace, SystemService.PHASE_THIRD_PARTY_APPS_CAN_START)
         userLifecycle.start(object : HostedUserLifecycle.Services {
             override fun starting(userId: Int) {

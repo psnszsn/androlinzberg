@@ -14,6 +14,7 @@ import com.android.server.pm.PackageKeySetData
 import com.android.server.pm.PackageSetting
 import com.android.server.pm.setHostedArchiveState
 import com.android.server.pm.permission.LegacyPermissionState
+import com.android.server.pm.parsing.pkg.AndroidPackageUtils
 import com.android.server.pm.pkg.AndroidPackage
 import com.android.server.pm.pkg.PackageStateInternal
 import com.android.server.pm.pkg.PackageStateUnserialized
@@ -135,8 +136,8 @@ class HostedPackageState(
     override fun getLoadingProgress(): Float = 1f
     override fun getLoadingCompletedTime(): Long = 0
     override fun getKeySetData(): PackageKeySetData = setting.keySetData
-    override fun getPrimaryCpuAbiLegacy(): String? = null
-    override fun getSecondaryCpuAbiLegacy(): String? = null
+    override fun getPrimaryCpuAbiLegacy(): String? = AndroidPackageUtils.getRawPrimaryCpuAbi(pkg)
+    override fun getSecondaryCpuAbiLegacy(): String? = AndroidPackageUtils.getRawSecondaryCpuAbi(pkg)
     override fun getAppMetadataFilePath(): String? = null
     override fun getOldPaths(): Set<File>? = null
     override fun getAppMetadataSource(): Int = 0
@@ -144,8 +145,8 @@ class HostedPackageState(
     override fun getAppId(): Int = appId
     override fun getHiddenApiEnforcementPolicy(): Int =
         ApplicationInfo.HIDDEN_API_ENFORCEMENT_DISABLED
-    override fun getPrimaryCpuAbi(): String? = null
-    override fun getSecondaryCpuAbi(): String? = null
+    override fun getPrimaryCpuAbi(): String? = AndroidPackageUtils.getRawPrimaryCpuAbi(pkg)
+    override fun getSecondaryCpuAbi(): String? = AndroidPackageUtils.getRawSecondaryCpuAbi(pkg)
     override fun getSeInfo(): String = "default"
     override fun getStateForUser(user: UserHandle): PackageUserState =
         setting.getStateForUser(user)

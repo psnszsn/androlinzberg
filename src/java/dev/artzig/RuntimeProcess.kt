@@ -29,6 +29,13 @@ object RuntimeProcess {
         val instance = logger.getDeclaredMethod("getInstance").apply { isAccessible = true }.invoke(null)
         ZygoteInit.setHiddenApiUsageLogger(instance as dalvik.system.VMRuntime.HiddenApiUsageLogger)
         val frameworkRes = checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES"))
+        if (entry.first() == dev.artzig.system.HostedWebViewZygote.ENTRY) {
+            HostContexts.prepareApplicationEnvironment(frameworkRes)
+            android.os.Process.setArgV0(checkNotNull(System.getenv("AZK_APP_PROCESS_NAME")))
+            dev.artzig.system.HostedWebViewZygote.run(config.getString("webViewProvider"),
+                entry.copyOfRange(1, entry.size))
+            return
+        }
         if (entry.first() == "android.app.ActivityThread") {
             HostContexts.prepareForActivityThreadMain(frameworkRes)
             dev.artzig.testing.ProcessInspection.observeActivityMainStartup()
