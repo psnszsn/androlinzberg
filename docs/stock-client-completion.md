@@ -467,6 +467,43 @@ desktop launcher's 16 steps also contain zero issues. All five session-loss
 cases passed. WebView pause, desktop modal and NewPipe fullscreen frames were
 inspected.
 
+### Stock resource paths (2026-09-10)
+
+SystemFonts, AssetManager and SQLiteGlobal now match pinned AOSP byte-for-byte.
+Their environment-based Java path changes are removed. A shared native resolver
+maps the existing configured font files, font directory, framework APK and exact
+`/data` partition probe below the original Java file/resource clients. Libcore's
+Linux, java.io and NIO pathname boundaries and androidfw's archive opener use the
+same resolver as the bionic file adapter. Unchanged paths remain borrowed; mapped
+buffers have explicit release and allocation-failure handling. ApkAssets retains
+its original Android asset name while opening the real hosted archive.
+
+This resolves named platform resources, not a general virtual filesystem or the
+remaining Environment/runtime partition layout. Symlink targets remain original
+stored text. The boot File library-existence workaround is still open.
+
+The exact compiler source response contains 7,080 unchanged AOSP files, four
+modified client files (ApplicationLoaders, Environment, Process and
+ClassLoaderFactory), 40 modified server files and no missing references. The stub
+inventory remains zero client stubs and four pending server stubs.
+
+Both local archives were rebuilt from the isolated checkout, which packaging
+restored. Framework SHA-256 is
+`6f0819795e007bce2d518ead281bb115560d422398523c95620343ae2e12d784`, pinned to
+`N-V-__8AAPTm806Q3otq_0qaOAtzGS8xYbCZ-hqVkWLhbcGq`. ART SHA-256 is
+`337b8031458cb01f56b78ab3995fcc26ab7e456ce380225e8891615959291b93`, pinned to
+`N-V-__8AADqdSw2GL19rcy7pDTYdgUr9zhkaIgGA-fqaYaFn`.
+
+`framework-module-test` passed with `-j24`, including original path constants,
+file bytes and metadata through java.io/Os/NIO, APK identity and freshness, XML
+parsing, actual font loading and SQLite's partition probe. The complete `-j10`
+gate passed: `install system-certificates-test build-tools-test cpp-audit
+graph-audit jvm-test system-test integration-test webview-test webview-ui-test
+stock-desktop-launcher-test stock-session-loss-test`. All 28 fresh APK cases
+contain 88 steps with zero structured issues; WebView's three and the desktop
+launcher's 16 steps also contain zero issues. All five session-loss cases passed.
+WebView pause, desktop modal and NewPipe fullscreen frames were inspected.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

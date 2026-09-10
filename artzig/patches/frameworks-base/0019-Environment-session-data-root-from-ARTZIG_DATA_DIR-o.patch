@@ -1,47 +1,10 @@
-From 263df64bb2a1e0aa112f9dd48667f966a6034b48 Mon Sep 17 00:00:00 2001
-From: Vlad Panazan <git@praznet.com>
-Date: Wed, 2 Sep 2026 01:32:13 +0200
-Subject: [PATCH] Environment: session data root from ARTZIG_DATA_DIR on the
- artzig host
+From: Androlinzberg host integration
+Subject: [PATCH] Environment: hosted persistent and session data roots
 
-ANDROID_DATA is ART's dalvik-cache root on this host (an XDG cache directory
-shared between sessions), so the launcher-exported ARTZIG_DATA_DIR takes
-precedence for the Android data directory. SQLiteGlobal's stock page-size
-probe names the device's /data partition literally; point that probe at the
-same session data root because the host has no /data mount.
-
-System services additionally receive ARTZIG_SYSTEM_DATA_DIR for system policy
-storage. Broker-assigned UIDs are session-local, so AppOps history must not be
-shared between sessions. Application data paths retain ARTZIG_DATA_DIR.
----
- core/java/android/database/sqlite/SQLiteGlobal.java | 9 ++++++---
- core/java/android/os/Environment.java               | 20 +++++++++++++-------
- 2 files changed, 19 insertions(+), 10 deletions(-)
-
-diff --git a/core/java/android/database/sqlite/SQLiteGlobal.java b/core/java/android/database/sqlite/SQLiteGlobal.java
-index 9aa9f1ac1..ab9ba5eed 100644
---- a/core/java/android/database/sqlite/SQLiteGlobal.java
-+++ b/core/java/android/database/sqlite/SQLiteGlobal.java
-@@ -20,3 +20,4 @@ import android.annotation.TestApi;
- import android.content.res.Resources;
-+import android.os.Environment;
- import android.os.StatFs;
- import android.os.SystemProperties;
-@@ -73,9 +74,11 @@ public final class SQLiteGlobal {
-     public static int getDefaultPageSize() {
-         synchronized (sLock) {
-             if (sDefaultPageSize == 0) {
--                // If there is an issue accessing /data, something is so seriously
--                // wrong that we just let the IllegalArgumentException propagate.
--                sDefaultPageSize = new StatFs("/data").getBlockSize();
-+                // Host adaptation (artzig): follows AOSP SQLiteGlobal.getDefaultPageSize,
-+                // but the host has no literal /data mount. Environment owns the session
-+                // data-root redirect, so query that Android data partition instead.
-+                sDefaultPageSize = new StatFs(
-+                        Environment.getDataDirectory().getPath()).getBlockSize();
-             }
-             return SystemProperties.getInt("debug.sqlite.pagesize", sDefaultPageSize);
-         }
+ANDROID_DATA still supplies ART's cache while ARTZIG_DATA_DIR owns persistent
+application data. System policy uses ARTZIG_SYSTEM_DATA_DIR because broker UIDs
+are session-local. This remaining Java adaptation belongs to the runtime/data
+partition batch; SQLiteGlobal now resolves its stock /data probe below Java.
 
 diff --git a/core/java/android/os/Environment.java b/core/java/android/os/Environment.java
 index 69540c42a..1ad2d0672 100644

@@ -22,12 +22,10 @@ framework_patches = tuple(
     ("frameworks/base", patch_root / "frameworks-base" / f"{number:04d}{suffix}")
     for number, suffix in (
         (3, "-jni-honor-CriticalNative-on-host-under-real-ART-ARTZ.patch"),
-        (5, "-SystemFonts-env-overridable-font-config-paths-for-ho.patch"),
         (6, "-androidfw-replace-CombinedIterator-merge-in-Theme-Ap.patch"),
         (7, "-host-fixes-for-app-playback-static-Display-null-Disp.patch"),
         (9, "-add-direct-Wayland-EGL-presentation-to-host-HWUI.patch"),
         (11, "-CursorWindow-always-parcel-as-shared-memory-on-the-a.patch"),
-        (12, "-AssetManager-env-overridable-framework-res.apk-path-.patch"),
         (13, "-host-hwui-view-uncommitted-working-tree-changes-pres.patch"),
         (14, "-fixup-drop-duplicated-Bitmap-compress-declaration-fr.patch"),
         (17, "-Process-broker-assigned-uid-no-zygote-on-the-host-ar.patch"),
@@ -84,6 +82,7 @@ framework_patches = tuple(
         (68, "-HWUI-convert-host-GL-functor-origin.patch"),
         (69, "-HWUI-and-NDK-stock-SurfaceControl-on-host.patch"),
         (70, "-ToneGenerator-use-host-audio-volume-conversion.patch"),
+        (71, "-AssetsProvider-resolve-platform-archive-below-client.patch"),
     )
 )
 

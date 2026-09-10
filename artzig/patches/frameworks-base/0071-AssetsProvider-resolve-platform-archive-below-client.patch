@@ -1,0 +1,29 @@
+From: Androlinzberg host integration
+Subject: [PATCH] AssetsProvider: resolve hosted archive below stock client
+
+Resolve platform file locations at the native boundary. Retain original JNI
+exceptions, descriptor ownership and Java-visible asset names.
+
+--- a/libs/androidfw/AssetsProvider.cpp
++++ b/libs/androidfw/AssetsProvider.cpp
+@@ -15,6 +15,7 @@
+  */
+ 
+ #include "androidfw/AssetsProvider.h"
++#include "host_paths.h"
+ 
+ #include <sys/stat.h>
+ 
+@@ -118,9 +119,11 @@
+ std::unique_ptr<ZipAssetsProvider> ZipAssetsProvider::Create(std::string path,
+                                                              package_property_t flags,
+                                                              base::unique_fd fd) {
++  HostedFilePath host_path(path.c_str());
++  if (host_path.c_str() == nullptr) return {};
+   const auto released_fd = fd.ok() ? fd.release() : -1;
+   ZipArchiveHandle handle;
+-  if (int32_t result = released_fd < 0 ? OpenArchive(path.c_str(), &handle)
++  if (int32_t result = released_fd < 0 ? OpenArchive(host_path.c_str(), &handle)
+                                        : OpenArchiveFd(released_fd, path.c_str(), &handle)) {
+     LOG(ERROR) << "Failed to open APK '" << path << "': " << ::ErrorCodeString(result);
+     CloseArchive(handle);

@@ -1,0 +1,737 @@
+From: Androlinzberg host integration
+Subject: [PATCH] libcore: resolve platform files below stock Java callers
+
+Resolve platform file locations at the native boundary. Retain original JNI
+exceptions, descriptor ownership and Java-visible asset names.
+
+--- a/luni/src/main/native/libcore_io_Linux.cpp
++++ b/luni/src/main/native/libcore_io_Linux.cpp
+@@ -64,6 +64,7 @@
+ #include <nativehelper/ScopedLocalRef.h>
+ #include <nativehelper/ScopedPrimitiveArray.h>
+ #include <nativehelper/ScopedUtfChars.h>
++#include "host_paths_jni.h"
+ #include <nativehelper/jni_macros.h>
+ #include <nativehelper/toStringArray.h>
+ 
+@@ -797,7 +798,7 @@
+ }
+ 
+ static jobject doStat(JNIEnv* env, jstring javaPath, bool isLstat) {
+-    ScopedUtfChars path(env, javaPath);
++    ScopedHostedPath path(env, javaPath);
+     if (path.c_str() == NULL) {
+         return NULL;
+     }
+@@ -1030,7 +1031,7 @@
+ }
+ 
+ static jboolean Linux_access(JNIEnv* env, jobject, jstring javaPath, jint mode) {
+-    ScopedUtfChars path(env, javaPath);
++    ScopedHostedPath path(env, javaPath);
+     if (path.c_str() == NULL) {
+         return JNI_FALSE;
+     }
+@@ -1146,7 +1147,7 @@
+ }
+ 
+ static void Linux_chmod(JNIEnv* env, jobject, jstring javaPath, jint mode) {
+-    ScopedUtfChars path(env, javaPath);
++    ScopedHostedPath path(env, javaPath);
+     if (path.c_str() == NULL) {
+         return;
+     }
+@@ -1154,7 +1155,7 @@
+ }
+ 
+ static void Linux_chown(JNIEnv* env, jobject, jstring javaPath, jint uid, jint gid) {
+-    ScopedUtfChars path(env, javaPath);
++    ScopedHostedPath path(env, javaPath);
+     if (path.c_str() == NULL) {
+         return;
+     }
+@@ -1271,7 +1272,7 @@
+ }
+ 
+ static void Linux_execve(JNIEnv* env, jobject, jstring javaFilename, jobjectArray javaArgv, jobjectArray javaEnvp) {
+-    ScopedUtfChars path(env, javaFilename);
++    ScopedHostedPath path(env, javaFilename);
+     if (path.c_str() == NULL) {
+         return;
+     }
+@@ -1284,7 +1285,7 @@
+ }
+ 
+ static void Linux_execv(JNIEnv* env, jobject, jstring javaFilename, jobjectArray javaArgv) {
+-    ScopedUtfChars path(env, javaFilename);
++    ScopedHostedPath path(env, javaFilename);
+     if (path.c_str() == NULL) {
+         return;
+     }
+@@ -1598,7 +1599,7 @@
+ 
+ static jbyteArray Linux_getxattr(JNIEnv* env, jobject, jstring javaPath,
+         jstring javaName) {
+-    ScopedUtfChars path(env, javaPath);
++    ScopedHostedPath path(env, javaPath);
+     if (path.c_str() == NULL) {
+         return NULL;
+     }
+@@ -1827,7 +1828,7 @@
+ }
+ 
+ static void Linux_lchown(JNIEnv* env, jobject, jstring javaPath, jint uid, jint gid) {
+-    ScopedUtfChars path(env, javaPath);
++    ScopedHostedPath path(env, javaPath);
+     if (path.c_str() == NULL) {
+         return;
+     }
+@@ -1835,11 +1836,11 @@
+ }
+ 
+ static void Linux_link(JNIEnv* env, jobject, jstring javaOldPath, jstring javaNewPath) {
+-    ScopedUtfChars oldPath(env, javaOldPath);
++    ScopedHostedPath oldPath(env, javaOldPath);
+     if (oldPath.c_str() == NULL) {
+         return;
+     }
+-    ScopedUtfChars newPath(env, javaNewPath);
++    ScopedHostedPath newPath(env, javaNewPath);
+     if (newPath.c_str() == NULL) {
+         return;
+     }
+@@ -1852,7 +1853,7 @@
+ }
+ 
+ static jobjectArray Linux_listxattr(JNIEnv* env, jobject, jstring javaPath) {
+-    ScopedUtfChars path(env, javaPath);
++    ScopedHostedPath path(env, javaPath);
+     if (path.c_str() == NULL) {
+         return NULL;
+     }
+@@ -1920,7 +1921,7 @@
+ }
+ 
+ static void Linux_mkdir(JNIEnv* env, jobject, jstring javaPath, jint mode) {
+-    ScopedUtfChars path(env, javaPath);
++    ScopedHostedPath path(env, javaPath);
+     if (path.c_str() == NULL) {
+         return;
+     }
+@@ -1928,7 +1929,7 @@
+ }
+ 
+ static void Linux_mkfifo(JNIEnv* env, jobject, jstring javaPath, jint mode) {
+-    ScopedUtfChars path(env, javaPath);
++    ScopedHostedPath path(env, javaPath);
+     if (path.c_str() == NULL) {
+         return;
+     }
+@@ -1966,7 +1967,7 @@
+ }
+ 
+ static jobject Linux_open(JNIEnv* env, jobject, jstring javaPath, jint flags, jint mode) {
+-    ScopedUtfChars path(env, javaPath);
++    ScopedHostedPath path(env, javaPath);
+     if (path.c_str() == NULL) {
+         return NULL;
+     }
+@@ -2122,7 +2123,7 @@
+ }
+ 
+ static jstring Linux_readlink(JNIEnv* env, jobject, jstring javaPath) {
+-    ScopedUtfChars path(env, javaPath);
++    ScopedHostedPath path(env, javaPath);
+     if (path.c_str() == NULL) {
+         return NULL;
+     }
+@@ -2136,7 +2137,7 @@
+ }
+ 
+ static jstring Linux_realpath(JNIEnv* env, jobject, jstring javaPath) {
+-    ScopedUtfChars path(env, javaPath);
++    ScopedHostedPath path(env, javaPath);
+     if (path.c_str() == NULL) {
+         return NULL;
+     }
+@@ -2237,7 +2238,7 @@
+ 
+ 
+ static void Linux_remove(JNIEnv* env, jobject, jstring javaPath) {
+-    ScopedUtfChars path(env, javaPath);
++    ScopedHostedPath path(env, javaPath);
+     if (path.c_str() == NULL) {
+         return;
+     }
+@@ -2245,7 +2246,7 @@
+ }
+ 
+ static void Linux_removexattr(JNIEnv* env, jobject, jstring javaPath, jstring javaName) {
+-    ScopedUtfChars path(env, javaPath);
++    ScopedHostedPath path(env, javaPath);
+     if (path.c_str() == NULL) {
+         return;
+     }
+@@ -2261,11 +2262,11 @@
+ }
+ 
+ static void Linux_rename(JNIEnv* env, jobject, jstring javaOldPath, jstring javaNewPath) {
+-    ScopedUtfChars oldPath(env, javaOldPath);
++    ScopedHostedPath oldPath(env, javaOldPath);
+     if (oldPath.c_str() == NULL) {
+         return;
+     }
+-    ScopedUtfChars newPath(env, javaNewPath);
++    ScopedHostedPath newPath(env, javaNewPath);
+     if (newPath.c_str() == NULL) {
+         return;
+     }
+@@ -2533,7 +2534,7 @@
+ 
+ static void Linux_setxattr(JNIEnv* env, jobject, jstring javaPath, jstring javaName,
+         jbyteArray javaValue, jint flags) {
+-    ScopedUtfChars path(env, javaPath);
++    ScopedHostedPath path(env, javaPath);
+     if (path.c_str() == NULL) {
+         return;
+     }
+@@ -2631,7 +2632,7 @@
+ }
+ 
+ static jobject Linux_statvfs(JNIEnv* env, jobject, jstring javaPath) {
+-    ScopedUtfChars path(env, javaPath);
++    ScopedHostedPath path(env, javaPath);
+     if (path.c_str() == NULL) {
+         return NULL;
+     }
+@@ -2668,7 +2669,7 @@
+     if (oldPath.c_str() == NULL) {
+         return;
+     }
+-    ScopedUtfChars newPath(env, javaNewPath);
++    ScopedHostedPath newPath(env, javaNewPath);
+     if (newPath.c_str() == NULL) {
+         return;
+     }
+@@ -2708,7 +2709,7 @@
+ }
+ 
+ static void Linux_unlink(JNIEnv* env, jobject, jstring javaPathname) {
+-    ScopedUtfChars pathname(env, javaPathname);
++    ScopedHostedPath pathname(env, javaPathname);
+     if (pathname.c_str() == NULL) {
+         return;
+     }
+--- a/ojluni/src/main/native/UnixFileSystem_md.c
++++ b/ojluni/src/main/native/UnixFileSystem_md.c
+@@ -47,6 +47,7 @@
+ #include "jni_util.h"
+ #include "jlong.h"
+ #include "io_util.h"
++#include "host_paths_io.h"
+ #include "io_util_md.h"
+ #include "java_io_FileSystem.h"
+ #include "java_io_UnixFileSystem.h"
+@@ -112,7 +113,7 @@
+ {
+     jstring rv = NULL;
+ 
+-    WITH_PLATFORM_STRING(env, pathname, path) {
++    WITH_HOSTED_PLATFORM_STRING(env, pathname, path) {
+         char canonicalPath[PATH_MAX];
+         if (canonicalize((char *)path,
+                          canonicalPath, PATH_MAX, isAtLeastTargetSdk35) < 0) {
+@@ -124,7 +125,7 @@
+             rv = JNU_NewStringPlatform(env, canonicalPath);
+ #endif
+         }
+-    } END_PLATFORM_STRING(env, path);
++    } END_HOSTED_PLATFORM_STRING(env, path);
+     return rv;
+ }
+ 
+@@ -151,8 +152,8 @@
+     jint rv = 0;
+ 
+     /* ----- BEGIN android -----
+-    WITH_FIELD_PLATFORM_STRING(env, file, ids.path, path) {*/
+-    WITH_PLATFORM_STRING(env, abspath, path) {
++    WITH_HOSTED_FIELD_PLATFORM_STRING(env, file, ids.path, path) {*/
++    WITH_HOSTED_PLATFORM_STRING(env, abspath, path) {
+     // ----- END android -----
+         int mode;
+         if (statMode(path, &mode)) {
+@@ -161,7 +162,7 @@
+                   | ((fmt == S_IFREG) ? java_io_FileSystem_BA_REGULAR : 0)
+                   | ((fmt == S_IFDIR) ? java_io_FileSystem_BA_DIRECTORY : 0));
+         }
+-    } END_PLATFORM_STRING(env, path);
++    } END_HOSTED_PLATFORM_STRING(env, path);
+     return rv;
+ }
+ 
+@@ -185,11 +186,11 @@
+         break;
+     default: assert(0);
+     }
+-    WITH_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
++    WITH_HOSTED_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
+         if (access(path, mode) == 0) {
+             rv = JNI_TRUE;
+         }
+-    } END_PLATFORM_STRING(env, path);
++    } END_HOSTED_PLATFORM_STRING(env, path);
+     return rv;
+ }
+ */
+@@ -205,7 +206,7 @@
+ {
+     jboolean rv = JNI_FALSE;
+ 
+-    WITH_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
++    WITH_HOSTED_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
+         int amode = 0;
+         int mode;
+         switch (access) {
+@@ -239,7 +240,7 @@
+                 rv = JNI_TRUE;
+             }
+         }
+-    } END_PLATFORM_STRING(env, path);
++    } END_HOSTED_PLATFORM_STRING(env, path);
+     return rv;
+ }
+ 
+@@ -250,7 +251,7 @@
+ {
+     jlong rv = 0;
+ 
+-    WITH_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
++    WITH_HOSTED_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
+         struct stat64 sb;
+         if (stat64(path, &sb) == 0) {
+ #if defined(_AIX)
+@@ -264,7 +265,7 @@
+             rv += (jlong)sb.st_mtim.tv_nsec / 1000000;
+ #endif
+         }
+-    } END_PLATFORM_STRING(env, path);
++    } END_HOSTED_PLATFORM_STRING(env, path);
+     return rv;
+ }
+ 
+@@ -276,12 +277,12 @@
+ {
+     jlong rv = 0;
+ 
+-    WITH_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
++    WITH_HOSTED_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
+         struct stat64 sb;
+         if (stat64(path, &sb) == 0) {
+             rv = sb.st_size;
+         }
+-    } END_PLATFORM_STRING(env, path);
++    } END_HOSTED_PLATFORM_STRING(env, path);
+     return rv;
+ }
+ */
+@@ -297,7 +298,7 @@
+ {
+     jboolean rv = JNI_FALSE;
+ 
+-    WITH_PLATFORM_STRING(env, pathname, path) {
++    WITH_HOSTED_PLATFORM_STRING(env, pathname, path) {
+         FD fd;
+         /* The root directory always exists */
+         if (strcmp (path, "/")) {
+@@ -311,7 +312,7 @@
+                 rv = JNI_TRUE;
+             }
+         }
+-    } END_PLATFORM_STRING(env, path);
++    } END_HOSTED_PLATFORM_STRING(env, path);
+     return rv;
+ }
+ 
+@@ -324,11 +325,11 @@
+ {
+     jboolean rv = JNI_FALSE;
+ 
+-    WITH_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
++    WITH_HOSTED_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
+         if (remove(path) == 0) {
+             rv = JNI_TRUE;
+         }
+-    } END_PLATFORM_STRING(env, path);
++    } END_HOSTED_PLATFORM_STRING(env, path);
+     return rv;
+ }
+ */
+@@ -349,9 +350,9 @@
+     CHECK_NULL_RETURN(str_class, NULL);
+ 
+ 
+-    WITH_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
++    WITH_HOSTED_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
+         dir = opendir(path);
+-    } END_PLATFORM_STRING(env, path);
++    } END_HOSTED_PLATFORM_STRING(env, path);
+     if (dir == NULL) return NULL;
+ 
+     /* Allocate an initial String array */
+@@ -406,11 +407,11 @@
+ {
+     jboolean rv = JNI_FALSE;
+ 
+-    WITH_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
++    WITH_HOSTED_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
+         if (mkdir(path, 0777) == 0) {
+             rv = JNI_TRUE;
+         }
+-    } END_PLATFORM_STRING(env, path);
++    } END_HOSTED_PLATFORM_STRING(env, path);
+     return rv;
+ }
+ 
+@@ -423,13 +424,13 @@
+ {
+     jboolean rv = JNI_FALSE;
+ 
+-    WITH_FIELD_PLATFORM_STRING(env, from, ids.path, fromPath) {
+-        WITH_FIELD_PLATFORM_STRING(env, to, ids.path, toPath) {
++    WITH_HOSTED_FIELD_PLATFORM_STRING(env, from, ids.path, fromPath) {
++        WITH_HOSTED_FIELD_PLATFORM_STRING(env, to, ids.path, toPath) {
+             if (rename(fromPath, toPath) == 0) {
+                 rv = JNI_TRUE;
+             }
+-        } END_PLATFORM_STRING(env, toPath);
+-    } END_PLATFORM_STRING(env, fromPath);
++        } END_HOSTED_PLATFORM_STRING(env, toPath);
++    } END_HOSTED_PLATFORM_STRING(env, fromPath);
+     return rv;
+ }
+ */
+@@ -442,7 +443,7 @@
+ {
+     jboolean rv = JNI_FALSE;
+ 
+-    WITH_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
++    WITH_HOSTED_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
+         struct stat64 sb;
+ 
+         if (stat64(path, &sb) == 0) {
+@@ -466,7 +467,7 @@
+             if (utimes(path, tv) == 0)
+                 rv = JNI_TRUE;
+         }
+-    } END_PLATFORM_STRING(env, path);
++    } END_HOSTED_PLATFORM_STRING(env, path);
+ 
+     return rv;
+ }
+@@ -478,14 +479,14 @@
+ {
+     jboolean rv = JNI_FALSE;
+ 
+-    WITH_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
++    WITH_HOSTED_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
+         int mode;
+         if (statMode(path, &mode)) {
+             if (chmod(path, mode & ~(S_IWUSR | S_IWGRP | S_IWOTH)) >= 0) {
+                 rv = JNI_TRUE;
+             }
+         }
+-    } END_PLATFORM_STRING(env, path);
++    } END_HOSTED_PLATFORM_STRING(env, path);
+     return rv;
+ }
+ 
+@@ -496,7 +497,7 @@
+ {
+     jlong rv = 0L;
+ 
+-    WITH_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
++    WITH_HOSTED_FIELD_PLATFORM_STRING(env, file, ids.path, path) {
+ #ifdef MACOSX
+         struct statfs fsstat;
+ #else
+@@ -542,7 +543,7 @@
+             }
+         }
+ #endif
+-    } END_PLATFORM_STRING(env, path);
++    } END_HOSTED_PLATFORM_STRING(env, path);
+     return rv;
+ }
+ 
+@@ -551,9 +552,9 @@
+                                         jstring pathname)
+ {
+     jlong length = -1;
+-    WITH_PLATFORM_STRING(env, pathname, path) {
++    WITH_HOSTED_PLATFORM_STRING(env, pathname, path) {
+         length = (jlong)pathconf(path, _PC_NAME_MAX);
+-    } END_PLATFORM_STRING(env, path);
++    } END_HOSTED_PLATFORM_STRING(env, path);
+     return length != -1 ? length : (jlong)NAME_MAX;
+ }
+ 
+--- a/ojluni/src/main/native/UnixNativeDispatcher.c
++++ b/ojluni/src/main/native/UnixNativeDispatcher.c
+@@ -66,6 +66,7 @@
+ 
+ #include "jni.h"
+ #include "jni_util.h"
++#include "host_paths_io.h"
+ #include "jlong.h"
+ 
+ #include "sun_nio_fs_UnixNativeDispatcher.h"
+@@ -349,7 +350,7 @@
+     jlong pathAddress, jlong modeAddress)
+ {
+     FILE* fp = NULL;
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), 0);
+     const char* mode = (const char*)jlong_to_ptr(modeAddress);
+ 
+     do {
+@@ -383,7 +384,7 @@
+     jlong pathAddress, jint oflags, jint mode)
+ {
+     jint fd;
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), 0);
+ 
+     RESTARTABLE(open64(path, (int)oflags, (mode_t)mode), fd);
+     if (fd == -1) {
+@@ -397,7 +398,7 @@
+     jlong pathAddress, jint oflags, jint mode)
+ {
+     jint fd;
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), 0);
+ 
+     if (my_openat64_func == NULL) {
+         JNU_ThrowInternalError(env, "should not reach here");
+@@ -490,7 +491,7 @@
+ {
+     int err;
+     struct stat64 buf;
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), );
+ 
+     RESTARTABLE(stat64(path, &buf), err);
+     if (err == -1) {
+@@ -504,7 +505,7 @@
+ Java_sun_nio_fs_UnixNativeDispatcher_stat1(JNIEnv* env, jclass this, jlong pathAddress) {
+     int err;
+     struct stat64 buf;
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), 0);
+ 
+     RESTARTABLE(stat64(path, &buf), err);
+     if (err == -1) {
+@@ -520,7 +521,7 @@
+ {
+     int err;
+     struct stat64 buf;
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), );
+ 
+     RESTARTABLE(lstat64(path, &buf), err);
+     if (err == -1) {
+@@ -551,7 +552,7 @@
+ {
+     int err;
+     struct stat64 buf;
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), );
+ 
+     if (my_fstatat64_func == NULL) {
+         JNU_ThrowInternalError(env, "should not reach here");
+@@ -570,7 +571,7 @@
+     jlong pathAddress, jint mode)
+ {
+     int err;
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), );
+ 
+     RESTARTABLE(chmod(path, (mode_t)mode), err);
+     if (err == -1) {
+@@ -596,7 +597,7 @@
+     jlong pathAddress, jint uid, jint gid)
+ {
+     int err;
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), );
+ 
+     RESTARTABLE(chown(path, (uid_t)uid, (gid_t)gid), err);
+     if (err == -1) {
+@@ -608,7 +609,7 @@
+ Java_sun_nio_fs_UnixNativeDispatcher_lchown0(JNIEnv* env, jclass this, jlong pathAddress, jint uid, jint gid)
+ {
+     int err;
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), );
+ 
+     RESTARTABLE(lchown(path, (uid_t)uid, (gid_t)gid), err);
+     if (err == -1) {
+@@ -633,7 +634,7 @@
+ {
+     int err;
+     struct timeval times[2];
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), );
+ 
+     times[0].tv_sec = accessTime / 1000000;
+     times[0].tv_usec = accessTime % 1000000;
+@@ -679,7 +680,7 @@
+     jlong pathAddress)
+ {
+     DIR* dir;
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), 0);
+ 
+     /* EINTR not listed as a possible error */
+     dir = opendir(path);
+@@ -781,7 +782,7 @@
+ Java_sun_nio_fs_UnixNativeDispatcher_mkdir0(JNIEnv* env, jclass this,
+     jlong pathAddress, jint mode)
+ {
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), );
+ 
+     /* EINTR not listed as a possible error */
+     if (mkdir(path, (mode_t)mode) == -1) {
+@@ -793,7 +794,7 @@
+ Java_sun_nio_fs_UnixNativeDispatcher_rmdir0(JNIEnv* env, jclass this,
+     jlong pathAddress)
+ {
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), );
+ 
+     /* EINTR not listed as a possible error */
+     if (rmdir(path) == -1) {
+@@ -806,8 +807,8 @@
+     jlong existingAddress, jlong newAddress)
+ {
+     int err;
+-    const char* existing = (const char*)jlong_to_ptr(existingAddress);
+-    const char* newname = (const char*)jlong_to_ptr(newAddress);
++    HOSTED_NATIVE_PATH(env, existing, (const char*)jlong_to_ptr(existingAddress), );
++    HOSTED_NATIVE_PATH(env, newname, (const char*)jlong_to_ptr(newAddress), );
+ 
+     RESTARTABLE(link(existing, newname), err);
+     if (err == -1) {
+@@ -820,7 +821,7 @@
+ Java_sun_nio_fs_UnixNativeDispatcher_unlink0(JNIEnv* env, jclass this,
+     jlong pathAddress)
+ {
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), );
+ 
+     /* EINTR not listed as a possible error */
+     if (unlink(path) == -1) {
+@@ -832,7 +833,7 @@
+ Java_sun_nio_fs_UnixNativeDispatcher_unlinkat0(JNIEnv* env, jclass this, jint dfd,
+                                                jlong pathAddress, jint flags)
+ {
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), );
+ 
+     if (my_unlinkat_func == NULL) {
+         JNU_ThrowInternalError(env, "should not reach here");
+@@ -849,8 +850,8 @@
+ Java_sun_nio_fs_UnixNativeDispatcher_rename0(JNIEnv* env, jclass this,
+     jlong fromAddress, jlong toAddress)
+ {
+-    const char* from = (const char*)jlong_to_ptr(fromAddress);
+-    const char* to = (const char*)jlong_to_ptr(toAddress);
++    HOSTED_NATIVE_PATH(env, from, (const char*)jlong_to_ptr(fromAddress), );
++    HOSTED_NATIVE_PATH(env, to, (const char*)jlong_to_ptr(toAddress), );
+ 
+     /* EINTR not listed as a possible error */
+     if (rename(from, to) == -1) {
+@@ -862,8 +863,8 @@
+ Java_sun_nio_fs_UnixNativeDispatcher_renameat0(JNIEnv* env, jclass this,
+     jint fromfd, jlong fromAddress, jint tofd, jlong toAddress)
+ {
+-    const char* from = (const char*)jlong_to_ptr(fromAddress);
+-    const char* to = (const char*)jlong_to_ptr(toAddress);
++    HOSTED_NATIVE_PATH(env, from, (const char*)jlong_to_ptr(fromAddress), );
++    HOSTED_NATIVE_PATH(env, to, (const char*)jlong_to_ptr(toAddress), );
+ 
+     if (my_renameat_func == NULL) {
+         JNU_ThrowInternalError(env, "should not reach here");
+@@ -881,7 +882,7 @@
+     jlong targetAddress, jlong linkAddress)
+ {
+     const char* target = (const char*)jlong_to_ptr(targetAddress);
+-    const char* link = (const char*)jlong_to_ptr(linkAddress);
++    HOSTED_NATIVE_PATH(env, link, (const char*)jlong_to_ptr(linkAddress), );
+ 
+     /* EINTR not listed as a possible error */
+     if (symlink(target, link) == -1) {
+@@ -895,7 +896,7 @@
+ {
+     jbyteArray result = NULL;
+     char target[PATH_MAX+1];
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), 0);
+ 
+     /* EINTR not listed as a possible error */
+     int n = readlink(path, target, sizeof(target));
+@@ -922,7 +923,7 @@
+ {
+     jbyteArray result = NULL;
+     char resolved[PATH_MAX+1];
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), 0);
+ 
+     /* EINTR not listed as a possible error */
+     if (realpath(path, resolved) == NULL) {
+@@ -942,7 +943,7 @@
+     jlong pathAddress, jint amode)
+ {
+     int err;
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), );
+ 
+     RESTARTABLE(access(path, (int)amode), err);
+     if (err == -1) {
+@@ -953,7 +954,7 @@
+ JNIEXPORT jboolean JNICALL
+ Java_sun_nio_fs_UnixNativeDispatcher_exists0(JNIEnv* env, jclass this, jlong pathAddress) {
+     int err;
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), 0);
+     RESTARTABLE(access(path, F_OK), err);
+     return (err == 0) ? JNI_TRUE : JNI_FALSE;
+ }
+@@ -964,7 +965,7 @@
+ {
+     int err;
+     struct statvfs64 buf;
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), );
+ 
+ 
+     RESTARTABLE(statvfs64(path, &buf), err);
+@@ -995,7 +996,7 @@
+     jlong pathAddress, jint name)
+ {
+     long err;
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), 0);
+ 
+     err = pathconf(path, (int)name);
+     if (err == -1) {
+@@ -1022,7 +1023,7 @@
+     jlong pathAddress, jint mode, jlong dev)
+ {
+     int err;
+-    const char* path = (const char*)jlong_to_ptr(pathAddress);
++    HOSTED_NATIVE_PATH(env, path, (const char*)jlong_to_ptr(pathAddress), );
+ 
+     RESTARTABLE(mknod(path, (mode_t)mode, (dev_t)dev), err);
+     if (err == -1) {

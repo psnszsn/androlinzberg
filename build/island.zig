@@ -25,6 +25,8 @@ pub const Options = struct {
     input_headers: std.Build.LazyPath,
     graphics_headers: std.Build.LazyPath,
     art: *std.Build.Module,
+    host_paths_library: std.Build.LazyPath,
+    host_paths_headers: std.Build.LazyPath,
     aidl_header_roots: []const std.Build.LazyPath,
     aidl_source_roots: []const std.Build.LazyPath,
     hidl_header_roots: []const std.Build.LazyPath,
@@ -169,6 +171,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     for (@import("graphics.zig").includes) |path| common_includes.append(b.allocator, o.aosp.path(b, path)) catch @panic("oom");
     common_includes.appendSlice(b.allocator, &binder_ndk_includes) catch @panic("oom");
     common_includes.append(b.allocator, b.path("src/native")) catch @panic("oom");
+    common_includes.append(b.allocator, o.host_paths_headers) catch @panic("oom");
     common_includes.append(b.allocator, b.path("src/native/input-compat")) catch @panic("oom");
     common_includes.append(b.allocator, o.input_headers) catch @panic("oom");
     common_includes.appendSlice(b.allocator, o.aidl_header_roots) catch @panic("oom");
@@ -616,6 +619,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     link.addArtifactArg(abi_object);
     for (objects.items) |object| link.addFileArg(object);
     link.addFileArg(o.skia.getEmittedBin());
+    link.addFileArg(o.host_paths_library);
     link.addFileArg(o.perfetto.sdk.getEmittedBin());
     link.addFileArg(o.perfetto.base.getEmittedBin());
     link.addFileArg(o.binder_ndk.getEmittedBin());

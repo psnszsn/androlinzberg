@@ -53,6 +53,18 @@ pub fn build(b: *std.Build) void {
     // genrules ported to Zig (operator_out, mterp, asm_defines, vendored aconfig): no Soong out/ needed
     art_opts.generated = @import("build/genrules.zig").build(b, .{ .vendor = aosp, .art_opts = art_opts });
     const art_gen = @import("build/gen/art.zig").build(b, art_opts);
+    const host_paths = b.addLibrary(.{ .name = "artzig-host-paths", .linkage = .static, .root_module = b.createModule(.{
+        .root_source_file = b.path("src/host_paths.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .pic = true,
+    }) });
+    b.addNamedLazyPath("host-paths-library", host_paths.getEmittedBin());
+    b.addNamedLazyPath("host-paths-headers", b.path("src"));
+    for ([_]*std.Build.Step.Compile{ art_gen.libjavacore, art_gen.libopenjdk }) |native| {
+        native.root_module.linkLibrary(host_paths);
+    }
     const gen_step = b.step("gen-libartbase", "Build libartbase.so + deps with Zig");
     gen_step.dependOn(&b.addInstallArtifact(art_gen.libartbase, .{ .dest_dir = .{ .override = .{ .custom = "gen" } } }).step);
     // The runtime is relocatable, so retain only the explicit $ORIGIN rpaths

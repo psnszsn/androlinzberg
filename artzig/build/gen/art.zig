@@ -1225,6 +1225,7 @@ const inc_38 = [_]Inc{
     .{ .root = .vendor, .rel = "system/logging/liblog/include" },
 };
 const inc_39 = [_]Inc{
+    .{ .root = .project, .rel = "src" },
     .{ .root = .vendor, .rel = "libcore" },
     .{ .root = .vendor, .rel = "libnativehelper/include_jni" },
     .{ .root = .vendor, .rel = "libnativehelper/header_only_include" },
@@ -1245,6 +1246,7 @@ const inc_39 = [_]Inc{
     .{ .root = .vendor, .rel = "system/logging/liblog/include" },
 };
 const inc_40 = [_]Inc{
+    .{ .root = .project, .rel = "src" },
     .{ .root = .vendor, .rel = "libcore/luni/src/main/native" },
     .{ .root = .vendor, .rel = "libcore" },
     .{ .root = .vendor, .rel = "libnativehelper/include_jni" },

@@ -644,6 +644,8 @@ pub fn build(b: *std.Build) void {
 
     // --- native island: hwui + JNI + our shims, linked against static Skia
     const island = @import("build/island.zig").build(b, .{
+        .host_paths_library = artzig_dep.namedLazyPath("host-paths-library"),
+        .host_paths_headers = artzig_dep.namedLazyPath("host-paths-headers"),
         .hwui_stats = generated.native.hwui_stats,
         .surfaceflinger_generated = generated.native.surfaceflinger,
         .target = target,

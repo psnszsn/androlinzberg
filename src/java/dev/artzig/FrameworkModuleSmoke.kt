@@ -162,6 +162,7 @@ internal object FrameworkModuleSmoke {
         HostContexts.bootstrap(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
         permissionsFixtureApk = args.firstOrNull()
         StockIcuSmoke.run(ActivityThread.currentActivityThread().systemContext)
+        StockResourcePathSmoke.run()
         testPackageNames()
         testStockModuleClientContracts()
         testTaskInfoParcelableContracts()
