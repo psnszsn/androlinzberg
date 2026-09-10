@@ -52,11 +52,28 @@ pub fn build(b: *std.Build, o: Options) Artifacts {
     const wrapper_srcs = [_][]const u8{ "wrapper/wrapper.c", "shared/config/config.c" };
 
     const dl_bio = lib(b, o, "dl_bio");
+    // Keep the pinned dependency immutable. Apply the host process-handle
+    // adaptation to this compilation input, with an exact, tracked patch.
+    const dlfcn = b.addSystemCommand(&.{ "patch", "--batch", "--forward", "--fuzz=0" });
+    dlfcn.addFileArg(o.src.path(b, "linker/dlfcn.c"));
+    dlfcn.addArg("-i");
+    dlfcn.addFileArg(b.path("patches/bionic_translation/0004-linker-resolve-host-process-global-symbols.patch"));
+    dlfcn.addArg("-o");
+    const dlfcn_source = dlfcn.addOutputFileArg("dlfcn.c");
+    const dlfcn_cc = b.addSystemCommand(&.{ "gcc", "-c", "-fPIC", "-D_GNU_SOURCE", "-D_LARGEFILE64_SOURCE", "-DLINKER_DEBUG=0", "-Wno-parentheses" });
+    // Quoted upstream headers include its own dlfcn.h; <dlfcn.h> must
+    // continue to resolve to the host loader declaration.
+    dlfcn_cc.addPrefixedDirectoryArg("-iquote", o.src.path(b, "linker"));
+    dlfcn_cc.addPrefixedDirectoryArg("-I", o.src.path(b, "shared/config"));
+    dlfcn_cc.addFileArg(dlfcn_source);
+    dlfcn_cc.addArg("-o");
+    dl_bio.root_module.addObjectFile(dlfcn_cc.addOutputFileArg("dlfcn.o"));
     dl_bio.root_module.addCSourceFiles(.{
         .root = o.src,
         .files = &(wrapper_srcs ++ [_][]const u8{
-            "linker/dlfcn.c",      "linker/linker_environ.c",
-            "linker/linker_tls.c", "linker/rt.c",
+            "linker/linker_environ.c",
+            "linker/linker_tls.c",
+            "linker/rt.c",
             "linker/strlcpy.c",
         }),
         .flags = &(c_common ++ [_][]const u8{ "-D_LARGEFILE64_SOURCE", "-DLINKER_DEBUG=0", "-Wno-parentheses" }),

@@ -59,7 +59,8 @@ nix develop ./artzig -c env -u AZK_WINDOW_BACKEND -u AZK_TASK_WINDOWS \
   stock-desktop-launcher-test stock-task-desktop-test stock-task-output-test \
   stock-task-desktop-legacy-test stock-task-desktop-suspension-test stock-task-tablet-test \
   stock-video-test stock-ime-test stock-clipboard-test stock-drag-test stock-drag-pressure-test \
-  stock-session-loss-test webview-test webview-ui-test build-tools-test cpp-audit graph-audit
+  stock-session-loss-test webview-test webview-ui-test webview-overlay-test \
+  bionic-loader-test build-tools-test cpp-audit graph-audit
 ```
 
 Use the host Mesa EGL/GBM/VAAPI paths when required. The desktop targets use

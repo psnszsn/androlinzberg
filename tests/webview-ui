@@ -14,10 +14,14 @@ tools/azk-test diagnose | python3 -c 'import json,sys; d=json.load(sys.stdin); i
 tools/azk-test step click --text "Count: 0" --settle idle >/dev/null
 tools/azk-test wait exists --text "Count: 1" >/dev/null
 tools/azk-test diagnose | python3 -c 'import json,sys; d=json.load(sys.stdin); issues=d["diagnostics"]["runtime"]["issues"]; assert not issues, issues'
+if [[ -n "${AZK_WEBVIEW_TRACE_OUT:-}" ]]; then
+  tools/azk-test step click --text "START RENDERING TRACE" --settle idle >/dev/null
+fi
 # Default: ordinary encoded-video playback. The stream modes retain separate
 # Chromium 133 pause-copy reproductions; see the fixture README.
 case "${AZK_WEBVIEW_VIDEO_SOURCE:-encoded}" in
   encoded) video_button="Start video" ;;
+  avc) video_button="Start H264 video" ;;
   i420) video_button="Start I420 video" ;;
   canvas) video_button="Start canvas video" ;;
   *) echo "unknown AZK_WEBVIEW_VIDEO_SOURCE" >&2; exit 2 ;;
@@ -43,3 +47,12 @@ tools/azk-test wait exists --text "Video paused" >/dev/null
 tools/azk-test diagnose | python3 -c 'import json,sys; issues=json.load(sys.stdin)["diagnostics"]["runtime"]["issues"]; assert not issues, issues'
 # Capture while the app is still running, then require actual painted text/video.
 check_video_frame "${SHOT_A11Y_OUT%.a11y.json}.content.png" "${SHOT_A11Y_OUT%.a11y.json}.playing.png"
+
+if [[ -n "${AZK_WEBVIEW_TRACE_OUT:-}" ]]; then
+  tools/azk-test step click --text "SAVE RENDERING TRACE" --settle idle >/dev/null
+  tools/azk-test --timeout 30 wait exists --text "Rendering trace saved" >/dev/null
+  [[ -s "$AZK_WEBVIEW_TRACE_OUT" ]]
+fi
+if [[ "${AZK_WEBVIEW_REQUIRE_OVERLAY:-0}" == 1 ]]; then
+  python3 tests/webview-overlay-check.py "${AZK_WEBVIEW_TRACE_OUT:?overlay test requires a rendering trace}"
+fi

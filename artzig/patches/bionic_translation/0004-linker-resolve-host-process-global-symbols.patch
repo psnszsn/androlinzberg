@@ -1,0 +1,34 @@
+--- a/linker/dlfcn.c
++++ b/linker/dlfcn.c
+@@ -63,6 +63,15 @@
+ 
+ void *bionic_dlopen(const char *filename, int flag)
+ {
++	/* AOSP linker.cpp find_library(NULL) returns the process main object.
++	 * Our main executable and its platform dependencies belong to glibc,
++	 * not apkenv_somain. Keep its real handle and reference ownership. */
++	if (filename == NULL) {
++		void *handle = dlopen(NULL, flag);
++		if (handle == NULL)
++			set_dlerror(DL_ERR_CANNOT_LOAD_LIBRARY);
++		return handle;
++	}
+ //	verbose("%s (%d)", filename, flag);
+ 	soinfo *ret;
+ 	pthread_mutex_lock(&apkenv_dl_lock);
+@@ -161,6 +170,15 @@
+ 
+ 	if (handle == RTLD_DEFAULT) {
+ 		sym = apkenv_lookup(symbol, &found, NULL);
++		/* Platform DSOs are host-loaded RTLD_GLOBAL. They share the
++		 * Android process global scope with the guest linker objects. */
++		if (sym == NULL) {
++			void *host_symbol = dlsym(RTLD_DEFAULT, symbol);
++			if (host_symbol != NULL) {
++				pthread_mutex_unlock(&apkenv_dl_lock);
++				return wrapper_create(symbol, host_symbol);
++			}
++		}
+ 	} else if (handle == RTLD_NEXT) {
+ 		void *ret_addr = __builtin_return_address(0);
+ 		soinfo *si = apkenv_find_containing_library(ret_addr);

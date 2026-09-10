@@ -142,6 +142,9 @@ pub fn build(b: *std.Build) void {
     const partition_tests = b.addSystemCommand(&.{"env"});
     partition_tests.addFileArg(artzig_dep.namedLazyPath("data-partition-test-bin"));
     b.step("data-partition-test", "Verify persistent app storage, session policy and shared ART cache").dependOn(&partition_tests.step);
+    const bionic_loader_tests = b.addSystemCommand(&.{"env"});
+    bionic_loader_tests.addFileArg(artzig_dep.namedLazyPath("bionic-loader-test-bin"));
+    b.step("bionic-loader-test", "Verify native process handles, global exports and explicit DSO scope").dependOn(&bionic_loader_tests.step);
 
     const build_audit = b.addExecutable(.{
         .name = "build-audit",
@@ -1453,6 +1456,23 @@ pub fn build(b: *std.Build) void {
     webview_ui.addFileArg(application_tree.path(b, "bin/androlinzberg"));
     webview_ui.addFileArg(java.fixtures.webview);
     b.step("webview-ui-test", "Render and interact with stock WebView through ApkHost and Cage").dependOn(&webview_ui.run.step);
+    const webview_overlay = @import("build/command.zig").create(b);
+    setApplicationEnvironment(webview_overlay, application_tree);
+    webview_overlay.setEnvironment("WLR_RENDERER", "gles2");
+    webview_overlay.setPathEnvironment("AZK_TESTKIT_ROOT", testkit_tree.getDirectory());
+    webview_overlay.setPathEnvironment("AZK_TEST_SEAT", surface_server.getEmittedBin());
+    webview_overlay.setEnvironment("AZK_WEBVIEW_VIDEO_SOURCE", "avc");
+    webview_overlay.setEnvironment("AZK_WEBVIEW_TRACE_OUT", "zig-out/test-results/webview-overlay/rendering-trace.json");
+    webview_overlay.setEnvironment("AZK_WEBVIEW_REQUIRE_OVERLAY", "1");
+    webview_overlay.addArg("bash");
+    webview_overlay.addFileArg(b.path("tools/shot.sh"));
+    webview_overlay.addArg("zig-out/test-results/webview-overlay/screenshot.png");
+    webview_overlay.addArg("--test");
+    webview_overlay.addFileArg(b.path("tests/webview-ui"));
+    webview_overlay.addArg("--");
+    webview_overlay.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    webview_overlay.addFileArg(java.fixtures.webview);
+    b.step("webview-overlay-test", "Verify Chromium platform decoding, overlay transactions and retained video pixels").dependOn(&webview_overlay.run.step);
     const framework_compat_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(framework_compat_smoke, application_tree);
     framework_compat_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));

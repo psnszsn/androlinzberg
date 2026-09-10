@@ -639,6 +639,43 @@ Process remains the one modified static client source. The four server stubs,
 isolated/external service implementation and remaining graphics acceptance are
 still open; this checkpoint does not mark the completion plan finished.
 
+### Chromium platform video and overlay acceptance (2026-09-10)
+
+The pinned Chromium provider now completes its platform H.264 decoder and
+SurfaceControl overlay path. A 720p source is displayed at the same 320×180 size
+as the existing VP8 fixture: Chromium 133 prefers software decoding below 360
+pixels high, so the smaller source did not exercise this path. The new probe
+initially reached the existing VAAPI decoder and DMA-BUF export, then crashed
+calling a null dynamically resolved AHardwareBuffer_describe pointer.
+
+The bionic translation bridge now returns the real host process handle for
+dlopen(NULL) and searches host platform exports for global lookups. Explicit
+library lookup remains confined to that library's scope. A tracked patch is
+applied to a generated compilation input; the pinned dependency remains unchanged.
+The native regression checks callable export identity, repeated open/close,
+global lookup, missing-symbol errors and explicit-library scope.
+
+`webview-overlay-test` uses the original TracingController API and the existing
+Cage/azk-test harness. It requires platform decoder frame creation, a WebView
+overlay, buffer transactions and both HWUI and buffer-update completion callbacks,
+as well as actual playing and retained paused pixels. The checker rejects the
+earlier software-only trace. The final trace records 32 decoder frame creations;
+the five UI actions contain no structured runtime issues. Trace and screenshots
+are retained under `zig-out/test-results/webview-overlay/`.
+
+Validation passed with -j24 for the focused loader/overlay tests and -j10 for the
+complete current Wayland acceptance command, plus data-partition and standalone
+certificate tests. All 28 APK cases passed; the fresh UI journals contain 322
+actions with zero structured runtime issues and no failure artifacts. All five
+session-loss cases passed. Overlay paused pixels and the desktop modal screenshot
+were inspected. Both AOSP archive checksums still match the previous checkpoint;
+this batch changes no AOSP package contents and adds no media/display backend.
+
+This closes the remaining Chromium overlay prerequisite in batch 2. The separately
+documented Chromium capture-stream pause bugs remain provider limitations, not
+successful regression coverage. Process, isolated/external service semantics,
+the four server stubs and final clean-cache acceptance remain open.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

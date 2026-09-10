@@ -129,6 +129,17 @@ pub fn build(b: *std.Build) void {
     b.addNamedLazyPath("libpthread-bio-so", bionic.pthread_bio.getEmittedBin());
     b.addNamedLazyPath("libc-bio-so", bionic.c_bio.getEmittedBin());
     b.addNamedLazyPath("libstdcpp-bio-so", bionic.stdcpp_bio.getEmittedBin());
+    const bionic_loader_test = b.addExecutable(.{ .name = "bionic-loader-test", .root_module = b.createModule(.{
+        .root_source_file = b.path("src/bionic_loader_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    }) });
+    bionic_loader_test.rdynamic = true;
+    bionic_loader_test.root_module.linkLibrary(bionic.dl_bio);
+    b.addNamedLazyPath("bionic-loader-test-bin", bionic_loader_test.getEmittedBin());
+    b.step("bionic-loader-test", "Verify native process handles, global exports and explicit DSO scope")
+        .dependOn(&b.addRunArtifact(bionic_loader_test).step);
     const bionic_step = b.step("bionic", "Build bionic_translation (libdl_bio, libc_bio, ...)");
     inline for (.{ bionic.dl_bio, bionic.pthread_bio, bionic.c_bio, bionic.stdcpp_bio }) |a| {
         bionic_step.dependOn(&b.addInstallArtifact(a, .{ .dest_dir = .{ .override = .{ .custom = "dist/art/lib64" } } }).step);

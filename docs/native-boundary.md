@@ -44,9 +44,11 @@ zig build -j10 cpp-audit
   `src/platform/webview_support.zig`. The original HWUI functor manager owns
   callback lifetime and the original GL drawable records and draws the functor.
   The original SurfaceControl callbacks and NDK transactions now reach the
-  existing compositor. Overlay promotion still needs validation at the host GL
-  drawable boundary: its intermediate framebuffer is classified as a layer by
-  stock HWUI. The original `graphic_buffer_impl.cpp` supplies the legacy provider
+  existing compositor. `webview-overlay-test` verifies platform H.264 decoding,
+  actual overlay creation and buffer updates, SurfaceControl completion callbacks
+  and correct playing/paused pixels through the existing HWUI underlay path.
+  The bionic loader resolves public NDK exports through real process handles and
+  host/guest global lookup. The original `graphic_buffer_impl.cpp` supplies the legacy provider
   buffer interface over the existing GraphicBuffer and DMA-BUF mapper.
   Original NDK bitmap, input, looper and native-window JNI wrappers are compiled
   with their original bitmap and shared JNI helpers.

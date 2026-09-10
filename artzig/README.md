@@ -55,7 +55,17 @@ zig build -j10 -Doptimize=fast run
 - `zig build -j10 gen-art` builds the native ART runtime.
 - `zig build -j10 java` builds the boot class-path JAR files.
 - `zig build -j10 bionic` builds the Bionic compatibility libraries.
+- `zig build -j10 bionic-loader-test` checks process handles, native global
+  exports, missing symbols and explicit library lookup scope.
 - `zig build -j10 dist` assembles the complete runtime tree.
+
+The Bionic translation dependency retains its pinned upstream package. Its build
+applies `patches/bionic_translation/0004-linker-resolve-host-process-global-symbols.patch`
+to a generated compilation input without changing the extracted dependency.
+The patch gives `dlopen(NULL)` the actual host process handle and includes loaded
+platform libraries in global lookup. Android JNI libraries can therefore resolve
+public NDK APIs dynamically as well as through ELF relocations. The older patches
+in that directory are historical; they are not implicitly applied by this build.
 
 Use `zig build -j10 --help` to show all build steps.
 
