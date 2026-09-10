@@ -9,8 +9,8 @@ Current verified code: `2a76eac9` (2026-09-10). The live audit has zero stubs an
 zero modified static client sources: 7,066 selected static AOSP sources match
 their reference files, with 62 server adaptations recorded separately. Original
 Process.start and Process.startWebView work through hosted exec services.
-The complete fresh-cache acceptance run remains in progress. The bundled
-provider also has a diagnosed [frame-rate hint defect](webview-frame-rate-hints.md)
+The complete fresh-cache acceptance run passes at that revision. The bundled
+provider still has a diagnosed [frame-rate hint defect](webview-frame-rate-hints.md)
 that must not be reported as repaired by the framework migration.
 
 ## Implementation checkpoints
@@ -1238,6 +1238,41 @@ and desktop tests added 24 actions, all with empty structured issue lists and
 no fresh failure artifacts. WebView playing pixels and desktop modal screenshots
 were inspected. An earlier intermittent Chromium infinite frame-rate hint remains
 under investigation; this successful overlay run does not establish its repair.
+
+### Fresh-cache complete acceptance matrix (2026-09-10)
+
+Verified code revision `2a76eac9` from a new detached checkout at
+`/tmp/stock-client-acceptance-2a76eac9`. Its `.zig-cache`, `zig-pkg` and `zig-out`
+did not exist before the run. Copied only the two current local AOSP archives;
+normal Zig dependency resolution and compilation succeeded without the previous
+worktree's extracted packages or build outputs. No shared cache was deleted or
+overridden. Both archive checksums match the WebView Zygote checkpoint above.
+
+The complete command in [wayland-task-windows.md](wayland-task-windows.md), with
+`-j10` and the pinned APK/Mesa environment, passes. This includes the complete
+JVM, native, system, Binder/NDK, graphics/input/fence/pressure, Wayland desktop,
+APK, WebView and service/compositor-loss matrix. Added `image-queue-jvm-test`,
+`process-app-data-test` and `data-partition-test` to the same invocation. Tone,
+wallpaper API/capability, native namespace and service isolation checks run in
+their existing JVM/system/Binder groups. This does not add desktop wallpaper
+presentation or other excluded backend capabilities.
+
+All 28 fresh APK cases passed with 88 captured actions. The remaining recorded
+UI groups contain 228 actions, including 116 drag-pressure actions; all 316
+records have empty structured runtime issue lists and there are no failure
+artifacts. WebView overlay playing pixels and the desktop modal screenshot were
+inspected. Both stock Process start APIs pass their real process/identity checks.
+The NDK audit finds all 135 reference A* exports. The fresh static source audit
+again records 7,066 unchanged inputs, 62 server adaptations, zero modified
+clients and zero missing reference files.
+
+The source jar is
+`.zig-cache/o/501edee2c2b073d25205d4232264fd43/framework-classes.jar` in that
+checkout. Development evidence is `/tmp/stock-client-fresh-acceptance-1.log`,
+its `.command`, `.manifest.json` and `.ui.json` files, and the checkout's retained
+`zig-out/test-results/` directory. The full run took approximately 20 minutes.
+The earlier intermittent Chromium frame-rate defect remains open despite this
+successful overlay run; a separately pinned provider update is being evaluated.
 
 ## Objective and boundary
 
