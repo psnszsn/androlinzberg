@@ -465,6 +465,8 @@ internal object SystemTestClientA {
                 Context.BIND_AUTO_CREATE.toLong(), null, context.packageName, 0) == -1,
                 "cold $serviceClass denied before spawning or retaining work")
             check(!bindingManager.unbindService(coldConnection), "denied cold binding is not retained")
+            check(runCatching { context.startService(cold) }.exceptionOrNull() is SecurityException,
+                "cold $serviceClass start denied before spawning")
         }
         check(bindingManager.runningAppProcesses.none { it.processName in listOf(
             "dev.artzig.test.b:private_cold", "dev.artzig.test.b:permission_cold") },

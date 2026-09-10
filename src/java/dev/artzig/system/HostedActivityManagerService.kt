@@ -1008,7 +1008,13 @@ class HostedActivityManagerService(private val context: android.content.Context?
                     binding.hasBound = false
                     binding.doRebind = false
                 }
-                if (record.exitReason == android.app.ApplicationExitInfo.REASON_CRASH) service.crashCount++
+                if (record.exitReason == android.app.ApplicationExitInfo.REASON_CRASH) {
+                    // ProcessServiceRecord.incServiceCrashCountLocked resets after
+                    // a stable run, independently of the restart backoff window.
+                    val interval = serviceConstants().getInt("min_crash_interval", 120_000)
+                    service.crashCount = if (android.os.SystemClock.uptimeMillis() > service.restartTime + interval)
+                        1 else service.crashCount + 1
+                }
                 for (connection in service.connections) {
                     try { connection.conn.connected(service.name, null, false) } catch (_: RemoteException) { }
                 }
@@ -1301,13 +1307,21 @@ class HostedActivityManagerService(private val context: android.content.Context?
         callingFeatureId: String?,
         userId: Int,
     ): ComponentName? {
-        service ?: return null
         val callingUid = Binder.getCallingUid()
-        if (callingPackage != null && packageService?.isSameAppInternal(callingPackage, callingUid) != true) {
+        if (UserHandle.isIsolated(callingUid)) throw SecurityException("Isolated process not allowed to call startService")
+        require(service == null || !service.hasFileDescriptors()) { "File descriptors passed in Intent" }
+        requireNotNull(callingPackage) { "callingPackage cannot be null" }
+        service ?: return null
+        service.removeExtendedFlags(Intent.EXTENDED_FLAG_FILTER_MISMATCH)
+        if (packageService?.isSameAppInternal(callingPackage, callingUid) != true) {
             throw SecurityException("uid $callingUid does not own $callingPackage")
         }
         addCreatorToken(service, callingPackage)
-        val post = synchronized(lock) { doStartLocked(callingUid, service, callingPackage) }
+        val post = synchronized(lock) {
+            validateServiceCallerLocked(caller, service, "starting")
+            val targetUser = serviceUser(service, callingUid, userId, callingPackage)
+            doStartLocked(callingUid, service, callingPackage, resolvedType, targetUser)
+        }
         if (post.status == -1) throw SecurityException("startService denied")
         post.schedule?.invoke()
         return post.name
@@ -1317,12 +1331,16 @@ class HostedActivityManagerService(private val context: android.content.Context?
         callingUid: Int,
         service: Intent,
         callingPackage: String?,
+        resolvedType: String? = service.type,
+        userId: Int = UserHandle.getUserId(callingUid),
     ): PostStart {
-        val targetInfo = packageService?.resolveServiceInfo(service) ?: return PostStart(null, null, 0)
+        val targetInfo = packageService?.resolveService(service, resolvedType, 0L, userId)?.serviceInfo
+            ?: return PostStart(null, null, 0)
+        validateBindModes(targetInfo, service, 0, null, callingPackage ?: targetInfo.packageName, callingUid)
         if (!checkAccessLocked(targetInfo, targetInfo.applicationInfo.uid, callingUid))
             return PostStart(null, null, -1)
         val target = bindingTarget(targetInfo, service, 0, null,
-            callingPackage ?: targetInfo.packageName, UserHandle.getUserId(targetInfo.applicationInfo.uid))
+            callingPackage ?: targetInfo.packageName, userId)
         val record = serviceForLocked(target)
         record.startRequested = true
         record.stopIfKilled = false
@@ -1383,11 +1401,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
         catch (_: RemoteException) { handleProcessDied(app) }
     }
 
-    /** ActiveServices.scheduleServiceRestartLocked's start redelivery and backoff.
-     * Original ActivityManagerConstants reads these settings; the host process
-     * graph uses the same keys/defaults without importing Android's zygote/AMS. */
-    private fun scheduleServiceRestartLocked(record: ServiceRecord): Boolean {
-        val now = android.os.SystemClock.uptimeMillis()
+    private fun serviceConstants(): android.util.KeyValueListParser {
         val constants = android.util.KeyValueListParser(',')
         val identity = Binder.clearCallingIdentity()
         try {
@@ -1395,6 +1409,15 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 it.contentResolver, android.provider.Settings.Global.ACTIVITY_MANAGER_CONSTANTS) })
         } catch (_: IllegalArgumentException) { /* Original constants retain defaults for bad input. */ }
         finally { Binder.restoreCallingIdentity(identity) }
+        return constants
+    }
+
+    /** ActiveServices.scheduleServiceRestartLocked's start redelivery and backoff.
+     * Original ActivityManagerConstants reads these settings; the host process
+     * graph uses the same keys/defaults without importing Android's zygote/AMS. */
+    private fun scheduleServiceRestartLocked(record: ServiceRecord): Boolean {
+        val now = android.os.SystemClock.uptimeMillis()
+        val constants = serviceConstants()
         var duration = constants.getLong("service_restart_duration", 1_000)
         var reset = constants.getLong("service_reset_run_duration", 60_000)
         var canceled = false
@@ -1499,14 +1522,36 @@ class HostedActivityManagerService(private val context: android.content.Context?
         return callbacks
     }
 
+    /** ActiveServices.retrieveServiceLocked resolves user and access for start,
+     * stop and bind before mutating a record or launching an application. */
+    private fun serviceUser(service: Intent, uid: Int, userId: Int, callingPackage: String?): Int {
+        val allowMode = if (callingPackage != null && service.component?.packageName == callingPackage)
+            android.app.ActivityManagerInternal.ALLOW_PROFILES_OR_NON_FULL
+            else android.app.ActivityManagerInternal.ALLOW_NON_FULL_IN_PROFILE
+        return HostedActivityManagerInternalService(this, HostedPermissions(checkNotNull(packageService)))
+            .handleIncomingUser(Binder.getCallingPid(), uid, userId, false, allowMode, "service", callingPackage)
+    }
+
+    private fun validateServiceCallerLocked(caller: IApplicationThread?, service: Intent, operation: String) {
+        if (caller != null && processes[caller.asBinder()] == null)
+            throw SecurityException("Unable to find app for caller $caller (pid=${Binder.getCallingPid()}) when $operation service $service")
+    }
+
     override fun stopService(caller: IApplicationThread?, service: Intent?, resolvedType: String?, userId: Int): Int {
+        val uid = Binder.getCallingUid()
+        if (UserHandle.isIsolated(uid)) throw SecurityException("Isolated process not allowed to call stopService")
+        require(service == null || !service.hasFileDescriptors()) { "File descriptors passed in Intent" }
         service ?: return 0
         var schedule: (() -> Unit)? = null
         synchronized(lock) {
-            val component = service.component
-                ?: resolveServiceLocked(service, null)?.let { ComponentName(it.first.packageName, it.second.name) }
-                ?: return 0
-            val record = servicesByComponent[ServiceInstance(userId, component)] ?: return 0
+            validateServiceCallerLocked(caller, service, "stopping")
+            val targetUser = serviceUser(service, uid, userId, null)
+            val info = packageService?.resolveService(service, resolvedType, 0L, targetUser)?.serviceInfo ?: return 0
+            // retrieveServiceLocked checks the existing record as well as a cold
+            // resolution; another UID must not stop a private running service.
+            val component = ComponentName(info.applicationInfo.packageName, info.name)
+            val record = servicesByComponent[ServiceInstance(targetUser, component)] ?: return 0
+            if (!checkAccessLocked(record.entry, record.entry.applicationInfo.uid, uid)) return -1
             record.startRequested = false
             schedule = bringDownIfNeededLocked(record)
         }

@@ -7,5 +7,6 @@
             android:allowSharedIsolatedProcess="true" android:process=":worker" />
         <service android:name=".ExternalService" android:exported="true" android:isolatedProcess="true"
             android:externalService="true" android:allowSharedIsolatedProcess="true" android:process=":external" />
+        <service android:name=".ClientService" android:exported="true" android:process=":client" />
     </application>
 </manifest>

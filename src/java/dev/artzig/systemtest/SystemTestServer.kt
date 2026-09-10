@@ -5,6 +5,16 @@ package dev.artzig.systemtest
 internal object SystemTestServer {
     @JvmStatic fun main(args: Array<String>) {
         ActivityUriGrantSystemSmoke.setCallerApis(true)
+        // Exercise the pinned flag-enabled private sharing contract in this
+        // fixture server; the production generated default stays unchanged.
+        val field = android.content.flags.Flags::class.java.getDeclaredField("FEATURE_FLAGS")
+        field.isAccessible = true
+        val original = field.get(null)
+        field.set(null, java.lang.reflect.Proxy.newProxyInstance(field.type.classLoader,
+            arrayOf(field.type)) { _, method, arguments ->
+                if (method.name == "enableBindPackageIsolatedProcess") true
+                else method.invoke(original, *(arguments ?: emptyArray()))
+            })
         dev.artzig.system.SystemServer.main(args)
     }
 }

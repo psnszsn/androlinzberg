@@ -103,3 +103,37 @@ class FixtureApplication : Application() {
         finally { data.recycle(); reply.recycle() }
     }
 }
+
+/** An ordinary APK process owns a second process's binding. Killing this client
+ * must release its isolated child even though onDestroy cannot run. */
+class ClientService : Service() {
+    private val children = java.util.concurrent.LinkedBlockingQueue<IBinder>()
+    private val connection = object : android.content.ServiceConnection {
+        override fun onServiceConnected(name: android.content.ComponentName, service: IBinder) {
+            children.add(service)
+        }
+        override fun onServiceDisconnected(name: android.content.ComponentName) {}
+    }
+    override fun onCreate() {
+        super.onCreate()
+        check(bindIsolatedService(Intent().setClassName(packageName, "$packageName.OtherService"),
+            BIND_AUTO_CREATE, "client_owned", mainExecutor, connection))
+    }
+    override fun onBind(intent: Intent): IBinder = object : Binder() {
+        override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+            if (code == FIRST_CALL_TRANSACTION) {
+                val child = checkNotNull(children.poll(20, java.util.concurrent.TimeUnit.SECONDS))
+                reply!!.writeNoException()
+                reply.writeStrongBinder(child)
+                return true
+            }
+            if (code == FIRST_CALL_TRANSACTION + 2) {
+                android.os.Handler(mainLooper).postDelayed({ Process.killProcess(Process.myPid()) }, 100)
+                reply!!.writeNoException()
+                return true
+            }
+            return super.onTransact(code, data, reply, flags)
+        }
+    }
+    override fun onDestroy() { unbindService(connection); super.onDestroy() }
+}

@@ -953,6 +953,34 @@ frame-rate-hint failure remains open; it is not claimed fixed by this checkpoint
 Batch 5 also retains broader shared-process/client-death coverage to complete.
 The stock Process restoration and final fresh-cache acceptance remain open.
 
+
+### Service ownership and private sharing (2026-09-10)
+
+Start/stop now apply pinned AMS caller, isolated-caller and descriptor checks,
+resolve the requested user and MIME type, and enforce access before mutating a
+running service. Starting an external service without its required bind mode is
+rejected. Crash counts reset after ActivityManagerConstants' stable-run interval,
+independently of the restart backoff window.
+
+An independently signed APK service binds an isolated child and is then killed.
+The regression requires the child's Binder death and process removal without
+relying on the owner's onDestroy. Private isolated-process sharing is exercised
+with the original aconfig flag enabled only in SystemTestServer: distinct service
+instances share their manifest process, remain separate from caller-named shared
+processes, and reject conflicting sharing modes. Production flag defaults are
+unchanged. Denied cold starts are also checked before any process attaches.
+
+Validation passed with `-j10`: `install jvm-test system-test integration-test
+webview-test webview-ui-test webview-overlay-test stock-desktop-launcher-test
+stock-session-loss-test binder-test binder-broker-test binder-cpp-test ndk-test
+build-tools-test cpp-audit graph-audit`. The focused `system-test process-start-test
+cpp-audit graph-audit` command also passed with `-j24`. All 28 fresh APK cases
+contain 91 clean actions; WebView, overlay and desktop add 24, for 115 actions
+with no structured runtime issues or fresh failure artifacts. The AOSP archives
+and pins are unchanged and current. Process restoration and final acceptance
+remain open; the earlier intermittent WebView frame-rate-hint finding is not
+claimed fixed by this successful run.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

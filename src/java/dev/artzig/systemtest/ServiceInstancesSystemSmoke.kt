@@ -188,6 +188,30 @@ internal object ServiceInstancesSystemSmoke {
         }
     }
 
+    private fun clientDeathReleasesChild(context: Context) {
+        val connection = Connection()
+        check(context.bindService(Intent().setClassName(PACKAGE, "$PACKAGE.ClientService"),
+            connection, Context.BIND_AUTO_CREATE))
+        try {
+            val client = checkNotNull(connection.connected.poll(30, TimeUnit.SECONDS)).second
+            val data = Parcel.obtain(); val reply = Parcel.obtain()
+            val child = try {
+                check(client.transact(IBinder.FIRST_CALL_TRANSACTION, data, reply, 0))
+                reply.readException()
+                checkNotNull(reply.readStrongBinder())
+            } finally { data.recycle(); reply.recycle() }
+            val state = snapshot(child)
+            val death = java.util.concurrent.CountDownLatch(1)
+            child.linkToDeath({ death.countDown() }, 0)
+            kill(client)
+            check(connection.disconnected.await(10, TimeUnit.SECONDS))
+            check(death.await(10, TimeUnit.SECONDS)) { "Dead client's isolated service survived" }
+            awaitCondition("Dead client must release its child process") {
+                android.app.ActivityManager.getService().getRunningAppProcesses().none { it.pid == state.getInt("pid") }
+            }
+        } finally { context.unbindService(connection) }
+    }
+
     private fun replacementDuringDestroy(context: Context) {
         val intent = Intent().setClassName(PACKAGE, "$PACKAGE.InstanceService")
         val previous = Connection(); val next = Connection()
@@ -235,6 +259,7 @@ internal object ServiceInstancesSystemSmoke {
         pendingCancellationAndFailure(context)
         replacementDuringDestroy(context)
         restartAndStartResults(context)
+        clientDeathReleasesChild(context)
         val connections = ArrayList<Connection>()
         val deaths = ArrayList<Pair<IBinder, java.util.concurrent.CountDownLatch>>()
         fun bind(service: String, instance: String, flags: Long = Context.BIND_AUTO_CREATE.toLong()): Pair<ComponentName, Bundle> {
@@ -281,12 +306,27 @@ internal object ServiceInstancesSystemSmoke {
             val sharedOther = bind("OtherService", "shared", sharedFlags)
             check(shared.second.getInt("pid") == sharedOther.second.getInt("pid"))
             check(shared.second.getString("process") == "${context.packageName}:ishared:shared")
+            val privateFlags = Context.BIND_AUTO_CREATE.toLong() or Context.BIND_PACKAGE_ISOLATED_PROCESS.toLong()
+            val privateOne = bind("InstanceService", "private_one", privateFlags)
+            val privateTwo = bind("OtherService", "private_two", privateFlags)
+            check(privateOne.second.getInt("pid") == privateTwo.second.getInt("pid"))
+            check(privateOne.second.getString("process") == "$PACKAGE:worker")
+            check(privateOne.second.getInt("pid") != shared.second.getInt("pid"))
+            val invalid = Connection()
+            check(runCatching {
+                context.bindIsolatedService(Intent().setClassName(PACKAGE, "$PACKAGE.InstanceService"),
+                    privateFlags.toInt() or Context.BIND_SHARED_ISOLATED_PROCESS,
+                    "invalid_both", context.mainExecutor, invalid)
+            }.exceptionOrNull() is SecurityException)
+            check(runCatching {
+                context.startService(Intent().setClassName(PACKAGE, "$PACKAGE.ExternalService"))
+            }.exceptionOrNull() is SecurityException)
             val external = bind("ExternalService", "external",
                 Context.BIND_AUTO_CREATE.toLong() or Context.BIND_EXTERNAL_SERVICE_LONG)
             check(external.first == ComponentName(context.packageName, "$PACKAGE.ExternalService:external"))
             check(external.second.getString("package") == context.packageName)
             check(external.second.getInt("ownerUid") == context.applicationInfo.uid)
-            println("Service instances: separate/reused names, shared process, external identity, APK loading and kernel isolated UID passed")
+            println("Service instances: separate/reused names, shared/private sharing, external identity, APK loading and kernel isolated UID passed")
         } finally {
             for (connection in connections) context.unbindService(connection)
         }
