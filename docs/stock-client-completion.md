@@ -504,6 +504,50 @@ contain 88 steps with zero structured issues; WebView's three and the desktop
 launcher's 16 steps also contain zero issues. All five session-loss cases passed.
 WebView pause, desktop modal and NewPipe fullscreen frames were inspected.
 
+### Stock Environment and session data layout (2026-09-10)
+
+Environment is now verbatim AOSP. The runtime creates its Android data layout
+before Java initialization: application/user directories link to persistent
+storage, system policy directories belong to the session, and dalvik-cache links
+to the shared runtime cache. Standalone runtimes own and remove their private
+layout; the session supervisor owns shared layouts. Teardown unlinks the layout
+without deleting application bytes. No Java data-directory overrides remain.
+
+Session metadata carries canonical application, external-storage, download-cache
+and runtime-cache locations. Independently joined launchers adopt those locations,
+including when their shell supplies none of the owner's Android storage variables.
+The hosted storage services measure the persistent backing filesystem rather than
+the session directory's tmpfs. Stock StorageManager resolves both the logical
+partition and canonical persistent user paths to the default storage UUID.
+
+The exact compiler source inventory contains 7,081 unchanged AOSP files, three
+modified client files (ApplicationLoaders, Process and ClassLoaderFactory), 40
+modified server files and no missing references. Boot File's library-existence
+workaround, process/class loading, isolated-service semantics, server stubs and
+the provider/final acceptance work remain open. The stub inventory is unchanged:
+zero client stubs and four pending server entries.
+
+The framework archive was rebuilt from the isolated checkout, which packaging
+restored. Its SHA-256 is
+`db3f130ad093d94397a51db06edd61535f855e5ed20b80ae7ec5925abcb5d284`, pinned to
+`N-V-__8AADfl807g3MCsXpkPSES9KDdrSsa6hq-HWqg9yuNJ`. ART remains at the resource-path
+checkpoint (`337b8031458cb01f56b78ab3995fcc26ab7e456ce380225e8891615959291b93`,
+`N-V-__8AADqdSw2GL19rcy7pDTYdgUr9zhkaIgGA-fqaYaFn`). Both local archives match.
+
+Native tests cover independent session policy, persistent bytes/cache, idempotent
+join, rejection of a changed backing store, partial-construction cleanup, and
+runtime startup failure/destruction. The existing desktop harness also launches
+the resource smoke in a separate joined process with its storage environment
+cleared. Its resource, metadata and storage-capacity assertions pass.
+
+After focused tests, the final `-j10` gate passed: `install data-partition-test
+system-certificates-test build-tools-test cpp-audit graph-audit jvm-test system-test
+integration-test webview-test webview-ui-test stock-desktop-launcher-test
+stock-session-loss-test binder-test binder-broker-test`. All 28 fresh APK cases
+contain 88 steps with zero structured issues; WebView and desktop add 19 steps
+with zero issues. All five session-loss cases passed, and the final WebView,
+desktop modal and NewPipe fullscreen frames were inspected.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

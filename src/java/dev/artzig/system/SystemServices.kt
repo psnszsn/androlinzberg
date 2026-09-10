@@ -440,7 +440,6 @@ internal object SystemServices {
                 // Never hand the system identity to an app process: with the
                 // system cookie an APK could reconnect as uid 1000 and claim
                 // the system service names.
-                builder.environment().remove("ARTZIG_SYSTEM_DATA_DIR")
                 builder.environment().remove("AZK_BINDER_SYSTEM_COOKIE")
                 builder.environment()["AZK_BINDER_PACKAGE"] = packageName
                 builder.environment()["AZK_APP_PROCESS_NAME"] = processName

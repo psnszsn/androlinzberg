@@ -56,6 +56,9 @@ internal object StorageManagerSystemSmoke {
         }
 
         check(storage.getUuidForPath(expectedRoot) == StorageManager.UUID_DEFAULT)
+        check(storage.getUuidForPath(android.os.Environment.getDataDirectory()) == StorageManager.UUID_DEFAULT)
+        check(storage.getUuidForPath(android.os.Environment.getDataUserCeDirectory(null, 0)) == StorageManager.UUID_DEFAULT)
+        check(storage.getUuidForPath(android.os.Environment.getDataUserDeDirectory(null, 0)) == StorageManager.UUID_DEFAULT)
         val allocatable = storage.getAllocatableBytes(StorageManager.UUID_DEFAULT)
         check(allocatable >= 0L && allocatable <= expectedRoot.usableSpace)
 

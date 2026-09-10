@@ -139,6 +139,9 @@ pub fn build(b: *std.Build) void {
     certificate_tests.addFileArg(artzig_dep.namedLazyPath("system-certificates-test-bin"));
     certificate_tests.addDirectoryArg(artzig_dep.namedLazyPath("art-runtime"));
     b.step("system-certificates-test", "Verify stock standalone ART trust and native certificate installation").dependOn(&certificate_tests.step);
+    const partition_tests = b.addSystemCommand(&.{"env"});
+    partition_tests.addFileArg(artzig_dep.namedLazyPath("data-partition-test-bin"));
+    b.step("data-partition-test", "Verify persistent app storage, session policy and shared ART cache").dependOn(&partition_tests.step);
 
     const build_audit = b.addExecutable(.{
         .name = "build-audit",

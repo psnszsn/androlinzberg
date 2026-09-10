@@ -29,7 +29,6 @@ framework_patches = tuple(
         (13, "-host-hwui-view-uncommitted-working-tree-changes-pres.patch"),
         (14, "-fixup-drop-duplicated-Bitmap-compress-declaration-fr.patch"),
         (17, "-Process-broker-assigned-uid-no-zygote-on-the-host-ar.patch"),
-        (19, "-Environment-session-data-root-from-ARTZIG_DATA_DIR-o.patch"),
         (20, "-ClassLoaderFactory-the-hosted-APK-class-loader-on-th.patch"),
         (21, "-ApplicationLoaders-the-system-class-loader-is-the-ba.patch"),
         (23, "-resources-make-early-RRO-constraint-flag-read-only.patch"),

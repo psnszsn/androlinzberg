@@ -17,6 +17,17 @@ import java.security.MessageDigest
 
 /** Original Java file/resource clients must observe the real configured files. */
 internal object StockResourcePathSmoke {
+    /** Standalone joined-process check used by the existing desktop harness. */
+    @JvmStatic
+    fun main(args: Array<String>) {
+        android.os.Looper.prepareMainLooper()
+        HostContexts.bootstrap(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
+        run()
+        check(Environment.getDataDirectory().canonicalPath == File(args[0]).canonicalPath)
+        check(File(checkNotNull(System.getenv("ARTZIG_DATA_DIR"))).canonicalPath == File(args[1]).canonicalPath)
+        println("stock-resource-join: PASS session storage without inherited environment")
+    }
+
     private fun digest(path: String): ByteArray {
         val digest = MessageDigest.getInstance("SHA-256")
         FileInputStream(path).use { input ->
@@ -72,7 +83,21 @@ internal object StockResourcePathSmoke {
         check(Files.size(font.toPath()) == font.length() && font.length() > 0)
         check(Paint().measureText("Stock resource paths") > 0)
 
-        val expectedBlock = StatFs(Environment.getDataDirectory().path).blockSizeLong
+        val partition = Environment.getDataDirectory()
+        check(partition.path == System.getenv("ANDROID_DATA"))
+        val persistent = File(checkNotNull(System.getenv("ARTZIG_DATA_DIR")))
+        check(Environment.getDataUserCeDirectory(null, 0).canonicalPath == File(persistent, "user/0").canonicalPath)
+        check(Environment.getDataUserDeDirectory(null, 0).canonicalPath == File(persistent, "user_de/0").canonicalPath)
+        check(Environment.getDataSystemDirectory() == File(partition, "system"))
+        check(Environment.getDataSystemCeDirectory(0) == File(partition, "system_ce/0"))
+        check(Environment.getDataSystemDeDirectory(0) == File(partition, "system_de/0"))
+        check(File(partition, "dalvik-cache").canonicalPath ==
+            File(checkNotNull(System.getenv("ARTZIG_RUNTIME_CACHE_DIR")), "dalvik-cache").canonicalPath)
+        val storage = android.os.storage.IStorageManager.Stub.asInterface(android.os.ServiceManager.getService("mount"))
+        check(storage.internalStorageBlockDeviceSize == persistent.totalSpace)
+        val stats = android.app.usage.IStorageStatsManager.Stub.asInterface(android.os.ServiceManager.getService("storagestats"))
+        check(stats.getTotalBytes(android.os.storage.StorageManager.UUID_PRIVATE_INTERNAL, null) == persistent.totalSpace)
+        val expectedBlock = StatFs(partition.path).blockSizeLong
         check(StatFs("/data").blockSizeLong == expectedBlock)
         check(SQLiteGlobal.getDefaultPageSize() ==
             SystemProperties.getInt("debug.sqlite.pagesize", expectedBlock.toInt()))

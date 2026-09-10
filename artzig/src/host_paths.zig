@@ -34,7 +34,7 @@ pub export fn azk_host_path(original: [*:0]const u8) callconv(.c) ?[*:0]const u8
     else if (std.mem.eql(u8, path, "/system/framework/framework-res.apk"))
         configured("ARTZIG_FRAMEWORK_RES")
     else if (std.mem.eql(u8, path, "/data"))
-        configured("ARTZIG_DATA_DIR") orelse configured("ANDROID_DATA")
+        configured("ANDROID_DATA") orelse configured("ARTZIG_DATA_DIR")
     else
         null;
     if (replacement) |value|

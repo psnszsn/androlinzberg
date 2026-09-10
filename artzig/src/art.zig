@@ -14,11 +14,13 @@ pub const jobject = jni.jobject;
 pub const jstring = jni.jstring;
 pub const jmethodID = jni.jmethodID;
 pub const jint = jni.jint;
+pub const DataPartition = @import("data_partition.zig");
 
 pub const Error = error{
     RuntimeTreeNotFound,
     HostCaBundleNotFound,
     SystemRootCreationFailed,
+    DataPartitionCreationFailed,
     SystemCertificateInstallationFailed,
     LibartLoadFailed,
     SymbolNotFound,
@@ -250,8 +252,10 @@ pub const Options = struct {
     libart_path: ?[]const u8 = null,
     /// Directory containing libdl_bio.so and its ABI adapter libraries.
     bionic_lib_dir: ?[]const u8 = null,
-    /// ANDROID_DATA: where dalvik-cache/ lives. Default: $XDG_CACHE_HOME/artzig.
+    /// ART cache root. Also ANDROID_DATA unless data_partition supplies a layout.
+    /// Default: inherited ARTZIG_RUNTIME_CACHE_DIR/ANDROID_DATA or XDG cache.
     data_dir: ?[]const u8 = null,
+    data_partition: ?@import("data_partition.zig").Options = null,
     /// Host PEM CA bundle. If null, environment overrides and standard Linux
     /// locations are searched. Native startup materializes the certificates in
     /// Android's hashed directory layout for the original Conscrypt trust store.
@@ -278,6 +282,7 @@ pub const Runtime = struct {
     arena: std.heap.ArenaAllocator,
     io: std.Io,
     system_root_overlay: ?[]const u8,
+    data_partition: ?@import("data_partition.zig").Partition,
     certificate_library: ?@import("system_certificates.zig").Library,
 
     const CreateFn = *const fn (**JavaVM, *?*anyopaque, *anyopaque) callconv(.c) jint;
@@ -288,8 +293,17 @@ pub const Runtime = struct {
         const a = arena.allocator();
 
         const root = if (opts.root) |r| try a.dupe(u8, r) else try locateTree(a, io, environ);
-        const data_dir = opts.data_dir orelse try defaultDataDir(a, environ);
+        const data_dir = if (opts.data_dir) |dir| try a.dupe(u8, dir) else try defaultDataDir(a, environ);
         const ca_bundle = try locateCaBundle(a, io, environ, opts.ca_bundle);
+
+        const data_partition = if (opts.data_partition) |layout|
+            @import("data_partition.zig").create(a, io, data_dir, layout) catch |err| {
+                std.log.err("unable to prepare Android data partition: {t}", .{err});
+                return Error.DataPartitionCreationFailed;
+            }
+        else
+            null;
+        errdefer if (data_partition) |partition| partition.release(io);
 
         const system_root_overlay = if (opts.system_root_overlay)
             @import("system_root.zig").create(a, io, root, data_dir) catch return Error.SystemRootCreationFailed
@@ -301,7 +315,8 @@ pub const Runtime = struct {
         try setenv(a, "ANDROID_ART_ROOT", try std.fs.path.join(a, &.{ root, "apex/com.android.art" }));
         try setenv(a, "ANDROID_I18N_ROOT", try std.fs.path.join(a, &.{ root, "com.android.i18n" }));
         try setenv(a, "ANDROID_TZDATA_ROOT", try std.fs.path.join(a, &.{ root, "com.android.tzdata" }));
-        try setenv(a, "ANDROID_DATA", data_dir);
+        try setenv(a, "ANDROID_DATA", if (data_partition) |partition| partition.path else data_dir);
+        try setenv(a, "ARTZIG_RUNTIME_CACHE_DIR", data_dir);
         const cache = try std.fs.path.join(a, &.{ data_dir, "dalvik-cache", isa });
         std.Io.Dir.cwd().createDirPath(io, cache) catch {};
 
@@ -394,6 +409,7 @@ pub const Runtime = struct {
             .arena = arena,
             .io = io,
             .system_root_overlay = system_root_overlay,
+            .data_partition = data_partition,
             .certificate_library = certificate_library,
         };
     }
@@ -404,6 +420,7 @@ pub const Runtime = struct {
         self.lib.close();
         if (self.certificate_library) |crypto| crypto.close();
         if (self.system_root_overlay) |path| std.Io.Dir.cwd().deleteTree(self.io, path) catch {};
+        if (self.data_partition) |partition| partition.release(self.io);
         self.arena.deinit();
     }
 
@@ -413,6 +430,7 @@ pub const Runtime = struct {
     /// ART and its dlopen handle immediately after main returns.
     pub fn releaseProcessState(self: *Runtime) void {
         if (self.system_root_overlay) |path| std.Io.Dir.cwd().deleteTree(self.io, path) catch {};
+        if (self.data_partition) |partition| partition.release(self.io);
         self.arena.deinit();
     }
 
@@ -534,7 +552,9 @@ fn resolveHostFile(a: std.mem.Allocator, io: std.Io, path: []const u8) ?[]const 
     return std.Io.Dir.cwd().realPathFileAlloc(io, path, a) catch null;
 }
 
-fn defaultDataDir(a: std.mem.Allocator, environ: std.process.Environ) Error![]const u8 {
+/// Resolve the shared runtime cache before creating a session's data layout.
+pub fn defaultDataDir(a: std.mem.Allocator, environ: std.process.Environ) Error![]const u8 {
+    if (environ.getPosix("ARTZIG_RUNTIME_CACHE_DIR")) |d| return a.dupe(u8, d);
     if (environ.getPosix("ANDROID_DATA")) |d| return a.dupe(u8, d);
     if (environ.getPosix("XDG_CACHE_HOME")) |c| return std.fs.path.join(a, &.{ c, "artzig" });
     const home = environ.getPosix("HOME") orelse "/tmp";

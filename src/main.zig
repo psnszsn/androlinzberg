@@ -7,6 +7,7 @@ const test_control = @import("test_control.zig");
 const host_natives = @import("host_natives");
 const apk_optimizer = @import("apk_optimizer");
 extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
 extern "c" fn dlopen(path: [*:0]const u8, flags: c_int) ?*anyopaque;
 const Timespec = extern struct { sec: i64, nsec: i64 };
 extern "c" fn clock_gettime(clk: c_int, ts: *Timespec) c_int;
@@ -119,12 +120,12 @@ fn configureNativeLibraries(init: std.process.Init, tree: []const u8, runtime_ro
     _ = setenv("XDG_DATA_DIRS", data_dirs, 1);
 }
 
-/// The session's Android data root (android.os.Environment.getDataDirectory):
+/// Persistent Android application storage:
 /// `$ARTZIG_DATA_DIR`, else `$XDG_DATA_HOME/artzig`, else
 /// `$HOME/.local/share/artzig`. Exported for this process and everything it
 /// spawns (system server, app processes, tests), with the download-cache and
 /// shared-storage roots AOSP reads from DOWNLOAD_CACHE and EXTERNAL_STORAGE
-/// placed underneath. ANDROID_DATA stays ART's dalvik-cache root.
+/// placed underneath. Runtime.create supplies ANDROID_DATA's session layout.
 fn configureDataRoot(init: std.process.Init) !void {
     const a = init.arena.allocator();
     const env = init.minimal.environ;
@@ -140,6 +141,39 @@ fn configureDataRoot(init: std.process.Init) !void {
     }
     if (env.getPosix("EXTERNAL_STORAGE") == null) {
         _ = setenv("EXTERNAL_STORAGE", try std.fs.path.joinZ(a, &.{ root, "external" }), 1);
+    }
+}
+
+fn dataPartitionOptions(init: std.process.Init) !art.DataPartition.Options {
+    const persistent = getenv("ARTZIG_DATA_DIR") orelse return error.MissingApplicationDataRoot;
+    return .{
+        .persistent_root = std.mem.span(persistent),
+        .directory = if (getenv("AZK_BINDER_SESSION_DIR")) |session|
+            try std.fs.path.join(init.arena.allocator(), &.{ std.mem.span(session), "android-data" })
+        else
+            null,
+    };
+}
+
+fn sessionStorage(init: std.process.Init) !binder_session.Storage {
+    const a = init.arena.allocator();
+    const cache = try art.defaultDataDir(a, init.minimal.environ);
+    const external = std.mem.span(getenv("EXTERNAL_STORAGE") orelse return error.MissingExternalStorageRoot);
+    const download = std.mem.span(getenv("DOWNLOAD_CACHE") orelse return error.MissingDownloadCache);
+    for ([_][]const u8{ cache, external, download }) |path|
+        try std.Io.Dir.cwd().createDirPath(init.io, path);
+    return .{
+        .application_data = try std.Io.Dir.cwd().realPathFileAlloc(init.io, std.mem.span(getenv("ARTZIG_DATA_DIR") orelse return error.MissingApplicationDataRoot), a),
+        .external_storage = try std.Io.Dir.cwd().realPathFileAlloc(init.io, external, a),
+        .download_cache = try std.Io.Dir.cwd().realPathFileAlloc(init.io, download, a),
+        .runtime_cache = try std.Io.Dir.cwd().realPathFileAlloc(init.io, cache, a),
+    };
+}
+
+fn applySessionStorage(init: std.process.Init, storage: binder_session.Storage) !void {
+    for (storage.environment()) |entry| {
+        if (setenv(entry.name.ptr, try init.arena.allocator().dupeSentinel(u8, entry.value, 0), 1) != 0)
+            return error.StorageEnvironmentFailed;
     }
 }
 
@@ -328,9 +362,11 @@ fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_
     const arena = init.arena.allocator();
     if (join_dir) |dir| {
         const info = try joinSession(init, dir);
+        if (info.storage) |storage| try applySessionStorage(init, storage);
         _ = setenv(binder_session.socket_env, try arena.dupeSentinel(u8, info.socket, 0), 1);
         _ = setenv(binder_session.cookie_env, try arena.dupeSentinel(u8, info.cookie, 0), 1);
         _ = setenv(binder_session.prop_area_env, try arena.dupeSentinel(u8, info.prop_area, 0), 1);
+        _ = setenv("AZK_BINDER_SESSION_DIR", try arena.dupeSentinel(u8, dir, 0), 1);
         std.debug.print("azk: joined binder session: {s}\n", .{dir});
         return;
     }
@@ -338,6 +374,8 @@ fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_
     const tree = try installTree(init);
     const broker_exe = try std.fs.path.join(arena, &.{ tree, "bin", "azk-binder-broker" });
     const launcher_exe = try std.process.executablePathAlloc(init.io, arena);
+    const storage = try sessionStorage(init);
+    try applySessionStorage(init, storage);
     binder.* = try binder_session.Session.start(init.gpa, init.io, .{
         .broker_exe = broker_exe,
         .launcher_exe = launcher_exe,
@@ -347,10 +385,12 @@ fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_
         else
             null,
         .environ = init.minimal.environ,
+        .storage = storage,
     });
     _ = setenv(binder_session.socket_env, try arena.dupeSentinel(u8, binder.*.?.socket_path, 0), 1);
     _ = setenv(binder_session.cookie_env, try arena.dupeSentinel(u8, binder.*.?.cookie, 0), 1);
     _ = setenv(binder_session.prop_area_env, try arena.dupeSentinel(u8, binder.*.?.prop_area_path, 0), 1);
+    _ = setenv("AZK_BINDER_SESSION_DIR", try arena.dupeSentinel(u8, binder.*.?.dir, 0), 1);
     std.debug.print("azk: binder session: {s}\n", .{binder.*.?.dir});
 }
 
@@ -441,6 +481,8 @@ fn bootHeadless(init: std.process.Init) !Headless {
     // without the bionic loader there is no <root>/lib64 fallback.
     var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
         .classpath = &.{framework_jar},
+        .data_partition = try dataPartitionOptions(init),
+        .data_dir = if (getenv("ARTZIG_RUNTIME_CACHE_DIR")) |cache| std.mem.span(cache) else null,
         .system_root_overlay = true,
         .library_path = &.{runtime_overlay_dir},
         .use_bionic_loader = false,
@@ -490,6 +532,8 @@ fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8) !Headless {
     configureFonts(init);
     var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
         .classpath = &.{framework_jar},
+        .data_partition = try dataPartitionOptions(init),
+        .data_dir = if (getenv("ARTZIG_RUNTIME_CACHE_DIR")) |cache| std.mem.span(cache) else null,
         .system_root_overlay = true,
         .library_path = &.{runtime_overlay_dir},
         .root = runtime_root,

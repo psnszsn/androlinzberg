@@ -79,10 +79,12 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const failed_data = try std.fs.path.join(a, &.{ temporary, "failed-vm-data" });
+    const application_data = try std.fs.path.join(a, &.{ temporary, "persistent-apps" });
     if (art.Runtime.create(init.gpa, io, init.minimal.environ, .{
         .root = runtime,
         .ca_bundle = try std.fs.path.join(a, &.{ temporary, "invalid-4.pem" }),
         .data_dir = failed_data,
+        .data_partition = .{ .persistent_root = application_data },
     })) |created| {
         var unexpected = created;
         unexpected.destroy();
@@ -91,8 +93,10 @@ pub fn main(init: std.process.Init) !void {
     var failed_dir = try Io.Dir.cwd().openDir(io, failed_data, .{ .iterate = true });
     defer failed_dir.close(io);
     var failed_entries = failed_dir.iterate();
-    while (try failed_entries.next(io)) |entry|
+    while (try failed_entries.next(io)) |entry| {
         try require(!std.mem.startsWith(u8, entry.name, "system-"));
+        try require(!std.mem.startsWith(u8, entry.name, "data-"));
+    }
 
     // Default standalone ART startup must supply the stock trust store too,
     // without any framework bootstrap or repository-owned Java trust adapter.
@@ -100,11 +104,15 @@ pub fn main(init: std.process.Init) !void {
         .root = runtime,
         .ca_bundle = duplicate_bundle,
         .data_dir = try std.fs.path.join(a, &.{ temporary, "android-data" }),
+        .data_partition = .{ .persistent_root = application_data },
         .check_jni = true,
     });
     const root = try a.dupe(u8, vm.system_root_overlay.?);
+    const partition = try a.dupe(u8, vm.data_partition.?.path);
+    const saved = try std.fs.path.join(a, &.{ partition, "user", "0", "saved" });
     {
         defer vm.destroy();
+        try write(io, saved, "persistent state across runtime teardown");
         const e = art.Env{ .env = vm.env };
         const env = vm.env;
         const cls = try e.findClass("java/security/KeyStore");
@@ -121,5 +129,8 @@ pub fn main(init: std.process.Init) !void {
         try require(actual == 2);
     }
     if (Io.Dir.cwd().access(io, root, .{})) |_| return error.RetainedSystemRoot else |err| try require(err == error.FileNotFound);
+    if (Io.Dir.cwd().access(io, partition, .{})) |_| return error.RetainedDataPartition else |err| try require(err == error.FileNotFound);
+    const retained = try Io.Dir.cwd().readFileAlloc(io, try std.fs.path.join(a, &.{ application_data, "user", "0", "saved" }), a, .limited(4096));
+    try require(std.mem.eql(u8, retained, "persistent state across runtime teardown"));
     try Io.File.stdout().writeStreamingAll(io, "system-certificates: PASS DER, collisions, malformed bundles, stock standalone trust and cleanup\n");
 }

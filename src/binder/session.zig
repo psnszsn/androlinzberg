@@ -22,6 +22,25 @@ pub const prop_area_env = "AZK_PROP_AREA";
 
 pub const session_file = "session.json";
 
+/// Storage selected by the session owner, also used by independently joined
+/// launchers. These are filesystem locations, never Binder role credentials.
+pub const Storage = struct {
+    application_data: []const u8,
+    external_storage: []const u8,
+    download_cache: []const u8,
+    runtime_cache: []const u8,
+
+    pub const Entry = struct { name: [:0]const u8, value: []const u8 };
+    pub fn environment(self: Storage) [4]Entry {
+        return .{
+            .{ .name = "ARTZIG_DATA_DIR", .value = self.application_data },
+            .{ .name = "EXTERNAL_STORAGE", .value = self.external_storage },
+            .{ .name = "DOWNLOAD_CACHE", .value = self.download_cache },
+            .{ .name = "ARTZIG_RUNTIME_CACHE_DIR", .value = self.runtime_cache },
+        };
+    }
+};
+
 /// Contents of `session.json` (0600 inside the 0700 runtime directory).
 pub const SessionInfo = struct {
     socket: []const u8,
@@ -29,6 +48,7 @@ pub const SessionInfo = struct {
     launcher: []const u8,
     pid: i32,
     prop_area: []const u8,
+    storage: ?Storage = null,
 
     /// Returned strings belong to the caller's arena, never a temporary JSON
     /// input buffer. Joined processes retain these paths through native startup.
@@ -74,6 +94,7 @@ pub const Session = struct {
         ready_timeout: Io.Duration = .{ .nanoseconds = 30 * std.time.ns_per_s },
         shutdown_timeout: Io.Duration = .{ .nanoseconds = 5 * std.time.ns_per_s },
         environ: std.process.Environ,
+        storage: ?Storage = null,
         first_app_uid: u32 = Client.default_app_uid,
     };
 
@@ -82,7 +103,7 @@ pub const Session = struct {
         // Its errdefers have ended before stop takes over startup failure cleanup.
         var session = try startBroker(gpa, io, options);
         errdefer session.stop();
-        try session.writeInfo(options.launcher_exe);
+        try session.writeInfo(options.launcher_exe, options.storage);
         if (options.surfaceflinger_exe) |exe| try session.startSurfaceFlinger(options, exe);
         if (options.task_presenter_exe) |exe| try session.startTaskPresenter(options, exe);
         try session.startSystemProcess(options);
@@ -150,7 +171,7 @@ pub const Session = struct {
         };
     }
 
-    fn writeInfo(s: *Session, launcher_exe: []const u8) !void {
+    fn writeInfo(s: *Session, launcher_exe: []const u8, storage: ?Storage) !void {
         const io = s.io;
         const path = try std.fs.path.join(s.gpa, &.{ s.dir, session_file });
         defer s.gpa.free(path);
@@ -160,6 +181,7 @@ pub const Session = struct {
             .launcher = launcher_exe,
             .pid = @intCast(std.os.linux.getpid()),
             .prop_area = s.prop_area_path,
+            .storage = storage,
         }, .{});
         defer s.gpa.free(text);
         const file = try Io.Dir.createFileAbsolute(io, path, .{ .permissions = @fromBackingInt(@intCast(0o600)) });
@@ -218,6 +240,9 @@ pub const Session = struct {
         try child_env.put(system_cookie_env, s.system_cookie);
         try child_env.put(prop_area_env, s.prop_area_path);
         try configureSystemData(s.gpa, io, &child_env, s.dir);
+        if (options.storage) |storage| {
+            for (storage.environment()) |entry| try child_env.put(entry.name, entry.value);
+        }
         try child_env.put("AZK_LAUNCHER_EXE", options.launcher_exe);
         if (options.task_presenter_exe != null) try child_env.put("AZK_TASK_WINDOWS", "1");
         const argv = try s.gpa.alloc([]const u8, options.system_args.len + 1);
@@ -393,10 +418,9 @@ fn drainPipe(io: Io, pipe: Io.File) void {
 /// application storage. Shared by the production launcher and multi-process harness.
 pub fn configureSystemData(gpa: std.mem.Allocator, io: Io, child_env: *std.process.Environ.Map, session_dir: []const u8) !void {
     try child_env.put("AZK_BINDER_SESSION_DIR", session_dir);
-    // Environment redirects only system/system_ce/system_de here. Application
-    // paths and ART's separate ANDROID_DATA cache root retain their normal values.
+    // Runtime.create fills the session partition with persistent app-storage and
+    // shared ART-cache links before the original Environment class initializes.
     const data_dir = try std.fs.path.join(gpa, &.{ session_dir, "android-data" });
     defer gpa.free(data_dir);
     try Io.Dir.createDirAbsolute(io, data_dir, @fromBackingInt(@intCast(0o700)));
-    try child_env.put("ARTZIG_SYSTEM_DATA_DIR", data_dir);
 }

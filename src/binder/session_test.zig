@@ -60,6 +60,12 @@ pub fn main(init: std.process.Init) !void {
             .surfaceflinger_exe = if (std.mem.eql(u8, case.mode, "sf-spawn")) "/azk-no-such-compositor-executable" else exe,
             .task_presenter_exe = if (std.mem.eql(u8, case.mode, "presenter-spawn")) "/azk-no-such-presenter-executable" else if (std.mem.startsWith(u8, case.mode, "presenter-")) exe else null,
             .environ = env,
+            .storage = .{
+                .application_data = "/fixture/application-data",
+                .external_storage = "/fixture/external-storage",
+                .download_cache = "/fixture/download-cache",
+                .runtime_cache = "/fixture/runtime-cache",
+            },
             .ready_timeout = .{ .nanoseconds = 500 * std.time.ns_per_ms },
             .shutdown_timeout = .{ .nanoseconds = 100 * std.time.ns_per_ms },
         })) |value| {
@@ -69,6 +75,10 @@ pub fn main(init: std.process.Init) !void {
             try std.testing.expectEqualStrings(session.socket_path, joined.socket);
             try std.testing.expectEqualStrings(session.prop_area_path, joined.prop_area);
             try std.testing.expectEqualStrings(session.cookie, joined.cookie);
+            try std.testing.expectEqualStrings("/fixture/application-data", joined.storage.?.application_data);
+            try std.testing.expectEqualStrings("/fixture/external-storage", joined.storage.?.external_storage);
+            try std.testing.expectEqualStrings("/fixture/download-cache", joined.storage.?.download_cache);
+            try std.testing.expectEqualStrings("/fixture/runtime-cache", joined.storage.?.runtime_cache);
             if (std.mem.eql(u8, case.mode, "normal"))
                 try std.testing.expectEqualStrings(exe, joined.launcher);
             session.awaitSystemReady() catch |err| {

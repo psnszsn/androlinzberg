@@ -39,7 +39,9 @@ class HostedStorageStatsService : android.app.usage.IStorageStatsManager.Stub(),
         }
     }
 
-    private fun dataRoot(): File = Environment.getDataDirectory()
+    // The runtime's session layout may live on tmpfs; capacity belongs to the
+    // persistent backing store used by its application-data links.
+    private fun dataRoot(): File = System.getenv("ARTZIG_DATA_DIR")?.let(::File) ?: Environment.getDataDirectory()
 
     @Suppress("UNCHECKED_CAST")
     private fun installedApplications(): List<android.content.pm.ApplicationInfo> =

@@ -34,11 +34,11 @@ import java.io.IOException
  * daemon operations remain on [unsupported].
  *
  * The launcher exports `ARTZIG_DATA_DIR` and `EXTERNAL_STORAGE` beneath the
- * per-session root. The service never exposes or creates paths outside that root.
+ * persistent application root. The service never exposes or creates paths outside that root.
  */
 class HostedStorageManagerService @JvmOverloads constructor(
     private val packageService: HostedPackageManagerService,
-    private val dataRoot: File = Environment.getDataDirectory(),
+    private val dataRoot: File = System.getenv("ARTZIG_DATA_DIR")?.let(::File) ?: Environment.getDataDirectory(),
     private val externalRoot: File = configuredExternalRoot(dataRoot),
 ) : IStorageManager.Stub(), IStorageManager by unsupported<IStorageManager>() {
     private val listeners = RemoteCallbackList<IStorageEventListener>()

@@ -340,6 +340,27 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     time.sleep(0.05)
                 subprocess.run(['grim', str(out / 'screenshot.png')], check=True, timeout=3)
                 result['launcher'] = {'pid': process.pid, 'app_pid': app_pid, 'size': [width, height]}
+                if not (args.video or args.ime or args.clipboard or args.drag):
+                    # A launcher started from another shell must use the owner's
+                    # storage layout even without its Android environment.
+                    session_dir = Path(re.search(r'azk: binder session: (\S+)', text).group(1))
+                    session_info = json.loads((session_dir / 'session.json').read_text())
+                    joined_env = {key: value for key, value in environment.items()
+                                  if not key.startswith(('AZK_BINDER_', 'AZK_TEST_'))
+                                  and key not in ('ANDROID_DATA', 'ARTZIG_DATA_DIR',
+                                                  'ARTZIG_RUNTIME_CACHE_DIR', 'EXTERNAL_STORAGE',
+                                                  'DOWNLOAD_CACHE', 'AZK_PROP_AREA')}
+                    joined_env['AZK_TEST_CLASS'] = 'dev.artzig.StockResourcePathSmoke'
+                    joined_log = out / 'storage-join.log'
+                    with joined_log.open('wb') as output:
+                        joined = subprocess.run([command[0], '--join', str(session_dir), '--javatest',
+                                                 str(session_dir / 'android-data'),
+                                                 session_info['storage']['application_data']],
+                                                env=joined_env, stdout=output, stderr=output,
+                                                timeout=30)
+                    assert joined.returncode == 0, f'joined storage startup failed: {joined_log}'
+                    assert 'stock-resource-join: PASS' in joined_log.read_text(errors='replace')
+                    result['storage_join'] = {'passed': True, 'log': str(joined_log)}
                 control('wait', 'ready')
                 control('wait', 'idle')
                 observed = control('observe', '--tree')['observation']

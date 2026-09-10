@@ -144,6 +144,13 @@ pub fn build(b: *std.Build) void {
         .icu_libraries = &.{ icu_native.common, icu_native.i18n, icu_native.stable, icu_native.android, icu_jni },
     });
     b.addNamedLazyPath("art-runtime", runtime);
+    const partition_test = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/data_partition.zig"),
+        .target = target,
+        .optimize = optimize,
+    }) });
+    b.addNamedLazyPath("data-partition-test-bin", partition_test.getEmittedBin());
+    b.step("data-partition-test", "Verify persistent app storage, session policy and shared ART cache").dependOn(&b.addRunArtifact(partition_test).step);
     const certificate_test = b.addExecutable(.{ .name = "system-certificates-test", .root_module = b.createModule(.{
         .root_source_file = b.path("src/system_certificates_test.zig"),
         .target = target,
