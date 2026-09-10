@@ -783,7 +783,7 @@ test "context object serves the IServiceManager AIDL over the broker" {
     const name = "dev.artzig.test.smsvc";
     const ctx = ObjectRef.remote(Client.context_object_id);
 
-    // addService(name, IBinder, allowIsolated=false, dumpPriority=0). The owner
+    // addService(name, IBinder, allowIsolated=false, dumpPriority=DEFAULT). The owner
     // passes a process-local binder (local id 100) in the side table.
     {
         var p = ParcelBuf{ .gpa = gpa };
@@ -793,7 +793,7 @@ test "context object serves the IServiceManager AIDL over the broker" {
         const binder_off: u32 = @intCast(p.bytes.items.len);
         try p.i32v(1); // strong binder placeholder
         try p.i32v(0); // allowIsolated
-        try p.i32v(0); // dumpPriority
+        try p.i32v(8); // DUMP_FLAG_PRIORITY_DEFAULT
         const entries = [_]ObjectEntry{.{ .offset = binder_off, .kind = .binder_local, .value = 100 }};
         try owner.client.serveTransact(.{ .target = ctx, .code = 5, .request_id = 1, .entries = &entries, .data = p.bytes.items });
         const msg = try owner.next();
@@ -865,7 +865,7 @@ test "context object serves the IServiceManager AIDL over the broker" {
         var p = ParcelBuf{ .gpa = gpa };
         defer p.deinit();
         try p.token();
-        try p.i32v(0); // dumpPriority
+        try p.i32v(8); // DUMP_FLAG_PRIORITY_DEFAULT
         try client.client.serveTransact(.{ .target = ctx, .code = 6, .request_id = 5, .data = p.bytes.items });
         const msg = try client.next();
         defer gpa.free(msg.fds);
@@ -1555,5 +1555,105 @@ test "reference acknowledgements cannot recycle unfinished release or death call
         h.broker.mutex.unlock(io);
         try testing.expectEqualDeep(Broker.DeliveryBudget{}, remaining);
         try testing.expectEqual(@as(u32, 0), objects);
+    }
+}
+
+// The authority-assigned UID is the input to registry policy. This fixture sets
+// it under the broker lock; this tests registry policy, not launch authentication.
+test "service registration policy filters every lookup and dump priority" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const h = try Harness.start(gpa, io);
+    defer h.stop(gpa, io);
+    var owner: Peer = undefined;
+    try owner.connect(io, h.path, system_cookie);
+    defer owner.close();
+    try owner.expectWelcome();
+    var isolated: Peer = undefined;
+    try isolated.connect(io, h.path, cookie);
+    defer isolated.close();
+    try isolated.expectWelcome();
+    h.broker.mutex.lockUncancelable(io);
+    h.broker.peers.get(isolated.welcome.peer_id).?.android_uid = 190001;
+    h.broker.mutex.unlock(io);
+    const name = "policy.fixture";
+    const ctx = ObjectRef.remote(Client.context_object_id);
+
+    // A pending native lookup cannot acquire a restricted object when it appears.
+    try isolated.client.serveLookupService(1, name, true);
+    try owner.client.serveRegisterServiceWithPolicy(1, ObjectRef.local(77), name, false, 2);
+    const registered = try owner.next();
+    defer gpa.free(registered.fds);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.ok, (try serviceResult(registered.body)).status);
+    const pending = try isolated.next();
+    defer gpa.free(pending.fds);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.not_found, (try serviceResult(pending.body)).status);
+
+    // Legacy and modern Java service-manager lookups both return null, with no
+    // object capability in the side table. The native path returns not_found.
+    for ([_]u32{ 1, 2, 3, 4 }) |code| {
+        var p = ParcelBuf{ .gpa = gpa };
+        defer p.deinit();
+        try p.token();
+        try p.string16(name);
+        try isolated.client.serveTransact(.{ .target = ctx, .code = code, .request_id = code + 10, .data = p.bytes.items });
+        const msg = try isolated.next();
+        defer gpa.free(msg.fds);
+        const payload = (try replyBody(msg.body))[1];
+        try testing.expectEqual(@as(usize, 0), payload.entries.len);
+        const binder_offset: usize = if (code == 2 or code == 4) 20 else 4;
+        try testing.expectEqual(@as(i32, 0), std.mem.readInt(i32, payload.data[binder_offset..][0..4], .little));
+    }
+    try isolated.client.serveLookupService(20, name, false);
+    const denied = try isolated.next();
+    defer gpa.free(denied.fds);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.not_found, (try serviceResult(denied.body)).status);
+
+    // Isolated clients cannot register notification callbacks, even before a
+    // service exists (pinned servicemanager rejects before parsing the callback).
+    {
+        var p = ParcelBuf{ .gpa = gpa };
+        defer p.deinit();
+        try p.token();
+        try isolated.client.serveTransact(.{ .target = ctx, .code = 7, .request_id = 21, .data = p.bytes.items });
+        const msg = try isolated.next();
+        defer gpa.free(msg.fds);
+        const payload = (try replyBody(msg.body))[1];
+        try testing.expectEqual(@as(i32, -1), std.mem.readInt(i32, payload.data[0..4], .little));
+    }
+
+    // Replacement through the stock AIDL path updates policy on the same object.
+    {
+        var p = ParcelBuf{ .gpa = gpa };
+        defer p.deinit();
+        try p.token();
+        try p.string16(name);
+        const offset: u32 = @intCast(p.bytes.items.len);
+        try p.i32v(1);
+        try p.i32v(1); // allowIsolated
+        try p.i32v(1 | 16); // critical + proto
+        const entries = [_]ObjectEntry{.{ .offset = offset, .kind = .binder_local, .value = 77 }};
+        try owner.client.serveTransact(.{ .target = ctx, .code = 5, .request_id = 22, .data = p.bytes.items, .entries = &entries });
+        const msg = try owner.next();
+        defer gpa.free(msg.fds);
+        const payload = (try replyBody(msg.body))[1];
+        try testing.expectEqual(@as(i32, 0), std.mem.readInt(i32, payload.data[0..4], .little));
+    }
+    try isolated.client.serveLookupService(23, name, false);
+    const allowed = try isolated.next();
+    defer gpa.free(allowed.fds);
+    const result = try serviceResult(allowed.body);
+    try testing.expectEqual(Server.Message.ServiceResult.Status.ok, result.status);
+    try testing.expectEqual(ObjectRef.Kind.remote, result.object.kind);
+    for ([_]u32{ 0, 1, 2, 4, 8, 16, 31 }) |mask| {
+        var p = ParcelBuf{ .gpa = gpa };
+        defer p.deinit();
+        try p.token();
+        try p.i32v(@intCast(mask));
+        try owner.client.serveTransact(.{ .target = ctx, .code = 6, .request_id = mask + 30, .data = p.bytes.items });
+        const msg = try owner.next();
+        defer gpa.free(msg.fds);
+        const payload = (try replyBody(msg.body))[1];
+        try testing.expectEqual(@as(i32, @intFromBool(mask & 17 != 0)), std.mem.readInt(i32, payload.data[4..8], .little));
     }
 }

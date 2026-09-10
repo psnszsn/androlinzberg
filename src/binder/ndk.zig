@@ -2617,7 +2617,11 @@ export fn AIBinder_unlinkToDeath(binder: *AIBinder, recipient: *AIBinder_DeathRe
 
 // ----- AServiceManager
 
-export fn AServiceManager_addService(binder: *AIBinder, instance: [*:0]const u8) callconv(.c) i32 {
+export fn AServiceManager_addService(binder: ?*AIBinder, instance: ?[*:0]const u8) callconv(.c) i32 {
+    return addServiceWithPolicy(binder orelse return -3, instance orelse return -3, false, 8);
+}
+
+fn addServiceWithPolicy(binder: *AIBinder, instance: [*:0]const u8, allow_isolated: bool, dump_priority: u32) i32 {
     const name = std.mem.span(instance);
     const r = Runtime.get();
     if (name.len > Client.limits.max_name_len) return EX_ILLEGAL_STATE;
@@ -2629,7 +2633,7 @@ export fn AServiceManager_addService(binder: *AIBinder, instance: [*:0]const u8)
     const object = if (binder.kind == .local) ObjectRef.local(r.exportLocal(binder)) else ObjectRef.remote(binder.id);
     var body = std.ArrayListUnmanaged(u8).empty;
     defer body.deinit(alloc);
-    const reg = Client.Message.RegisterService{ .object = object, .name_len = @intCast(name.len) };
+    const reg = Client.Message.RegisterService{ .object = object, .name_len = @intCast(name.len), .allow_isolated = @intFromBool(allow_isolated), .dump_priority = dump_priority };
     body.appendSlice(alloc, std.mem.asBytes(&reg)) catch @panic("oom");
     body.appendSlice(alloc, name) catch @panic("oom");
     r.publishServiceRequestLocked(.register_service, body.items, call);
@@ -2891,10 +2895,10 @@ export fn AStatus_deleteDescription(description: ?[*:0]const u8) callconv(.c) vo
 
 // ----- AServiceManager extras
 
-export fn AServiceManager_addServiceWithFlags(binder: *AIBinder, instance: [*:0]const u8, flags: u32) callconv(.c) i32 {
-    // The isolated/dump-priority flags do not apply to the hosted registry.
-    _ = flags;
-    return AServiceManager_addService(binder, instance);
+export fn AServiceManager_addServiceWithFlags(binder: ?*AIBinder, instance: ?[*:0]const u8, flags: u32) callconv(.c) i32 {
+    // Pinned ndk/service_manager.cpp maps the five dump flags down one bit.
+    const dump_flags = (flags >> 1) & 0x1f;
+    return addServiceWithPolicy(binder orelse return -3, instance orelse return -3, flags & 1 != 0, if (dump_flags == 0) 8 else dump_flags);
 }
 export fn AServiceManager_registerLazyService(binder: *AIBinder, instance: [*:0]const u8) callconv(.c) i32 {
     // No lazy-service lifecycle here; register normally so lookups resolve.

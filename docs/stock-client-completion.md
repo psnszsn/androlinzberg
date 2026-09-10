@@ -801,6 +801,40 @@ no fresh failure artifacts. Process, isolated/external service semantics and
 final fresh-cache acceptance remain open; an empty stub inventory is not plan
 completion.
 
+### Service binding validation and registry policy (2026-09-10)
+
+Hosted AMS preserves all 64 bind-flag bits and follows pinned AMS/ActiveServices
+validation for caller attachment, file descriptors, instance names, privileged
+flags, cross-user access and incompatible isolated/external/shared modes.
+Component permission checks now use original ActivityManager behavior. Cold
+binds and starts check access before spawning or retaining pending work. Service
+resolution carries the requested user, resolved type and supported query flags.
+Successful named/isolated/external process execution remains the next step;
+validation alone does not implement separate instances or isolated identities.
+
+The Binder registry retains allowIsolated and dump priority from both native and
+stock IServiceManager registration. Both Java lookup shapes and native lookups,
+including pending lookups completed by later publication, check isolated-UID
+policy before delivering an object capability. Isolated UIDs cannot register
+services or notification callbacks. Replacement updates the registration's policy;
+listServices filters by dump mask and returns sorted names. NDK flag translation
+and null-argument behavior follow the pinned native client. The internal wire
+version is now 6, so old peers cannot interpret the expanded registration frame.
+
+Focused tests pass for bit-62 external flags, malformed requests, cold cross-UID
+permission/export denials, native/Java registration and lookup, replacement,
+notification rejection, and dump-mask filtering. The isolated registry fixture
+sets the authority's UID under its lock; it tests registry enforcement and does
+not claim launch-credential authentication, which remains open.
+
+The broad -j10 gate passed: `install jvm-test system-test integration-test
+webview-test webview-ui-test webview-overlay-test stock-desktop-launcher-test
+stock-session-loss-test binder-test binder-broker-test binder-cpp-test ndk-test
+build-tools-test cpp-audit graph-audit`. All 28 fresh APK cases passed with 89
+captured actions; WebView and desktop journals bring the total to 113 actions,
+all without structured runtime issues or fresh failure artifacts. No AOSP package
+inputs changed; both archives and their pins remain at the previous checkpoint.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

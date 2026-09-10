@@ -31,7 +31,8 @@ extern fn AIBinder_transact(binder: *AIBinder, code: u32, in: *?*AParcel, out: *
 extern fn AIBinder_decStrong(binder: *AIBinder) callconv(.c) void;
 extern fn AIBinder_isRemote(binder: *const AIBinder) callconv(.c) bool;
 extern fn AIBinder_ping(binder: ?*AIBinder) callconv(.c) i32;
-extern fn AServiceManager_addService(binder: *AIBinder, instance: [*:0]const u8) callconv(.c) i32;
+extern fn AServiceManager_addService(binder: ?*AIBinder, instance: ?[*:0]const u8) callconv(.c) i32;
+extern fn AServiceManager_addServiceWithFlags(binder: ?*AIBinder, instance: ?[*:0]const u8, flags: u32) callconv(.c) i32;
 extern fn AServiceManager_waitForService(instance: [*:0]const u8) callconv(.c) ?*AIBinder;
 extern fn AParcel_writeInt32(parcel: *AParcel, value: i32) callconv(.c) i32;
 extern fn AParcel_readInt32(parcel: *const AParcel, value: *i32) callconv(.c) i32;
@@ -186,7 +187,9 @@ pub fn main(init: std.process.Init) !void {
     const service = AIBinder_new(class, null);
     check(AIBinder_ping(service) == 0, "local ping bypasses the user transaction handler", &failures);
     check(AIBinder_ping(null) == std.math.minInt(i32) + 8, "null ping returns STATUS_UNEXPECTED_NULL", &failures);
-    const add_rc = AServiceManager_addService(service, "dev.artzig.ndk.test");
+    check(AServiceManager_addService(null, "invalid") == -3, "null service rejected", &failures);
+    check(AServiceManager_addServiceWithFlags(service, null, 1) == -3, "null flagged name rejected", &failures);
+    const add_rc = AServiceManager_addServiceWithFlags(service, "dev.artzig.ndk.test", 1 | (1 << 2));
     check(add_rc == 0, "addService accepted", &failures);
     if (add_rc != 0) {
         // Registration was denied; waitForService(wait=true) would block forever.

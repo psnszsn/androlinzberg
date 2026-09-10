@@ -3751,6 +3751,26 @@ internal object FrameworkModuleSmoke {
         val connection = object : android.app.IServiceConnection.Stub() {
             override fun connected(name: ComponentName?, service: android.os.IBinder?, dead: Boolean) { }
         }
+        // Stock AMS/ActiveServices reject invalid requests before retaining a
+        // connection. In particular bit 62 must survive the Binder Long argument.
+        fun rejectedBind(flags: Long, instance: String? = null, request: Intent = intent("BoundTaskService"),
+            expected: Class<out Throwable> = SecurityException::class.java) {
+            val failure = runCatching { am.bindServiceInstance(thread, null, request, null,
+                connection, flags or Context.BIND_AUTO_CREATE.toLong(), instance, pkg, 0) }.exceptionOrNull()
+            check(expected.isInstance(failure)) { "flags=$flags instance=$instance: $failure" }
+            check(!am.unbindService(connection)) { "Rejected bind retained a connection" }
+        }
+        rejectedBind(Context.BIND_EXTERNAL_SERVICE_LONG)
+        rejectedBind(Integer.toUnsignedLong(Context.BIND_EXTERNAL_SERVICE))
+        rejectedBind(Context.BIND_SHARED_ISOLATED_PROCESS.toLong())
+        rejectedBind(0L, "named", expected = IllegalArgumentException::class.java)
+        rejectedBind(0L, "bad/name", expected = IllegalArgumentException::class.java)
+        rejectedBind(0L, "named", Intent("implicit"), IllegalArgumentException::class.java)
+        rejectedBind(Context.BIND_SCHEDULE_LIKE_TOP_APP.toLong())
+        check(runCatching { am.bindServiceInstance(null, null, intent("BoundTaskService"), null,
+            connection, 0L, null, pkg, 0) }.exceptionOrNull() is SecurityException)
+        check(runCatching { am.bindServiceInstance(thread, null, intent("BoundTaskService"), null,
+            connection, 0L, null, null, 0) }.exceptionOrNull() is IllegalArgumentException)
         fun bind(name: String, callback: android.app.IServiceConnection) {
             check(am.bindServiceInstance(thread, null, intent(name), null, callback,
                 Context.BIND_AUTO_CREATE.toLong(), null, pkg, 0) == 1)

@@ -55,7 +55,7 @@ objects: std.AutoHashMapUnmanaged(u64, *Object) = .empty,
 /// the service manager and is never assigned to an owned object.
 next_object_id: u64 = Client.context_object_id + 1,
 local_index: std.AutoHashMapUnmanaged(LocalKey, u64) = .empty,
-services: std.StringHashMapUnmanaged(u64) = .empty,
+services: std.StringHashMapUnmanaged(Service) = .empty,
 waiters: std.ArrayList(Waiter) = .empty,
 /// IServiceManager.registerForNotifications: service name -> the global ids of
 /// the IServiceCallback objects to notify (each holds a `service_refs` on its
@@ -706,6 +706,7 @@ fn handleReservePackageUid(peer: *Peer, header: Client.Message.Header, package: 
 /// Registry policy: the system process may claim any name; an app may only
 /// claim its own package name or names beneath it.
 fn mayRegister(peer: *const Peer, name: []const u8) bool {
+    if (isIsolated(peer.android_uid)) return false;
     if (peer.role == .system) return true;
     if (!namespacePrefix(peer.package, name)) return false;
     // A dotted-prefix package must not squat inside a longer known package's
@@ -1169,6 +1170,7 @@ fn handleRegister(peer: *Peer, header: Client.Message.Header, body: []const u8) 
     const io = b.io;
     const reg = takeStruct(Client.Message.RegisterService, body) catch return protocolError(peer, "malformed register_service");
     const name = try readName(peer, body[@sizeOf(Client.Message.RegisterService)..], reg.name_len);
+    if (reg.allow_isolated > 1) return protocolError(peer, "invalid allowIsolated");
     b.mutex.lockUncancelable(io);
     defer b.mutex.unlock(io);
     const object = resolveRef(peer, reg.object) catch |err| switch (err) {
@@ -1186,12 +1188,29 @@ fn handleRegister(peer: *Peer, header: Client.Message.Header, body: []const u8) 
         peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .not_found, ObjectRef.null_ref, "" }));
         return;
     }
-    const status: Server.Message.ServiceResult.Status = switch (try registerService(b, peer, object, name)) {
+    const status: Server.Message.ServiceResult.Status = switch (try registerService(b, peer, object, name, reg.allow_isolated != 0, reg.dump_priority)) {
         .ok => .ok,
         .taken => .already_registered,
         .exhausted => .exhausted,
     };
     peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, status, ObjectRef.null_ref, "" }));
+}
+
+// ServiceManager::Service retains policy per registration, including replacements.
+const Service = struct {
+    object_id: u64,
+    allow_isolated: bool,
+    dump_priority: u32,
+
+    fn permits(service: Service, peer: *const Peer) bool {
+        return service.allow_isolated or !isIsolated(peer.android_uid);
+    }
+};
+
+// Pinned servicemanager's is_multiuser_uid_isolated (not a child-supplied role).
+fn isIsolated(uid: u32) bool {
+    const app_id = uid % 100000;
+    return app_id >= 90000 and app_id <= 99999;
 }
 
 const RegisterOutcome = enum { ok, taken, exhausted };
@@ -1202,21 +1221,22 @@ const RegisterOutcome = enum { ok, taken, exhausted };
 /// register_service path and the gid-1 IServiceManager addService path so both
 /// feed one registry and wake the same waiters. Requires `b.mutex`; the caller
 /// has already checked `mayRegister` and that the object is alive.
-fn registerService(b: *Broker, peer: *Peer, object: *Object, name: []const u8) ServeError!RegisterOutcome {
+fn registerService(b: *Broker, peer: *Peer, object: *Object, name: []const u8, allow_isolated: bool, dump_priority: u32) ServeError!RegisterOutcome {
+    const service: Service = .{ .object_id = object.id, .allow_isolated = allow_isolated, .dump_priority = dump_priority };
     const gpa = b.gpa;
     if (b.services.getEntry(name)) |entry| {
-        const existing = b.objects.get(entry.value_ptr.*).?;
+        const existing = b.objects.get(entry.value_ptr.object_id).?;
         if (existing.owner != peer.id) return .taken;
         // The owner replaces its own registration.
         existing.service_refs -= 1;
-        entry.value_ptr.* = object.id;
+        entry.value_ptr.* = service;
         object.service_refs += 1;
         try b.maybeReleaseObject(existing);
     } else {
         if (b.services.count() >= b.resource_limits.services or peer.registered_services >= b.resource_limits.peer_services) return .exhausted;
         const owned_name = try gpa.dupe(u8, name);
         errdefer gpa.free(owned_name);
-        try b.services.put(gpa, owned_name, object.id);
+        try b.services.put(gpa, owned_name, service);
         object.service_refs += 1;
         peer.registered_services += 1;
     }
@@ -1230,8 +1250,9 @@ fn registerService(b: *Broker, peer: *Peer, object: *Object, name: []const u8) S
         if (b.peers.get(w.peer)) |waiter| {
             waiter.service_waiters -= 1;
             if (waiter.alive) {
-                const ref = try b.deliverRef(waiter, object);
-                waiter.enqueue(try b.encode(Server.serveServiceResult, .{ w.request_id, .ok, ref, "" }));
+                const allowed = service.permits(waiter);
+                const ref = if (allowed) try b.deliverRef(waiter, object) else ObjectRef.null_ref;
+                waiter.enqueue(try b.encode(Server.serveServiceResult, .{ w.request_id, @as(Server.Message.ServiceResult.Status, if (allowed) .ok else .not_found), ref, "" }));
             }
         }
         gpa.free(w.name);
@@ -1326,8 +1347,12 @@ fn handleLookup(peer: *Peer, header: Client.Message.Header, body: []const u8) Se
     const name = try readName(peer, body[@sizeOf(Client.Message.LookupService)..], lookup.name_len);
     b.mutex.lockUncancelable(io);
     defer b.mutex.unlock(io);
-    if (b.services.get(name)) |gid| {
-        const object = b.objects.get(gid).?;
+    if (b.services.get(name)) |service| {
+        if (!service.permits(peer)) {
+            peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .not_found, ObjectRef.null_ref, "" }));
+            return;
+        }
+        const object = b.objects.get(service.object_id).?;
         const ref = try b.deliverRef(peer, object);
         peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .ok, ref, "" }));
         return;
@@ -1485,7 +1510,9 @@ fn handleServiceManagerTransact(
             };
             defer b.maybeReleaseObject(object) catch {};
             if (object.dead) return smReplyException(peer, header, EX_ILLEGAL_STATE, "service object is dead");
-            switch (try registerService(b, peer, object, name)) {
+            const allow_isolated = r.readI32() orelse return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "missing allowIsolated");
+            const dump_priority = r.readI32() orelse return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "missing dumpPriority");
+            switch (try registerService(b, peer, object, name, allow_isolated != 0, @bitCast(dump_priority))) {
                 .ok => {},
                 .taken => return smReplyException(peer, header, EX_ILLEGAL_STATE, "service already registered by another owner"),
                 .exhausted => return smReplyException(peer, header, EX_ILLEGAL_STATE, "service registry capacity exhausted"),
@@ -1494,11 +1521,22 @@ fn handleServiceManagerTransact(
             try smReply(peer, header, data.items, entries.items);
         },
         SM.listServices => {
-            _ = r.readI32(); // dumpPriority (ignored: every service is listed)
-            try smWriteI32(&data, gpa, 0); // no exception
-            try smWriteI32(&data, gpa, @intCast(b.services.count())); // array length
-            var it = b.services.keyIterator();
-            while (it.next()) |k| try smWriteString16(&data, gpa, k.*);
+            const priority: u32 = @bitCast(r.readI32() orelse return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "missing dumpPriority"));
+            var names: std.ArrayList([]const u8) = .empty;
+            defer names.deinit(gpa);
+            var it = b.services.iterator();
+            while (it.next()) |entry| {
+                if (entry.value_ptr.dump_priority & priority != 0) try names.append(gpa, entry.key_ptr.*);
+            }
+            // Pinned ServiceManager stores registrations in an ordered map.
+            std.mem.sort([]const u8, names.items, {}, struct {
+                fn lessThan(_: void, a: []const u8, other: []const u8) bool {
+                    return std.mem.lessThan(u8, a, other);
+                }
+            }.lessThan);
+            try smWriteI32(&data, gpa, 0);
+            try smWriteI32(&data, gpa, @intCast(names.items.len));
+            for (names.items) |name| try smWriteString16(&data, gpa, name);
             try smReply(peer, header, data.items, entries.items);
         },
         SM.isDeclared => {
@@ -1527,6 +1565,7 @@ fn handleServiceManagerTransact(
             try smReply(peer, header, data.items, entries.items);
         },
         SM.registerForNotifications, SM.unregisterForNotifications => {
+            if (isIsolated(peer.android_uid)) return smReplyException(peer, header, EX_SECURITY, "isolated app");
             // registerForNotifications(name, IServiceCallback) /
             // unregisterForNotifications(name, IServiceCallback): void.
             const name = r.readString16(gpa) catch return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "bad service name");
@@ -1606,8 +1645,9 @@ fn smWriteServiceBinder(
     entries: *std.ArrayList(ObjectEntry),
     name: []const u8,
 ) ServeError!void {
-    if (b.services.get(name)) |gid| {
-        const object = b.objects.get(gid).?;
+    if (b.services.get(name)) |service| {
+        if (!service.permits(peer)) return smWriteI32(data, b.gpa, 0);
+        const object = b.objects.get(service.object_id).?;
         const ref = try b.deliverRef(peer, object);
         const off: u32 = @intCast(data.items.len);
         try smWriteI32(data, b.gpa, 1); // strong binder present
@@ -1853,12 +1893,12 @@ fn removePeer(b: *Broker, peer: *Peer) void {
     defer removed_names.deinit(gpa);
     var services = b.services.iterator();
     while (services.next()) |entry| {
-        const object = b.objects.get(entry.value_ptr.*).?;
+        const object = b.objects.get(entry.value_ptr.object_id).?;
         if (object.owner == peer.id) removed_names.append(gpa, entry.key_ptr.*) catch {};
     }
     for (removed_names.items) |name| {
         const kv = b.services.fetchRemove(name).?;
-        b.objects.get(kv.value).?.service_refs -= 1;
+        b.objects.get(kv.value.object_id).?.service_refs -= 1;
         gpa.free(kv.key);
     }
     var i: usize = 0;

@@ -451,6 +451,23 @@ internal object SystemTestClientA {
         }
         val intent = Intent("dev.artzig.test.ECHO").setPackage("dev.artzig.test.b")
         intent.setData(android.net.Uri.parse("test://echo"))
+        val bindingManager = android.app.ActivityManager.getService()
+        val callerThread = ActivityThread.currentActivityThread().applicationThread
+        val coldConnection = object : android.app.IServiceConnection.Stub() {
+            override fun connected(name: ComponentName?, service: IBinder?, dead: Boolean) {
+                error("Denied cold binding received a callback: $name")
+            }
+        }
+        for (serviceClass in listOf("ANoPermissionJobService", "ATestConnectionService")) {
+            val cold = Intent().setClassName("dev.artzig.test.b", "dev.artzig.systemtest.$serviceClass")
+            check(bindingManager.bindServiceInstance(callerThread, null, cold, null, coldConnection,
+                Context.BIND_AUTO_CREATE.toLong(), null, context.packageName, 0) == -1,
+                "cold $serviceClass denied before spawning or retaining work")
+            check(!bindingManager.unbindService(coldConnection), "denied cold binding is not retained")
+        }
+        check(bindingManager.runningAppProcesses.none { it.processName in listOf(
+            "dev.artzig.test.b:private_cold", "dev.artzig.test.b:permission_cold") },
+            "denied cold services have no attached processes")
         check(context.bindService(intent, connection, Context.BIND_AUTO_CREATE), "bindService accepted")
         check(connected.await(30, TimeUnit.SECONDS), "onServiceConnected delivered")
         check(connectedThread === Looper.getMainLooper().thread, "onServiceConnected ran on the main looper")

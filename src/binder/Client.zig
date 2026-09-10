@@ -24,7 +24,7 @@ out: *Writer,
 /// First 4 bytes of every frame ("AZKB" as little-endian u32).
 pub const magic: u32 = 0x424B5A41;
 /// Bumped for every incompatible wire change.
-pub const version: u16 = 5;
+pub const version: u16 = 6;
 
 /// Android uid of the trusted system process (AOSP `Process.SYSTEM_UID`).
 pub const system_uid: u32 = 1000;
@@ -225,6 +225,8 @@ pub const Message = struct {
     pub const RegisterService = extern struct {
         object: ObjectRef,
         name_len: u32,
+        allow_isolated: u32 = 0,
+        dump_priority: u32 = 8, // IServiceManager.DUMP_FLAG_PRIORITY_DEFAULT
         _pad: u32 = 0,
     };
 
@@ -366,12 +368,16 @@ pub fn serveObjectRefMessage(c: *const Client, tag: OutMessage.Tag, object: Obje
 }
 
 pub fn serveRegisterService(c: *const Client, request_id: u64, object: ObjectRef, name: []const u8) Writer.Error!void {
+    return c.serveRegisterServiceWithPolicy(request_id, object, name, false, 8);
+}
+
+pub fn serveRegisterServiceWithPolicy(c: *const Client, request_id: u64, object: ObjectRef, name: []const u8, allow_isolated: bool, dump_priority: u32) Writer.Error!void {
     try c.serveMessageHeader(.{
         .tag = .register_service,
         .bytes_len = @intCast(@sizeOf(OutMessage.RegisterService) + name.len),
         .request_id = request_id,
     });
-    try c.out.writeStruct(OutMessage.RegisterService{ .object = object, .name_len = @intCast(name.len) }, .little);
+    try c.out.writeStruct(OutMessage.RegisterService{ .object = object, .name_len = @intCast(name.len), .allow_isolated = @intFromBool(allow_isolated), .dump_priority = dump_priority }, .little);
     try c.out.writeAll(name);
     try c.out.flush();
 }

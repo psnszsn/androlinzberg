@@ -145,7 +145,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
         val client: ProcessRecord,
         val record: ServiceRecord,
         val binding: IntentBindRecord,
-        val flags: Int,
+        val flags: Long,
     )
 
     private val lock = Any()
@@ -1156,13 +1156,8 @@ class HostedActivityManagerService(private val context: android.content.Context?
         ownerUid: Int,
         callingUid: Int,
     ): Boolean {
-        if (!entry.exported && callingUid != ownerUid && callingUid != android.os.Process.SYSTEM_UID) {
-            return false
-        }
-        val permission = entry.permission ?: return true
-        if (callingUid == android.os.Process.SYSTEM_UID || callingUid == ownerUid) return true
-        return packageService?.checkUidPermission(permission, callingUid) ==
-            android.content.pm.PackageManager.PERMISSION_GRANTED
+        return android.app.ActivityManager.checkComponentPermission(entry.permission, callingUid,
+            ownerUid, entry.exported) == android.content.pm.PackageManager.PERMISSION_GRANTED
     }
 
     private fun serviceForLocked(process: ProcessRecord, entry: android.content.pm.ServiceInfo): ServiceRecord {
@@ -1207,6 +1202,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
         callingPackage: String?,
         allowSpawn: Boolean = true,
     ): PostStart {
+        val targetInfo = packageService?.resolveServiceInfo(service) ?: return PostStart(null, null, 0)
+        if (!checkAccessLocked(targetInfo, targetInfo.applicationInfo.uid, callingUid))
+            return PostStart(null, null, -1)
         val resolved = resolveServiceLocked(service, callingPackage) ?: run {
             val info = packageService?.resolveServiceInfo(service)
             val pkg = info?.packageName
@@ -1342,18 +1340,29 @@ class HostedActivityManagerService(private val context: android.content.Context?
     ): Int {
         service ?: return 0
         connection ?: return 0
-        val flags = flags.toInt()
         val callingUid = Binder.getCallingUid()
+        // ActivityManagerService.bindServiceInstance validates before registry work.
+        if (UserHandle.isIsolated(callingUid)) throw SecurityException("Isolated process not allowed to call bindService")
+        require(!service.hasFileDescriptors()) { "File descriptors passed in Intent" }
+        requireNotNull(callingPackage) { "callingPackage cannot be null" }
+        if (instanceName != null) require(instanceName.matches(Regex("[a-zA-Z0-9_.]+"))) { "Illegal instanceName" }
+        service.removeExtendedFlags(Intent.EXTENDED_FLAG_FILTER_MISMATCH)
         if (callingPackage != null && packageService?.isSameAppInternal(callingPackage, callingUid) != true) {
             throw SecurityException("uid $callingUid does not own $callingPackage")
         }
         addCreatorToken(service, callingPackage)
         val post = synchronized(lock) {
             val client = caller?.asBinder()?.let { processes[it] } ?: run {
-                Log.w(TAG, "bindService from an unattached process")
-                return 0
+                throw SecurityException("Unable to find app for caller $caller (pid=${Binder.getCallingPid()}) when binding service $service")
             }
-            doBindLocked(client, callingUid, service, connection, flags, callingPackage)
+            validateBindPrivileges(client, service, flags)
+            val allowMode = if (service.component?.packageName == callingPackage)
+                android.app.ActivityManagerInternal.ALLOW_PROFILES_OR_NON_FULL
+                else android.app.ActivityManagerInternal.ALLOW_NON_FULL_IN_PROFILE
+            val targetUser = HostedActivityManagerInternalService(this, HostedPermissions(checkNotNull(packageService)))
+                .handleIncomingUser(Binder.getCallingPid(), callingUid, userId, false, allowMode, "service", callingPackage)
+            doBindLocked(client, callingUid, service, connection, flags, callingPackage,
+                instanceName, resolvedType, targetUser)
         }
         if (post.status == -1) return -1
         applyPostBind(post, connection)
@@ -1365,16 +1374,33 @@ class HostedActivityManagerService(private val context: android.content.Context?
         callingUid: Int,
         service: Intent,
         connection: IServiceConnection,
-        flags: Int,
-        callingPackage: String?,
+        flags: Long,
+        callingPackage: String,
+        instanceName: String?,
+        resolvedType: String?,
+        userId: Int,
         allowSpawn: Boolean = true,
     ): PostBind {
-        val resolved = resolveServiceLocked(service, callingPackage) ?: run {
+        if (instanceName != null && service.component == null) throw IllegalArgumentException(
+            "Can't use custom instance name '$instanceName' without expicit component in Intent")
+        val queryFlags = (if (flags and android.content.Context.BIND_ALLOW_INSTANT.toLong() != 0L)
+            android.content.pm.PackageManager.MATCH_INSTANT.toLong() else 0L) or
+            (if (flags and android.content.Context.BIND_MATCH_QUARANTINED_COMPONENTS != 0L)
+                android.content.pm.PackageManager.MATCH_QUARANTINED_COMPONENTS else 0L)
+        val info = packageService?.resolveService(service, resolvedType, queryFlags, userId)?.serviceInfo
+            ?: return PostBind(null, null, false, null, 0)
+        validateBindModes(info, service, flags, instanceName, callingPackage, callingUid)
+        // ActiveServices.retrieveServiceLocked checks permission before bringUpServiceLocked:
+        // a denied cold bind must never create a process or retain pending work.
+        if (!checkAccessLocked(info, info.applicationInfo.uid, callingUid))
+            return PostBind(null, null, false, null, -1)
+        val readyProcess = processes.values.firstOrNull { it.ready && it.packageName == info.packageName &&
+            it.processName == (info.processName ?: info.packageName) && UserHandle.getUserId(it.uid) == userId }
+        val resolved = readyProcess?.let { it to info } ?: run {
             // ActiveServices.bindServiceLocked only brings a process up for
             // BIND_AUTO_CREATE; the connection is retained and completed when
             // the spawned process attaches.
-            val autoCreate = (flags and android.content.Context.BIND_AUTO_CREATE) != 0
-            val info = packageService?.resolveServiceInfo(service)
+            val autoCreate = (flags and android.content.Context.BIND_AUTO_CREATE.toLong()) != 0L
             val pkg = info?.packageName
             val processName = info?.processName ?: pkg
             if (allowSpawn && autoCreate && pkg != null && processName != null &&
@@ -1384,7 +1410,8 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 pendingByProcess.getOrPut(pkg to processName) { ArrayList() }.add(PendingWork({
                     // allowSpawn=false on replay (process now attached).
                     val p = synchronized(lock) {
-                        doBindLocked(client, callingUid, service, connection, flags, callingPackage, false)
+                        doBindLocked(client, callingUid, service, connection, flags, callingPackage,
+                            instanceName, resolvedType, userId, false)
                     }
                     if (p.status != -1) applyPostBind(p, connection)
                 }, {
@@ -1399,13 +1426,12 @@ class HostedActivityManagerService(private val context: android.content.Context?
             return PostBind(null, null, false, null, 0)
         }
         val (process, entry) = resolved
-        if (!checkAccessLocked(entry, process.uid, callingUid)) return PostBind(null, null, false, null, -1)
         val record = serviceForLocked(process, entry)
         val comparison = FilterComparison(service)
         val binding = record.bindings.getOrPut(comparison) { IntentBindRecord(service) }
         record.connections[connection.asBinder()] =
             ConnectionRecord(connection, client, record, binding, flags)
-        val autoCreate = (flags and android.content.Context.BIND_AUTO_CREATE) != 0
+        val autoCreate = (flags and android.content.Context.BIND_AUTO_CREATE.toLong()) != 0L
         val create = autoCreate && !record.created
         if (create) record.created = true
         updateWindowProcessStates()
@@ -1431,6 +1457,63 @@ class HostedActivityManagerService(private val context: android.content.Context?
         }
         // Bound but the service is not up yet (no BIND_AUTO_CREATE): waits for creation.
         return PostBind(null, record.name, false, null, 1)
+    }
+
+    /** ActiveServices.bindServiceLocked flag privileges, before any service/process mutation. */
+    private fun validateBindPrivileges(client: ProcessRecord, service: Intent, flags: Long) {
+        val system = client.uid == android.os.Process.SYSTEM_UID
+        for ((flag, name) in listOf(
+            android.content.Context.BIND_SCHEDULE_LIKE_TOP_APP to "BIND_SCHEDULE_LIKE_TOP_APP",
+            android.content.Context.BIND_ALLOW_WHITELIST_MANAGEMENT to "BIND_ALLOW_WHITELIST_MANAGEMENT",
+            android.content.Context.BIND_ALLOW_INSTANT to "BIND_ALLOW_INSTANT",
+            android.content.Context.BIND_ALMOST_PERCEPTIBLE to "BIND_ALMOST_PERCEPTIBLE")) {
+            if (flags and flag.toLong() != 0L && !system) throw SecurityException(
+                "Non-system caller (pid=${Binder.getCallingPid()}) set $name when binding service $service")
+        }
+        for ((flag, permission, name) in listOf(
+            Triple(android.content.Context.BIND_TREAT_LIKE_ACTIVITY,
+                android.Manifest.permission.MANAGE_ACTIVITY_TASKS, "BIND_TREAT_LIKE_ACTIVITY"),
+            Triple(android.content.Context.BIND_ALLOW_BACKGROUND_ACTIVITY_STARTS,
+                android.Manifest.permission.START_ACTIVITIES_FROM_BACKGROUND, "BIND_ALLOW_BACKGROUND_ACTIVITY_STARTS"),
+            Triple(android.content.Context.BIND_ALLOW_FOREGROUND_SERVICE_STARTS_FROM_BACKGROUND,
+                android.Manifest.permission.START_FOREGROUND_SERVICES_FROM_BACKGROUND, "BIND_ALLOW_FOREGROUND_SERVICE_STARTS_FROM_BACKGROUND"))) {
+            if (flags and flag.toLong() != 0L) enforceCallingPermission(permission, name)
+        }
+    }
+
+    /** ActiveServices.retrieveServiceLocked validation order. Successful isolation
+     * still needs the supervised process identity/instance path below this gate. */
+    private fun validateBindModes(info: android.content.pm.ServiceInfo, intent: Intent, flags: Long,
+        instanceName: String?, callingPackage: String, callingUid: Int) {
+        val isolated = info.flags and android.content.pm.ServiceInfo.FLAG_ISOLATED_PROCESS != 0
+        if (instanceName != null && !isolated) throw IllegalArgumentException(
+            "Can't use instance name '$instanceName' with non-isolated non-sdk sandbox service '${info.name}'")
+        val external = flags and Integer.toUnsignedLong(android.content.Context.BIND_EXTERNAL_SERVICE) != 0L ||
+            flags and android.content.Context.BIND_EXTERNAL_SERVICE_LONG != 0L
+        val shared = flags and android.content.Context.BIND_SHARED_ISOLATED_PROCESS.toLong() != 0L
+        val privateShared = flags and android.content.Context.BIND_PACKAGE_ISOLATED_PROCESS.toLong() != 0L &&
+            android.content.flags.Flags.enableBindPackageIsolatedProcess()
+        val className = ComponentName(info.applicationInfo.packageName, info.name)
+        val component = intent.component ?: className
+        if (info.flags and android.content.pm.ServiceInfo.FLAG_EXTERNAL_SERVICE != 0) {
+            if (!external) throw SecurityException("BIND_EXTERNAL_SERVICE required for $component")
+            if (!info.exported) throw SecurityException("BIND_EXTERNAL_SERVICE failed, $className is not exported")
+            if (privateShared) throw SecurityException("BIND_PACKAGE_ISOLATED_PROCESS cannot be applied to an external service.")
+            if (!isolated) throw SecurityException("BIND_EXTERNAL_SERVICE failed, $className is not an isolatedProcess")
+            if (packageService?.getPackagesForUid(callingUid)?.contains(callingPackage) != true)
+                throw SecurityException("BIND_EXTERNAL_SERVICE failed, calling package not owned by calling UID ")
+        } else if (external) throw SecurityException("BIND_EXTERNAL_SERVICE failed, $component is not an externalService")
+        if (shared && privateShared) throw SecurityException(
+            "Either BIND_SHARED_ISOLATED_PROCESS or BIND_PACKAGE_ISOLATED_PROCESS should be set. Not both.")
+        if ((shared || privateShared) && !isolated) throw SecurityException(
+            "BIND_SHARED_ISOLATED_PROCESS failed, $className is not an isolatedProcess")
+        if (privateShared && info.processName == info.applicationInfo.processName) throw SecurityException(
+            "BIND_PACKAGE_ISOLATED_PROCESS cannot be used for services running in the main app process.")
+        if (shared) {
+            require(instanceName != null) { "instanceName must be provided for binding a service into a shared isolated process." }
+            if (info.flags and android.content.pm.ServiceInfo.FLAG_ALLOW_SHARED_ISOLATED_PROCESS == 0)
+                throw SecurityException("BIND_SHARED_ISOLATED_PROCESS failed, $className has not set the allowSharedIsolatedProcess  attribute.")
+        }
     }
 
     private fun applyPostBind(post: PostBind, connection: IServiceConnection) {
