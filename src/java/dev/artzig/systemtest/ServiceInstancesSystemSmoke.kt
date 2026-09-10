@@ -283,6 +283,10 @@ internal object ServiceInstancesSystemSmoke {
             val uid = state.getInt("uid")
             check(uid in 99000..99999 && uid == state.getInt("kernelUid") && uid == state.getInt("kernelGid")) { state.toString() }
             check(state.getBoolean("isolated"))
+            check(state.getInt("callerUidForPid") == android.os.Process.myUid()) {
+                "Isolated child must resolve its caller's authenticated Android UID" }
+            check(android.os.Process.getUidForPid(state.getInt("pid")) == uid) {
+                "Stock Process must observe the isolated child's Android UID across namespaces" }
             check(state.getBoolean("noSharedCredentials"))
             check(state.getInt("appOp") == android.app.AppOpsManager.MODE_ERRORED)
             check(state.getInt("camera") == android.content.pm.PackageManager.PERMISSION_DENIED)

@@ -24,7 +24,7 @@ out: *Writer,
 /// First 4 bytes of every frame ("AZKB" as little-endian u32).
 pub const magic: u32 = 0x424B5A41;
 /// Bumped for every incompatible wire change.
-pub const version: u16 = 7;
+pub const version: u16 = 8;
 
 /// Android uid of the trusted system process (AOSP `Process.SYSTEM_UID`).
 pub const system_uid: u32 = 1000;
@@ -160,6 +160,8 @@ pub const Message = struct {
         reserve_launch,
         bind_launch,
         revoke_launch,
+        /// Kernel PID; returns PackageUidResult for an authenticated live process.
+        process_uid,
         _,
     };
 
@@ -437,6 +439,12 @@ pub fn serveBindLaunch(c: *const Client, request_id: u64, id: u64, pid: i32) Wri
 pub fn serveRevokeLaunch(c: *const Client, request_id: u64, id: u64) Writer.Error!void {
     try c.serveMessageHeader(.{ .tag = .revoke_launch, .request_id = request_id, .bytes_len = @sizeOf(u64) });
     try c.out.writeInt(u64, id, .little);
+    try c.out.flush();
+}
+
+pub fn serveProcessUid(c: *const Client, request_id: u64, pid: i32) Writer.Error!void {
+    try c.serveMessageHeader(.{ .tag = .process_uid, .request_id = request_id, .bytes_len = @sizeOf(i32) });
+    try c.out.writeInt(i32, pid, .little);
     try c.out.flush();
 }
 

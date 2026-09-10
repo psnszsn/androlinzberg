@@ -144,6 +144,26 @@ pub fn isBoundProcess(self: *LaunchGrants, pid: i32) bool {
     return false;
 }
 
+/// Positive liveness evidence for peer identity lookups (not UID quarantine).
+pub fn liveStartTime(self: *LaunchGrants, pid: i32) ?u64 {
+    const current = self.inspect(pid) catch return null;
+    return if (current.alive) current.start else null;
+}
+
+/// Translate only authenticated kernel processes. Unlike UID quarantine,
+/// a metadata query needs positive evidence of a live matching start time.
+/// Revocation does not change the UID of a child which can still execute.
+pub fn liveUid(self: *LaunchGrants, pid: i32) ?u32 {
+    for (self.grants.items) |grant| {
+        if (grant.claimed_peer == null) continue;
+        const child = grant.child orelse continue;
+        if (child.pid != pid) continue;
+        const current = self.inspect(pid) catch return null;
+        if (current.alive and current.start == child.start) return grant.ticket.uid;
+    }
+    return null;
+}
+
 pub fn disconnected(self: *LaunchGrants, peer: u32) void {
     for (self.grants.items) |*grant| {
         if (grant.supervisor == peer or grant.claimed_peer == peer) grant.revoked = true;

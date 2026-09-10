@@ -177,7 +177,8 @@ zig build -j10 cpp-audit
   the registrar for the other real `android.os` classes: SystemProperties
   (property area reader, broker set), SharedMemory/MemoryFile (memfd),
   Process (priorities, signals, /proc; `std.Io` proc-file ownership and pinned
-  field/numeric parsing), SystemClock (`clock_gettime`; all
+  field/numeric parsing; authenticated PID/start-time UID translation across
+  hosted user namespaces), SystemClock (`clock_gettime`; all
   `@CriticalNative`, so the Zig functions take no `JNIEnv`), Trace (the
   Ravenwood no-op shape: no tag enabled, emitters empty), and
   `ClassLoaderFactory.createClassloaderNamespace` (null: the bionic bridge has

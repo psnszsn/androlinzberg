@@ -1673,7 +1673,7 @@ const Runtime = struct {
 
     fn serviceRequest(r: *Runtime, tag: Client.Message.Tag, body_extra: []const u8) *PendingCall {
         const call = r.preparePending(switch (tag) {
-            .reserve_package_uid => .package_uid,
+            .reserve_package_uid, .process_uid => .package_uid,
             .reserve_launch => .launch,
             else => .service,
         });
@@ -4211,6 +4211,20 @@ fn bsAssignedUid(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) jni.jint {
     // broker-backed process's uid is broker-assigned) and return the uid.
     if (getenv("AZK_BINDER_SOCKET") == null) return -1;
     return @intCast(Runtime.get().uid);
+}
+
+/// Process.readProcLines is a normal JNI entry, so its cross-process metadata
+/// query may wait on Binder. CriticalNative identity getters never call this.
+pub fn hostedUidForPid(pid: i32) ?u32 {
+    if (pid <= 0 or getenv("AZK_BINDER_SOCKET") == null) return null;
+    const r = Runtime.get();
+    if (pid == r.pid) return r.uid;
+    var body: [@sizeOf(i32)]u8 = undefined;
+    std.mem.writeInt(i32, &body, pid, .little);
+    const call = r.serviceRequest(.process_uid, &body);
+    defer r.destroyPending(call);
+    if (call.failed or call.package_uid.status != .ok) return null;
+    return call.package_uid.uid;
 }
 
 fn bsReservePackageUid(env: JNIEnvPtr, cls: jni.jclass, pkg: jni.jstring) callconv(.c) jni.jint {

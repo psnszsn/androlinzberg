@@ -981,6 +981,29 @@ and pins are unchanged and current. Process restoration and final acceptance
 remain open; the earlier intermittent WebView frame-rate-hint finding is not
 claimed fixed by this successful run.
 
+### Process UID queries across namespaces (2026-09-10)
+
+The original Process.getUidForPid/readProcLines APIs now observe authenticated
+Android UIDs across hosted user namespaces. The native proc reader retains
+Linux file parsing and uses the broker for known process identities. The broker
+checks both PID and kernel start time, requires child authentication, declines
+ambiguous multi-identity PIDs, and never treats an unreadable proc entry as proof
+of identity. Revocation preserves the UID until the actual child exits. Unknown
+processes retain the native Linux query behavior. AZKB protocol version is 8.
+
+Broker tests cover unclaimed, authenticated and exited children. Independently
+signed isolated services verify both lookup directions: framework caller to
+isolated child and isolated child to framework caller. The final focused
+`-j24 binder-broker-test system-test cpp-audit graph-audit` gate passes. The UID
+change also passed `-j10 install jvm-test integration-test webview-test
+webview-ui-test webview-overlay-test stock-desktop-launcher-test
+stock-session-loss-test binder-test binder-cpp-test ndk-test build-tools-test`:
+28 APK cases and 115 captured UI actions have empty structured issue lists and
+no fresh failure artifacts. The reverse lookup extension was verified by the
+final focused gate. Both AOSP archives remain unchanged and current. The Java
+Process identity/start adaptation and final acceptance are still open.
+
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

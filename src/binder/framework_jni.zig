@@ -680,6 +680,24 @@ fn procReadProcLines(env: JNIEnvPtr, _: jni.jclass, path: jni.jstring, req: jni.
             break;
         }
     }
+    // procfs presents namespace IDs in the reader's namespace. Stock Process
+    // expects the Android identity of the target: translate known live session
+    // children at this native boundary, retaining Linux data for other PIDs.
+    const filename = std.mem.span(path_chars);
+    if (filename.len > 13 and std.mem.startsWith(u8, filename, "/proc/") and std.mem.endsWith(u8, filename, "/status")) {
+        const middle = filename[6 .. filename.len - 7];
+        const pid = if (std.mem.eql(u8, middle, "self")) std.os.linux.getpid() else std.fmt.parseInt(i32, middle, 10) catch 0;
+        for (fields.items) |field| {
+            if (!std.mem.eql(u8, field, "Uid:") and !std.mem.eql(u8, field, "Gid:")) continue;
+            if (ndk.hostedUidForPid(pid)) |uid| {
+                for (fields.items, 0..) |candidate, i| {
+                    if (std.mem.eql(u8, candidate, "Uid:") or std.mem.eql(u8, candidate, "Gid:"))
+                        values[i] = uid;
+                }
+            }
+            break;
+        }
+    }
     env.*.*.SetLongArrayRegion.?(env, out, 0, @intCast(count), values.ptr);
 }
 

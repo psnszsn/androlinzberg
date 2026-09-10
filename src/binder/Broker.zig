@@ -163,6 +163,7 @@ const Peer = struct {
     broker: *Broker,
     id: u32,
     pid: i32,
+    kernel_start_time: u64,
     /// Linux uid from SO_PEERCRED (always the session user).
     uid: u32,
     /// Android identity assigned at hello.
@@ -438,6 +439,7 @@ fn admit(b: *Broker, stream: net.Stream) !void {
         .broker = b,
         .id = b.next_peer_id,
         .pid = creds.pid,
+        .kernel_start_time = b.launches.liveStartTime(creds.pid) orelse return error.PeerProcessExited,
         .uid = creds.uid,
         .conn = .init(io, stream, read_buffer, write_buffer),
         .read_buffer = read_buffer,
@@ -634,6 +636,7 @@ fn serveLoop(peer: *Peer) ServeError!void {
             .list_services => try handleList(peer, header),
             .set_property => try handleSetProperty(peer, header, body),
             .reserve_package_uid => try handleReservePackageUid(peer, header, body),
+            .process_uid => try handleProcessUid(peer, header, body),
             .reserve_launch => try handleReserveLaunch(peer, header, body),
             .bind_launch => try handleBindLaunch(peer, header, body),
             .revoke_launch => try handleRevokeLaunch(peer, header, body),
@@ -717,6 +720,36 @@ fn assignPackageUidLocked(b: *Broker, package: []const u8) error{OutOfMemory}!?u
     try b.packages.put(b.gpa, owned, uid);
     b.next_app_uid += 1;
     return uid;
+}
+
+fn handleProcessUid(peer: *Peer, header: Client.Message.Header, body: []const u8) ServeError!void {
+    if (body.len != @sizeOf(i32)) return protocolError(peer, "malformed process_uid");
+    const pid = std.mem.readInt(i32, body[0..4], .little);
+    const b = peer.broker;
+    b.mutex.lockUncancelable(b.io);
+    defer b.mutex.unlock(b.io);
+    // Supervised children retain their kernel UID through revocation. Ordinary
+    // framework peers carry the logical Android identity authenticated at hello.
+    var uid = b.launches.liveUid(pid);
+    if (uid == null) if (b.launches.liveStartTime(pid)) |start| {
+        var peers = b.peers.valueIterator();
+        while (peers.next()) |candidate| {
+            const other = candidate.*;
+            if (!other.alive or !other.hello_done or other.pid != pid or other.kernel_start_time != start) continue;
+            // Native protocol tests can intentionally host several identities in
+            // one Linux process. Such an ambiguous PID must never pick a UID.
+            if (uid != null and uid.? != other.android_uid) {
+                uid = null;
+                break;
+            }
+            uid = other.android_uid;
+        }
+    };
+    const result: Server.Message.PackageUidResult = if (uid) |value|
+        .{ .status = .ok, .uid = value }
+    else
+        .{ .status = .not_found };
+    peer.enqueue(try b.encode(Server.servePackageUidResult, .{ header.request_id, result }));
 }
 
 fn handleReservePackageUid(peer: *Peer, header: Client.Message.Header, package: []const u8) ServeError!void {

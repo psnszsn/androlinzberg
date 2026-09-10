@@ -102,7 +102,7 @@ pub const Message = struct {
         /// Zero unless status is ok.
         uid: u32 = 0,
 
-        pub const Status = enum(u32) { ok, denied, exhausted, _ };
+        pub const Status = enum(u32) { ok, denied, exhausted, not_found, _ };
     };
 
     /// Trailing:

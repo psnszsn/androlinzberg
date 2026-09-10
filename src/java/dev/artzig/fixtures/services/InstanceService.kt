@@ -38,6 +38,7 @@ open class InstanceService : Service() {
                 putInt("startId", lastStartId)
                 putString("mainStack", android.os.Looper.getMainLooper().thread.stackTrace.joinToString("\n"))
                 putInt("uid", Process.myUid())
+                putInt("callerUidForPid", Process.getUidForPid(Binder.getCallingPid()))
                 putInt("kernelUid", android.system.Os.getuid())
                 putInt("kernelGid", android.system.Os.getgid())
                 putInt("pid", Process.myPid())
