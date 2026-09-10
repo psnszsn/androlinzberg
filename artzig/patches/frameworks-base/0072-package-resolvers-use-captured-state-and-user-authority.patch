@@ -1,0 +1,1157 @@
+--- a/services/core/java/com/android/server/IntentResolver.java
++++ b/services/core/java/com/android/server/IntentResolver.java
+@@ -15,6 +15,9 @@
+  */
+ 
+ package com.android.server;
++
++// Host seam: package queries use a captured registry; user queries use the
++// existing UserManagerInternal authority rather than full PMS/UMS instances.
+ 
+ import static android.permission.flags.Flags.ignoreProcessText;
+ 
+@@ -36,7 +39,7 @@
+ import android.util.proto.ProtoOutputStream;
+ 
+ import com.android.internal.util.FastPrintWriter;
+-import com.android.server.pm.Computer;
++import dev.artzig.system.HostedPackageSnapshot;
+ import com.android.server.pm.snapshot.PackageDataSnapshot;
+ 
+ import java.io.PrintWriter;
+@@ -352,7 +355,7 @@
+         return Collections.unmodifiableSet(mFilters);
+     }
+ 
+-    public List<R> queryIntentFromList(@NonNull Computer computer, Intent intent,
++    public List<R> queryIntentFromList(@NonNull HostedPackageSnapshot computer, Intent intent,
+             String resolvedType, boolean defaultOnly, ArrayList<F[]> listCut, int userId,
+             long customFlags) {
+         if (Intent.ACTION_PROCESS_TEXT.equals(intent.getAction()) && ignoreProcessText()) {
+@@ -464,7 +467,7 @@
+         }
+ 
+         FastImmutableArraySet<String> categories = getFastIntentCategories(intent);
+-        Computer computer = (Computer) snapshot;
++        HostedPackageSnapshot computer = (HostedPackageSnapshot) snapshot;
+         if (firstTypeCut != null) {
+             buildResolveList(computer, intent, categories, debug, defaultOnly, resolvedType,
+                     scheme, firstTypeCut, finalList, userId, customFlags);
+@@ -507,7 +510,7 @@
+      * "stopped", that is whether it should not be included in the result
+      * if the intent requests to excluded stopped objects.
+      */
+-    protected boolean isFilterStopped(@NonNull Computer computer, F filter, @UserIdInt int userId) {
++    protected boolean isFilterStopped(@NonNull HostedPackageSnapshot computer, F filter, @UserIdInt int userId) {
+         return false;
+     }
+ 
+@@ -537,7 +540,7 @@
+     protected abstract F[] newArray(int size);
+ 
+     @SuppressWarnings("unchecked")
+-    protected R newResult(@NonNull Computer computer, F filter, int match, int userId,
++    protected R newResult(@NonNull HostedPackageSnapshot computer, F filter, int match, int userId,
+             long customFlags) {
+         return (R)filter;
+     }
+@@ -718,7 +721,7 @@
+         return new FastImmutableArraySet<String>(categories.toArray(new String[categories.size()]));
+     }
+ 
+-    private void buildResolveList(@NonNull Computer computer, Intent intent,
++    private void buildResolveList(@NonNull HostedPackageSnapshot computer, Intent intent,
+             FastImmutableArraySet<String> categories, boolean debug, boolean defaultOnly,
+             String resolvedType, String scheme, F[] src, List<R> dest, int userId,
+             long customFlags) {
+--- a/services/core/java/com/android/server/SystemService.java
++++ b/services/core/java/com/android/server/SystemService.java
+@@ -16,6 +16,9 @@
+ 
+ package com.android.server;
+ 
++// Host seam: package queries use a captured registry; user queries use the
++// existing UserManagerInternal authority rather than full PMS/UMS instances.
++
+ import static android.os.IServiceManager.DUMP_FLAG_PRIORITY_DEFAULT;
+ 
+ import android.annotation.IntDef;
+@@ -33,7 +36,7 @@
+ import android.os.UserManager;
+ 
+ import com.android.internal.annotations.VisibleForTesting;
+-import com.android.server.pm.UserManagerService;
++import com.android.server.pm.UserManagerInternal;
+ 
+ import java.io.PrintWriter;
+ import java.lang.annotation.Retention;
+@@ -505,7 +508,7 @@
+      * either of the users ({@code from} or {@code to}).
+      *
+      * <b>NOTE: </b> both {@code from} and {@code to} are "live" objects
+-     * referenced by {@link UserManagerService} and hence should not be modified.
++     * referenced by {@link UserManagerInternal} and hence should not be modified.
+      *
+      * @param from the user switching from
+      * @param to the user switching to
+--- a/services/core/java/com/android/server/UiModeManagerService.java
++++ b/services/core/java/com/android/server/UiModeManagerService.java
+@@ -15,6 +15,9 @@
+  */
+ 
+ package com.android.server;
++
++// Host seam: package queries use a captured registry; user queries use the
++// existing UserManagerInternal authority rather than full PMS/UMS instances.
+ 
+ import static android.app.Flags.enableCurrentModeTypeBinderCache;
+ import static android.app.Flags.enableNightModeBinderCache;
+@@ -39,7 +42,7 @@
+ import static android.util.TimeUtils.isTimeBetween;
+ 
+ import static com.android.internal.util.FunctionalUtils.ignoreRemoteException;
+-import static com.android.server.pm.UserManagerService.enforceCurrentUserIfVisibleBackgroundEnabled;
++import static dev.artzig.system.HostedUserManagerService.enforceCurrentUserIfVisibleBackgroundEnabled;
+ 
+ import android.annotation.IntRange;
+ import android.annotation.NonNull;
+--- a/services/core/java/com/android/server/firewall/IntentFirewall.java
++++ b/services/core/java/com/android/server/firewall/IntentFirewall.java
+@@ -15,6 +15,9 @@
+  */
+ 
+ package com.android.server.firewall;
++
++// Host seam: package queries use a captured registry; user queries use the
++// existing UserManagerInternal authority rather than full PMS/UMS instances.
+ 
+ import android.annotation.NonNull;
+ import android.app.AppGlobals;
+@@ -41,7 +44,7 @@
+ import com.android.server.EventLogTags;
+ import com.android.server.IntentResolver;
+ import com.android.server.LocalServices;
+-import com.android.server.pm.Computer;
++import dev.artzig.system.HostedPackageSnapshot;
+ 
+ import org.xmlpull.v1.XmlPullParser;
+ import org.xmlpull.v1.XmlPullParserException;
+@@ -527,7 +530,7 @@
+         }
+ 
+         @Override
+-        protected Rule newResult(@NonNull Computer computer, FirewallIntentFilter filter,
++        protected Rule newResult(@NonNull HostedPackageSnapshot computer, FirewallIntentFilter filter,
+                 int match, int userId, long customFlags) {
+             return filter.rule;
+         }
+--- a/services/core/java/com/android/server/pm/InstantAppResolver.java
++++ b/services/core/java/com/android/server/pm/InstantAppResolver.java
+@@ -15,6 +15,11 @@
+  */
+ 
+ package com.android.server.pm;
++
++// Host seam: package queries use a captured registry; user queries use the
++// existing UserManagerInternal authority rather than full PMS/UMS instances.
++
++import dev.artzig.system.HostedPackageSnapshot;
+ 
+ import static android.content.Intent.FLAG_ACTIVITY_MATCH_EXTERNAL;
+ 
+@@ -136,8 +141,8 @@
+         }
+     }
+ 
+-    public static AuxiliaryResolveInfo doInstantAppResolutionPhaseOne(@NonNull Computer computer,
+-            @NonNull UserManagerService userManager, InstantAppResolverConnection connection,
++    public static AuxiliaryResolveInfo doInstantAppResolutionPhaseOne(@NonNull HostedPackageSnapshot computer,
++            @NonNull UserManagerInternal userManager, InstantAppResolverConnection connection,
+             InstantAppRequest requestObj) {
+         final long startTime = System.currentTimeMillis();
+         final String token = requestObj.token;
+@@ -190,8 +195,8 @@
+         return resolveInfo;
+     }
+ 
+-    public static void doInstantAppResolutionPhaseTwo(Context context, @NonNull Computer computer,
+-            @NonNull UserManagerService userManager, InstantAppResolverConnection connection,
++    public static void doInstantAppResolutionPhaseTwo(Context context, @NonNull HostedPackageSnapshot computer,
++            @NonNull UserManagerInternal userManager, InstantAppResolverConnection connection,
+             InstantAppRequest requestObj, ActivityInfo instantAppInstaller,
+             Handler callbackHandler) {
+         final long startTime = System.currentTimeMillis();
+@@ -393,8 +398,8 @@
+         );
+     }
+ 
+-    private static AuxiliaryResolveInfo filterInstantAppIntent(@NonNull Computer computer,
+-            @NonNull UserManagerService userManager,
++    private static AuxiliaryResolveInfo filterInstantAppIntent(@NonNull HostedPackageSnapshot computer,
++            @NonNull UserManagerInternal userManager,
+             List<InstantAppResolveInfo> instantAppResolveInfoList, Intent origIntent,
+             String resolvedType, int userId, String packageName, String token,
+             int[] hostDigestPrefixSecure) {
+@@ -473,7 +478,7 @@
+      *
+      */
+     private static List<AuxiliaryResolveInfo.AuxiliaryFilter> computeResolveFilters(
+-            @NonNull Computer computer, @NonNull UserManagerService userManager, Intent origIntent,
++            @NonNull HostedPackageSnapshot computer, @NonNull UserManagerInternal userManager, Intent origIntent,
+             String resolvedType, int userId, String packageName, String token,
+             InstantAppResolveInfo instantAppInfo) {
+         if (instantAppInfo.shouldLetInstallerDecide()) {
+--- a/services/core/java/com/android/server/pm/KnownPackages.java
++++ b/services/core/java/com/android/server/pm/KnownPackages.java
+@@ -15,6 +15,11 @@
+  */
+ 
+ package com.android.server.pm;
++
++// Host seam: package queries use a captured registry; user queries use the
++// existing UserManagerInternal authority rather than full PMS/UMS instances.
++
++import dev.artzig.system.HostedPackageSnapshot;
+ 
+ import android.annotation.IntDef;
+ import android.annotation.NonNull;
+@@ -177,7 +182,7 @@
+         return "Unknown";
+     }
+ 
+-    String[] getKnownPackageNames(@NonNull Computer snapshot, int knownPackage, int userId) {
++    String[] getKnownPackageNames(@NonNull HostedPackageSnapshot snapshot, int knownPackage, int userId) {
+         switch (knownPackage) {
+             case PACKAGE_BROWSER:
+                 return new String[]{mDefaultAppProvider.getDefaultBrowser(userId)};
+--- a/services/core/java/com/android/server/pm/SaferIntentUtils.java
++++ b/services/core/java/com/android/server/pm/SaferIntentUtils.java
+@@ -15,6 +15,11 @@
+  */
+ 
+ package com.android.server.pm;
++
++// Host seam: package queries use a captured registry; user queries use the
++// existing UserManagerInternal authority rather than full PMS/UMS instances.
++
++import dev.artzig.system.HostedPackageSnapshot;
+ 
+ import static com.android.internal.util.FrameworkStatsLog.UNSAFE_INTENT_EVENT_REPORTED__EVENT_TYPE__EXPLICIT_INTENT_FILTER_UNMATCH;
+ import static com.android.internal.util.FrameworkStatsLog.UNSAFE_INTENT_EVENT_REPORTED__EVENT_TYPE__INTERNAL_NON_EXPORTED_COMPONENT_MATCH;
+@@ -65,7 +70,7 @@
+  * <ul>
+  *     <li>Activity: {@link ComputerEngine#queryIntentActivitiesInternal} or
+  *     {@link ResolveIntentHelper#resolveIntentInternal}</li>
+- *     <li>Service: {@link Computer#queryIntentServicesInternal}</li>
++ *     <li>Service: {@link HostedPackageSnapshot#queryIntentServicesInternal}</li>
+  *     <li>Static BroadcastReceivers: {@link ResolveIntentHelper#queryIntentReceiversInternal}</li>
+  *     <li>Runtime BroadcastReceivers:
+  *     {@link com.android.server.am.ActivityManagerService#broadcastIntentLockedTraced}</li>
+@@ -216,7 +221,7 @@
+         if (args.intent.getAction() != null) return;
+         if (ActivityManager.canAccessUnexportedComponents(args.callingUid)) return;
+ 
+-        final Computer computer = (Computer) args.snapshot;
++        final HostedPackageSnapshot computer = (HostedPackageSnapshot) args.snapshot;
+         ComponentResolverApi resolver = null;
+ 
+         final boolean enforce = Flags.blockNullActionIntents()
+@@ -283,7 +288,7 @@
+         // Do not enforce filter matching when the caller is system or root
+         if (ActivityManager.canAccessUnexportedComponents(args.callingUid)) return;
+ 
+-        final Computer computer = (Computer) args.snapshot;
++        final HostedPackageSnapshot computer = (HostedPackageSnapshot) args.snapshot;
+         final ComponentResolverApi resolver = computer.getComponentResolver();
+ 
+         final Printer logPrinter = DEBUG_INTENT_MATCHING
+@@ -377,7 +382,7 @@
+         // Do not enforce filter matching when the caller is system or root
+         if (ActivityManager.canAccessUnexportedComponents(args.callingUid)) return;
+ 
+-        final Computer computer = (Computer) args.snapshot;
++        final HostedPackageSnapshot computer = (HostedPackageSnapshot) args.snapshot;
+         final ComponentResolverApi resolver = computer.getComponentResolver();
+ 
+         final Printer logPrinter = DEBUG_INTENT_MATCHING
+--- a/services/core/java/com/android/server/pm/UserNeedsBadgingCache.java
++++ b/services/core/java/com/android/server/pm/UserNeedsBadgingCache.java
+@@ -15,6 +15,9 @@
+  */
+ 
+ package com.android.server.pm;
++
++// Host seam: package queries use a captured registry; user queries use the
++// existing UserManagerInternal authority rather than full PMS/UMS instances.
+ 
+ import android.annotation.NonNull;
+ import android.annotation.UserIdInt;
+@@ -34,9 +37,9 @@
+     private final SparseBooleanArray mUserCache = new SparseBooleanArray();
+ 
+     @NonNull
+-    private final UserManagerService mUserManager;
++    private final UserManagerInternal mUserManager;
+ 
+-    public UserNeedsBadgingCache(@NonNull UserManagerService userManager) {
++    public UserNeedsBadgingCache(@NonNull UserManagerInternal userManager) {
+         mUserManager = userManager;
+     }
+ 
+--- a/services/core/java/com/android/server/pm/UserRestrictionsUtils.java
++++ b/services/core/java/com/android/server/pm/UserRestrictionsUtils.java
+@@ -15,6 +15,9 @@
+  */
+ 
+ package com.android.server.pm;
++
++// Host seam: package queries use a captured registry; user queries use the
++// existing UserManagerInternal authority rather than full PMS/UMS instances.
+ 
+ import android.annotation.NonNull;
+ import android.annotation.Nullable;
+@@ -62,7 +65,7 @@
+ /**
+  * Utility methods for user restrictions.
+  *
+- * <p>See {@link UserManagerService} for the method suffixes.
++ * <p>See {@link UserManagerInternal} for the method suffixes.
+  */
+ public class UserRestrictionsUtils {
+     private static final String TAG = "UserRestrictionsUtils";
+@@ -609,7 +612,7 @@
+      * Takes a new use restriction set and the previous set, and apply the restrictions that have
+      * changed.
+      *
+-     * <p>Note this method is called by {@link UserManagerService} without holding any locks.
++     * <p>Note this method is called by {@link UserManagerInternal} without holding any locks.
+      */
+     public static void applyUserRestrictions(Context context, int userId,
+             Bundle newRestrictions, Bundle prevRestrictions) {
+@@ -631,7 +634,7 @@
+      */
+     private static void applyUserRestriction(Context context, int userId, String key,
+             boolean newValue) {
+-        if (UserManagerService.DBG) {
++        if (false /* hosted user diagnostics disabled */) {
+             Log.d(TAG, "Applying user restriction: userId=" + userId
+                     + " key=" + key + " value=" + newValue);
+         }
+--- a/services/core/java/com/android/server/pm/permission/PermissionManagerService.java
++++ b/services/core/java/com/android/server/pm/permission/PermissionManagerService.java
+@@ -15,6 +15,9 @@
+  */
+ 
+ package com.android.server.pm.permission;
++
++// Host seam: package queries use a captured registry; user queries use the
++// existing UserManagerInternal authority rather than full PMS/UMS instances.
+ 
+ import static android.Manifest.permission.CAMERA;
+ import static android.Manifest.permission.CAPTURE_AUDIO_HOTWORD;
+@@ -79,7 +82,7 @@
+ import com.android.internal.util.Preconditions;
+ import com.android.server.LocalServices;
+ import com.android.server.companion.virtual.VirtualDeviceManagerInternal;
+-import com.android.server.pm.UserManagerService;
++import com.android.server.pm.UserManagerInternal;
+ import com.android.server.pm.permission.PermissionManagerServiceInternal.CheckPermissionDelegate;
+ import com.android.server.pm.permission.PermissionManagerServiceInternal.HotwordDetectionServiceProvider;
+ import com.android.server.pm.pkg.AndroidPackage;
+@@ -871,7 +874,7 @@
+      * @return user ids for created users and pre-created users
+      */
+     private int[] getAllUserIds() {
+-        return UserManagerService.getInstance().getUserIdsIncludingPreCreated();
++        return LocalServices.getService(UserManagerInternal.class).getUserIds();
+     }
+     private static final class AttributionSourceRegistry {
+         private final Object mLock = new Object();
+--- a/services/core/java/com/android/server/pm/resolution/ComponentResolver.java
++++ b/services/core/java/com/android/server/pm/resolution/ComponentResolver.java
+@@ -15,6 +15,9 @@
+  */
+ 
+ package com.android.server.pm.resolution;
++
++// Host seam: package queries use a captured registry; user queries use the
++// existing UserManagerInternal authority rather than full PMS/UMS instances.
+ 
+ import static android.content.pm.PackageManager.INSTALL_FAILED_CONFLICTING_PROVIDER;
+ 
+@@ -55,9 +58,9 @@
+ import com.android.internal.pm.pkg.component.ParsedService;
+ import com.android.internal.util.ArrayUtils;
+ import com.android.server.IntentResolver;
+-import com.android.server.pm.Computer;
++import dev.artzig.system.HostedPackageSnapshot;
+ import com.android.server.pm.PackageManagerException;
+-import com.android.server.pm.UserManagerService;
++import com.android.server.pm.UserManagerInternal;
+ import com.android.server.pm.UserNeedsBadgingCache;
+ import com.android.server.pm.parsing.PackageInfoUtils;
+ import com.android.server.pm.pkg.AndroidPackage;
+@@ -158,7 +161,7 @@
+      */
+     List<Pair<ParsedMainComponent, ParsedIntentInfo>> mProtectedFilters;
+ 
+-    public ComponentResolver(@NonNull UserManagerService userManager,
++    public ComponentResolver(@NonNull UserManagerInternal userManager,
+             @NonNull UserNeedsBadgingCache userNeedsBadgingCache) {
+         super(userManager);
+         mActivities = new ActivityIntentResolver(userManager, userNeedsBadgingCache);
+@@ -189,7 +192,7 @@
+ 
+     /** Add all components defined in the given package to the internal structures. */
+     public void addAllComponents(AndroidPackage pkg, boolean chatty,
+-            @Nullable String setupWizardPackage, @NonNull Computer computer) {
++            @Nullable String setupWizardPackage, @NonNull HostedPackageSnapshot computer) {
+         final ArrayList<Pair<ParsedActivity, ParsedIntentInfo>> newIntents = new ArrayList<>();
+         synchronized (mLock) {
+             addActivitiesLocked(computer, pkg, newIntents, chatty);
+@@ -273,7 +276,7 @@
+     }
+ 
+     @GuardedBy("mLock")
+-    private void addActivitiesLocked(@NonNull Computer computer, AndroidPackage pkg,
++    private void addActivitiesLocked(@NonNull HostedPackageSnapshot computer, AndroidPackage pkg,
+             List<Pair<ParsedActivity, ParsedIntentInfo>> newIntents, boolean chatty) {
+         final int activitiesSize = ArrayUtils.size(pkg.getActivities());
+         StringBuilder r = null;
+@@ -295,7 +298,7 @@
+     }
+ 
+     @GuardedBy("mLock")
+-    private void addProvidersLocked(@NonNull Computer computer, AndroidPackage pkg, boolean chatty) {
++    private void addProvidersLocked(@NonNull HostedPackageSnapshot computer, AndroidPackage pkg, boolean chatty) {
+         final int providersSize = ArrayUtils.size(pkg.getProviders());
+         StringBuilder r = null;
+         for (int i = 0; i < providersSize; i++) {
+@@ -359,7 +362,7 @@
+     }
+ 
+     @GuardedBy("mLock")
+-    private void addReceiversLocked(@NonNull Computer computer, AndroidPackage pkg, boolean chatty) {
++    private void addReceiversLocked(@NonNull HostedPackageSnapshot computer, AndroidPackage pkg, boolean chatty) {
+         final int receiversSize = ArrayUtils.size(pkg.getReceivers());
+         StringBuilder r = null;
+         for (int i = 0; i < receiversSize; i++) {
+@@ -380,7 +383,7 @@
+     }
+ 
+     @GuardedBy("mLock")
+-    private void addServicesLocked(@NonNull Computer computer, AndroidPackage pkg, boolean chatty) {
++    private void addServicesLocked(@NonNull HostedPackageSnapshot computer, AndroidPackage pkg, boolean chatty) {
+         final int servicesSize = ArrayUtils.size(pkg.getServices());
+         StringBuilder r = null;
+         for (int i = 0; i < servicesSize; i++) {
+@@ -490,7 +493,7 @@
+      * <em>NOTE:</em> There is one exception. For security reasons, the setup wizard is
+      * allowed to obtain any priority on any action.
+      */
+-    private void adjustPriority(@NonNull Computer computer, List<ParsedActivity> systemActivities,
++    private void adjustPriority(@NonNull HostedPackageSnapshot computer, List<ParsedActivity> systemActivities,
+             ParsedActivity activity, ParsedIntentInfo intentInfo, String setupWizardPackage) {
+         // nothing to do; priority is fine as-is
+         IntentFilter intentFilter = intentInfo.getIntentFilter();
+@@ -814,16 +817,16 @@
+         private boolean mIsUpdatingMimeGroup = false;
+ 
+         @NonNull
+-        protected final UserManagerService mUserManager;
++        protected final UserManagerInternal mUserManager;
+ 
+         // Default constructor
+-        MimeGroupsAwareIntentResolver(@NonNull UserManagerService userManager) {
++        MimeGroupsAwareIntentResolver(@NonNull UserManagerInternal userManager) {
+             mUserManager = userManager;
+         }
+ 
+         // Copy constructor used in creating snapshots
+         MimeGroupsAwareIntentResolver(MimeGroupsAwareIntentResolver<F, R> orig,
+-                @NonNull UserManagerService userManager) {
++                @NonNull UserManagerInternal userManager) {
+             mUserManager = userManager;
+             copyFrom(orig);
+             copyInto(mMimeGroupToFilter, orig.mMimeGroupToFilter);
+@@ -833,10 +836,10 @@
+         @Override
+         public void addFilter(@Nullable PackageDataSnapshot snapshot, F f) {
+             IntentFilter intentFilter = getIntentFilter(f);
+-            // We assume Computer is available for this class and all subclasses. Because this class
+-            // uses subclass method override to handle logic, the Computer parameter must be in the
++            // We assume HostedPackageSnapshot is available for this class and all subclasses. Because this class
++            // uses subclass method override to handle logic, the HostedPackageSnapshot parameter must be in the
+             // base, leading to this odd nullability.
+-            applyMimeGroups((Computer) snapshot, f);
++            applyMimeGroups((HostedPackageSnapshot) snapshot, f);
+             super.addFilter(snapshot, f);
+ 
+             if (!mIsUpdatingMimeGroup) {
+@@ -865,7 +868,7 @@
+          * @param mimeGroup MIME group to update
+          * @return true, if any intent filters were changed due to this update
+          */
+-        public boolean updateMimeGroup(@NonNull Computer computer, String packageName,
++        public boolean updateMimeGroup(@NonNull HostedPackageSnapshot computer, String packageName,
+                 String mimeGroup) {
+             F[] filters = mMimeGroupToFilter.get(mimeGroup);
+             int n = filters != null ? filters.length : 0;
+@@ -882,7 +885,7 @@
+             return hasChanges;
+         }
+ 
+-        private boolean updateFilter(@NonNull Computer computer, F f) {
++        private boolean updateFilter(@NonNull HostedPackageSnapshot computer, F f) {
+             IntentFilter filter = getIntentFilter(f);
+             List<String> oldTypes = filter.dataTypes();
+             removeFilter(f);
+@@ -907,7 +910,7 @@
+             return first.equals(second);
+         }
+ 
+-        private void applyMimeGroups(@NonNull Computer computer, F f) {
++        private void applyMimeGroups(@NonNull HostedPackageSnapshot computer, F f) {
+             IntentFilter filter = getIntentFilter(f);
+ 
+             for (int i = filter.countMimeGroups() - 1; i >= 0; i--) {
+@@ -931,7 +934,7 @@
+         }
+ 
+         @Override
+-        protected boolean isFilterStopped(@NonNull Computer computer, F filter,
++        protected boolean isFilterStopped(@NonNull HostedPackageSnapshot computer, F filter,
+                 @UserIdInt int userId) {
+             if (!mUserManager.exists(userId)) {
+                 return true;
+@@ -960,7 +963,7 @@
+         private final UserNeedsBadgingCache mUserNeedsBadging;
+ 
+         // Default constructor
+-        ActivityIntentResolver(@NonNull UserManagerService userManager,
++        ActivityIntentResolver(@NonNull UserManagerInternal userManager,
+                 @NonNull UserNeedsBadgingCache userNeedsBadgingCache) {
+             super(userManager);
+             mUserNeedsBadging = userNeedsBadgingCache;
+@@ -968,7 +971,7 @@
+ 
+         // Copy constructor used in creating snapshots
+         ActivityIntentResolver(@NonNull ActivityIntentResolver orig,
+-                @NonNull UserManagerService userManager,
++                @NonNull UserManagerInternal userManager,
+                 @NonNull UserNeedsBadgingCache userNeedsBadgingCache) {
+             super(orig, userManager);
+             mActivities.putAll(orig.mActivities);
+@@ -983,7 +986,7 @@
+             return super.queryIntent(snapshot, intent, resolvedType, defaultOnly, userId, flags);
+         }
+ 
+-        List<ResolveInfo> queryIntent(@NonNull Computer computer, Intent intent,
++        List<ResolveInfo> queryIntent(@NonNull HostedPackageSnapshot computer, Intent intent,
+                 String resolvedType, long flags, int userId) {
+             if (!mUserManager.exists(userId)) {
+                 return null;
+@@ -992,7 +995,7 @@
+                     (flags & PackageManager.MATCH_DEFAULT_ONLY) != 0, userId, flags);
+         }
+ 
+-        List<ResolveInfo> queryIntentForPackage(@NonNull Computer computer, Intent intent,
++        List<ResolveInfo> queryIntentForPackage(@NonNull HostedPackageSnapshot computer, Intent intent,
+                 String resolvedType, long flags, List<ParsedActivity> packageActivities,
+                 int userId) {
+             if (!mUserManager.exists(userId)) {
+@@ -1022,7 +1025,7 @@
+                     defaultOnly, listCut, userId, flags);
+         }
+ 
+-        protected void addActivity(@NonNull Computer computer, ParsedActivity a, String type,
++        protected void addActivity(@NonNull HostedPackageSnapshot computer, ParsedActivity a, String type,
+                 List<Pair<ParsedActivity, ParsedIntentInfo>> newIntents) {
+             mActivities.put(a.getComponentName(), a);
+             if (DEBUG_SHOW_INFO) {
+@@ -1100,7 +1103,7 @@
+         }
+ 
+         @Override
+-        protected ResolveInfo newResult(@NonNull Computer computer,
++        protected ResolveInfo newResult(@NonNull HostedPackageSnapshot computer,
+                 Pair<ParsedActivity, ParsedIntentInfo> pair, int match, int userId,
+                 long customFlags) {
+             ParsedActivity activity = pair.first;
+@@ -1265,14 +1268,14 @@
+     public static final class ReceiverIntentResolver extends ActivityIntentResolver {
+ 
+         // Default constructor
+-        ReceiverIntentResolver(@NonNull UserManagerService userManager,
++        ReceiverIntentResolver(@NonNull UserManagerInternal userManager,
+                 @NonNull UserNeedsBadgingCache userNeedsBadgingCache) {
+             super(userManager, userNeedsBadgingCache);
+         }
+ 
+         // Copy constructor used in creating snapshots
+         ReceiverIntentResolver(@NonNull ReceiverIntentResolver orig,
+-                @NonNull UserManagerService userManager,
++                @NonNull UserManagerInternal userManager,
+                 @NonNull UserNeedsBadgingCache userNeedsBadgingCache) {
+             super(orig, userManager, userNeedsBadgingCache);
+         }
+@@ -1286,13 +1289,13 @@
+     public static final class ProviderIntentResolver
+             extends MimeGroupsAwareIntentResolver<Pair<ParsedProvider, ParsedIntentInfo>, ResolveInfo> {
+         // Default constructor
+-        ProviderIntentResolver(@NonNull UserManagerService userManager) {
++        ProviderIntentResolver(@NonNull UserManagerInternal userManager) {
+             super(userManager);
+         }
+ 
+         // Copy constructor used in creating snapshots
+         ProviderIntentResolver(@NonNull ProviderIntentResolver orig,
+-                @NonNull UserManagerService userManager) {
++                @NonNull UserManagerInternal userManager) {
+             super(orig, userManager);
+             mProviders.putAll(orig.mProviders);
+         }
+@@ -1308,7 +1311,7 @@
+         }
+ 
+         @Nullable
+-        List<ResolveInfo> queryIntent(@NonNull Computer computer, Intent intent,
++        List<ResolveInfo> queryIntent(@NonNull HostedPackageSnapshot computer, Intent intent,
+                 String resolvedType, long flags, int userId) {
+             if (!mUserManager.exists(userId)) {
+                 return null;
+@@ -1318,7 +1321,7 @@
+         }
+ 
+         @Nullable
+-        List<ResolveInfo> queryIntentForPackage(@NonNull Computer computer, Intent intent,
++        List<ResolveInfo> queryIntentForPackage(@NonNull HostedPackageSnapshot computer, Intent intent,
+                 String resolvedType, long flags, List<ParsedProvider> packageProviders,
+                 int userId) {
+             if (!mUserManager.exists(userId)) {
+@@ -1348,7 +1351,7 @@
+                     defaultOnly, listCut, userId, flags);
+         }
+ 
+-        void addProvider(@NonNull Computer computer, ParsedProvider p) {
++        void addProvider(@NonNull HostedPackageSnapshot computer, ParsedProvider p) {
+             if (mProviders.containsKey(p.getComponentName())) {
+                 Slog.w(TAG, "Provider " + p.getComponentName() + " already defined; ignoring");
+                 return;
+@@ -1420,7 +1423,7 @@
+         }
+ 
+         @Override
+-        protected ResolveInfo newResult(@NonNull Computer computer,
++        protected ResolveInfo newResult(@NonNull HostedPackageSnapshot computer,
+                 Pair<ParsedProvider, ParsedIntentInfo> pair, int match, int userId,
+                 long customFlags) {
+             if (!mUserManager.exists(userId)) {
+@@ -1536,13 +1539,13 @@
+     public static final class ServiceIntentResolver
+             extends MimeGroupsAwareIntentResolver<Pair<ParsedService, ParsedIntentInfo>, ResolveInfo> {
+         // Default constructor
+-        ServiceIntentResolver(@NonNull UserManagerService userManager) {
++        ServiceIntentResolver(@NonNull UserManagerInternal userManager) {
+             super(userManager);
+         }
+ 
+         // Copy constructor used in creating snapshots
+         ServiceIntentResolver(@NonNull ServiceIntentResolver orig,
+-                @NonNull UserManagerService userManager) {
++                @NonNull UserManagerInternal userManager) {
+             super(orig, userManager);
+             mServices.putAll(orig.mServices);
+         }
+@@ -1557,14 +1560,14 @@
+             return super.queryIntent(snapshot, intent, resolvedType, defaultOnly, userId, flags);
+         }
+ 
+-        List<ResolveInfo> queryIntent(@NonNull Computer computer, Intent intent,
++        List<ResolveInfo> queryIntent(@NonNull HostedPackageSnapshot computer, Intent intent,
+                 String resolvedType, long flags, int userId) {
+             if (!mUserManager.exists(userId)) return null;
+             return super.queryIntent(computer, intent, resolvedType,
+                     (flags & PackageManager.MATCH_DEFAULT_ONLY) != 0, userId, flags);
+         }
+ 
+-        List<ResolveInfo> queryIntentForPackage(@NonNull Computer computer, Intent intent,
++        List<ResolveInfo> queryIntentForPackage(@NonNull HostedPackageSnapshot computer, Intent intent,
+                 String resolvedType, long flags, List<ParsedService> packageServices, int userId) {
+             if (!mUserManager.exists(userId)) return null;
+             if (packageServices == null) {
+@@ -1591,7 +1594,7 @@
+                     defaultOnly, listCut, userId, flags);
+         }
+ 
+-        void addService(@NonNull Computer computer, ParsedService s) {
++        void addService(@NonNull HostedPackageSnapshot computer, ParsedService s) {
+             mServices.put(s.getComponentName(), s);
+             if (DEBUG_SHOW_INFO) {
+                 Log.v(TAG, "  service:");
+@@ -1658,7 +1661,7 @@
+         }
+ 
+         @Override
+-        protected ResolveInfo newResult(@NonNull Computer computer,
++        protected ResolveInfo newResult(@NonNull HostedPackageSnapshot computer,
+                 Pair<ParsedService, ParsedIntentInfo> pair, int match, int userId,
+                 long customFlags) {
+             if (!mUserManager.exists(userId)) return null;
+@@ -1786,9 +1789,9 @@
+                 new ArrayMap<>();
+ 
+         @NonNull
+-        private final UserManagerService mUserManager;
+-
+-        public InstantAppIntentResolver(@NonNull UserManagerService userManager) {
++        private final UserManagerInternal mUserManager;
++
++        public InstantAppIntentResolver(@NonNull UserManagerInternal userManager) {
+             mUserManager = userManager;
+         }
+ 
+@@ -1804,7 +1807,7 @@
+         }
+ 
+         @Override
+-        protected AuxiliaryResolveInfo.AuxiliaryFilter newResult(@NonNull Computer computer,
++        protected AuxiliaryResolveInfo.AuxiliaryFilter newResult(@NonNull HostedPackageSnapshot computer,
+                 AuxiliaryResolveInfo.AuxiliaryFilter responseObj, int match, int userId,
+                 long customFlags) {
+             if (!mUserManager.exists(userId)) {
+@@ -1869,7 +1872,7 @@
+      * Removes MIME type from the group, by delegating to IntentResolvers
+      * @return true if any intent filters were changed due to this update
+      */
+-    public boolean updateMimeGroup(@NonNull Computer computer, String packageName, String group) {
++    public boolean updateMimeGroup(@NonNull HostedPackageSnapshot computer, String packageName, String group) {
+         boolean hasChanges = false;
+         synchronized (mLock) {
+             hasChanges |= mActivities.updateMimeGroup(computer, packageName, group);
+--- a/services/core/java/com/android/server/pm/resolution/ComponentResolverApi.java
++++ b/services/core/java/com/android/server/pm/resolution/ComponentResolverApi.java
+@@ -16,6 +16,9 @@
+ 
+ package com.android.server.pm.resolution;
+ 
++// Host seam: package queries use a captured registry; user queries use the
++// existing UserManagerInternal authority rather than full PMS/UMS instances.
++
+ import android.annotation.NonNull;
+ import android.annotation.Nullable;
+ import android.annotation.UserIdInt;
+@@ -28,7 +31,7 @@
+ import com.android.internal.pm.pkg.component.ParsedActivity;
+ import com.android.internal.pm.pkg.component.ParsedProvider;
+ import com.android.internal.pm.pkg.component.ParsedService;
+-import com.android.server.pm.Computer;
++import dev.artzig.system.HostedPackageSnapshot;
+ import com.android.server.pm.DumpState;
+ 
+ import java.io.PrintWriter;
+@@ -54,50 +57,50 @@
+     boolean componentExists(@NonNull ComponentName componentName);
+ 
+     @Nullable
+-    List<ResolveInfo> queryActivities(@NonNull Computer computer, @NonNull Intent intent,
++    List<ResolveInfo> queryActivities(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @UserIdInt int userId);
+ 
+     @Nullable
+-    List<ResolveInfo> queryActivities(@NonNull Computer computer, @NonNull Intent intent,
++    List<ResolveInfo> queryActivities(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @NonNull List<ParsedActivity> activities,
+             @UserIdInt int userId);
+ 
+     @Nullable
+-    ProviderInfo queryProvider(@NonNull Computer computer, @NonNull String authority, long flags,
++    ProviderInfo queryProvider(@NonNull HostedPackageSnapshot computer, @NonNull String authority, long flags,
+             @UserIdInt int userId);
+ 
+     @Nullable
+-    List<ResolveInfo> queryProviders(@NonNull Computer computer, @NonNull Intent intent,
++    List<ResolveInfo> queryProviders(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @UserIdInt int userId);
+ 
+     @Nullable
+-    List<ResolveInfo> queryProviders(@NonNull Computer computer, @NonNull Intent intent,
++    List<ResolveInfo> queryProviders(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @NonNull List<ParsedProvider> providers,
+             @UserIdInt int userId);
+ 
+     @Nullable
+-    List<ProviderInfo> queryProviders(@NonNull Computer computer, @Nullable String processName,
++    List<ProviderInfo> queryProviders(@NonNull HostedPackageSnapshot computer, @Nullable String processName,
+             @Nullable String metaDataKey, int uid, long flags, @UserIdInt int userId);
+ 
+     @Nullable
+-    List<ResolveInfo> queryReceivers(@NonNull Computer computer, @NonNull Intent intent,
++    List<ResolveInfo> queryReceivers(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @UserIdInt int userId);
+ 
+     @Nullable
+-    List<ResolveInfo> queryReceivers(@NonNull Computer computer, @NonNull Intent intent,
++    List<ResolveInfo> queryReceivers(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @NonNull List<ParsedActivity> receivers,
+             @UserIdInt int userId);
+ 
+     @Nullable
+-    List<ResolveInfo> queryServices(@NonNull Computer computer, @NonNull Intent intent,
++    List<ResolveInfo> queryServices(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @UserIdInt int userId);
+ 
+     @Nullable
+-    List<ResolveInfo> queryServices(@NonNull Computer computer, @NonNull Intent intent,
++    List<ResolveInfo> queryServices(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @NonNull List<ParsedService> services,
+             @UserIdInt int userId);
+ 
+-    void querySyncProviders(@NonNull Computer computer, @NonNull List<String> outNames,
++    void querySyncProviders(@NonNull HostedPackageSnapshot computer, @NonNull List<String> outNames,
+             @NonNull List<ProviderInfo> outInfo, boolean safeMode, @UserIdInt int userId);
+ 
+     void dumpActivityResolvers(@NonNull PrintWriter pw, @NonNull DumpState dumpState,
+@@ -112,7 +115,7 @@
+     void dumpServiceResolvers(@NonNull PrintWriter pw, @NonNull DumpState dumpState,
+             @NonNull String packageName);
+ 
+-    void dumpContentProviders(@NonNull Computer computer, @NonNull PrintWriter pw,
++    void dumpContentProviders(@NonNull HostedPackageSnapshot computer, @NonNull PrintWriter pw,
+             @NonNull DumpState dumpState, @NonNull String packageName);
+ 
+     void dumpServicePermissions(@NonNull PrintWriter pw, @NonNull DumpState dumpState);
+--- a/services/core/java/com/android/server/pm/resolution/ComponentResolverBase.java
++++ b/services/core/java/com/android/server/pm/resolution/ComponentResolverBase.java
+@@ -16,6 +16,9 @@
+ 
+ package com.android.server.pm.resolution;
+ 
++// Host seam: package queries use a captured registry; user queries use the
++// existing UserManagerInternal authority rather than full PMS/UMS instances.
++
+ import android.annotation.NonNull;
+ import android.annotation.Nullable;
+ import android.annotation.UserIdInt;
+@@ -33,9 +36,9 @@
+ import com.android.internal.pm.pkg.component.ParsedMainComponent;
+ import com.android.internal.pm.pkg.component.ParsedProvider;
+ import com.android.internal.pm.pkg.component.ParsedService;
+-import com.android.server.pm.Computer;
++import dev.artzig.system.HostedPackageSnapshot;
+ import com.android.server.pm.DumpState;
+-import com.android.server.pm.UserManagerService;
++import com.android.server.pm.UserManagerInternal;
+ import com.android.server.pm.parsing.PackageInfoUtils;
+ import com.android.server.pm.parsing.pkg.AndroidPackageUtils;
+ import com.android.server.pm.pkg.AndroidPackage;
+@@ -68,9 +71,9 @@
+     protected ArrayMap<String, ParsedProvider> mProvidersByAuthority;
+ 
+     @NonNull
+-    protected final UserManagerService mUserManager;
+-
+-    protected ComponentResolverBase(@NonNull UserManagerService userManager) {
++    protected final UserManagerInternal mUserManager;
++
++    protected ComponentResolverBase(@NonNull UserManagerInternal userManager) {
+         mUserManager = userManager;
+     }
+ 
+@@ -125,14 +128,14 @@
+ 
+     @Nullable
+     @Override
+-    public List<ResolveInfo> queryActivities(@NonNull Computer computer, @NonNull Intent intent,
++    public List<ResolveInfo> queryActivities(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, int userId) {
+         return mActivities.queryIntent(computer, intent, resolvedType, flags, userId);
+     }
+ 
+     @Nullable
+     @Override
+-    public List<ResolveInfo> queryActivities(@NonNull Computer computer, @NonNull Intent intent,
++    public List<ResolveInfo> queryActivities(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @NonNull List<ParsedActivity> activities,
+             int userId) {
+         return mActivities.queryIntentForPackage(computer, intent, resolvedType, flags, activities,
+@@ -141,7 +144,7 @@
+ 
+     @Nullable
+     @Override
+-    public ProviderInfo queryProvider(@NonNull Computer computer, @NonNull String authority,
++    public ProviderInfo queryProvider(@NonNull HostedPackageSnapshot computer, @NonNull String authority,
+             long flags, int userId) {
+         final ParsedProvider p = mProvidersByAuthority.get(authority);
+         if (p == null) {
+@@ -167,14 +170,14 @@
+ 
+     @Nullable
+     @Override
+-    public List<ResolveInfo> queryProviders(@NonNull Computer computer, @NonNull Intent intent,
++    public List<ResolveInfo> queryProviders(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, int userId) {
+         return mProviders.queryIntent(computer, intent, resolvedType, flags, userId);
+     }
+ 
+     @Nullable
+     @Override
+-    public List<ResolveInfo> queryProviders(@NonNull Computer computer, @NonNull Intent intent,
++    public List<ResolveInfo> queryProviders(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @NonNull List<ParsedProvider> providers,
+             @UserIdInt int userId) {
+         return mProviders.queryIntentForPackage(computer, intent, resolvedType, flags, providers,
+@@ -183,7 +186,7 @@
+ 
+     @Nullable
+     @Override
+-    public List<ProviderInfo> queryProviders(@NonNull Computer computer,
++    public List<ProviderInfo> queryProviders(@NonNull HostedPackageSnapshot computer,
+             @Nullable String processName, @Nullable String metaDataKey, int uid, long flags,
+             int userId) {
+         if (!mUserManager.exists(userId)) {
+@@ -240,14 +243,14 @@
+ 
+     @Nullable
+     @Override
+-    public List<ResolveInfo> queryReceivers(@NonNull Computer computer, @NonNull Intent intent,
++    public List<ResolveInfo> queryReceivers(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, int userId) {
+         return mReceivers.queryIntent(computer, intent, resolvedType, flags, userId);
+     }
+ 
+     @Nullable
+     @Override
+-    public List<ResolveInfo> queryReceivers(@NonNull Computer computer, @NonNull Intent intent,
++    public List<ResolveInfo> queryReceivers(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @NonNull List<ParsedActivity> receivers,
+             @UserIdInt int userId) {
+         return mReceivers.queryIntentForPackage(computer, intent, resolvedType, flags, receivers,
+@@ -256,14 +259,14 @@
+ 
+     @Nullable
+     @Override
+-    public List<ResolveInfo> queryServices(@NonNull Computer computer, @NonNull Intent intent,
++    public List<ResolveInfo> queryServices(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @UserIdInt int userId) {
+         return mServices.queryIntent(computer, intent, resolvedType, flags, userId);
+     }
+ 
+     @Nullable
+     @Override
+-    public List<ResolveInfo> queryServices(@NonNull Computer computer, @NonNull Intent intent,
++    public List<ResolveInfo> queryServices(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @NonNull List<ParsedService> services,
+             @UserIdInt int userId) {
+         return mServices.queryIntentForPackage(computer, intent, resolvedType, flags, services,
+@@ -271,7 +274,7 @@
+     }
+ 
+     @Override
+-    public void querySyncProviders(@NonNull Computer computer, @NonNull List<String> outNames,
++    public void querySyncProviders(@NonNull HostedPackageSnapshot computer, @NonNull List<String> outNames,
+             @NonNull List<ProviderInfo> outInfo, boolean safeMode, int userId) {
+         PackageInfoUtils.CachedApplicationInfoGenerator appInfoGenerator = null;
+         for (int i = mProvidersByAuthority.size() - 1; i >= 0; --i) {
+@@ -354,7 +357,7 @@
+     }
+ 
+     @Override
+-    public void dumpContentProviders(@NonNull Computer computer, @NonNull PrintWriter pw,
++    public void dumpContentProviders(@NonNull HostedPackageSnapshot computer, @NonNull PrintWriter pw,
+             @NonNull DumpState dumpState, @NonNull String packageName) {
+         boolean printedSomething = false;
+         for (ParsedProvider p : mProviders.mProviders.values()) {
+--- a/services/core/java/com/android/server/pm/resolution/ComponentResolverLocked.java
++++ b/services/core/java/com/android/server/pm/resolution/ComponentResolverLocked.java
+@@ -16,6 +16,9 @@
+ 
+ package com.android.server.pm.resolution;
+ 
++// Host seam: package queries use a captured registry; user queries use the
++// existing UserManagerInternal authority rather than full PMS/UMS instances.
++
+ import android.annotation.NonNull;
+ import android.annotation.Nullable;
+ import android.annotation.UserIdInt;
+@@ -27,10 +30,10 @@
+ import com.android.internal.pm.pkg.component.ParsedActivity;
+ import com.android.internal.pm.pkg.component.ParsedProvider;
+ import com.android.internal.pm.pkg.component.ParsedService;
+-import com.android.server.pm.Computer;
++import dev.artzig.system.HostedPackageSnapshot;
+ import com.android.server.pm.DumpState;
+ import com.android.server.pm.PackageManagerTracedLock;
+-import com.android.server.pm.UserManagerService;
++import com.android.server.pm.UserManagerInternal;
+ 
+ import java.io.PrintWriter;
+ import java.util.List;
+@@ -39,7 +42,7 @@
+ 
+     protected final PackageManagerTracedLock mLock = new PackageManagerTracedLock();
+ 
+-    protected ComponentResolverLocked(@NonNull UserManagerService userManager) {
++    protected ComponentResolverLocked(@NonNull UserManagerInternal userManager) {
+         super(userManager);
+     }
+ 
+@@ -91,7 +94,7 @@
+ 
+     @Nullable
+     @Override
+-    public List<ResolveInfo> queryActivities(@NonNull Computer computer, @NonNull Intent intent,
++    public List<ResolveInfo> queryActivities(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @UserIdInt int userId) {
+         synchronized (mLock) {
+             return super.queryActivities(computer, intent, resolvedType, flags, userId);
+@@ -100,7 +103,7 @@
+ 
+     @Nullable
+     @Override
+-    public List<ResolveInfo> queryActivities(@NonNull Computer computer, @NonNull Intent intent,
++    public List<ResolveInfo> queryActivities(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @NonNull List<ParsedActivity> activities,
+             @UserIdInt int userId) {
+         synchronized (mLock) {
+@@ -110,7 +113,7 @@
+ 
+     @Nullable
+     @Override
+-    public ProviderInfo queryProvider(@NonNull Computer computer, @NonNull String authority,
++    public ProviderInfo queryProvider(@NonNull HostedPackageSnapshot computer, @NonNull String authority,
+             long flags, @UserIdInt int userId) {
+         synchronized (mLock) {
+             return super.queryProvider(computer, authority, flags, userId);
+@@ -119,7 +122,7 @@
+ 
+     @Nullable
+     @Override
+-    public List<ResolveInfo> queryProviders(@NonNull Computer computer, @NonNull Intent intent,
++    public List<ResolveInfo> queryProviders(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @UserIdInt int userId) {
+         synchronized (mLock) {
+             return super.queryProviders(computer, intent, resolvedType, flags, userId);
+@@ -128,7 +131,7 @@
+ 
+     @Nullable
+     @Override
+-    public List<ResolveInfo> queryProviders(@NonNull Computer computer, @NonNull Intent intent,
++    public List<ResolveInfo> queryProviders(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @NonNull List<ParsedProvider> providers,
+             @UserIdInt int userId) {
+         synchronized (mLock) {
+@@ -138,7 +141,7 @@
+ 
+     @Nullable
+     @Override
+-    public List<ProviderInfo> queryProviders(@NonNull Computer computer,
++    public List<ProviderInfo> queryProviders(@NonNull HostedPackageSnapshot computer,
+             @Nullable String processName, @Nullable String metaDataKey, int uid, long flags,
+             @UserIdInt int userId) {
+         synchronized (mLock) {
+@@ -148,7 +151,7 @@
+ 
+     @Nullable
+     @Override
+-    public List<ResolveInfo> queryReceivers(@NonNull Computer computer, @NonNull Intent intent,
++    public List<ResolveInfo> queryReceivers(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @UserIdInt int userId) {
+         synchronized (mLock) {
+             return super.queryReceivers(computer, intent, resolvedType, flags, userId);
+@@ -157,7 +160,7 @@
+ 
+     @Nullable
+     @Override
+-    public List<ResolveInfo> queryReceivers(@NonNull Computer computer, @NonNull Intent intent,
++    public List<ResolveInfo> queryReceivers(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @NonNull List<ParsedActivity> receivers,
+             @UserIdInt int userId) {
+         synchronized (mLock) {
+@@ -167,7 +170,7 @@
+ 
+     @Nullable
+     @Override
+-    public List<ResolveInfo> queryServices(@NonNull Computer computer, @NonNull Intent intent,
++    public List<ResolveInfo> queryServices(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @UserIdInt int userId) {
+         synchronized (mLock) {
+             return super.queryServices(computer, intent, resolvedType, flags, userId);
+@@ -176,7 +179,7 @@
+ 
+     @Nullable
+     @Override
+-    public List<ResolveInfo> queryServices(@NonNull Computer computer, @NonNull Intent intent,
++    public List<ResolveInfo> queryServices(@NonNull HostedPackageSnapshot computer, @NonNull Intent intent,
+             @Nullable String resolvedType, long flags, @NonNull List<ParsedService> services,
+             @UserIdInt int userId) {
+         synchronized (mLock) {
+@@ -185,7 +188,7 @@
+     }
+ 
+     @Override
+-    public void querySyncProviders(@NonNull Computer computer, @NonNull List<String> outNames,
++    public void querySyncProviders(@NonNull HostedPackageSnapshot computer, @NonNull List<String> outNames,
+             @NonNull List<ProviderInfo> outInfo, boolean safeMode, @UserIdInt int userId) {
+         synchronized (mLock) {
+             super.querySyncProviders(computer, outNames, outInfo, safeMode, userId);
+@@ -225,7 +228,7 @@
+     }
+ 
+     @Override
+-    public void dumpContentProviders(@NonNull Computer computer, @NonNull PrintWriter pw,
++    public void dumpContentProviders(@NonNull HostedPackageSnapshot computer, @NonNull PrintWriter pw,
+             @NonNull DumpState dumpState, @NonNull String packageName) {
+         synchronized (mLock) {
+             super.dumpContentProviders(computer, pw, dumpState, packageName);
+--- a/services/core/java/com/android/server/pm/resolution/ComponentResolverSnapshot.java
++++ b/services/core/java/com/android/server/pm/resolution/ComponentResolverSnapshot.java
+@@ -16,17 +16,20 @@
+ 
+ package com.android.server.pm.resolution;
+ 
++// Host seam: package queries use a captured registry; user queries use the
++// existing UserManagerInternal authority rather than full PMS/UMS instances.
++
+ import android.annotation.NonNull;
+ import android.util.ArrayMap;
+ 
+-import com.android.server.pm.UserManagerService;
++import com.android.server.pm.UserManagerInternal;
+ import com.android.server.pm.UserNeedsBadgingCache;
+ 
+ public class ComponentResolverSnapshot extends ComponentResolverBase {
+ 
+     public ComponentResolverSnapshot(@NonNull ComponentResolver orig,
+             @NonNull UserNeedsBadgingCache userNeedsBadgingCache) {
+-        super(UserManagerService.getInstance());
++        super(orig.mUserManager);
+         mActivities = new ComponentResolver.ActivityIntentResolver(orig.mActivities, mUserManager,
+                 userNeedsBadgingCache);
+         mProviders = new ComponentResolver.ProviderIntentResolver(orig.mProviders, mUserManager);
+--- a/services/core/java/com/android/server/pm/snapshot/PackageDataSnapshot.java
++++ b/services/core/java/com/android/server/pm/snapshot/PackageDataSnapshot.java
+@@ -16,18 +16,19 @@
+ 
+ package com.android.server.pm.snapshot;
+ 
++// Host seam: package queries use a captured registry; user queries use the
++// existing UserManagerInternal authority rather than full PMS/UMS instances.
++
+ import android.content.pm.PackageManagerInternal;
+ 
+-import com.android.server.pm.Computer;
+-import com.android.server.pm.PackageManagerService;
+ 
+ /**
+- * An empty interface provided as the type for a snapshot of {@link PackageManagerService} data.
++ * An empty interface provided as the type for a snapshot of the hosted package authority data.
+  * There should be no members of this interface, to discourage its usage beyond as an input to
+  * other package related APIs.
+  *
+  * Usage inside {@link PackageManagerInternal} and related should cast the object instance to
+- * a {@link Computer} to access data.
++ * a captured hosted package registry to access data.
+  *
+  * @hide
+  */

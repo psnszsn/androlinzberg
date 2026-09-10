@@ -26,8 +26,7 @@ import com.android.internal.pm.pkg.component.ParsedPermission
 import com.android.internal.pm.pkg.component.ParsedPermissionGroup
 import com.android.internal.pm.pkg.parsing.ParsingPackageUtils
 import android.content.pm.parsing.result.ParseTypeImpl
-import com.android.server.pm.Computer
-import com.android.server.pm.UserManagerService
+import com.android.server.pm.UserManagerInternal
 import com.android.server.pm.UserNeedsBadgingCache
 import com.android.server.pm.parsing.PackageInfoUtils
 import com.android.server.pm.pkg.AndroidPackage
@@ -50,12 +49,12 @@ import java.io.File
  * Anything not overridden here fails loudly through
  * [PackageManagerServiceBase].
  */
-class HostedPackageManagerService(desktopWindows: Boolean = false,
+class HostedPackageManagerService(userManager: UserManagerInternal, desktopWindows: Boolean = false,
     private val reservePackageUid: ((String) -> Int)? = null,
     private val packageBroadcast: (Intent, Int) -> Unit = { intent, user ->
         (android.app.ActivityThread.currentActivityThread().systemContext as android.content.Context)
             .sendBroadcastAsUser(intent, UserHandle.of(user))
-    }) : PackageManagerServiceBase(), Computer {
+    }) : PackageManagerServiceBase() {
     /** PackageManagerInternalBase reads the configured name without resolving a service. */
     fun getSystemUiServiceComponent(): ComponentName? = ComponentName.unflattenFromString(
         (android.app.ActivityThread.currentActivityThread().systemContext as android.content.Context).resources.getString(
@@ -100,7 +99,7 @@ class HostedPackageManagerService(desktopWindows: Boolean = false,
     /** Broker uid -> package state, bound at process attach. */
     private val packagesByUid = HashMap<Int, HostedPackageState>()
     private val componentResolver =
-        ComponentResolver(UserManagerService.getInstance(), UserNeedsBadgingCache(UserManagerService.getInstance()))
+        ComponentResolver(userManager, UserNeedsBadgingCache(userManager))
     /** Permission name -> (definition, defining package); first definition wins. */
     private class PermissionDef(val permission: ParsedPermission, val owner: HostedPackageState)
     private val permissionDefs = HashMap<String, PermissionDef>()
@@ -335,7 +334,7 @@ class HostedPackageManagerService(desktopWindows: Boolean = false,
                 installed.packageName == "android" ||
                     (platformSigning != null && platformSigning.signaturesMatchExactly(installed.signingDetails)))
         }
-        componentResolver.addAllComponents(pkg, false, null, this)
+        componentResolver.addAllComponents(pkg, false, null, snapshotPackages())
         packageProperties.installed(pkg)
         // A package installed before its permission's definer was denied that
         // permission at its own install (the definition did not exist yet).
@@ -435,9 +434,9 @@ class HostedPackageManagerService(desktopWindows: Boolean = false,
 
     // ------------------------------------------------- Computer (resolver)
 
-    override fun getComponentResolver(): com.android.server.pm.resolution.ComponentResolverApi = componentResolver
+    fun getComponentResolver(): com.android.server.pm.resolution.ComponentResolverApi = componentResolver
 
-    override fun getPackage(packageName: String): AndroidPackage? =
+    fun getPackage(packageName: String): AndroidPackage? =
         synchronized(lock) { packages[packageName]?.pkg }
 
     // Pinned ComputerEngine.getPackage(int) returns the first installed package
@@ -447,28 +446,18 @@ class HostedPackageManagerService(desktopWindows: Boolean = false,
         getPackagesForUid(uid)?.firstNotNullOfOrNull { packages[it]?.pkg }
     }
 
-    override fun getPackageStateInternal(packageName: String): PackageStateInternal? =
+    fun getPackageStateInternal(packageName: String): PackageStateInternal? =
         synchronized(lock) { packages[packageName] }
 
-    /** Capture the mutable hosted registry fields under its lock. Parsed manifest
-     * collections are frozen after install; only UID/platform-signing facts change. */
+    /** ComputerEngine's package and resolver snapshots must describe the same
+     * registry revision. Never return the live service as PackageDataSnapshot. */
+    fun snapshotPackages(): HostedPackageSnapshot = synchronized(lock) {
+        HostedPackageSnapshot(packages.mapValues { (_, state) -> state.snapshot() }, componentResolver.snapshot())
+    }
+
+    /** PackageManagerLocal uses the same stock state-copy rules as Computer. */
     internal fun packageStateSnapshot(): Map<String, com.android.server.pm.pkg.PackageState> = synchronized(lock) {
-        java.util.Collections.unmodifiableMap(packages.mapValues { (_, state) ->
-            val uid = state.appId
-            val user = state.userState.snapshot()
-            val manifestUid = state.pkg.uid
-            val signedWithPlatform = state.pkg.isSignedWithPlatformKey
-            val manifest = object : AndroidPackage by state.pkg {
-                override fun getUid(): Int = manifestUid
-                override fun isSignedWithPlatformKey(): Boolean = signedWithPlatform
-            }
-            object : com.android.server.pm.pkg.PackageState by state {
-                override fun getAppId(): Int = uid
-                override fun getAndroidPackage(): AndroidPackage = manifest
-                override fun getStateForUser(handle: android.os.UserHandle): com.android.server.pm.pkg.PackageUserState =
-                    if (handle.identifier == 0) user else com.android.server.pm.pkg.PackageUserState.DEFAULT
-            }
-        })
+        java.util.Collections.unmodifiableMap(packages.mapValues { (_, state) -> state.snapshot() })
     }
 
     @Volatile var externalSourcesPolicy: android.content.pm.PackageManagerInternal.ExternalSourcesPolicy? = null
@@ -708,10 +697,10 @@ class HostedPackageManagerService(desktopWindows: Boolean = false,
             if (pkg != null) {
                 val state = packages[pkg] ?: return emptyList()
                 return componentResolver.queryActivities(
-                    this, intent, resolvedType, withDirectBoot(flags), state.pkg.activities, userId,
+                    snapshotPackages(), intent, resolvedType, withDirectBoot(flags), state.pkg.activities, userId,
                 ) ?: emptyList()
             }
-            return componentResolver.queryActivities(this, intent, resolvedType, withDirectBoot(flags), userId)
+            return componentResolver.queryActivities(snapshotPackages(), intent, resolvedType, withDirectBoot(flags), userId)
                 ?: emptyList()
         }
     }
@@ -746,12 +735,12 @@ class HostedPackageManagerService(desktopWindows: Boolean = false,
                 val state = packages[pkg] ?: return ParceledListSlice(emptyList<ResolveInfo>())
                 return ParceledListSlice(
                     componentResolver.queryReceivers(
-                        this, intent, resolvedType, withDirectBoot(flags), state.pkg.receivers, userId,
+                        snapshotPackages(), intent, resolvedType, withDirectBoot(flags), state.pkg.receivers, userId,
                     ) ?: emptyList(),
                 )
             }
             return ParceledListSlice(
-                componentResolver.queryReceivers(this, intent, resolvedType, withDirectBoot(flags), userId)
+                componentResolver.queryReceivers(snapshotPackages(), intent, resolvedType, withDirectBoot(flags), userId)
                     ?: emptyList(),
             )
         }
@@ -771,10 +760,10 @@ class HostedPackageManagerService(desktopWindows: Boolean = false,
             if (pkg != null) {
                 val state = packages[pkg] ?: return emptyList()
                 return componentResolver.queryServices(
-                    this, intent, resolvedType, withDirectBoot(flags), state.pkg.services, userId,
+                    snapshotPackages(), intent, resolvedType, withDirectBoot(flags), state.pkg.services, userId,
                 ) ?: emptyList()
             }
-            return componentResolver.queryServices(this, intent, resolvedType, withDirectBoot(flags), userId)
+            return componentResolver.queryServices(snapshotPackages(), intent, resolvedType, withDirectBoot(flags), userId)
                 ?: emptyList()
         }
     }
@@ -799,7 +788,7 @@ class HostedPackageManagerService(desktopWindows: Boolean = false,
         }
         synchronized(lock) {
             return ParceledListSlice(
-                componentResolver.queryProviders(this, intent, resolvedType, withDirectBoot(flags), userId)
+                componentResolver.queryProviders(snapshotPackages(), intent, resolvedType, withDirectBoot(flags), userId)
                     ?: emptyList(),
             )
         }
@@ -865,7 +854,7 @@ class HostedPackageManagerService(desktopWindows: Boolean = false,
     override fun resolveContentProvider(name: String?, flags: Long, userId: Int): ProviderInfo? {
         val authority = name ?: return null
         synchronized(lock) {
-            return componentResolver.queryProvider(this, authority, withDirectBoot(flags), userId)
+            return componentResolver.queryProvider(snapshotPackages(), authority, withDirectBoot(flags), userId)
         }
     }
 
@@ -879,7 +868,7 @@ class HostedPackageManagerService(desktopWindows: Boolean = false,
         // enabled components, then initialize larger initOrder values first.
         val userId = if (processName != null) UserHandle.getUserId(uid) else UserHandle.getCallingUserId()
         val effectiveFlags = withDirectBoot(flags)
-        val matches = componentResolver.queryProviders(this, processName, metaDataKey,
+        val matches = componentResolver.queryProviders(snapshotPackages(), processName, metaDataKey,
             uid, effectiveFlags, userId) ?: emptyList<ProviderInfo>()
         ParceledListSlice(matches.filter { provider ->
             com.android.server.pm.pkg.PackageStateUtils.isEnabledAndMatches(

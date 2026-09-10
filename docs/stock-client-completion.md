@@ -676,6 +676,48 @@ documented Chromium capture-stream pause bugs remain provider limitations, not
 successful regression coverage. Process, isolated/external service semantics,
 the four server stubs and final clean-cache acceptance remain open.
 
+### Captured package state and shared user authority (2026-09-10)
+
+Removed the Computer and UserManagerService stubs and all compiled references
+to them. The original PackageManagerInternal snapshot entry now returns a
+captured package registry and original ComponentResolverSnapshot. Original
+PackageSetting supplies the user, transient, permission and keyset copy rules;
+parsed-package copies retain AndroidPackageHidden behavior and the session data
+paths assigned at installation. Old snapshots remain stable after installation,
+UID/signing assignment, enabled/installed state and library-state changes.
+
+Original resolver, badging and permission collaborators now use the existing
+UserManagerInternal authority. Binder and local user services share the same
+hosted user catalog and lifecycle. A non-default-user fixture verifies that
+captured resolvers retain the injected authority instead of consulting a static
+singleton. This does not add desktop multi-user provisioning or device policy.
+
+The grouped original Computer/UMS closure reaches 959 sources, 64 AIDL inputs and
+244 blockers in the absent full PMS/AMS graph. The explicit server operations
+replace those dependencies; no live service is cast to an immutable snapshot.
+The current exact source response file contains 7,069 unchanged static AOSP
+sources, 54 modified server sources, one modified client (Process), and zero
+missing originals. The live jar contains neither deleted class nor references
+to either. The regenerated audit contains two pending server stubs,
+PackageManagerService and PackageArchiver, zero survivors and zero client stubs.
+
+The framework archive was rebuilt from the isolated checkout and pinned to
+`N-V-__8AAG3w807iLdt4VmUnUVP8yQA3ODiycjIn3hiuHFzD`, SHA-256
+`bcbdec179c94bf4932f4a916233091a5ca590dac7b662885dbdbe183c9c34673`.
+Packaging restored the checkout. ART remains at the stock-File checkpoint;
+both local archives are current.
+
+Validation passed: focused framework-module tests and source/build audits
+(-j24), then `install jvm-test system-test integration-test webview-test
+webview-ui-test webview-overlay-test stock-desktop-launcher-test
+stock-session-loss-test binder-test binder-broker-test build-tools-test cpp-audit
+graph-audit` (-j10). All 28 fresh APK cases contain 94 actions; including WebView
+and the desktop launcher, 118 captured actions have zero structured runtime
+issues and no fresh failure artifacts. All five session-loss cases passed and
+removed their owned session directories. The paused-overlay and desktop modal
+screenshots were inspected. Process, isolated/external service semantics, the
+two remaining server stubs and final fresh-cache acceptance remain open.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

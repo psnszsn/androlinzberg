@@ -63,7 +63,8 @@ object StockOptionalWmServicesSmoke {
         // does not own the system_server cache-property namespace.
         android.app.PropertyInvalidatedCache.disableForTestMode()
         val packageBroadcasts = java.util.Collections.synchronizedList(ArrayList<Intent>())
-        val packages = HostedPackageManagerService(packageBroadcast = { intent, user ->
+        val packages = HostedPackageManagerService(
+            dev.artzig.system.HostedUserManagerInternal(dev.artzig.system.HostedUserLifecycle()), packageBroadcast = { intent, user ->
             check(user == 0)
             packageBroadcasts.add(Intent(intent))
         }).apply {
@@ -193,7 +194,7 @@ object StockOptionalWmServicesSmoke {
         val component = ComponentName(packageName, "$packageName.ArchivedActivity")
         val intent = Intent(Intent.ACTION_MAIN).setComponent(component)
         fun result(value: Intent = intent, userId: Int = 0) =
-            HostedPackageArchiving.resolveMissingActivity(packages, value, userId)
+            HostedPackageArchiving.resolveMissingActivity(packages.snapshotPackages(), value, userId)
         check(!PackageArchiver.isArchived(state.userState))
         check(result() == ActivityManager.START_CLASS_NOT_FOUND)
         state.userState.setInstalled(false)

@@ -52,6 +52,61 @@ class HostedPackageState(
 
     /** The hosted user uses the stock setting's change-tracked state. */
     @JvmField val userState = setting.getOrCreateUserState(0)
+    private var snapshotManifest: com.android.internal.pm.parsing.pkg.PackageImpl? = null
+
+    /** PackageSetting.snapshot supplies the stock user/keyset/transient-state
+     * copy rules. PackageImpl's original parcel form captures the manifest and
+     * its hosted UID/platform-signing assignment while retaining AndroidPackageHidden
+     * behavior used by the original PackageInfoUtils.
+     * PackageStateUnserialized intentionally shares usage counters in AOSP. */
+    internal fun snapshot(): PackageStateInternal {
+        val source = this
+        val capturedSetting = setting.snapshot()
+        val capturedAppId = appId
+        // Parsed manifests do not change after install except for these two
+        // assignments. Share their immutable copy across registry snapshots,
+        // just as PackageSetting shares AOSP's finalized parsed package.
+        val manifest = snapshotManifest?.takeIf {
+            it.uid == pkg.uid && it.isSignedWithPlatformKey == pkg.isSignedWithPlatformKey
+        } ?: run {
+            val parcel = android.os.Parcel.obtain()
+            try {
+                (pkg as com.android.internal.pm.parsing.pkg.PackageImpl).writeToParcel(parcel, 0)
+                parcel.setDataPosition(0)
+                com.android.internal.pm.parsing.pkg.PackageImpl.CREATOR.createFromParcel(parcel)
+                    .also { captured ->
+                        // PackageImpl's parcel constructor recomputes these derived
+                        // paths. Preserve the session storage assigned at installation
+                        // so component resolution and direct package queries agree.
+                        for (fieldName in listOf(
+                            "mBaseAppDataCredentialProtectedDirForSystemUser",
+                            "mBaseAppDataDeviceProtectedDirForSystemUser",
+                        )) {
+                            com.android.internal.pm.parsing.pkg.PackageImpl::class.java
+                                .getDeclaredField(fieldName).apply { isAccessible = true }
+                                .let { it.set(captured, it.get(pkg)) }
+                        }
+                        snapshotManifest = captured
+                    }
+            } finally {
+                parcel.recycle()
+            }
+        }
+        return object : PackageStateInternal by source {
+            override fun getAppId(): Int = capturedAppId
+            override fun getPkg(): AndroidPackageInternal = manifest
+            override fun getAndroidPackage(): AndroidPackage = manifest
+            override fun getUserStates(): SparseArray<out PackageUserStateInternal> = capturedSetting.userStates
+            override fun getUserStateOrDefault(userId: Int): PackageUserStateInternal =
+                capturedSetting.getUserStateOrDefault(userId)
+            override fun getStateForUser(user: UserHandle): PackageUserState = capturedSetting.getStateForUser(user)
+            override fun getTransientState(): PackageStateUnserialized = capturedSetting.transientState
+            override fun getInstallSource(): InstallSource = capturedSetting.installSource
+            override fun getLegacyPermissionState(): LegacyPermissionState = capturedSetting.legacyPermissionState
+            override fun getKeySetData(): PackageKeySetData = capturedSetting.keySetData
+            override fun getLastPackageUsageTime(): LongArray = capturedSetting.transientState.lastPackageUsageTimeInMills
+        }
+    }
 
     override fun getPkg(): AndroidPackageInternal = pkg
     override fun getAndroidPackage(): AndroidPackage = pkg

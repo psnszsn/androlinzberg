@@ -34,14 +34,7 @@ internal class HostedUserManagerService(private val lifecycle: HostedUserLifecyc
         }
     }
 
-    private fun user(): UserInfo = UserInfo(
-        UserHandle.USER_SYSTEM,
-        "host",
-        null,
-        UserInfo.FLAG_PRIMARY or UserInfo.FLAG_ADMIN or UserInfo.FLAG_FULL or
-            UserInfo.FLAG_SYSTEM or UserInfo.FLAG_MAIN,
-        UserManager.USER_TYPE_FULL_SYSTEM,
-    )
+    private fun user(): UserInfo = checkNotNull(lifecycle.userInfo(UserHandle.USER_SYSTEM))
 
     override fun getCredentialOwnerProfile(userId: Int): Int = 0
     override fun getProfileParentId(userId: Int): Int = 0

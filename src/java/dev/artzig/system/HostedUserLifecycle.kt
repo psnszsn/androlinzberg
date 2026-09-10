@@ -20,6 +20,16 @@ internal class HostedUserLifecycle {
     private val user = UserState(UserHandle.SYSTEM)
     private var started = false
 
+    /** The Binder and local user services share this session's user catalogue.
+     * Return a fresh stock value so a caller cannot mutate the authority. */
+    fun userInfo(userId: Int): android.content.pm.UserInfo? =
+        if (userId != UserHandle.USER_SYSTEM) null else android.content.pm.UserInfo(
+            UserHandle.USER_SYSTEM, "host", null,
+            android.content.pm.UserInfo.FLAG_PRIMARY or android.content.pm.UserInfo.FLAG_ADMIN or
+                android.content.pm.UserInfo.FLAG_FULL or android.content.pm.UserInfo.FLAG_SYSTEM or
+                android.content.pm.UserInfo.FLAG_MAIN,
+            android.os.UserManager.USER_TYPE_FULL_SYSTEM)
+
     fun isRunning(userId: Int): Boolean = synchronized(lock) {
         userId == UserHandle.USER_SYSTEM && user.state in
             UserState.STATE_BOOTING..UserState.STATE_RUNNING_UNLOCKED

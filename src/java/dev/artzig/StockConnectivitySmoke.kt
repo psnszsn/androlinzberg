@@ -39,7 +39,8 @@ internal object StockConnectivitySmoke {
 
     fun run(fixtureApk: String, pump: () -> Unit) {
         val base = HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 320, 240, 120, 0)
-        val packages = HostedPackageManagerService().apply {
+        val packages = HostedPackageManagerService(
+            dev.artzig.system.HostedUserManagerInternal(dev.artzig.system.HostedUserLifecycle())).apply {
             installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
         }
         val installed = packages.installPackage(fixtureApk)

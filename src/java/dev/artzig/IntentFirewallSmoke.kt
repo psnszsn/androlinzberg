@@ -30,7 +30,8 @@ object IntentFirewallSmoke {
         // from this unprivileged, process-local package catalog.
         android.app.PropertyInvalidatedCache.disableForTestMode()
         HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 640, 480, 120, 0)
-        val packages = HostedPackageManagerService()
+        val packages = HostedPackageManagerService(
+            dev.artzig.system.HostedUserManagerInternal(dev.artzig.system.HostedUserLifecycle()))
         packages.installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
         val internal = Class.forName("android.content.pm.HostedPackageManagerInternal")
             .getConstructor(HostedPackageManagerService::class.java).newInstance(packages)

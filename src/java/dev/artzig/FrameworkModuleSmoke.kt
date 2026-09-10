@@ -913,7 +913,8 @@ internal object FrameworkModuleSmoke {
         val legacyClass = com.android.server.pm.permission.LegacyPermissionManagerInternal::class.java
         val ownsLegacy = com.android.server.LocalServices.getService(legacyClass) == null
         if (ownsLegacy) com.android.server.LocalServices.addService(legacyClass,
-            dev.artzig.system.HostedLegacyPermissionManagerInternal(HostedPackageManagerService()))
+            dev.artzig.system.HostedLegacyPermissionManagerInternal(HostedPackageManagerService(
+            dev.artzig.system.HostedUserManagerInternal(dev.artzig.system.HostedUserLifecycle()))))
         try {
             val service = com.android.server.NetworkScoreService(context)
             var invalidations = 0
@@ -947,7 +948,8 @@ internal object FrameworkModuleSmoke {
         check(!android.app.ActivityManager.isUserAMonkey())
         // LocalServices belongs to system_server; exercise the generated stock adapter
         // with a separate in-memory service so these contracts do not depend on IPC identity.
-        val packages = HostedPackageManagerService()
+        val packages = HostedPackageManagerService(
+            dev.artzig.system.HostedUserManagerInternal(dev.artzig.system.HostedUserLifecycle()))
         val local = dev.artzig.system.HostActivityManagerInternalAccess(
             HostedActivityManagerService(), packages, dev.artzig.system.HostedUserLifecycle(),
         )
@@ -2903,7 +2905,8 @@ internal object FrameworkModuleSmoke {
         )
         android.app.PropertyInvalidatedCache.disableForTestMode()
         StockPackageSnapshotsSmoke.run(checkNotNull(permissionsFixtureApk))
-        val packages = HostedPackageManagerService().apply {
+        val packages = HostedPackageManagerService(
+            dev.artzig.system.HostedUserManagerInternal(dev.artzig.system.HostedUserLifecycle())).apply {
             installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
         }
         val callerPackage = "org.example.permissions"
@@ -3514,7 +3517,8 @@ internal object FrameworkModuleSmoke {
         check(!thread.isHandleSplashScreenExit(token))
 
         android.app.PropertyInvalidatedCache.disableForTestMode()
-        val packages = HostedPackageManagerService().apply {
+        val packages = HostedPackageManagerService(
+            dev.artzig.system.HostedUserManagerInternal(dev.artzig.system.HostedUserLifecycle())).apply {
             installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
         }
         val packageName = checkNotNull(packages.installPackage(checkNotNull(permissionsFixtureApk)))

@@ -80,6 +80,7 @@ framework_patches = tuple(
         (69, "-HWUI-and-NDK-stock-SurfaceControl-on-host.patch"),
         (70, "-ToneGenerator-use-host-audio-volume-conversion.patch"),
         (71, "-AssetsProvider-resolve-platform-archive-below-client.patch"),
+        (72, "-package-resolvers-use-captured-state-and-user-authority.patch"),
     )
 )
 

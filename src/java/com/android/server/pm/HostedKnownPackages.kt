@@ -17,6 +17,6 @@ object HostedKnownPackages {
             { LocalServices.getService(UserManagerInternal::class.java) })
         return KnownPackages(defaults, null, null, null, emptyArray(), null, null,
             packages.permissionControllerPackageName, null, null, null, null,
-            null, null, null, null, null).getKnownPackageNames(packages, knownPackage, userId)
+            null, null, null, null, null).getKnownPackageNames(packages.snapshotPackages(), knownPackage, userId)
     }
 }

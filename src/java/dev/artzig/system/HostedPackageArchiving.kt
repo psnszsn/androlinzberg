@@ -4,7 +4,7 @@ import android.app.ActivityManager
 import android.content.Intent
 import android.content.pm.Flags
 import android.content.pm.PackageManagerInternal
-import com.android.server.pm.Computer
+import dev.artzig.system.HostedPackageSnapshot
 import com.android.server.pm.PackageArchiver
 import dev.artzig.ArtzigTestDiagnostics
 
@@ -19,10 +19,10 @@ object HostedPackageArchiving {
     @JvmStatic fun resolveMissingActivity(packages: PackageManagerInternal,
         intent: Intent, userId: Int): Int {
         if (!Flags.archiving()) return ActivityManager.START_CLASS_NOT_FOUND
-        return resolveMissingActivity(packages.snapshot() as Computer, intent, userId)
+        return resolveMissingActivity(packages.snapshot() as HostedPackageSnapshot, intent, userId)
     }
 
-    internal fun resolveMissingActivity(snapshot: Computer, intent: Intent, userId: Int): Int {
+    internal fun resolveMissingActivity(snapshot: HostedPackageSnapshot, intent: Intent, userId: Int): Int {
         // PackageArchiver.getPackageNameFromIntent / isIntentResolvedToArchivedApp.
         val component = intent.component ?: return ActivityManager.START_CLASS_NOT_FOUND
         val packageName = intent.`package` ?: component.packageName

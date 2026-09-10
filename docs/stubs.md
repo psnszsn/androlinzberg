@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 4 (budget 4). Survivors: 0. Total: 4.
+Pending: 2 (budget 2). Survivors: 0. Total: 2.
 
 ## Survivors
 
@@ -23,10 +23,8 @@ Pending: 4 (budget 4). Survivors: 0. Total: 4.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (916 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < ProcessList < Netwo |
-| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (914 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < ProcessList  |
-| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (963 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerServ |
-| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (1181 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < PackageWatchdog < ShutdownThread < UserMana |
+| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (1185 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < PackageWatchdog < ShutdownThread < UserManager |
+| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (1230 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerSer |
 
 ## Hubs
 
@@ -37,43 +35,43 @@ decides where to cut.
 
 | Class | Stubs blocked through it | Hops from the nearest stub |
 |---|---|---|
-| `com.android.server.art.DexUseManagerLocal` | 4 | 1 |
-| `com.android.server.pm.AppDataHelper` | 4 | 1 |
-| `com.android.server.pm.AppsFilterImpl` | 4 | 1 |
-| `com.android.server.pm.BroadcastHelper` | 4 | 1 |
-| `com.android.server.pm.DexOptHelper` | 4 | 1 |
-| `com.android.server.pm.PackageDexOptimizer` | 4 | 1 |
-| `com.android.server.pm.PackageInstallerService` | 4 | 1 |
-| `android.security.AndroidKeyStoreMaintenance` | 4 | 2 |
-| `com.android.server.PackageWatchdog` | 4 | 2 |
-| `com.android.server.art.ArtManagerLocal` | 4 | 2 |
-| `com.android.server.art.GlobalInjector` | 4 | 2 |
-| `com.android.server.art.IArtd` | 4 | 2 |
-| `com.android.server.art.Utils` | 4 | 2 |
-| `com.android.server.art.model.DexoptParams` | 4 | 2 |
-| `com.android.server.net.NetworkPolicyManagerInternal` | 4 | 2 |
-| `com.android.server.om.OverlayReferenceMapper` | 4 | 2 |
-| `com.android.server.pm.PackageManagerShellCommandDataLoader` | 4 | 2 |
-| `com.android.server.pm.dex.ArtStatsLogUtils` | 4 | 2 |
-| `com.android.server.ExplicitHealthCheckController` | 4 | 3 |
-| `com.android.server.am.SettingsToPropertiesMapper` | 4 | 3 |
-| `com.android.server.art.AidlUtils` | 4 | 3 |
-| `com.android.server.art.DexMetadataHelper` | 4 | 3 |
-| `com.android.server.art.DexoptHelper` | 4 | 3 |
-| `com.android.server.art.PreRebootDexoptJob` | 4 | 3 |
-| `com.android.server.art.model.BatchDexoptParams` | 4 | 3 |
-| `com.android.server.art.prereboot.PreRebootStatsReporter` | 4 | 3 |
-| `com.android.server.net.NetworkPolicyManagerService.UidBlockedState` | 4 | 3 |
-| `com.android.server.om.OverlayActorEnforcer` | 4 | 3 |
-| `android.os.UpdateEngine` | 4 | 4 |
-| `com.android.server.am.BatteryStatsService` | 4 | 4 |
-| `com.android.server.art.PrimaryDexopter` | 4 | 4 |
-| `com.android.server.lights.LightsManager` | 4 | 4 |
-| `com.android.server.lights.LogicalLight` | 4 | 4 |
-| `com.android.server.net.NetworkPolicyLogger` | 4 | 4 |
-| `com.android.server.om.OverlayManagerService` | 4 | 4 |
-| `android.power.PowerStatsInternal` | 4 | 5 |
-| `com.android.server.am.ProcessList` | 4 | 5 |
-| `com.android.server.art.Dexopter` | 4 | 5 |
-| `com.android.server.om.IdmapDaemon` | 4 | 5 |
-| `com.android.server.om.IdmapManager` | 4 | 5 |
+| `com.android.server.art.DexUseManagerLocal` | 2 | 1 |
+| `com.android.server.pm.AppDataHelper` | 2 | 1 |
+| `com.android.server.pm.AppsFilterImpl` | 2 | 1 |
+| `com.android.server.pm.BroadcastHelper` | 2 | 1 |
+| `com.android.server.pm.DexOptHelper` | 2 | 1 |
+| `com.android.server.pm.PackageDexOptimizer` | 2 | 1 |
+| `com.android.server.pm.PackageInstallerService` | 2 | 1 |
+| `com.android.server.pm.PreferredActivityHelper` | 2 | 1 |
+| `com.android.server.pm.UserManagerService` | 2 | 1 |
+| `android.security.AndroidKeyStoreMaintenance` | 2 | 2 |
+| `com.android.server.PackageWatchdog` | 2 | 2 |
+| `com.android.server.RescueParty` | 2 | 2 |
+| `com.android.server.art.ArtManagerLocal` | 2 | 2 |
+| `com.android.server.art.GlobalInjector` | 2 | 2 |
+| `com.android.server.art.IArtd` | 2 | 2 |
+| `com.android.server.art.Utils` | 2 | 2 |
+| `com.android.server.art.model.DexoptParams` | 2 | 2 |
+| `com.android.server.net.NetworkPolicyManagerInternal` | 2 | 2 |
+| `com.android.server.om.OverlayReferenceMapper` | 2 | 2 |
+| `com.android.server.pm.PackageManagerShellCommandDataLoader` | 2 | 2 |
+| `com.android.server.pm.UserManagerServiceShellCommand` | 2 | 2 |
+| `com.android.server.pm.dex.ArtStatsLogUtils` | 2 | 2 |
+| `com.android.server.ExplicitHealthCheckController` | 2 | 3 |
+| `com.android.server.am.SettingsToPropertiesMapper` | 2 | 3 |
+| `com.android.server.art.AidlUtils` | 2 | 3 |
+| `com.android.server.art.DexMetadataHelper` | 2 | 3 |
+| `com.android.server.art.DexoptHelper` | 2 | 3 |
+| `com.android.server.art.PreRebootDexoptJob` | 2 | 3 |
+| `com.android.server.art.model.BatchDexoptParams` | 2 | 3 |
+| `com.android.server.art.prereboot.PreRebootStatsReporter` | 2 | 3 |
+| `com.android.server.net.NetworkPolicyManagerService.UidBlockedState` | 2 | 3 |
+| `com.android.server.om.OverlayActorEnforcer` | 2 | 3 |
+| `com.android.server.power.ShutdownThread` | 2 | 3 |
+| `android.os.UpdateEngine` | 2 | 4 |
+| `com.android.server.art.PrimaryDexopter` | 2 | 4 |
+| `com.android.server.net.NetworkPolicyLogger` | 2 | 4 |
+| `com.android.server.om.OverlayManagerService` | 2 | 4 |
+| `com.android.server.power.PowerManagerService` | 2 | 4 |
+| `com.android.internal.foldables.FoldGracePeriodProvider` | 2 | 5 |
+| `com.android.server.am.BatteryStatsService` | 2 | 5 |

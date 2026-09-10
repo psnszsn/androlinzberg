@@ -101,7 +101,8 @@ object HostedConfigurationUsageSmoke {
         com.android.server.LocalServices.addService(type, local)
         try {
             val activities = HostActivityManagerInternalAccess(HostedActivityManagerService(),
-                HostedPackageManagerService(), HostedUserLifecycle())
+                HostedPackageManagerService(
+            dev.artzig.system.HostedUserManagerInternal(dev.artzig.system.HostedUserLifecycle())), HostedUserLifecycle())
             val token = android.os.Binder()
             var destroyed = false
             activities.setVoiceInteractionManagerProvider {

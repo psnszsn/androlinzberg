@@ -83,7 +83,8 @@ internal object StockJobNetworkSmoke {
 
     fun run(fixtureApk: String, pump: () -> Unit) {
         val resources = checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES"))
-        val packages = HostedPackageManagerService().apply { installPlatform(resources) }
+        val packages = HostedPackageManagerService(
+            dev.artzig.system.HostedUserManagerInternal(dev.artzig.system.HostedUserLifecycle())).apply { installPlatform(resources) }
         val owner = packages.installPackage(fixtureApk)
         val handler = Handler(Looper.getMainLooper())
         val context = JobContext(HostContexts.systemContext(resources, 200, 200, 120, 0), owner, handler)

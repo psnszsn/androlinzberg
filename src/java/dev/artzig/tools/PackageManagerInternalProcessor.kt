@@ -72,7 +72,7 @@ class PackageManagerInternalProcessor : LocalServiceAdapterProcessor() {
                 "return packages.checkUidSignatures(p0, p1);"
             name == "isUidPrivileged" && params == listOf("int") ->
                 "return packages.isUidPrivileged(p0);"
-            name == "snapshot" && params.isEmpty() -> "return packages;"
+            name == "snapshot" && params.isEmpty() -> "return packages.snapshotPackages();"
             name == "filterAppAccess" -> "return false;"
             name == "canQueryPackage" -> "return true;"
             else -> "throw dev.artzig.ArtzigTestDiagnostics.unsupported(" +
