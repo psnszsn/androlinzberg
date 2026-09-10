@@ -7,8 +7,10 @@ internal object StockNativePropertiesSmoke {
     private external fun find(key: String): Long
     private external fun observe(handle: Long, key: String, expected: String): Long
     private external fun put(key: String, value: String?): Int
+    private external fun deviceApiLevel(): Int
 
     fun run() {
+        check(deviceApiLevel() == android.os.Build.VERSION.SDK_INT)
         val key = "debug.azk.native.property"
         check(find("ro.azk.native.missing") == 0L)
         SystemProperties.set(key, "first")
@@ -27,6 +29,7 @@ internal object StockNativePropertiesSmoke {
         check(observe(handle, key, "") >= 0)
         check(put("sys.azk.native.denied", "x") == -1)
         check(put("ro.build.version.sdk", "1") == -1)
+        check(deviceApiLevel() == android.os.Build.VERSION.SDK_INT)
         val longKey = "ro.build.version.known_codenames"
         val longValue = SystemProperties.get(longKey)
         check(longValue.length > 91)

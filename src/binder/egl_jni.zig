@@ -19,7 +19,6 @@ extern "EGL" fn eglGetDisplay(Handle) Handle;
 extern "EGL" fn eglGetPlatformDisplay(u32, Handle, ?[*]const isize) Handle;
 extern "EGL" fn eglInitialize(Handle, ?*i32, ?*i32) u32;
 extern "EGL" fn eglTerminate(Handle) u32;
-extern "EGL" fn eglQueryString(Handle, i32) ?[*:0]const u8;
 extern "EGL" fn eglGetConfigs(Handle, ?[*]Handle, i32, *i32) u32;
 extern "EGL" fn eglChooseConfig(Handle, ?[*]const i32, ?[*]Handle, i32, *i32) u32;
 extern "EGL" fn eglGetConfigAttrib(Handle, Handle, i32, *i32) u32;
@@ -174,7 +173,7 @@ fn initialize(env: Env, _: jni.jclass, dpy: jni.jobject, major: jni.jintArray, m
 fn queryString(env: Env, _: jni.jclass, dpy: jni.jobject, name: jni.jint) callconv(.c) jni.jstring {
     const display = handle(env, .display, dpy);
     if (env.*.*.ExceptionCheck.?(env) != 0) return null;
-    const string = eglQueryString(display, name) orelse return null;
+    const string = backend.queryString(display, name) orelse return null;
     return env.*.*.NewStringUTF.?(env, string);
 }
 
@@ -447,7 +446,78 @@ fn nativePbufferInterop(env: Env, _: jni.jobject, path: jni.jstring, raw_display
     var width: i32 = -1;
     var height: i32 = -1;
     return boolean(@intFromBool(query(display, surface, 0x3057, &width) != 0 and width == 0 and
-        query(display, surface, 0x3056, &height) != 0 and height == 0 and swap(display, surface) != 0));
+        query(display, surface, 0x3056, &height) != 0 and height == 0 and swap(display, surface) != 0 and
+        nativeBufferInterop(&library, get_proc, display)));
+}
+
+fn nativeBufferInterop(library: *std.DynLib, get_proc: *const fn ([*:0]const u8) callconv(.c) ?*const anyopaque, display: Handle) bool {
+    // Public NDK AHardwareBuffer_Desc; the provider uses the same API/ABI.
+    const Desc = extern struct { width: u32 = 2, height: u32 = 2, layers: u32 = 1, format: u32 = 1, usage: u64 = 0x330, stride: u32 = 0, rfu0: u32 = 0, rfu1: u64 = 0 };
+    const allocate = library.lookup(*const fn (*const Desc, *Handle) callconv(.c) i32, "AHardwareBuffer_allocate") orelse return false;
+    const release = library.lookup(*const fn (Handle) callconv(.c) void, "AHardwareBuffer_release") orelse return false;
+    const describe = library.lookup(*const fn (Handle, *Desc) callconv(.c) void, "AHardwareBuffer_describe") orelse return false;
+    const lock = library.lookup(*const fn (Handle, u64, i32, Handle, *Handle) callconv(.c) i32, "AHardwareBuffer_lock") orelse return false;
+    const unlock = library.lookup(*const fn (Handle, ?*i32) callconv(.c) i32, "AHardwareBuffer_unlock") orelse return false;
+    const live = library.lookup(*const fn () callconv(.c) u64, "azk_graphics_live_buffers") orelse return false;
+    const client: *const fn (Handle) callconv(.c) Handle = @ptrCast(get_proc("eglGetNativeClientBufferANDROID") orelse return false);
+    const create: *const fn (Handle, Handle, u32, Handle, ?[*]const i32) callconv(.c) Handle = @ptrCast(get_proc("eglCreateImageKHR") orelse return false);
+    const create_core: *const fn (Handle, Handle, u32, Handle, ?[*]const isize) callconv(.c) Handle = @ptrCast(get_proc("eglCreateImage") orelse return false);
+    const destroy: *const fn (Handle, Handle) callconv(.c) u32 = @ptrCast(get_proc("eglDestroyImageKHR") orelse return false);
+    const get_error: *const fn () callconv(.c) i32 = @ptrCast(get_proc("eglGetError") orelse return false);
+    if (client(null) != null or get_error() != 0x300c or get_error() != 0x3000) return false;
+    if (create(display, null, 0x3140, null, null) != null or get_error() != 0x300c) return false;
+    const before = live();
+    var desc: Desc = .{};
+    var buffer: Handle = null;
+    if (allocate(&desc, &buffer) != 0) return false;
+    var owned = true;
+    defer if (owned) release(buffer);
+    describe(buffer, &desc);
+    var pixels: Handle = null;
+    if (lock(buffer, 0x30, -1, null, &pixels) != 0) return false;
+    const bytes: [*]u8 = @ptrCast(pixels);
+    for (0..2) |y| for (0..2) |x| {
+        @memcpy(bytes[(y * desc.stride + x) * 4 ..][0..4], &[_]u8{ 0x33, 0x66, 0x99, 0xff });
+    };
+    if (unlock(buffer, null) != 0) return false;
+    const native = client(buffer) orelse return false;
+    const image = create(display, null, 0x3140, native, &.{ 0x30d2, 1, none }) orelse return false;
+    var image_live = true;
+    defer if (image_live) {
+        _ = destroy(display, image);
+    };
+    release(buffer);
+    owned = false;
+    // The returned client buffer survives the last application AHB reference.
+    const second = create_core(display, null, 0x3140, native, &.{ 0x30d2, 0, none }) orelse return false;
+    defer _ = destroy(display, second);
+    if (destroy(display, image) == 0) return false;
+    image_live = false;
+    if (live() != before + 1) return false;
+    const gen: *const fn (i32, *u32) callconv(.c) void = @ptrCast(get_proc("glGenTextures") orelse return false);
+    const bind: *const fn (u32, u32) callconv(.c) void = @ptrCast(get_proc("glBindTexture") orelse return false);
+    const delete: *const fn (i32, *const u32) callconv(.c) void = @ptrCast(get_proc("glDeleteTextures") orelse return false);
+    const target: *const fn (u32, Handle) callconv(.c) void = @ptrCast(get_proc("glEGLImageTargetTexture2DOES") orelse return false);
+    const gen_fbo: *const fn (i32, *u32) callconv(.c) void = @ptrCast(get_proc("glGenFramebuffers") orelse return false);
+    const bind_fbo: *const fn (u32, u32) callconv(.c) void = @ptrCast(get_proc("glBindFramebuffer") orelse return false);
+    const delete_fbo: *const fn (i32, *const u32) callconv(.c) void = @ptrCast(get_proc("glDeleteFramebuffers") orelse return false);
+    const attach: *const fn (u32, u32, u32, u32, i32) callconv(.c) void = @ptrCast(get_proc("glFramebufferTexture2D") orelse return false);
+    const read: *const fn (i32, i32, i32, i32, u32, u32, *[4]u8) callconv(.c) void = @ptrCast(get_proc("glReadPixels") orelse return false);
+    const gl_error: *const fn () callconv(.c) u32 = @ptrCast(get_proc("glGetError") orelse return false);
+    var texture: u32 = 0;
+    gen(1, &texture);
+    defer delete(1, &texture);
+    bind(0x0de1, texture);
+    target(0x0de1, second);
+    var framebuffer: u32 = 0;
+    gen_fbo(1, &framebuffer);
+    defer delete_fbo(1, &framebuffer);
+    bind_fbo(0x8d40, framebuffer);
+    defer bind_fbo(0x8d40, 0);
+    attach(0x8d40, 0x8ce0, 0x0de1, texture, 0);
+    var result: [4]u8 = undefined;
+    read(0, 0, 1, 1, 0x1908, 0x1401, &result);
+    return gl_error() == 0 and std.mem.eql(u8, &result, &.{ 0x33, 0x66, 0x99, 0xff });
 }
 
 fn nativeMethod(name: [*:0]const u8, signature: [*:0]const u8, function: anytype) jni.JNINativeMethod {

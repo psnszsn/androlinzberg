@@ -2,6 +2,7 @@
 const std = @import("std");
 pub const Handle = ?*anyopaque;
 pub var getError: *const fn () callconv(.c) i32 = undefined;
+pub var queryString: *const fn (Handle, i32) callconv(.c) ?[*:0]const u8 = undefined;
 pub var chooseConfig: *const fn (Handle, ?[*]const i32, ?[*]Handle, i32, *i32) callconv(.c) u32 = undefined;
 pub var getConfigAttrib: *const fn (Handle, Handle, i32, *i32) callconv(.c) u32 = undefined;
 pub var createPbuffer: *const fn (Handle, Handle, ?[*]const i32) callconv(.c) Handle = undefined;
@@ -18,6 +19,7 @@ pub var initCount: *const fn (Handle) callconv(.c) i32 = undefined;
 
 pub fn bind(platform: *std.DynLib) !void {
     getError = platform.lookup(@TypeOf(getError), "azk_egl_getError") orelse return error.NoMethod;
+    queryString = platform.lookup(@TypeOf(queryString), "azk_egl_queryString") orelse return error.NoMethod;
     chooseConfig = platform.lookup(@TypeOf(chooseConfig), "azk_egl_chooseConfig") orelse return error.NoMethod;
     getConfigAttrib = platform.lookup(@TypeOf(getConfigAttrib), "azk_egl_getConfigAttrib") orelse return error.NoMethod;
     createPbuffer = platform.lookup(@TypeOf(createPbuffer), "azk_egl_createPbuffer") orelse return error.NoMethod;

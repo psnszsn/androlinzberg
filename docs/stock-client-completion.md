@@ -15,6 +15,39 @@ that must not be reported as repaired by the framework migration.
 
 ## Implementation checkpoints
 
+### Native client queries and Android EGL buffer import (2026-09-10)
+
+AAudioStream_getDeviceId now reports the actual Android AudioTrack route and
+retains its last device ID after playback stops. The original bionic
+android_get_device_api_level implementation is compiled directly over the
+existing immutable system-property service; its API-level query is verified
+before and after a rejected read-only property write.
+
+The Android EGL adapter now supplies eglGetNativeClientBufferANDROID and imports
+native buffers through both eglCreateImage and eglCreateImageKHR. Conversion
+uses the original AHardwareBuffer helper, storage comes from the existing
+DMA-BUF backend, and EGL image ownership retains the Android buffer. Native,
+EGL14 and legacy callers see the supported extensions. The regression verifies
+errors, both image APIs and GPU pixel readback after releasing the application
+buffer reference. No Wayland, audio or codec backend was added.
+
+Focused framework-module and EGL tests pass. The complete regression gate also
+passes: focused NewPipe launch followed by all 28 APK cases (88 clean actions),
+JVM, system, headless and graphical WebView, overlay callbacks/pixels, stock cold
+launch, native/graphics-buffer tests and source/native audits. The graphical
+WebView tests captured another eight clean actions. Static source identity
+remains 7,066 unchanged clients/support sources, zero modified clients and 62
+server adaptations. Both local archives are current: framework SHA-256
+`186b5431047677671c3eaec0ba89390d9fe4cc450d5910a2dc7fcce227cad7a8`, pinned to
+`N-V-__8AAEBS9U7lF2noWWVjw_xsjFjmP8muuObielJwA3_K`; ART remains SHA-256
+`aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c`.
+
+The bundled provider remains 133. A separate 140.0.7339.15 probe passes headless
+WebView and graphical H264 playing/paused pixel checks after these native fixes.
+Its upstream feature configuration disables WebView overlays, so provider
+adoption and validation of that optional path are still in progress. These
+native changes do not themselves repair Chromium 133's frame-rate hint defect.
+
 ### Package layout and baseline (2026-09-09)
 
 Both local archives were synchronized and then rebuilt from the clean isolated

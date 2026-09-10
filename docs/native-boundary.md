@@ -54,7 +54,13 @@ zig build -j10 cpp-audit
   with their original bitmap and shared JNI helpers.
 - `src/platform/egl_support.zig` supplies the Android EGL library's display
   boundary. Both direct and dynamic `eglGetDisplay` lookup select HWUI's existing
-  GBM EGL display; other operations use the host EGL implementation.
+  GBM EGL display. Native, EGL14 and legacy clients share extension reporting.
+  `eglGetNativeClientBufferANDROID` uses the original AHardwareBuffer conversion;
+  core and KHR image creation import its existing DMA-BUF through Mesa. The EGL
+  owner retains the Android buffer until its images are destroyed or the final
+  display reference is terminated. Other image targets use the host driver.
+  The module regression reads GPU pixels after releasing the application's
+  buffer reference and checks both image APIs and null-buffer errors.
   HWUI requests the pinned EglManager's OpenGL ES context and wraps the actual
   RGBA8 framebuffer. Chromium's texture EGLImages can consequently be consumed
   by HWUI on the same display. No Wayland presentation backend is added.

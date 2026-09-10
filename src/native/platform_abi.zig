@@ -117,6 +117,21 @@ extern fn azk_graphics_egl_release(Handle, ?*u64) callconv(.c) u32;
 pub export fn azk_egl_getError() callconv(.c) i32 {
     return egl_backend.getError();
 }
+pub export fn azk_egl_queryString(display: Handle, name: i32) callconv(.c) ?[*:0]const u8 {
+    return egl_backend.queryString(g_io, display, name);
+}
+pub export fn azk_egl_getNativeClientBuffer(buffer: Handle) callconv(.c) Handle {
+    return egl_backend.nativeClientBuffer(buffer);
+}
+pub export fn azk_egl_createImageKHR(display: Handle, context: Handle, target: u32, buffer: Handle, attributes: ?[*]const i32) callconv(.c) Handle {
+    return egl_backend.createImage(g_io, i32, display, context, target, buffer, attributes);
+}
+pub export fn azk_egl_createImage(display: Handle, context: Handle, target: u32, buffer: Handle, attributes: ?[*]const isize) callconv(.c) Handle {
+    return egl_backend.createImage(g_io, isize, display, context, target, buffer, attributes);
+}
+pub export fn azk_egl_destroyImage(display: Handle, image: Handle) callconv(.c) u32 {
+    return egl_backend.destroyImage(g_io, display, image);
+}
 pub export fn azk_egl_chooseConfig(display: Handle, attributes: ?[*]const i32, configs: ?[*]Handle, size: i32, count: *i32) callconv(.c) u32 {
     return egl_backend.chooseConfig(display, attributes, configs, size, count);
 }

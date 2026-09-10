@@ -47,6 +47,10 @@ internal object HostedAAudio {
         var timestampPosition = 0L
         var timestampLast = 0
         var initialHead = 0L
+        // AudioStreamTrack::open and AudioStreamLegacy::onAudioDeviceUpdate
+        // retain the last nonempty route. The existing host output has a fixed
+        // route, obtained through stock AudioTrack when it becomes active.
+        var deviceId = track.routedDevice?.id ?: 0
         var worker: Thread? = null
         var inCallback = false
         val frameBytes = channels * if (format == 1) 2 else 4
@@ -162,6 +166,7 @@ internal object HostedAAudio {
                     if (stream.phase !in intArrayOf(2, 5, 6, 7, 8, 9, 10)) return INVALID
                     stream.initialHead = stream.track.playbackHeadPosition.toLong() and 0xffffffffL
                     stream.generation++; phase(stream, 3); stream.track.play()
+                    stream.track.routedDevice?.let { stream.deviceId = it.id }
                 }
                 1 -> {
                     if (stream.phase !in intArrayOf(2, 3, 4, 5, 6, 8, 10)) return INVALID
@@ -221,6 +226,7 @@ internal object HostedAAudio {
                 12 -> 0L // output
                 13 -> if (stream.callbacks[0] != 0L && stream.phase in 3..4) 1L else 0L
                 14 -> stream.sessionId.toLong()
+                15 -> stream.deviceId.toLong()
                 else -> ARGUMENT.toLong()
             }
         }

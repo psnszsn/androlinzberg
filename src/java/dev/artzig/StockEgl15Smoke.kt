@@ -72,6 +72,10 @@ internal object StockEgl15Smoke {
         nativeInterop(display)
         image(display, context)
         val extensions = EGL14.eglQueryString(display, EGL14.EGL_EXTENSIONS).orEmpty().split(' ')
+        if ("EGL_EXT_image_dma_buf_import" in extensions) {
+            check("EGL_ANDROID_image_native_buffer" in extensions)
+            check("EGL_ANDROID_get_native_client_buffer" in extensions)
+        }
         if ("EGL_ANDROID_native_fence_sync" in extensions) {
             nativeFence(display)
             StockFenceSmoke.nativeHostGpuTest()

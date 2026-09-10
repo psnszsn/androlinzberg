@@ -140,6 +140,16 @@ pub fn build(b: *std.Build, o: Options) Result {
     // Isolate the pinned ashmem UAPI header from the rest of bionic's libc headers.
     const ashmem_headers = b.addWriteFiles();
     _ = ashmem_headers.addCopyFile(o.aosp.path(b, "bionic/libc/kernel/uapi/linux/ashmem.h"), "linux/ashmem.h");
+    _ = ashmem_headers.addCopyFile(o.aosp.path(b, "bionic/libc/include/bits/get_device_api_level_inlines.h"), "bits/get_device_api_level_inlines.h");
+    // Reuse the original out-of-line C API with the existing property export.
+    // Its C-compatible source avoids glibc's different C++ atoi exception spec;
+    // isolate this header instead of replacing the host's libc include tree.
+    abi_object.root_module.addIncludePath(ashmem_headers.getDirectory());
+    abi_object.root_module.addCSourceFile(.{
+        .file = o.aosp.path(b, "bionic/libc/bionic/get_device_api_level.cpp"),
+        .language = .c,
+        .flags = &.{ "-std=c11", "-D_Nonnull=", "-fvisibility=default" },
+    });
     // libhwbinder needs Android's scheduling/security extensions to the Binder UAPI.
     _ = ashmem_headers.addCopyFile(o.aosp.path(b, "bionic/libc/kernel/uapi/linux/android/binder.h"), "linux/android/binder.h");
     // Every HWUI translation unit must see the real Fence layout. Preserve the

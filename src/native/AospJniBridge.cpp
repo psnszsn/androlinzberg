@@ -1068,11 +1068,16 @@ static jint setNativeProperty(JNIEnv* env, jclass, jstring key, jstring value) {
     ScopedUtfChars text(env, value);
     return text.c_str() ? bionic___system_property_set(name.c_str(), text.c_str()) : -1;
 }
+extern "C" int android_get_device_api_level();
+static jint nativeDeviceApiLevel(JNIEnv*, jclass) {
+    return android_get_device_api_level();
+}
 static int registerStockNativePropertiesSmoke(JNIEnv* env) {
     const JNINativeMethod methods[] = {
         {"find", "(Ljava/lang/String;)J", reinterpret_cast<void*>(findNativeProperty)},
         {"observe", "(JLjava/lang/String;Ljava/lang/String;)J", reinterpret_cast<void*>(testNativeProperty)},
         {"put", "(Ljava/lang/String;Ljava/lang/String;)I", reinterpret_cast<void*>(setNativeProperty)},
+        {"deviceApiLevel", "()I", reinterpret_cast<void*>(nativeDeviceApiLevel)},
     };
-    return jniRegisterNativeMethods(env, "dev/artzig/StockNativePropertiesSmoke", methods, 3);
+    return jniRegisterNativeMethods(env, "dev/artzig/StockNativePropertiesSmoke", methods, 4);
 }

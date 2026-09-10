@@ -208,6 +208,11 @@ export fn AAudioStream_getDirection(handle: Handle) callconv(.c) i32 {
 export fn AAudioStream_getSessionId(handle: Handle) callconv(.c) i32 {
     return @intCast(get(handle, 14));
 }
+// Pinned AAudioAudio.cpp returns the first routed device, or AAUDIO_UNSPECIFIED
+// when none is known. HostedAAudio retains the actual AudioTrack route.
+export fn AAudioStream_getDeviceId(handle: Handle) callconv(.c) i32 {
+    return @intCast(get(handle, 15));
+}
 export fn AAudioStream_setBufferSizeInFrames(handle: Handle, frames: i32) callconv(.c) i32 {
     const scope = Scope.enter() orelse return internal_error;
     defer scope.leave();
@@ -342,6 +347,7 @@ fn smoke() !void {
     try check(AAudioStreamBuilder_openStream(builder, &stream) == 0 and stream != null);
     defer _ = AAudioStream_close(stream);
     try check(AAudioStream_getSessionId(stream) == -1);
+    try check(AAudioStream_getDeviceId(stream) == 0);
     AAudioStreamBuilder_setSessionId(builder, -2);
     var session_stream: Handle = null;
     try check(AAudioStreamBuilder_openStream(builder, &session_stream) == -898 and session_stream == null);
@@ -370,6 +376,7 @@ fn smoke() !void {
     try check(AAudioStream_write(stream, &pcm, 160, 0) == 0);
     try check(AAudioStream_getFramesWritten(stream) == burst and AAudioStream_getFramesRead(stream) == 0);
     try check(AAudioStream_requestStart(stream) == 0);
+    try check(AAudioStream_getDeviceId(stream) == 1);
     try check(AAudioStream_requestStart(stream) == -895);
     const io = @import("ndk.zig").frameworkIo();
     for (0..1000) |_| {
@@ -382,6 +389,7 @@ fn smoke() !void {
     try check(AAudioStream_requestFlush(stream) == 0 and AAudioStream_getState(stream) == 8);
     try check(AAudioStream_getFramesRead(stream) == AAudioStream_getFramesWritten(stream));
     try check(AAudioStream_requestStop(stream) == 0 and AAudioStream_getState(stream) == 10);
+    try check(AAudioStream_getDeviceId(stream) == 1);
 
     var callback_state: SmokeState = .{};
     var callback_stream: Handle = null;

@@ -8,6 +8,8 @@
 #include <ui/Gralloc.h>
 #include <ui/Fence.h>
 #include <utils/Log.h>
+#include <private/android/AHardwareBufferHelpers.h>
+#include <system/window.h>
 
 namespace android::azk {
 namespace {
@@ -232,3 +234,26 @@ std::unique_ptr<const GrallocAllocator> createGrallocAllocator() {
   return std::make_unique<Allocator>();
 }
 } // namespace android::azk
+
+// Follow pinned eglGetNativeClientBufferANDROIDImpl and the Android EGL
+// native-buffer driver contract. Mesa consumes DMA-BUFs rather than Android's
+// ANativeWindowBuffer ABI; only the C++ buffer conversion lives here.
+extern "C" ANativeWindowBuffer* azk_egl_native_client_buffer(const AHardwareBuffer* buffer) {
+    return buffer ? const_cast<ANativeWindowBuffer*>(
+            android::AHardwareBuffer_to_ANativeWindowBuffer(buffer)) : nullptr;
+}
+
+extern "C" const native_handle_t* azk_egl_native_buffer_handle(ANativeWindowBuffer* buffer) {
+    if (!buffer || buffer->common.magic != ANDROID_NATIVE_BUFFER_MAGIC ||
+        buffer->common.version != sizeof(ANativeWindowBuffer) ||
+        !buffer->common.incRef || !buffer->common.decRef) return nullptr;
+    return buffer->handle;
+}
+
+extern "C" void azk_egl_native_buffer_acquire(ANativeWindowBuffer* buffer) {
+    buffer->common.incRef(&buffer->common);
+}
+
+extern "C" void azk_egl_native_buffer_release(ANativeWindowBuffer* buffer) {
+    buffer->common.decRef(&buffer->common);
+}

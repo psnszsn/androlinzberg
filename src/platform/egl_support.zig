@@ -11,6 +11,29 @@ extern fn azk_egl_getError() callconv(.c) i32;
 export fn eglGetError() callconv(.c) i32 {
     return azk_egl_getError();
 }
+extern fn azk_egl_queryString(Handle, i32) callconv(.c) ?[*:0]const u8;
+export fn eglQueryString(display: Handle, name: i32) callconv(.c) ?[*:0]const u8 {
+    return azk_egl_queryString(display, name);
+}
+extern fn azk_egl_getNativeClientBuffer(Handle) callconv(.c) Handle;
+export fn eglGetNativeClientBufferANDROID(buffer: Handle) callconv(.c) Handle {
+    return azk_egl_getNativeClientBuffer(buffer);
+}
+extern fn azk_egl_createImageKHR(Handle, Handle, u32, Handle, ?[*]const i32) callconv(.c) Handle;
+export fn eglCreateImageKHR(display: Handle, context: Handle, target: u32, buffer: Handle, attributes: ?[*]const i32) callconv(.c) Handle {
+    return azk_egl_createImageKHR(display, context, target, buffer, attributes);
+}
+extern fn azk_egl_createImage(Handle, Handle, u32, Handle, ?[*]const isize) callconv(.c) Handle;
+export fn eglCreateImage(display: Handle, context: Handle, target: u32, buffer: Handle, attributes: ?[*]const isize) callconv(.c) Handle {
+    return azk_egl_createImage(display, context, target, buffer, attributes);
+}
+extern fn azk_egl_destroyImage(Handle, Handle) callconv(.c) u32;
+export fn eglDestroyImageKHR(display: Handle, image: Handle) callconv(.c) u32 {
+    return azk_egl_destroyImage(display, image);
+}
+export fn eglDestroyImage(display: Handle, image: Handle) callconv(.c) u32 {
+    return azk_egl_destroyImage(display, image);
+}
 extern fn azk_egl_chooseConfig(Handle, ?[*]const i32, ?[*]Handle, i32, *i32) callconv(.c) u32;
 export fn eglChooseConfig(display: Handle, attributes: ?[*]const i32, configs: ?[*]Handle, size: i32, count: *i32) callconv(.c) u32 {
     return azk_egl_chooseConfig(display, attributes, configs, size, count);
@@ -60,6 +83,12 @@ export fn eglGetProcAddress(name: [*:0]const u8) callconv(.c) ?*const anyopaque 
     if (std.mem.eql(u8, std.mem.span(name), "eglGetDisplay")) return @ptrCast(&eglGetDisplay);
     if (std.mem.eql(u8, std.mem.span(name), "eglGetProcAddress")) return @ptrCast(&eglGetProcAddress);
     if (std.mem.eql(u8, std.mem.span(name), "eglGetError")) return @ptrCast(&eglGetError);
+    if (std.mem.eql(u8, std.mem.span(name), "eglQueryString")) return @ptrCast(&eglQueryString);
+    if (std.mem.eql(u8, std.mem.span(name), "eglGetNativeClientBufferANDROID")) return @ptrCast(&eglGetNativeClientBufferANDROID);
+    if (std.mem.eql(u8, std.mem.span(name), "eglCreateImageKHR")) return @ptrCast(&eglCreateImageKHR);
+    if (std.mem.eql(u8, std.mem.span(name), "eglCreateImage")) return @ptrCast(&eglCreateImage);
+    if (std.mem.eql(u8, std.mem.span(name), "eglDestroyImageKHR")) return @ptrCast(&eglDestroyImageKHR);
+    if (std.mem.eql(u8, std.mem.span(name), "eglDestroyImage")) return @ptrCast(&eglDestroyImage);
     if (std.mem.eql(u8, std.mem.span(name), "eglChooseConfig")) return @ptrCast(&eglChooseConfig);
     if (std.mem.eql(u8, std.mem.span(name), "eglGetConfigAttrib")) return @ptrCast(&eglGetConfigAttrib);
     if (std.mem.eql(u8, std.mem.span(name), "eglCreatePbufferSurface")) return @ptrCast(&eglCreatePbufferSurface);

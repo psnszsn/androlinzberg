@@ -17,7 +17,6 @@ var get_gbm_device: GetGbmDevice = undefined;
 extern "EGL" fn eglGetError() i32;
 extern "EGL" fn eglInitialize(Handle, ?*i32, ?*i32) u32;
 extern "EGL" fn eglTerminate(Handle) u32;
-extern "EGL" fn eglQueryString(Handle, i32) ?[*:0]const u8;
 extern "EGL" fn eglGetConfigs(Handle, ?[*]Handle, i32, *i32) u32;
 extern "EGL" fn eglChooseConfig(Handle, ?[*]const i32, ?[*]Handle, i32, *i32) u32;
 extern "EGL" fn eglGetConfigAttrib(Handle, Handle, i32, *i32) u32;
@@ -155,7 +154,7 @@ fn getCurrentSurface(env: Env, _: jni.jobject, which: jni.jint) callconv(.c) jni
 fn queryString(env: Env, _: jni.jclass, dpy: jni.jobject, name: jni.jint) callconv(.c) jni.jstring {
     const display = handle(env, .display, dpy);
     if (env.*.*.ExceptionCheck.?(env) != 0) return null;
-    const string = eglQueryString(display, name) orelse return null;
+    const string = backend.queryString(display, name) orelse return null;
     return env.*.*.NewStringUTF.?(env, string);
 }
 

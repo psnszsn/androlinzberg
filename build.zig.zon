@@ -6,7 +6,7 @@
     .dependencies = .{
         .aosp = .{
             .url = "file:aosp/androlinzberg-aosp-android-16.0.0_r1.tar.gz",
-            .hash = "N-V-__8AAHBE9U4uzlqu6wCrVZWNBKTFG47DJgYgcoRVy5Gi",
+            .hash = "N-V-__8AAEBS9U7lF2noWWVjw_xsjFjmP8muuObielJwA3_K",
         },
         .artzig = .{ .path = "artzig" },
         .wayland = .{
