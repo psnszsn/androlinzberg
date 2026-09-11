@@ -4864,8 +4864,6 @@ F aosp system/vold/binder/android/os/IVold.aidl
 F aosp system/vold/binder/android/os/IVoldListener.aidl
 F aosp system/vold/binder/android/os/IVoldMountCallback.aidl
 F aosp frameworks/base/core/java/com/android/internal/jank/EventLogTags.logtags
-F aosp external/chromium-webview/133.0.6943.137/x86_64/webview.apk
-F aosp external/chromium-webview/METADATA
 F aosp frameworks/av/media/aconfig/mediacodec_flags.aconfig
 F aosp frameworks/av/media/libaudioclient/aidl/android/media/AudioOffloadMode.aidl
 F aosp frameworks/base/core/java/android/app/AppOpInfo.java

@@ -48,7 +48,8 @@ zig build -j10 cpp-audit
   retains upstream flags. The overlay regression enables WebViewSurfaceControl
   through the provider's original developer UI and IPC in temporary test data.
   This provider fixes the previously diagnosed zero-cadence frame-rate hint;
-  [provenance and validation](webview-frame-rate-hints.md) are recorded separately.
+  [provider provenance](../aosp/README.md#webview-provider) and
+  [acceptance checks](acceptance.md) are recorded separately.
   The original SurfaceControl callbacks and NDK transactions now reach the
   existing compositor. `webview-overlay-test` verifies platform H.264 decoding,
   actual overlay creation and buffer updates, SurfaceControl completion callbacks

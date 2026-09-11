@@ -2367,9 +2367,8 @@ Protected playback is unavailable until the complete allocation, rendering and
 presentation chain can enforce protection; it must fail closed in the meantime.
 No arbitrary prebuilt Android C++ ABI compatibility is promised.
 
-This work deliberately replaces the window/graphics portions of the fence in
-`stock-client-migration.md` as their replacement milestones pass. The fence
-remains useful for unrelated migration work. Audio/PipeWire and codec behavior
+The selected window/graphics clients now use original AOSP sources; see
+[the current client boundary](stock-client.md). Audio/PipeWire and codec behavior
 stay in their existing host modules; their window/buffer integration is in scope.
 
 ## Multiple task desktop checkpoint (2026-09-07)

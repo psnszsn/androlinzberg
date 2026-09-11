@@ -161,7 +161,8 @@ from `platform/external/chromium-webview` commit
 `27d78d3db63b2dbe56d1136b7cefc502ca50548d`, path
 `140.0.7339.15/x86_64/webview.apk` ([original artifact](https://android.googlesource.com/platform/external/chromium-webview/+/27d78d3db63b2dbe56d1136b7cefc502ca50548d/140.0.7339.15/x86_64/webview.apk)).
 This provider has its own package pin; it does not change the Android 16 r1
-framework reference. The older provider in that reference is no longer installed.
+framework reference. The framework source archive does not include a provider APK;
+the independent WebView package is its only source for installation.
 
 Download the original artifact, then package it locally:
 
@@ -183,7 +184,10 @@ checksum; invalid input leaves an existing output untouched.
 Copy this third archive alongside the framework and ART archives when preparing
 a new worktree. The provider retains upstream production defaults. The optional
 overlay regression uses Chromium's supported developer setting only inside
-temporary test data; see [the provider defect and its resolution](../docs/webview-frame-rate-hints.md).
+temporary test data. This version's upstream overlay implementation guards zero
+frame intervals before calculating frame-rate hints, fixing the invalid infinite
+hint sent by the formerly bundled provider. Original SurfaceComposerClient
+validation remains intact. See [acceptance testing](../docs/acceptance.md).
 
 ## Refresh the Zig package hashes
 

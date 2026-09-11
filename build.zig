@@ -37,6 +37,10 @@ pub fn build(b: *std.Build) void {
     aosp_packaging_tests.addFileArg(b.path("tools/test_aosp_packaging.py"));
     aosp_packaging_tests.addFileInput(b.path("aosp/package-artzig-aosp.py"));
     build_tools_test.dependOn(&aosp_packaging_tests.step);
+    const source_identity_tests = b.addSystemCommand(&.{ "python3", "-B" });
+    source_identity_tests.addFileArg(b.path("tools/test_aosp_source_identity.py"));
+    source_identity_tests.addFileInput(b.path("tools/aosp-source-identity.py"));
+    build_tools_test.dependOn(&source_identity_tests.step);
     const doc_header_tests = b.addSystemCommand(&.{ "python3", "-B", "tools/test_javadoc_headers.py" });
     build_tools_test.dependOn(&doc_header_tests.step);
     const native_runner_tests = b.addSystemCommand(&.{ "python3", "-B" });
@@ -1486,40 +1490,32 @@ pub fn build(b: *std.Build) void {
     webview_smoke.run.addFileArg(java.fixtures.example);
     webview_smoke.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
     b.step("webview-test", "Run stock WebView against the bundled Android Chromium provider").dependOn(&webview_smoke.run.step);
-    const webview_ui = @import("build/command.zig").create(b);
-    setApplicationEnvironment(webview_ui, application_tree);
-    webview_ui.setEnvironment("WLR_RENDERER", "gles2");
-    webview_ui.setEnvironment("SHOT_ISOLATED_DATA", "1");
-    webview_ui.setPathEnvironment("AZK_TESTKIT_ROOT", testkit_tree.getDirectory());
-    webview_ui.setPathEnvironment("AZK_TEST_SEAT", surface_server.getEmittedBin());
-    webview_ui.addArg("bash");
-    webview_ui.addFileArg(b.path("tools/shot.sh"));
-    webview_ui.addArg("zig-out/test-results/webview/screenshot.png");
-    webview_ui.addArg("--test");
-    webview_ui.addFileArg(b.path("tests/webview-ui"));
-    webview_ui.addArg("--");
-    webview_ui.addFileArg(application_tree.path(b, "bin/androlinzberg"));
-    webview_ui.addFileArg(java.fixtures.webview);
-    b.step("webview-ui-test", "Render and interact with stock WebView through ApkHost and Cage").dependOn(&webview_ui.run.step);
-    const webview_overlay = @import("build/command.zig").create(b);
-    setApplicationEnvironment(webview_overlay, application_tree);
-    webview_overlay.setEnvironment("WLR_RENDERER", "gles2");
-    webview_overlay.setEnvironment("SHOT_ISOLATED_DATA", "1");
-    webview_overlay.setPathEnvironment("AZK_TESTKIT_ROOT", testkit_tree.getDirectory());
-    webview_overlay.setPathEnvironment("AZK_TEST_SEAT", surface_server.getEmittedBin());
-    webview_overlay.setEnvironment("AZK_WEBVIEW_VIDEO_SOURCE", "avc");
-    webview_overlay.setEnvironment("AZK_WEBVIEW_TRACE_OUT", "zig-out/test-results/webview-overlay/rendering-trace.json");
-    webview_overlay.setEnvironment("AZK_WEBVIEW_REQUIRE_OVERLAY", "1");
-    webview_overlay.setEnvironment("AZK_WEBVIEW_CONFIGURE_OVERLAYS", "1");
-    webview_overlay.addArg("bash");
-    webview_overlay.addFileArg(b.path("tools/shot.sh"));
-    webview_overlay.addArg("zig-out/test-results/webview-overlay/screenshot.png");
-    webview_overlay.addArg("--test");
-    webview_overlay.addFileArg(b.path("tests/webview-ui"));
-    webview_overlay.addArg("--");
-    webview_overlay.addFileArg(application_tree.path(b, "bin/androlinzberg"));
-    webview_overlay.addFileArg(java.fixtures.webview);
-    b.step("webview-overlay-test", "Verify Chromium platform decoding, overlay transactions and retained video pixels").dependOn(&webview_overlay.run.step);
+    inline for (.{
+        .{ .step = "webview-ui-test", .directory = "webview", .overlay = false, .description = "Render and interact with stock WebView through ApkHost and Cage" },
+        .{ .step = "webview-overlay-test", .directory = "webview-overlay", .overlay = true, .description = "Verify Chromium platform decoding, overlay transactions and retained video pixels" },
+    }) |fixture| {
+        const ui = @import("build/command.zig").create(b);
+        setApplicationEnvironment(ui, application_tree);
+        ui.setEnvironment("WLR_RENDERER", "gles2");
+        ui.setEnvironment("SHOT_ISOLATED_DATA", "1");
+        ui.setPathEnvironment("AZK_TESTKIT_ROOT", testkit_tree.getDirectory());
+        ui.setPathEnvironment("AZK_TEST_SEAT", surface_server.getEmittedBin());
+        if (fixture.overlay) {
+            ui.setEnvironment("AZK_WEBVIEW_VIDEO_SOURCE", "avc");
+            ui.setEnvironment("AZK_WEBVIEW_TRACE_OUT", b.fmt("zig-out/test-results/{s}/rendering-trace.json", .{fixture.directory}));
+            ui.setEnvironment("AZK_WEBVIEW_REQUIRE_OVERLAY", "1");
+            ui.setEnvironment("AZK_WEBVIEW_CONFIGURE_OVERLAYS", "1");
+        }
+        ui.addArg("bash");
+        ui.addFileArg(b.path("tools/shot.sh"));
+        ui.addArg(b.fmt("zig-out/test-results/{s}/screenshot.png", .{fixture.directory}));
+        ui.addArg("--test");
+        ui.addFileArg(b.path("tests/webview-ui"));
+        ui.addArg("--");
+        ui.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+        ui.addFileArg(java.fixtures.webview);
+        b.step(fixture.step, fixture.description).dependOn(&ui.run.step);
+    }
     const framework_compat_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(framework_compat_smoke, application_tree);
     framework_compat_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));
@@ -1628,4 +1624,105 @@ pub fn build(b: *std.Build) void {
     run.addPassthruArgs();
     run.run.setName("run androlinzberg");
     b.step("run", "Run the launcher: zig build run -- <app.apk>").dependOn(&run.run.step);
+
+    const source_identity = b.step("source-identity-test", "Compare exact compiled static sources with a clean pinned AOSP checkout");
+    if (b.option([]const u8, "aosp-reference", "Absolute path to the clean pinned AOSP reference checkout")) |reference| {
+        const compare = b.addSystemCommand(&.{ "python3", "-B" });
+        compare.addFileArg(b.path("tools/aosp-source-identity.py"));
+        compare.addArg("--reference");
+        // External operator-supplied reference, not a project/generated input.
+        // The comparison always runs so changes in this checkout are observed.
+        if (!std.fs.path.isAbsolute(reference))
+            std.debug.panic("aosp-reference must be an absolute checkout path", .{});
+        compare.addArg(reference);
+        compare.addArg("--package");
+        compare.addDirectoryArg(aosp);
+        compare.addArg("--classes");
+        compare.addFileArg(java.classes_jar);
+        for (java.static_sources) |sources| {
+            compare.addArg("--sources");
+            compare.addFileArg(sources);
+        }
+        compare.addArg("--output");
+        const report = compare.addOutputFileArg("source-identity.json");
+        // Read the reference anew on each invocation, including local changes.
+        compare.has_side_effects = true;
+        const install_report = b.addInstallFileWithDir(report, .prefix, "test-results/source-identity.json");
+        source_identity.dependOn(&install_report.step);
+    } else {
+        source_identity.dependOn(&b.addFail("source-identity-test requires -Daosp-reference=/absolute/path/to/clean/android-16.0.0_r1").step);
+    }
+
+    const acceptance = b.step("acceptance-test", "Run the complete stock-client acceptance suite and source comparison");
+    const acceptance_environment = b.addSystemCommand(&.{ "python3", "-c" });
+    acceptance_environment.addArg(
+        \\import os, sys
+        \\if len(sys.argv) != 1:
+        \\    sys.exit('acceptance-test runs the complete suite; use individual targets for test filters')
+        \\if os.environ.get('AZK_TEST_REQUIRE_EGL') != '1':
+        \\    sys.exit('acceptance-test requires AZK_TEST_REQUIRE_EGL=1')
+        \\if os.environ.get('AZK_WINDOW_BACKEND') or os.environ.get('AZK_TASK_WINDOWS'):
+        \\    sys.exit('acceptance-test requires unset AZK_WINDOW_BACKEND/AZK_TASK_WINDOWS')
+    );
+    acceptance_environment.addPassthruArgs();
+    acceptance_environment.has_side_effects = true;
+    acceptance.dependOn(&acceptance_environment.step);
+    for ([_][]const u8{
+        "install",
+        "integration-test",
+        "jvm-test",
+        "native-test",
+        "system-test",
+        "binder-test",
+        "binder-broker-test",
+        "binder-cpp-test",
+        "ndk-test",
+        "gui-test",
+        "graphics-buffer-test",
+        "graphics-budget-test",
+        "renderengine-test",
+        "surfaceflinger-service-test",
+        "surfaceflinger-output-test",
+        "surfaceflinger-composition-test",
+        "input-dispatcher-test",
+        "input-surfaceflinger-test",
+        "surface-wayland-test",
+        "surface-fence-test",
+        "surface-pacing-test",
+        "surface-drag-icon-test",
+        "wayland-output-test",
+        "wayland-unit-test",
+        "stock-window-boot-test",
+        "stock-cold-launch-test",
+        "stock-task-wayland-test",
+        "stock-desktop-launcher-test",
+        "stock-task-desktop-test",
+        "stock-task-output-test",
+        "stock-task-desktop-legacy-test",
+        "stock-task-desktop-suspension-test",
+        "stock-task-tablet-test",
+        "stock-video-test",
+        "stock-ime-test",
+        "stock-clipboard-test",
+        "stock-drag-test",
+        "stock-drag-pressure-test",
+        "stock-session-loss-test",
+        "webview-test",
+        "webview-ui-test",
+        "webview-overlay-test",
+        "bionic-loader-test",
+        "build-tools-test",
+        "cpp-audit",
+        "graph-audit",
+        "image-queue-jvm-test",
+        "process-app-data-test",
+        "data-partition-test",
+        "egl-test",
+        "framework-module-test",
+        "source-identity-test",
+    }) |name| {
+        const required = b.top_level_steps.get(name) orelse
+            std.debug.panic("acceptance target does not exist: {s}", .{name});
+        acceptance.dependOn(&required.step);
+    }
 }

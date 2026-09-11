@@ -49,6 +49,8 @@ and focused host adapters.
 
 See [desktop behavior and limits](docs/desktop.md) for task windows, input,
 media, desktop integration and recovery.
+See [stock clients and hosted services](docs/stock-client.md) for the framework
+boundary and [acceptance testing](docs/acceptance.md) for the complete test suite.
 
 androlinzberg does not provide a complete Android system. An app can fail when
 it needs an Android service that the host does not implement.
@@ -61,7 +63,8 @@ contains Zig, OpenJDK, and the required native libraries.
 The Git repository records the selected AOSP projects and files, but does not
 contain the large source archives themselves. Follow
 [`aosp/README.md`](aosp/README.md) to create the selective Repo checkout and
-generate the Artzig and Androlinzberg source tarballs before the first build.
+generate the Artzig and Androlinzberg source tarballs and the independently
+pinned WebView package before the first build.
 
 Enter the development shell:
 

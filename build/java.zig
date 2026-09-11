@@ -16,6 +16,8 @@ pub const Options = struct {
 
 pub const Result = struct {
     classes_jar: LazyPath,
+    /// Exact static compiler inputs for the independent AOSP source comparison.
+    static_sources: [3]LazyPath,
     compile_boot_jar: LazyPath,
     /// Classpath jar containing classes.dex and any secondary dex files.
     classpath_jar: LazyPath,
@@ -597,6 +599,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     }
     return .{
         .classes_jar = classes_jar,
+        .static_sources = .{ sources.java_rsp, sources.kotlin_rsp, sources.annotations_rsp },
         .compile_boot_jar = core_plus,
         .classpath_jar = classpath_jar,
         .compat_config = compat_config,

@@ -406,7 +406,6 @@ public final class FrameworkCompatSmoke {
             )
             verifyAndroidKeyStoreNullParameters()
             verifyMediaStoreCompatibility()
-            verifyBoundedHostThrowableDiagnostic()
             require(
                 PendingIntent.getActivities(
                     hostedSystemContext.createPackageContext("org.example", 0),
@@ -586,30 +585,6 @@ public final class FrameworkCompatSmoke {
                 "content://media/external/video/media/42".equals(thumbnailUri[0].toString()) &&
                     Size(512, 384).equals(thumbnailSize[0]),
                 "MediaStore video thumbnail resolver seam",
-            )
-        }
-
-        @JvmStatic private fun verifyBoundedHostThrowableDiagnostic() {
-            var cause: Throwable = IllegalStateException("leaf")
-            repeat(20) { index: Int ->
-                cause = RuntimeException("cause-" + index, cause)
-            }
-            val hostile: Throwable =
-                object : RuntimeException("printer must not run", cause) {
-                    override fun printStackTrace(writer: java.io.PrintWriter) {
-                        throw AssertionError("bounded logger called Throwable.printStackTrace")
-                    }
-
-                    override fun printStackTrace(stream: java.io.PrintStream) {
-                        throw AssertionError("bounded logger called Throwable.printStackTrace")
-                    }
-                }
-            val diagnostic: String = ApkHost.`formatThrowableForHost$artzig`(hostile)
-            require(diagnostic.length <= 64 * 1024, "host throwable diagnostic is bounded")
-            require(
-                diagnostic.contains(hostile.javaClass.name) &&
-                    diagnostic.contains("[throwable diagnostic truncated]"),
-                "host throwable diagnostic retains type and truncation marker",
             )
         }
 

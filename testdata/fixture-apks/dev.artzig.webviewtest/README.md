@@ -47,14 +47,13 @@ ffmpeg -nostdin -hide_banner -loglevel error -f lavfi \
 
 MP4 SHA-256: `c4bc34f18f476e3c66acc69be01e93d1c1c8886be54e72a2fabe237cd5471190`.
 
-The I420 and canvas buttons retain separate capture-stream pause probes. Set
-`AZK_WEBVIEW_VIDEO_SOURCE=i420` or `canvas` when running `webview-ui-test` to
-exercise them. These currently fail and are not successful regression coverage.
-The I420 probe observes correct retained pixels with lost color-space metadata:
-`VideoFrame.colorSpace` changes from explicit BT.709/sRGB to all-null on pause.
-Chromium 133.0.6943.137's
-[CopyFrame](https://chromium.googlesource.com/chromium/src/+/refs/tags/133.0.6943.137/third_party/blink/renderer/modules/mediastream/web_media_player_ms_compositor.cc)
-copies video metadata but not ColorSpace. It also returns black for unsupported
-mappable capture formats. The canvas probe observes RGBA becoming a black I420 frame on pause, consistent
-with a CopyFrame fallback. Distinguishing its exact fallback branch still needs
-provider instrumentation; no canvas fix is claimed. Its format probe is retained.
+The I420 and canvas buttons are optional capture-stream diagnostics. Set
+`AZK_WEBVIEW_VIDEO_SOURCE=i420` or `canvas` when invoking the fixture manually.
+These modes are outside the acceptance matrix; the encoded VP8 and H.264 paths
+above are the maintained playback regressions.
+
+Both graphical build targets use temporary Android data and cache directories.
+The overlay target enables `WebViewSurfaceControl` through the bundled provider's
+original developer UI and service, then waits for its content-provider readback
+before initializing WebView. This test-only setting cannot persist into user
+application data; normal WebView runs retain upstream defaults.

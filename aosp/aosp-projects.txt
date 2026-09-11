@@ -16,7 +16,6 @@ platform/external/auto
 platform/external/avb
 platform/external/boringssl
 platform/external/bouncycastle
-platform/external/chromium-webview
 platform/external/compiler-rt
 platform/external/conscrypt
 platform/external/cpu_features

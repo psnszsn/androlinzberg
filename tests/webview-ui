@@ -30,8 +30,8 @@ tools/azk-test diagnose | python3 -c 'import json,sys; d=json.load(sys.stdin); i
 if [[ -n "${AZK_WEBVIEW_TRACE_OUT:-}" ]]; then
   tools/azk-test step click --text "START RENDERING TRACE" --settle idle >/dev/null
 fi
-# Default: ordinary encoded-video playback. The stream modes retain separate
-# Chromium 133 pause-copy reproductions; see the fixture README.
+# Default: ordinary encoded-video playback. Optional stream modes are separate
+# capture diagnostics; see the fixture README for their coverage limits.
 case "${AZK_WEBVIEW_VIDEO_SOURCE:-encoded}" in
   encoded) video_button="Start video" ;;
   avc) video_button="Start H264 video" ;;
