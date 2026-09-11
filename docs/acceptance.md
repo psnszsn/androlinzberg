@@ -65,3 +65,12 @@ Record the revision, command, environment requirements, archive checksums, exit
 status and source-identity report alongside the retained test artifacts. Check
 that every APK case produced fresh results and inspect the rendering screenshots.
 The acceptance target does not remove caches or create worktrees automatically.
+
+## Latest verification
+
+The complete command above passed on 2026-09-11 at `c7b6f3e9` in 10 minutes
+36 seconds. All 28 APK integration cases passed; those cases and the WebView,
+video, desktop, IME, drag and clipboard checks produced 323 actions with no
+structured runtime issues. WebView content/video and desktop modal screenshots
+were inspected. Source identity reported 7,081 unchanged AOSP inputs, 62 server
+adaptations and no modified or repository-owned client substitutes.
