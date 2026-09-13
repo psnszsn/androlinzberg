@@ -14,7 +14,9 @@ standard Linux installation the loader can normally find zlib without that
 override.
 
 The host Looper patch exposes a borrowed epoll descriptor and the next native
-message deadline to the Wayland owner loop. The application compiles pinned
+message deadline to native/Java integration tests. APK processes run the stock
+Java Looper; Wayland runs in the separate task presenter. The application compiles
+pinned
 `android_os_MessageQueue.cpp`, `android_view_InputChannel.cpp`,
 `android_view_InputEventReceiver.cpp` and `android_view_InputEventSender.cpp`
 directly; queue and input callbacks retain their stock native object lifetimes.
@@ -223,4 +225,5 @@ interfaces, its upstream test fixtures, and StatsD native libraries/flags.
 `build/input_dispatcher.zig` generates package-manager/StatsD Binder interfaces,
 KLL protobuf, native statistics and native window/StatsD flags. Dispatcher
 verification uses host OpenSSL's constant-time comparison declaration through
-`0005-inputdispatcher-host-crypto.patch`; dispatch behavior stays upstream.
+`0005-inputdispatcher-host-crypto.patch`. The native audit records additional
+[dispatcher adaptations](../docs/native-client-audit.md#graphics-input-and-webview).

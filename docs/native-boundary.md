@@ -38,8 +38,8 @@ zig build -j10 cpp-audit
 - `src/platform/message_queue.zig` exposes only a borrowed readiness descriptor.
   The original native MessageQueue and public NDK ALooper share the original
   C++ Looper on the Java thread. A host-only accessor exposes its epoll descriptor;
-  only stock `pollOnce` consumes readiness and dispatches callbacks. The host
-  renderer observes that descriptor through its existing event loop.
+  only stock `pollOnce` consumes readiness and dispatches callbacks. Native/Java
+  integration tests observe the descriptor; APKs use stock Looper.loop.
 - `ArrayUtilsJniBridge.cpp` includes the pinned ArrayUtils JNI implementation
   and registers its exact table for both the framework and ConfigInfrastructure
   packages. The original code owns critical-array access, zeroization and CPU
@@ -52,9 +52,8 @@ zig build -j10 cpp-audit
   `.webview` dependency; framework sources remain Android 16 r1. Production
   retains upstream flags. The overlay regression enables WebViewSurfaceControl
   through the provider's original developer UI and IPC in temporary test data.
-  This provider fixes the previously diagnosed zero-cadence frame-rate hint;
-  [provider provenance](../aosp/README.md#webview-provider) and
-  [acceptance checks](acceptance.md) are recorded separately.
+  See [provider provenance](../aosp/README.md#webview-provider) and
+  [acceptance checks](acceptance.md).
   The original SurfaceControl callbacks and NDK transactions now reach the
   existing compositor. `webview-overlay-test` verifies platform H.264 decoding,
   actual overlay creation and buffer updates, SurfaceControl completion callbacks
@@ -426,8 +425,9 @@ macros and callback code that Zig cannot import directly.
   logging streams across that shared-library boundary corrupts locale ownership.
 
 Run `zig build -j6 binder-cpp-test` for generated IFpsListener Bp/Bn transactions,
-Parcel ownership, status, callbacks, identity and death regressions. The original
-optional hardware experiment remains under `tools/prototypes/binder-facade`.
+Parcel ownership, status, callbacks, identity and death regressions.
+[Testing](testing.md#optional-binder-graphics-probe) also describes the standalone
+DMA-BUF transport probe against production libraries.
 
 The native island uses pinned libui `Fence.cpp` and Linux `libsync` for fence
 waits, descriptor ownership and flattening. An isolated copy of stock
@@ -438,14 +438,12 @@ Parcel descriptor lifetime and invalid flattening input. Its pipe fixture tests
 libsync's polling contract; it does not simulate sync-file merge/timestamp
 ioctls. Java `SyncFence` and its JNI use pinned AOSP directly.
 
-`Image` and `PublicFormatUtils` now compile from pinned AOSP. The latter uses
-its original three JNI methods and libui's real `PublicFormat.cpp`, replacing
-hostgraphics' identity format mapping and always-unknown dataspace. The
+`Image` and `PublicFormatUtils` compile from pinned AOSP. The latter uses
+its original three JNI methods and libui's `PublicFormat.cpp`. The
 graphics-common Dataspace enum is generated from its VINTF-stable AIDL with
 the NDK backend. `Image` supplies the abstract base contract (crop rectangles,
-dataspace and validity checks). Concrete ImageReader/ImageWriter producers now
-use the stock JNI and shared graphics queues described below; their runtime
-sources replace the previous documentation-only ImageWriter header.
+dataspace and validity checks). Concrete ImageReader/ImageWriter producers
+use the stock JNI and shared graphics queues described below.
 Run `zig build -j6 gui-test` on a GBM/EGL host for stock remote BufferQueue,
 GPU pixels and sync fences, queue pressure, callbacks, resize and peer death.
 `graphics-buffer-test` validates malformed handle metadata without a GPU.
@@ -490,7 +488,7 @@ Its Zig supervisor owns readiness/EOF I/O; the C++ service seam ends SF's
 process-lifetime runtime with `_Exit` so static destructors cannot race the
 compositor workers. The runner requires successful service and broker shutdown,
 except for explicitly requested crash tests, and inherits live Mesa paths.
-The normal launcher now supervises broker, SF and system-server startup in that
+The normal launcher supervises broker, SF and system-server startup in that
 order, with exact readiness and bounded shutdown. `session-test` covers failure
 and resource cleanup. The session also supervises the task presenter, which
 imports private SF task outputs and owns xdg-shell lifecycle, placement and input.
@@ -512,8 +510,8 @@ Stock `android_view_InputChannel.cpp` is also compiled into the JNI island.
 Pinned Binder JNI supplies the C++ Java/Binder conversion functions.
 `BinderJniBridge.cpp` also exposes them to NDK callers, preserving identity and
 reference ownership. `input-channel-jvm-test` checks the Java/native Parcel framing,
-duplication and disposal boundary; its follow-up JVM and full APK suite pass.
-The application now compiles pinned MessageQueue, InputEventReceiver and
+duplication and disposal boundary.
+The application compiles pinned MessageQueue, InputEventReceiver and
 InputEventSender JNI. The former Zig MessageQueue implementation is replaced
 by a borrowed poll-state adapter (`src/platform/message_queue.zig` and
 `src/native/HostLooper.cpp`). Stock libutils Looper owns descriptors, callback
@@ -526,19 +524,15 @@ wakeups, fd callbacks and callback unregistration through the borrowed epoll.
 `input-channel-jvm-test` also passes stock key/motion delivery, deferred motion
 batching, handled/unhandled acknowledgements, cross-thread sender dispatch,
 receiver exception rethrow/recovery, fd listener unregistration and disposal.
-The full queue-replacement regression passed native/Binder/GUI/input/SF checks,
-build audits/tools, JVM checks and all 14 APK tests (41 steps, zero runtime
-issues), recorded in `/tmp/input-event-full-regression-1.log`.
 Stock application/window input-handle JNI and its common Rect/Size and region
 helpers are registered in the application island. A test-only JNI library in
 `build/input_jni.zig` exercises the production conversion functions from Kotlin:
 application/channel/window token identity, exact frame and disjoint touch
 regions, mutable metadata updates, clearing stale token/region/focus-transfer
 state, and SF-supplied content dimensions/transforms/alpha. It is not installed
-in the application tree. Stock Java SurfaceControl and native crop handles now
-share the same Binder objects; these isolated tests do not claim WMS/ATMS boot. The
-follow-up JVM, build audits and full 14-test APK suite pass with 41 recorded
-steps and zero runtime issues (`/tmp/input-handle-full-regression-1.log`).
+in the application tree. Stock Java SurfaceControl and native crop handles
+share the same Binder objects. WMS/ATMS boot and APK integration have separate
+coverage in [acceptance testing](acceptance.md).
 `build/input_dispatcher.zig` builds stock InputDispatcher with the generated
 package-manager/StatsD interfaces, KLL, native statistics, window flags and
 Perfetto schemas. Six interface tests cover real overlap and transforms,
@@ -555,7 +549,7 @@ The HWC adapter returns an empty successful LUT-request query, matching pinned
 HidlComposer: SF's validation path requires that even without hardware LUTs.
 
 Stock HardwareBuffer/GraphicBuffer/SyncFence and SurfaceControl/SurfaceSession
-Java/JNI now share native objects with libui/libgui and NDK clients. AZKB owns
+Java/JNI share native objects with libui/libgui and NDK clients. AZKB owns
 Binder objects and Parcel tables, and attaches native callback workers to ART
 before C++ listeners can call Java. `buffer-jvm-test` and
 `surface-client-jvm-test` verify ownership, fences and SF callbacks.

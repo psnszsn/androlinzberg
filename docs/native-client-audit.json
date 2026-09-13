@@ -271,6 +271,6 @@
     "apk_cases": 28,
     "recorded_actions": 329,
     "structured_runtime_issues": 0,
-    "details": "docs/stock-binder-migration.md"
+    "details": "docs/acceptance.md#binder-jni-provenance"
   }
 }

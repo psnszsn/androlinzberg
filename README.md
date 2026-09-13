@@ -90,10 +90,9 @@ zig build -j10 run -- /absolute/path/to/app.apk
 ```
 
 APK launches use stock Android window services and one Wayland toplevel per task
-by default; no migration flags are needed. Press `F11` to enter or leave
+by default. Press `F11` to enter or leave
 fullscreen mode. Applications can also request fullscreen through their Android
-window attributes. The former `--fullscreen`, `--frames` and `--java` presentation
-options are unavailable on the task path.
+window attributes.
 
 Every launch runs inside a hosted Binder session: the launcher starts an
 `azk-binder-broker` router, SurfaceFlinger, system process and task presenter, and prints the

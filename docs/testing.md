@@ -1,5 +1,8 @@
 # Testing
 
+Run [acceptance testing](acceptance.md) for the complete suite and source
+provenance checks. The targets below support focused development.
+
 ## Native and JVM tests
 
 Run the native tests and the source-boundary check:
@@ -120,3 +123,28 @@ framework issue.
 
 Use `--allow-missing` only when you record a known issue. A regression test must
 finish with an empty `diagnostics.runtime.issues` list.
+
+## Optional Binder graphics probe
+
+`tools/prototypes/binder-facade/build-production-probe.py` links the production
+Binder libraries to a standalone DMA-BUF/Fence transport fixture. It requires
+the full pinned AOSP checkout, `/dev/dri/card1` with dumb-buffer/PRIME and
+syncobj sync-file export, and the same Zig/libc++ toolchain as the application.
+The test mapper carries opaque probe metadata; it does not exercise production
+gralloc/EGL import and is outside `acceptance-test`.
+
+```sh
+nix develop ./artzig -c zig build -j6
+nix develop ./artzig -c python3 tools/prototypes/binder-facade/build-production-probe.py \
+  /tmp/facade-production-graphics /absolute/path/to/aosp \
+  --binder zig-out/lib/art/libbinder.so --ndk zig-out/lib/art/libbinder_ndk.so
+python3 tools/binder-facade-test.py \
+  --output /tmp/facade-production-graphics \
+  --probe /tmp/facade-production-graphics/probe \
+  --library zig-out/lib/art/libbinder.so --library zig-out/lib/art/libbinder_ndk.so \
+  --broker zig-out/bin/azk-binder-broker
+```
+
+The harness checks remote pixel mutation, buffer metadata, sync-file transfer
+and peer death. `run/results.json` records library hashes and results. Use the
+normal graphics and APK gates to verify production rendering.

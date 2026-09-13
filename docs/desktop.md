@@ -35,5 +35,5 @@ framework probes; ordinary APK launches require task presentation. The former
 `--java`, `--frames` and `--fullscreen` presentation options are unavailable.
 
 See [the architecture](architecture.md), [native boundaries](native-boundary.md)
-and [implementation and verification record](wayland-task-windows.md) for source
-ownership, protocol gates and retained regression artifacts.
+and [acceptance testing](acceptance.md) for source ownership, protocol gates
+and regression artifacts.

@@ -82,18 +82,3 @@ Record the revision, command, environment requirements, archive checksums, exit
 status and source-identity report alongside the retained test artifacts. Check
 that every APK case produced fresh results and inspect the rendering screenshots.
 The acceptance target does not remove caches or create worktrees automatically.
-
-## Latest verification
-
-Full acceptance passed on 2026-09-13 at runtime commit `b7d78a39` in the detached
-worktree `/tmp/androlinzberg-stock-binder-acceptance`, in about 11 minutes after
-its archive-only build. All 28 APK cases passed. The APK, WebView, desktop, IME,
-drag and clipboard logs contain 329 actions, zero failed actions and no structured
-runtime issues. WebView video and desktop modal screenshots were inspected.
-
-Source identity reports 7,081 unchanged AOSP inputs, 62 server adaptations and
-no modified or repository-owned client substitutes. Binder JNI provenance
-confirms four unchanged production units, matching facade headers and unique
-registrar ownership; NDK ABI checks pass. Installed library hashes match the
-reports. Archive hashes, commits, commands and retained artifacts are recorded
-in [the completed Binder migration](stock-binder-migration.md).

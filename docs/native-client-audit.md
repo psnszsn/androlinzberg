@@ -1,9 +1,10 @@
 # Native client audit
 
-Audited 2026-09-13 at `31ac159f`. **The complete client stack is not stock
-AOSP.** The earlier completion claim covered selected framework JVM source
-files. Android-native implementations, runtime libraries and process placement
-still contain substantial host adaptations.
+Baseline audited 2026-09-13 at `31ac159f`; Binder JNI and package evidence
+updated through `b7d78a39`. **The complete client stack is not stock AOSP.**
+The JVM source check covers selected framework source files. Android-native
+implementations, runtime libraries and process placement still contain substantial
+host adaptations.
 
 This is a source and architecture audit, not a new runtime regression run or
 an exhaustive per-method compatibility certification. It traces production
@@ -11,7 +12,7 @@ registration, build selection, native library mappings, host backends and the
 pinned reference. Existing passing acceptance tests establish their exercised
 behavior; they do not establish native provenance or stock process boundaries.
 
-## What the previous check establishes
+## JVM source check scope
 
 [`aosp-source-identity.py`](../tools/aosp-source-identity.py) compares the root
 framework build's static Java/Kotlin/annotation inputs against its explicitly
@@ -192,7 +193,6 @@ Service-backed audio/media alone cannot resolve this distinction.
 
 ### Stock Binder JNI over the existing facade
 
-The [migration plan](stock-binder-migration.md) tracks validation and commits.
 All four JNI units are compiled unchanged from pinned Android 16 r1. Their
 C++ interfaces do not directly open the Binder driver, so restoring them did
 not require replacing AZKB. Hosted libbinder and the NDK implementation remain
@@ -218,7 +218,8 @@ include ordering, compares the four files with a clean pinned reference, checks
 facade header selection and ELF registrar ownership, and rejects the obsolete
 native layout paths. Its report is
 `zig-out/test-results/binder-jni-source.json`. It is part of acceptance alongside
-`ndk-abi`. Runtime results and remaining gates are recorded in the plan.
+`ndk-abi`. See [acceptance testing](acceptance.md#binder-jni-provenance) for
+commands and generated reports.
 
 ## Graphics, input and WebView
 
@@ -300,24 +301,21 @@ structured unsupported diagnostic. This is confirmed in source, not a newly
 executed SQL regression. It needs original Android SQLite extensions, not a
 new Binder service.
 
-## Closure order and acceptance criteria
+## Remaining work and acceptance criteria
 
-1. Fix the status wording and retain separate JVM/native/runtime evidence.
-   Do not use namespace or zero-stub counts as native completion criteria.
-2. Restore isolated stock native implementations first: SQLite extensions,
-   tracing/logging and available utility JNI closures. Classify missing-service
-   behavior explicitly instead of treating local failure models as stock.
-3. Binder/Parcel JNI now uses the four original units over the hosted facade;
-   [migration verification](stock-binder-migration.md) tracks its gates. AZKB is
-   still an explicit native adaptation; replacing libbinder itself is a separate
-   decision if literal native identity is required.
-4. Restore audio JNI/libaudioclient/AAudio and service protocols; place the
+1. Restore isolated native implementations: SQLite extensions, tracing/logging
+   and available utility JNI closures. Classify missing-service behavior
+   explicitly instead of treating local failure models as stock.
+2. Decide whether libbinder and AZKB remain explicit native adaptations or
+   whether literal native identity requires replacing them below the restored
+   Binder JNI boundary.
+3. Restore audio JNI/libaudioclient/AAudio and service protocols; place the
    existing PipeWire backend behind them. Require real audio output in addition
    to track position, callbacks and service-death tests.
-5. Restore codec/player/NDK clients and their services; put the existing FFmpeg
+4. Restore codec/player/NDK clients and their services; put the existing FFmpeg
    engine behind the selected component interface. Verify app/service process
    placement as well as decoding, buffers, callbacks and failure handling.
-6. Restore app graphics clients while retaining host EGL/gralloc/compositor
+5. Restore app graphics clients while retaining host EGL/gralloc/compositor
    implementations at their appropriate boundaries. Then close device,
    networking, loader and runtime gaps against the declared scope.
 
