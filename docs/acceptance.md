@@ -53,6 +53,13 @@ Unlike a cache-directory search, this cannot select an unrelated older build.
 The reference must be the clean pinned checkout; the tool does not download or
 select an AOSP revision. Generated sources retain their separate build audits.
 
+This is a JVM source check for the root framework build. It does not compare
+JNI implementations, native libraries, the separate Artzig/libcore closure,
+ELF dependencies or process placement. Host sources under `dev.artzig` may
+implement client operations through JNI callbacks. Passing this check and the
+UI suite does not establish a fully stock native client; see the
+[native client audit](native-client-audit.md).
+
 ## Verify a fresh worktree
 
 Create a new detached worktree at the revision being verified. Before building,

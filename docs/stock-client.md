@@ -1,10 +1,12 @@
 # Stock client and hosted runtime
 
-The selected application-facing framework sources use pinned Android 16 r1
-AOSP code. There are no tracked framework stubs or modified static client
-sources. AOSP owns the client API signatures, validation, exceptions, lifecycle
-callbacks, resource handling and service protocols. Repository-owned JVM
-adapters and test helpers live outside the Android/internal client namespaces.
+The selected application-facing Java/Kotlin framework sources use pinned
+Android 16 r1 AOSP code. The audited root framework source set has no tracked
+framework stubs or modified static client sources. **The complete client stack
+is not stock:** JNI, native libraries and ART/libcore still contain host
+adaptations. Some JNI implementations delegate back to repository-owned JVM
+code inside the app process. See the [native client audit](native-client-audit.md)
+for the remaining replacements and process boundaries.
 
 The hosted runtime supplies the services and native facilities needed by those
 clients. It does not boot an Android system image or implement every device
@@ -23,7 +25,7 @@ capability. Selected server sources retain documented adaptations; see
 - Hosted services implement named, shared-isolated and external instances,
   authenticated process identities, binding lifetime, failure/restart handling,
   notification ownership and package/user query and snapshot operations.
-- Original ToneGenerator synthesizes audio through the existing output.
+- AOSP ToneGenerator synthesis uses a patched native output through hosted AAudio.
   WallpaperService is available, while desktop-wide live-wallpaper presentation
   remains unsupported.
 - The unchanged official AOSP WebView 140.0.7339.15 provider supports HTML,
@@ -44,15 +46,19 @@ service records, including Chromium renderers, use the primary exec launcher;
 the dedicated WebView controller has separate preload and isolated-launch tests.
 Full Android SELinux/device sandbox equivalence is not provided.
 
-Existing Wayland, PipeWire and FFmpeg facilities are used at their native
-boundaries. Specific unsupported desktop operations and recovery behavior are
-documented in [desktop behavior and limits](desktop.md).
+Wayland presentation runs in the separate task presenter. The PipeWire adapter
+and FFmpeg codec backend run inside app processes; PipeWire connects to the
+desktop's external audio daemon. These are not native Android audio/codec
+service clients. Specific unsupported desktop operations and recovery behavior
+are documented in [desktop behavior and limits](desktop.md).
 
 ## Verification
 
 [Acceptance testing](acceptance.md) describes the maintained build target,
 source comparison and fresh-worktree procedure. The source comparison consumes
 the exact compiler response files and classes jar, reports server adaptations
-separately, and rejects modified or repository-owned client replacements.
+separately, and rejects modified or repository-owned Android/internal JVM client
+replacements in that source set. It does not audit native code or prove full
+client-stack identity.
 Generated sources are checked through the build's source/generator audits.
 The zero-stub inventory remains enforced by [the stub audit](stubs.md).

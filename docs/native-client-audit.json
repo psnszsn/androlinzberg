@@ -1,0 +1,259 @@
+{
+  "revision": "31ac159fbd38dec3103f0293c1e2781a6366311a",
+  "reference": "Pinned checkout described by aosp/README.md; project revisions below",
+  "scope": "Packaged native source/header files, not compiled translation units or binary identity",
+  "packages": {
+    "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
+      "archive_sha256": "9ca641e184c58083369645a43d31e41cbae782c1577bd163013865612621898e",
+      "unchanged": 12300,
+      "modified": [
+        "bionic/libc/bionic/fortify.cpp",
+        "bionic/libc/private/bionic_fortify.h",
+        "external/skia/include/android/AHardwareBufferUtils.h",
+        "external/skia/include/android/GrAHardwareBufferUtils.h",
+        "external/skia/linux/include/config/SkUserConfig.h",
+        "external/skia/src/gpu/android/AHardwareBufferUtils.cpp",
+        "external/skia/src/gpu/ganesh/GrAHardwareBufferImageGenerator.cpp",
+        "external/skia/src/gpu/ganesh/GrAHardwareBufferUtils.cpp",
+        "external/skia/src/gpu/ganesh/gl/AHardwareBufferGL.cpp",
+        "external/skia/src/image/SkImage_AndroidFactories.cpp",
+        "frameworks/av/media/libaudioclient/ToneGenerator.cpp",
+        "frameworks/av/media/libaudioclient/include/media/ToneGenerator.h",
+        "frameworks/av/media/libstagefright/MediaExtractorFactory.cpp",
+        "frameworks/av/media/ndk/NdkImageReader.cpp",
+        "frameworks/base/core/jni/android/opengl/util.cpp",
+        "frameworks/base/core/jni/android_hardware_OverlayProperties.cpp",
+        "frameworks/base/core/jni/android_hardware_camera2_CameraMetadata.cpp",
+        "frameworks/base/core/jni/android_hardware_camera2_utils_SurfaceUtils.cpp",
+        "frameworks/base/core/jni/android_media_ImageReader.cpp",
+        "frameworks/base/core/jni/android_media_ToneGenerator.cpp",
+        "frameworks/base/core/jni/android_media_Utils.cpp",
+        "frameworks/base/core/jni/android_net_LocalSocketImpl.cpp",
+        "frameworks/base/core/jni/android_opengl_GLES20.cpp",
+        "frameworks/base/core/jni/android_opengl_GLES30.cpp",
+        "frameworks/base/core/jni/android_opengl_GLES31.cpp",
+        "frameworks/base/core/jni/android_opengl_GLES32.cpp",
+        "frameworks/base/core/jni/android_view_Surface.cpp",
+        "frameworks/base/core/jni/android_view_TunnelModeEnabledListener.cpp",
+        "frameworks/base/core/jni/com_google_android_gles_jni_GLImpl.cpp",
+        "frameworks/base/core/jni/core_jni_helpers.h",
+        "frameworks/base/libs/androidfw/AssetManager2.cpp",
+        "frameworks/base/libs/androidfw/AssetsProvider.cpp",
+        "frameworks/base/libs/androidfw/CursorWindow.cpp",
+        "frameworks/base/libs/androidfw/LoadedArsc.cpp",
+        "frameworks/base/libs/hwui/AutoBackendTextureRelease.cpp",
+        "frameworks/base/libs/hwui/DeferredLayerUpdater.cpp",
+        "frameworks/base/libs/hwui/Layer.h",
+        "frameworks/base/libs/hwui/WebViewFunctorManager.h",
+        "frameworks/base/libs/hwui/apex/android_bitmap.cpp",
+        "frameworks/base/libs/hwui/hwui/Bitmap.cpp",
+        "frameworks/base/libs/hwui/hwui/Bitmap.h",
+        "frameworks/base/libs/hwui/hwui/ImageDecoder.cpp",
+        "frameworks/base/libs/hwui/jni/Bitmap.cpp",
+        "frameworks/base/libs/hwui/jni/HardwareBufferHelpers.cpp",
+        "frameworks/base/libs/hwui/jni/Path.cpp",
+        "frameworks/base/libs/hwui/jni/PathIterator.cpp",
+        "frameworks/base/libs/hwui/jni/android_graphics_HardwareRenderer.cpp",
+        "frameworks/base/libs/hwui/jni/graphics_jni_helpers.h",
+        "frameworks/base/libs/hwui/pipeline/skia/GLFunctorDrawable.cpp",
+        "frameworks/base/libs/hwui/pipeline/skia/SkiaRecordingCanvas.cpp",
+        "frameworks/base/libs/hwui/platform/host/Readback.cpp",
+        "frameworks/base/libs/hwui/platform/host/renderthread/RenderThread.cpp",
+        "frameworks/base/libs/hwui/renderthread/CanvasContext.cpp",
+        "frameworks/base/libs/hwui/renderthread/CanvasContext.h",
+        "frameworks/base/libs/hwui/renderthread/DrawFrameTask.cpp",
+        "frameworks/base/libs/hwui/renderthread/ReliableSurface.h",
+        "frameworks/base/libs/hwui/renderthread/RenderProxy.cpp",
+        "frameworks/base/libs/hwui/renderthread/RenderProxy.h",
+        "frameworks/base/libs/hwui/renderthread/RenderThread.h",
+        "frameworks/base/libs/hwui/utils/Color.cpp",
+        "frameworks/base/media/jni/android_media_MediaMetricsJNI.cpp",
+        "frameworks/base/native/android/surface_control.cpp",
+        "frameworks/base/services/core/jni/com_android_server_wm_TaskFpsCallbackController.cpp",
+        "frameworks/minikin/libs/minikin/Hyphenator.cpp",
+        "frameworks/native/libs/binder/ndk/include_cpp/android/binder_auto_utils.h",
+        "frameworks/native/libs/binder/ndk/include_cpp/android/binder_interface_utils.h",
+        "frameworks/native/libs/binder/ndk/include_ndk/android/binder_status.h",
+        "frameworks/native/libs/gui/BufferQueueCore.cpp",
+        "frameworks/native/libs/gui/BufferQueueThreadState.cpp",
+        "frameworks/native/libs/gui/GLConsumer.cpp",
+        "frameworks/native/libs/gui/IGraphicBufferProducer.cpp",
+        "frameworks/native/libs/gui/IProducerListener.cpp",
+        "frameworks/native/libs/gui/SurfaceComposerClient.cpp",
+        "frameworks/native/libs/gui/SyncFeatures.cpp",
+        "frameworks/native/libs/gui/include/gui/IGraphicBufferProducer.h",
+        "frameworks/native/libs/gui/include/gui/IProducerListener.h",
+        "frameworks/native/libs/nativedisplay/surfacetexture/EGLConsumer.cpp",
+        "frameworks/native/libs/nativewindow/ANativeWindow.cpp",
+        "frameworks/native/libs/renderengine/RenderEngine.cpp",
+        "frameworks/native/libs/renderengine/skia/SkiaGLRenderEngine.cpp",
+        "frameworks/native/libs/renderengine/skia/SkiaRenderEngine.cpp",
+        "frameworks/native/libs/renderengine/skia/compat/GaneshBackendTexture.cpp",
+        "frameworks/native/libs/renderengine/skia/compat/GaneshGpuContext.cpp",
+        "frameworks/native/libs/renderengine/threaded/RenderEngineThreaded.cpp",
+        "frameworks/native/libs/ui/DependencyMonitor.cpp",
+        "frameworks/native/libs/ui/GraphicBufferAllocator.cpp",
+        "frameworks/native/libs/ui/GraphicBufferMapper.cpp",
+        "frameworks/native/libs/ui/include/ui/Gralloc.h",
+        "frameworks/native/services/inputflinger/dispatcher/Entry.h",
+        "frameworks/native/services/inputflinger/dispatcher/InputDispatcher.cpp",
+        "frameworks/native/services/inputflinger/dispatcher/InputDispatcher.h",
+        "frameworks/native/services/powermanager/PowerHalController.cpp",
+        "frameworks/native/services/surfaceflinger/BackgroundExecutor.cpp",
+        "frameworks/native/services/surfaceflinger/CompositionEngine/src/HwcAsyncWorker.cpp",
+        "frameworks/native/services/surfaceflinger/PowerAdvisor/SessionLayerMap.h",
+        "frameworks/native/services/surfaceflinger/Scheduler/EventThread.cpp",
+        "frameworks/native/services/surfaceflinger/Scheduler/OneShotTimer.h",
+        "frameworks/native/services/surfaceflinger/Scheduler/src/Timer.cpp",
+        "frameworks/native/services/surfaceflinger/SurfaceFlinger.cpp",
+        "frameworks/native/services/surfaceflinger/SurfaceFlingerProperties.cpp",
+        "system/core/libcutils/ashmem-dev.cpp",
+        "system/core/libcutils/socket_local_client_unix.cpp",
+        "system/core/libutils/Threads.cpp",
+        "system/core/libutils/include/utils/AndroidThreads.h",
+        "system/core/libutils/include/utils/Looper.h",
+        "system/core/libutils/include/utils/Mutex.h",
+        "system/incremental_delivery/incfs/util/include/util/map_ptr.h",
+        "system/libbase/properties.cpp"
+      ],
+      "missing_reference": []
+    },
+    "artzig-aosp-android-16.0.0_r1.tar.gz": {
+      "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
+      "unchanged": 3460,
+      "modified": [
+        "art/compiler/jni/quick/jni_compiler.cc",
+        "art/compiler/optimizing/nodes_x86.h",
+        "art/compiler/optimizing/optimization.cc",
+        "art/compiler/utils/assembler.h",
+        "art/dex2oat/dex2oat.cc",
+        "art/libartbase/base/strlcpy.h",
+        "art/openjdkjvm/OpenjdkJvm.cc",
+        "art/runtime/class_linker.cc",
+        "art/runtime/class_linker.h",
+        "art/runtime/class_loader_context.cc",
+        "art/runtime/jni/check_jni.cc",
+        "art/runtime/jni/java_vm_ext.cc",
+        "art/runtime/jni/jni_internal.cc",
+        "art/runtime/native/java_lang_VMClassLoader.cc",
+        "art/runtime/runtime.cc",
+        "art/runtime/runtime.h",
+        "art/runtime/runtime_common.h",
+        "art/runtime/subtype_check.h",
+        "art/runtime/thread.cc",
+        "art/runtime/thread_linux.cc",
+        "libcore/luni/src/main/native/libcore_io_Linux.cpp",
+        "libcore/ojluni/src/main/native/UnixFileSystem_md.c",
+        "libcore/ojluni/src/main/native/UnixNativeDispatcher.c",
+        "system/libbase/properties.cpp"
+      ],
+      "missing_reference": [
+        "art/runtime/jni/artzig_native_loader.h"
+      ]
+    }
+  },
+  "reference_projects": {
+    "bionic": {
+      "revision": "09a271af557444c9a6b3f3146d6d474156fd6cdb",
+      "tracked_clean": true
+    },
+    "external/skia": {
+      "revision": "bcb0f77c44783b1800ba37641ba7ecab04f05e07",
+      "tracked_clean": true
+    },
+    "frameworks/av": {
+      "revision": "4b2111885ff934799e70eddae2527a9848c3be29",
+      "tracked_clean": true
+    },
+    "frameworks/base": {
+      "revision": "99b01a65cc4c104933788b3143285ab6bae65827",
+      "tracked_clean": true
+    },
+    "frameworks/minikin": {
+      "revision": "1e1d5d137d487df875d7db69b5ff24e7d0291612",
+      "tracked_clean": true
+    },
+    "frameworks/native": {
+      "revision": "2827a4a16b0340ecd07c2d5a6c89991799b362bb",
+      "tracked_clean": true
+    },
+    "system/core": {
+      "revision": "68be0c2c0006a0740d0b1809abe4717308f90d15",
+      "tracked_clean": true
+    },
+    "system/incremental_delivery": {
+      "revision": "c999e3e207ec7633a172d773dda162746b6eaf18",
+      "tracked_clean": true
+    },
+    "system/libbase": {
+      "revision": "0ac7ea4a65d981166d6e5617e1e4ef0572f774e5",
+      "tracked_clean": true
+    },
+    "art": {
+      "revision": "ed6c006bd06ae060bd9698fd2cb25c4865512ec3",
+      "tracked_clean": true
+    },
+    "libcore": {
+      "revision": "fff4fcc0cf7f080cf2511cbb57561482b13b218f",
+      "tracked_clean": true
+    }
+  },
+  "date": "2026-09-13",
+  "native_extensions": [
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".h",
+    ".hpp",
+    ".hxx",
+    ".S",
+    ".s",
+    ".inl"
+  ],
+  "delegated_registration_modules": [
+    "src/binder/network_utils_internal_jni.zig",
+    "src/binder/debug_jni.zig",
+    "src/binder/pointer_icon_jni.zig",
+    "src/binder/application_shared_memory_jni.zig",
+    "src/binder/memory_int_array_jni.zig",
+    "src/binder/vintf_jni.zig",
+    "src/binder/performance_hint_jni.zig",
+    "src/binder/traffic_stats_jni.zig",
+    "src/binder/media_crypto_jni.zig",
+    "src/binder/media_metadata_retriever_jni.zig",
+    "src/binder/media_player_jni.zig",
+    "src/binder/sensor_manager_jni.zig",
+    "src/binder/media_drm_jni.zig",
+    "src/binder/legacy_camera_jni.zig",
+    "src/binder/media_codec_list_jni.zig",
+    "src/binder/activity_jni.zig",
+    "src/binder/audio_system_jni.zig",
+    "src/binder/audio_track_jni.zig",
+    "src/binder/media_codec_jni.zig",
+    "src/binder/media_ndk.zig",
+    "src/binder/aaudio_ndk.zig",
+    "src/binder/runtime_init_jni.zig",
+    "src/binder/egl_jni.zig",
+    "src/binder/egl_extensions_jni.zig",
+    "src/binder/legacy_egl_jni.zig"
+  ],
+  "registration_scope_note": "25 delegated registration modules, not 25 replaced classes: pointer_icon_jni registers a host cursor helper; media_ndk and aaudio_ndk also export C ABIs. Central and C++ registrars are additional.",
+  "installed_dso_spot_checks": {
+    "lib/libandroid_platform.so": {
+      "sha256": "98255452f482369aa9da12a502c1ef167ec572eb7142fe08ae0078ec396e0ffb",
+      "defined_symbols": [
+        "register_localized_collators",
+        "register_android_functions"
+      ]
+    },
+    "lib/art/libbinder_ndk.so": {
+      "sha256": "713ea7a3f875a38548207b622dc55c20d6042f912efd4f5c0649662da395039e",
+      "defined_symbols": [
+        "azk_register_binder_jni",
+        "AMediaCodec_createDecoderByType",
+        "AAudio_createStreamBuilder"
+      ]
+    }
+  }
+}

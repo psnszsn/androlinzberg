@@ -3,6 +3,11 @@
 Use Zig for application logic and Linux platform logic. Use C++ only where the
 AOSP graphics stack or an AOSP C++ interface requires it.
 
+This document describes implementation boundaries, not stock-client
+completion. Many native implementations below execute inside app processes.
+The [native client audit](native-client-audit.md) distinguishes replacements,
+patched AOSP sources, service-side adapters and remaining functionality gaps.
+
 Self-targeting overlays compile the original OverlayManagerImpl JNI and
 `libidmap2`, including its original self-targeting entry points and generated
 fabricated-overlay protobuf. The separate shared library uses the existing
