@@ -93,8 +93,9 @@ const skia_extra_srcs = [_][]const u8{"tools/SkSharingProc.cpp"};
 
 const our_srcs = [_][]const u8{
     "src/native/ArtzigGpuPipeline.cpp", "src/native/HardwareBufferRender.cpp",
-    "src/native/AospJniBridge.cpp",     "src/native/BinderJniBridge.cpp",
-    "src/native/HostLooper.cpp",        "src/native/HostedVideoOutput.cpp",
+    "src/native/AospJniBridge.cpp",     "src/native/EglWindow.cpp",
+    "src/native/BinderJniBridge.cpp",   "src/native/HostLooper.cpp",
+    "src/native/HostedVideoOutput.cpp",
 };
 
 pub fn build(b: *std.Build, o: Options) Result {
@@ -518,6 +519,31 @@ pub fn build(b: *std.Build, o: Options) Result {
 
     g.add(o.aosp.path(b, "frameworks/native/libs/tonemap"), &.{"tonemap.cpp"}, &.{}, &.{});
 
+    // Original JNI over the native Android-window / Mesa platform ABI.
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "android_opengl_EGL14.cpp", "com_google_android_gles_jni_EGLImpl.cpp" }, &.{
+        o.aosp.path(b, "frameworks/base/core/jni/include"),
+        o.aosp.path(b, "frameworks/native/opengl/libs/EGL/include"),
+    }, &.{
+        "-DEGL_NO_PLATFORM_SPECIFIC_TYPES",
+        "-DeglGetDisplay=bionic_eglGetDisplay",
+        "-DeglGetError=azk_egl_getError",
+        "-DeglQueryString=azk_egl_queryString",
+        "-DeglChooseConfig=azk_egl_chooseConfig",
+        "-DeglGetConfigAttrib=azk_egl_getConfigAttrib",
+        "-DeglCreatePbufferSurface=azk_egl_createPbuffer",
+        "-DeglCreateWindowSurface=azk_egl_createWindow",
+        "-DeglQuerySurface=azk_egl_querySurface",
+        "-DeglSurfaceAttrib=azk_egl_surfaceAttrib",
+        "-DeglSwapBuffers=azk_egl_swapBuffers",
+        "-DeglDestroySurface=azk_egl_destroySurface",
+        "-DeglMakeCurrent=azk_egl_makeCurrent",
+        "-DeglReleaseThread=azk_egl_releaseThread",
+        "-DeglInitialize=azk_egl_initialize",
+        "-DeglTerminate=azk_egl_terminate",
+        "-DeglGetCurrentSurface=azk_egl_currentSurface",
+        "-DeglBindTexImage=azk_egl_bindTexImage",
+        "-DeglReleaseTexImage=azk_egl_releaseTexImage",
+    });
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_opengl_EGLExt.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{
         "-DeglPresentationTimeANDROID=azk_egl_presentationTime",
         "-DeglDupNativeFenceFDANDROID=azk_egl_dupNativeFenceFD",

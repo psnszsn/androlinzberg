@@ -220,6 +220,7 @@
     "src/binder/network_utils_internal_jni.zig",
     "src/binder/debug_jni.zig",
     "src/binder/pointer_icon_jni.zig",
+    "src/binder/egl_interop_test.zig",
     "src/binder/vintf_jni.zig",
     "src/binder/performance_hint_jni.zig",
     "src/binder/traffic_stats_jni.zig",
@@ -234,24 +235,24 @@
     "src/binder/media_codec_jni.zig",
     "src/binder/media_ndk.zig",
     "src/binder/aaudio_ndk.zig",
-    "src/binder/runtime_init_jni.zig",
-    "src/binder/egl_jni.zig",
-    "src/binder/legacy_egl_jni.zig"
+    "src/binder/runtime_init_jni.zig"
   ],
-  "registration_scope_note": "20 delegated registration modules, not 20 replaced classes: pointer_icon_jni registers a host cursor helper; media_ndk and aaudio_ndk also export C ABIs. Central and C++ registrars are additional.",
+  "registration_scope_note": "19 delegated registration modules, not 19 replaced classes: pointer_icon_jni registers a host cursor helper; egl_interop_test registers only dev.artzig test helpers; media_ndk and aaudio_ndk also export C ABIs. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
-      "sha256": "284cae06de937d7a5919af42ed239883d7cc0a78c8698c18364b347e81bed6ac",
+      "sha256": "a4434a2a9dbf5029cfef2a0363f558d295263ad88525f072da14bb0b87ecdfe1",
       "defined_symbols": [
         "register_localized_collators",
         "register_android_functions",
         "register_android_media_Crypto",
         "register_android_media_Drm",
-        "register_android_opengl_jni_EGLExt"
+        "register_android_opengl_jni_EGLExt",
+        "register_android_opengl_jni_EGL14",
+        "register_com_google_android_gles_jni_EGLImpl"
       ]
     },
     "lib/art/libbinder_ndk.so": {
-      "sha256": "e7327febe569a855b8a4155fb8a821ee446795371e64e62225fa8ada89687076",
+      "sha256": "d513405945207c4b5bb084ecbf404d2c303e0ff705c3c36701a8cf0fe837ae35",
       "defined_symbols": [
         "azk_register_binder_jni",
         "AMediaCodec_createDecoderByType",
@@ -316,7 +317,7 @@
     }
   },
   "media_graphics_jni_followup": {
-    "scope": "Original MediaCrypto, MediaDrm and EGLExt JNI; native hardware snapshots and original Bitmap JNI registration. MediaCodec, MediaPlayer, metadata retrieval, EGL10/EGL14 and the HWUI backend remain pending.",
+    "scope": "Original MediaCrypto, MediaDrm and EGLExt JNI; native hardware snapshots and original Bitmap JNI registration. The subsequent EGL follow-up is recorded separately. MediaCodec, MediaPlayer, metadata retrieval and the HWUI backend remain pending.",
     "source_sha256": {
       "frameworks/base/media/jni/android_media_MediaCrypto.cpp": "10b92130e4a8535f689bc5c4254d0d842cfdbba8c6609c4f0879785365316612",
       "frameworks/base/media/jni/android_media_MediaDrm.cpp": "0cb734d461d82c6735e09bf6a3391f65fd9ba5276c4f1a63e4b91fd0ccc138ec",
@@ -350,6 +351,31 @@
       "apk_recorded_actions": 88,
       "apk_structured_runtime_issues": 0,
       "full_acceptance_run": false
+    }
+  },
+  "egl_jni_followup": {
+    "scope": "Original EGL10/EGL14 JNI over the Mesa/ANativeWindow driver boundary; window pixels, timestamps, resize and deferred ownership. No Wayland protocol backend changes.",
+    "source_sha256": {
+      "frameworks/base/core/jni/android_opengl_EGL14.cpp": "5dba92b15ad3b3ecca00968f64d6474f5e2eec991c62d2f0929c436029f64013",
+      "frameworks/base/core/jni/com_google_android_gles_jni_EGLImpl.cpp": "643cc325f9cc8206282d9ae92b35c78073832cfa5c6fde96fa44c3d6657878fd"
+    },
+    "native_adaptations": [
+      "src/native/egl_backend.zig",
+      "src/native/EglWindow.cpp",
+      "src/platform/egl_support.zig"
+    ],
+    "test_helper": "src/binder/egl_interop_test.zig registers only dev.artzig.StockEgl15Smoke",
+    "validation": {
+      "native_build_cpp_audit": "passed",
+      "egl_test": "passed",
+      "framework_module_test": "passed",
+      "framework_compat_test": "passed",
+      "newpipe_launch": "passed",
+      "integration_test_cases": 28,
+      "testkit_tests": 23,
+      "recorded_actions": 88,
+      "runtime_issues": 0,
+      "aggregate_acceptance": "not run"
     }
   }
 }

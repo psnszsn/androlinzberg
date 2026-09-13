@@ -129,8 +129,21 @@ pub export fn azk_egl_initCount(display: Handle) callconv(.c) i32 {
 }
 
 pub export fn azk_egl_presentationTime(display: Handle, surface: Handle, time: i64) callconv(.c) u32 {
-    return egl_backend.presentationTime(display, surface, time);
+    return egl_backend.presentationTime(g_io, display, surface, time);
 }
 pub export fn azk_egl_dupNativeFenceFD(display: Handle, sync: Handle) callconv(.c) i32 {
     return egl_backend.dupNativeFenceFD(display, sync);
+}
+
+pub export fn azk_egl_createWindow(display: Handle, config: Handle, window: Handle, attributes: ?[*]const i32) callconv(.c) Handle {
+    return egl_backend.createWindow(g_io, display, config, window, attributes);
+}
+pub export fn azk_egl_currentSurface(which: i32) callconv(.c) Handle {
+    return egl_backend.currentSurface(g_io, which);
+}
+pub export fn azk_egl_bindTexImage(display: Handle, surface: Handle, buffer: i32) callconv(.c) u32 {
+    return egl_backend.bindTexImage(g_io, display, surface, buffer, true);
+}
+pub export fn azk_egl_releaseTexImage(display: Handle, surface: Handle, buffer: i32) callconv(.c) u32 {
+    return egl_backend.bindTexImage(g_io, display, surface, buffer, false);
 }

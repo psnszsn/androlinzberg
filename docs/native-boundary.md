@@ -242,22 +242,15 @@ zig build -j10 cpp-audit
   remain owned by their Java streams. Binder object counts come from the hosted
   Binder runtime. Android-only debuggerd, malloc_debug, memtrack, and heap-tracing
   facilities retain failure results or explicit unsupported diagnostics.
-- `src/binder/legacy_egl_jni.zig` registers the 28 pinned EGLImpl methods. Its
-  Java objects and EGL 1.0 reporting remain stock; Android display reference
-  counts are shared with EGL14 in `egl_backend.zig`, including concurrent
-  initialization and final-owner cleanup. GLSurfaceView uses its stock GLThread;
-  the regression renders through its public pbuffer surface factory while
-  native-window presentation remains at the existing compositor boundary.
-- `src/binder/egl_jni.zig` registers the stock EGL14 native methods and handle
-  classes. `egl_backend.zig` uses the existing GBM render device and supplies
-  pbuffer drawables over GBM buffers, including pixel preservation on swaps and
-  deferred destruction while current. A surfaceless display remains available
-  when the render device is absent. JNI retains handle identity, array
-  validation, and native error results.
-  The Binder JNI library links EGL explicitly because ART also loads its
-  connectivity alias independently of the launcher. Window surfaces still need
-  a presentation adapter compatible with the host EGL driver; this JNI seam
-  does not change the existing Wayland backend.
+- EGLImpl (EGL10), EGL14, EGL15 and EGLExt compile original AOSP JNI. Display
+  reference counts, offscreen GBM drawables and Android native-window ownership
+  live in `src/native/egl_backend.zig`. `EglWindow.cpp` bridges Mesa's GBM driver
+  to stock ANativeWindow producers, using DMA-BUF GPU copies and Android fences.
+  A private ES3 copy context preserves the application's ES1/ES2/ES3 state.
+  Window handles remain stable across drawable resize; destroyed current
+  surfaces retain their native windows until unbound. Buffer dequeue runs
+  without holding the global EGL map lock. The copy completes before returning
+  GBM's source buffer because GBM release has no fence argument.
 - SharedMemory, MemoryFile, ApplicationSharedMemory and MemoryIntArray compile
   their original JNI over libcutils' sealed-memfd implementation, also used by
   NDK shared memory. The existing Linux adaptation selects memfd without

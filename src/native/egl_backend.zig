@@ -23,6 +23,8 @@ const bad_alloc = 0x3003;
 const bad_attribute = 0x3004;
 const bad_match = 0x3009;
 const bad_parameter = 0x300c;
+const bad_surface = 0x300d;
+const bad_native_window = 0x300b;
 
 extern "EGL" fn eglGetPlatformDisplay(u32, Handle, ?[*]const isize) Handle;
 extern "EGL" fn eglGetError() i32;
@@ -35,6 +37,13 @@ extern "EGL" fn eglQuerySurface(Handle, Handle, i32, *i32) u32;
 extern "EGL" fn eglSurfaceAttrib(Handle, Handle, i32, i32) u32;
 extern "EGL" fn eglSwapBuffers(Handle, Handle) u32;
 extern "EGL" fn eglGetCurrentSurface(i32) Handle;
+extern "EGL" fn eglGetCurrentContext() Handle;
+extern "EGL" fn eglBindTexImage(Handle, Handle, i32) u32;
+extern "EGL" fn eglReleaseTexImage(Handle, Handle, i32) u32;
+extern fn azk_egl_window_connect(Handle, Handle, Handle, ?[*]const i32, *i32, *i32, *i32) callconv(.c) Handle;
+extern fn azk_egl_window_disconnect(Handle, bool) callconv(.c) void;
+extern fn azk_egl_window_present(Handle, Handle, Handle, *i32, *i32) callconv(.c) i32;
+extern fn azk_egl_window_timestamp(Handle, i64) callconv(.c) i32;
 extern "EGL" fn eglMakeCurrent(Handle, Handle, Handle, Handle) u32;
 extern "EGL" fn eglReleaseThread() u32;
 extern "EGL" fn eglInitialize(Handle, ?*i32, ?*i32) u32;
@@ -74,7 +83,14 @@ const Surface = struct {
     height: i32,
     largest: i32,
     bindings: u32 = 0,
+    presenting: u32 = 0,
     destroyed: bool = false,
+    window: Handle = null,
+    driver: Handle = null,
+    config: Handle = null,
+    visual: u32 = 0,
+    attributes: []const i32 = &.{},
+    display_alive: bool = true,
 };
 
 pub fn defaultDisplay(device: Handle) Handle {
@@ -108,8 +124,9 @@ pub fn queryString(io: Io, display: Handle, name: i32) ?[*:0]const u8 {
     const extensions = std.mem.span(native);
     if (!hasExtension(extensions, "EGL_EXT_image_dma_buf_import")) return native;
     if (extension_strings.get(@intFromPtr(display))) |cached| return cached.ptr;
-    const combined = std.fmt.allocPrintSentinel(alloc, "{s}{s}{s}", .{
+    const combined = std.fmt.allocPrintSentinel(alloc, "{s}{s}{s}{s}", .{
         extensions,
+        if (!isGbm(display) or hasExtension(extensions, "EGL_ANDROID_presentation_time")) "" else " EGL_ANDROID_presentation_time",
         if (hasExtension(extensions, "EGL_ANDROID_image_native_buffer")) "" else " EGL_ANDROID_image_native_buffer",
         if (hasExtension(extensions, "EGL_ANDROID_get_native_client_buffer")) "" else " EGL_ANDROID_get_native_client_buffer",
     }, 0) catch {
@@ -315,6 +332,115 @@ pub fn createPbuffer(io: Io, display: Handle, config: Handle, attributes: ?[*]co
     };
     return surface;
 }
+// Window handles remain stable while their Mesa drawable is replaced on resize.
+// These translations run under mutex and leave foreign/native HWUI surfaces alone.
+fn driverSurface(surface: Handle) Handle {
+    if (surfaces.get(@intFromPtr(surface))) |owned| if (owned.window != null) return owned.driver;
+    return surface;
+}
+fn publicSurface(driver: Handle) Handle {
+    var entries = surfaces.iterator();
+    while (entries.next()) |entry| if (entry.value_ptr.window != null and entry.value_ptr.driver == driver)
+        return @ptrFromInt(entry.key_ptr.*);
+    return driver;
+}
+pub fn currentSurface(io: Io, which: i32) Handle {
+    mutex.lockUncancelable(io);
+    defer mutex.unlock(io);
+    return publicSurface(eglGetCurrentSurface(which));
+}
+pub fn bindTexImage(io: Io, display: Handle, surface: Handle, buffer: i32, bind: bool) u32 {
+    mutex.lockUncancelable(io);
+    defer mutex.unlock(io);
+    return if (bind) eglBindTexImage(display, driverSurface(surface), buffer) else eglReleaseTexImage(display, driverSurface(surface), buffer);
+}
+pub fn createWindow(io: Io, display: Handle, config: Handle, native: Handle, attributes: ?[*]const i32) Handle {
+    if (eglQueryString(display, 0x3054) == null) return null; // Validate EGL_VERSION first.
+    if (!isGbm(display)) {
+        fail(bad_native_window);
+        return null;
+    }
+    var visual: i32 = 0;
+    var types: i32 = 0;
+    if (eglGetConfigAttrib(display, config, 0x302e, &visual) == 0 or
+        eglGetConfigAttrib(display, config, surface_type, &types) == 0) return null;
+    if (types & window_bit == 0) {
+        fail(bad_match);
+        return null;
+    }
+    var length: usize = 0;
+    if (attributes) |attrs| while (attrs[length] != none) : (length += 2) {};
+    const attrs = alloc.dupe(i32, if (attributes) |list| list[0 .. length + 1] else &.{none}) catch {
+        fail(bad_alloc);
+        return null;
+    };
+    var committed = false;
+    defer if (!committed) alloc.free(attrs);
+    var width: i32 = 0;
+    var height: i32 = 0;
+    var window_error: i32 = bad_native_window;
+    const window = azk_egl_window_connect(native, display, config, attrs.ptr, &width, &height, &window_error) orelse {
+        fail(window_error);
+        return null;
+    };
+    defer if (!committed) azk_egl_window_disconnect(window, true);
+    const buffer = gbm_surface_create(@ptrFromInt(gbm_device.load(.acquire)), @intCast(width), @intCast(height), @bitCast(visual), 4) orelse {
+        fail(bad_alloc);
+        return null;
+    };
+    defer if (!committed) gbm_surface_destroy(buffer);
+    const driver = eglCreateWindowSurface(display, config, buffer, attrs.ptr) orelse return null;
+    defer if (!committed) {
+        _ = eglDestroySurface(display, driver);
+    };
+    mutex.lockUncancelable(io);
+    defer mutex.unlock(io);
+    surfaces.put(alloc, @intFromPtr(window), .{
+        .display = display,
+        .buffer = buffer,
+        .width = width,
+        .height = height,
+        .largest = 0,
+        .window = window,
+        .driver = driver,
+        .config = config,
+        .visual = @bitCast(visual),
+        .attributes = attrs,
+    }) catch {
+        fail(bad_alloc);
+        return null;
+    };
+    committed = true;
+    return window;
+}
+fn resizeWindow(owned: *Surface, width: i32, height: i32) bool {
+    const draw = eglGetCurrentSurface(0x3059);
+    const read = eglGetCurrentSurface(0x305a);
+    if (draw != owned.driver and read != owned.driver) {
+        fail(0x3002);
+        return false;
+    } // EGL_BAD_ACCESS
+    const buffer = gbm_surface_create(@ptrFromInt(gbm_device.load(.acquire)), @intCast(width), @intCast(height), owned.visual, 4) orelse {
+        fail(bad_alloc);
+        return false;
+    };
+    const driver = eglCreateWindowSurface(owned.display, owned.config, buffer, owned.attributes.ptr) orelse {
+        gbm_surface_destroy(buffer);
+        return false;
+    };
+    if (eglMakeCurrent(owned.display, if (draw == owned.driver) driver else draw, if (read == owned.driver) driver else read, eglGetCurrentContext()) == 0) {
+        _ = eglDestroySurface(owned.display, driver);
+        gbm_surface_destroy(buffer);
+        return false;
+    }
+    _ = eglDestroySurface(owned.display, owned.driver);
+    gbm_surface_destroy(owned.buffer);
+    owned.driver = driver;
+    owned.buffer = buffer;
+    owned.width = width;
+    owned.height = height;
+    return true;
+}
 pub fn querySurface(io: Io, display: Handle, surface: Handle, attribute: i32, value: *i32) u32 {
     mutex.lockUncancelable(io);
     defer mutex.unlock(io);
@@ -322,23 +448,24 @@ pub fn querySurface(io: Io, display: Handle, surface: Handle, attribute: i32, va
     // Validate through EGL even for properties owned here: a deleted or foreign
     // surface must not become valid merely because its GBM buffer is still bound.
     var ignored: i32 = 0;
-    if (eglQuerySurface(display, surface, width_key, &ignored) == 0) return 0;
+    if (eglQuerySurface(display, driverSurface(surface), width_key, &ignored) == 0) return 0;
     value.* = switch (attribute) {
         width_key => owned.width,
         height_key => owned.height,
         largest_key => owned.largest,
         texture_format, texture_target => no_texture,
         mipmap_texture, 0x3083 => 0, // EGL_MIPMAP_LEVEL
-        else => return eglQuerySurface(display, surface, attribute, value),
+        else => return eglQuerySurface(display, driverSurface(surface), attribute, value),
     };
     return 1;
 }
 pub fn surfaceAttrib(io: Io, display: Handle, surface: Handle, attribute: i32, value: i32) u32 {
     mutex.lockUncancelable(io);
     defer mutex.unlock(io);
-    if (!surfaces.contains(@intFromPtr(surface))) return eglSurfaceAttrib(display, surface, attribute, value);
+    const owned = surfaces.get(@intFromPtr(surface)) orelse return eglSurfaceAttrib(display, surface, attribute, value);
+    if (owned.window != null) return eglSurfaceAttrib(display, owned.driver, attribute, value);
     var ignored: i32 = 0;
-    if (eglQuerySurface(display, surface, width_key, &ignored) == 0) return 0;
+    if (eglQuerySurface(display, driverSurface(surface), width_key, &ignored) == 0) return 0;
     // EGL_MIPMAP_LEVEL is ignored for surfaces without a texture.
     if (attribute == 0x3083) return 1;
     return eglSurfaceAttrib(display, surface, attribute, value);
@@ -346,22 +473,53 @@ pub fn surfaceAttrib(io: Io, display: Handle, surface: Handle, attribute: i32, v
 pub fn swapBuffers(io: Io, display: Handle, surface: Handle) u32 {
     mutex.lockUncancelable(io);
     defer mutex.unlock(io);
-    if (!surfaces.contains(@intFromPtr(surface))) return eglSwapBuffers(display, surface);
+    const owned = surfaces.getPtr(@intFromPtr(surface)) orelse return eglSwapBuffers(display, surface);
+    if (owned.window) |window| {
+        if (owned.destroyed) {
+            fail(bad_surface);
+            return 0;
+        }
+        // Dequeue may wait for a consumer that needs EGL on another thread.
+        // Keep the window alive, but never hold the display map lock across it.
+        owned.presenting += 1;
+        const driver = owned.driver;
+        const buffer = owned.buffer;
+        var width = owned.width;
+        var height = owned.height;
+        mutex.unlock(io);
+        const swapped = eglSwapBuffers(display, driver);
+        const status = if (swapped != 0) azk_egl_window_present(window, display, buffer, &width, &height) else success;
+        mutex.lockUncancelable(io);
+        const live = surfaces.getPtr(@intFromPtr(surface)).?;
+        live.presenting -= 1;
+        defer collect(surface);
+        if (swapped == 0) return 0;
+        if (status != success) {
+            fail(status);
+            return 0;
+        }
+        if (!live.destroyed and (width != live.width or height != live.height) and !resizeWindow(live, width, height)) return 0;
+        return 1;
+    }
     var ignored: i32 = 0;
     // EGL defines swapping a pbuffer as having no effect. Do not rotate GBM's
     // window queue, which would both lose pbuffer contents and require a consumer.
     return eglQuerySurface(display, surface, width_key, &ignored);
 }
 fn collect(handle: Handle) void {
-    if (surfaces.get(@intFromPtr(handle))) |owned| if (owned.destroyed and owned.bindings == 0) {
+    if (surfaces.get(@intFromPtr(handle))) |owned| if (owned.destroyed and owned.bindings == 0 and owned.presenting == 0) {
         gbm_surface_destroy(owned.buffer);
+        if (owned.window) |window| {
+            azk_egl_window_disconnect(window, owned.display_alive);
+            alloc.free(owned.attributes);
+        }
         _ = surfaces.remove(@intFromPtr(handle));
     };
 }
 pub fn destroySurface(io: Io, display: Handle, surface: Handle) u32 {
     mutex.lockUncancelable(io);
     defer mutex.unlock(io);
-    const result = eglDestroySurface(display, surface);
+    const result = eglDestroySurface(display, driverSurface(surface));
     if (result != 0) if (surfaces.getPtr(@intFromPtr(surface))) |owned| {
         owned.destroyed = true;
         collect(surface);
@@ -380,8 +538,8 @@ fn releaseBindings(old: [2]Handle) void {
 pub fn makeCurrent(io: Io, display: Handle, draw: Handle, read: Handle, context: Handle) u32 {
     mutex.lockUncancelable(io);
     defer mutex.unlock(io);
-    const old = [2]Handle{ eglGetCurrentSurface(0x3059), eglGetCurrentSurface(0x305a) };
-    const result = eglMakeCurrent(display, draw, read, context);
+    const old = [2]Handle{ publicSurface(eglGetCurrentSurface(0x3059)), publicSurface(eglGetCurrentSurface(0x305a)) };
+    const result = eglMakeCurrent(display, driverSurface(draw), driverSurface(read), context);
     if (result != 0) {
         for ([_]Handle{ draw, read }) |handle| if (surfaces.getPtr(@intFromPtr(handle))) |owned| {
             owned.bindings += 1;
@@ -393,7 +551,7 @@ pub fn makeCurrent(io: Io, display: Handle, draw: Handle, read: Handle, context:
 pub fn releaseThread(io: Io) u32 {
     mutex.lockUncancelable(io);
     defer mutex.unlock(io);
-    const old = [2]Handle{ eglGetCurrentSurface(0x3059), eglGetCurrentSurface(0x305a) };
+    const old = [2]Handle{ publicSurface(eglGetCurrentSurface(0x3059)), publicSurface(eglGetCurrentSurface(0x305a)) };
     const result = eglReleaseThread();
     if (result != 0) releaseBindings(old);
     return result;
@@ -475,7 +633,8 @@ pub fn terminate(io: Io, display: Handle) u32 {
             var removed = false;
             while (entries.next()) |entry| if (entry.value_ptr.display == display) {
                 entry.value_ptr.destroyed = true;
-                if (entry.value_ptr.bindings == 0) {
+                entry.value_ptr.display_alive = false;
+                if (entry.value_ptr.bindings == 0 and entry.value_ptr.presenting == 0) {
                     collect(@ptrFromInt(entry.key_ptr.*));
                     removed = true;
                     break;
@@ -565,13 +724,20 @@ test "GBM pbuffers render, preserve pixels across swaps, and survive deferred de
 // Android exports these entry points from libEGL; GLVND publishes extension
 // entry points through its driver dispatcher. Keep this ABI difference below
 // the original EGLExt JNI, including the driver's error and fence ownership.
-pub fn presentationTime(display: Handle, surface: Handle, time: i64) u32 {
-    const Function = *const fn (Handle, Handle, i64) callconv(.c) u32;
-    const function: Function = @ptrCast(eglGetProcAddress("eglPresentationTimeANDROID") orelse {
-        fail(bad_match);
-        return 0;
-    });
-    return function(display, surface, time);
+pub fn presentationTime(io: Io, display: Handle, surface: Handle, time: i64) u32 {
+    mutex.lockUncancelable(io);
+    defer mutex.unlock(io);
+    // Pinned eglPresentationTimeANDROIDImpl validates the display and window,
+    // then sets its producer timestamp (including AUTO); it has no driver call.
+    if (eglQueryString(display, 0x3054) == null) return 0;
+    if (surfaces.get(@intFromPtr(surface))) |owned| {
+        if (owned.display == display and !owned.destroyed and owned.window != null) {
+            _ = azk_egl_window_timestamp(owned.window, time);
+            return 1;
+        }
+    }
+    fail(bad_surface);
+    return 0;
 }
 pub fn dupNativeFenceFD(display: Handle, sync: Handle) i32 {
     const Function = *const fn (Handle, Handle) callconv(.c) i32;

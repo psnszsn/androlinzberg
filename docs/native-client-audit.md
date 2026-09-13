@@ -63,10 +63,10 @@ the build selection; it is not a complete dynamic-symbol resolution audit.
 
 [`main.zig`](../src/main.zig) calls the Binder and graphics registrars and then
 [`host_natives.zig`](../src/platform/host_natives.zig) when booting APK ART.
-[`framework_jni.zig`](../src/binder/framework_jni.zig) has 23 delegated
+[`framework_jni.zig`](../src/binder/framework_jni.zig) has 19 delegated
 registration modules, plus its own registrations and the Binder registrar.
 That number is not a replaced-class count: it includes host-only cursor helpers
-and NDK exports. Merely registering a helper does not prove an app uses it.
+and NDK exports, plus a dev.artzig EGL test helper. Merely registering a helper does not prove an app uses it.
 
 ## Audio and media: app-side replacements
 
@@ -237,14 +237,13 @@ commands and generated reports.
   CanvasContext, RenderThread-related code, layer updates, bitmap and WebView
   functor paths also differ from the reference. Stock RenderNode/Canvas Java
   and an existing SurfaceFlinger do not remove these modifications.
-- [`egl_jni.zig`](../src/binder/egl_jni.zig) and
-  [`legacy_egl_jni.zig`](../src/binder/legacy_egl_jni.zig) replace JNI.
-  EGLExt and EGL15 use the original JNI; the host EGL export seam resolves
-  Android extensions through the Mesa driver dispatcher;
-  [`egl_support.zig`](../src/platform/egl_support.zig) and the native EGL
-  backend translate Android display, buffer, image and pbuffer operations to
-  the host driver. Generated GLES bindings are reused, with native fixes for
-  JNI array bases/bounds and host pixel ordering.
+- EGL10, EGL14, EGL15 and EGLExt compile their original JNI. The host EGL
+  driver adapter translates Android windows to Mesa GBM drawables and delivers
+  GPU-rendered frames through the original ANativeWindow/BufferQueue producer.
+  It owns DMA-BUF imports, acquire/release fences, drawable resizing and deferred
+  destruction. Presentation remains in the existing compositor backend.
+  Generated GLES bindings remain reused with native fixes for JNI array
+  bases/bounds and host pixel ordering.
 - HardwareRenderer snapshots use AOSP's AImageReader / RenderProxy algorithm.
   A build guard enables it on the host; Bitmap's native buffer factory delegates
   GPU import to the existing render-thread owner. The Kotlin snapshot and its
@@ -363,3 +362,11 @@ they do not certify protected playback. No aggregate acceptance run is claimed.
 The refreshed framework archive and its dependency pin are current, and the
 build is installed in `zig-out`. Source hashes and validation counts are in
 `native-client-audit.json`.
+
+The EGL follow-up also passed the native EGL lifetime test, C++ audit,
+framework module and compatibility suites, NewPipe launch, and all 28 APK
+integration cases (23 testkit tests). The final APK run followed the display
+validation and disconnect fixes. Window tests check EGL10/EGL14 pixels,
+timestamps, GL state, SurfaceTexture resize and independent native ownership.
+The two original JNI files match the pinned reference byte for byte; the
+archive contents and dependency pin are unchanged by this follow-up.

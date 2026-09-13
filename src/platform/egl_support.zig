@@ -102,6 +102,10 @@ export fn eglGetProcAddress(name: [*:0]const u8) callconv(.c) ?*const anyopaque 
     if (std.mem.eql(u8, std.mem.span(name), "eglTerminate")) return @ptrCast(&eglTerminate);
     if (std.mem.eql(u8, std.mem.span(name), "eglPresentationTimeANDROID")) return @ptrCast(&eglPresentationTimeANDROID);
     if (std.mem.eql(u8, std.mem.span(name), "eglDupNativeFenceFDANDROID")) return @ptrCast(&eglDupNativeFenceFDANDROID);
+    if (std.mem.eql(u8, std.mem.span(name), "eglCreateWindowSurface")) return @ptrCast(&eglCreateWindowSurface);
+    if (std.mem.eql(u8, std.mem.span(name), "eglGetCurrentSurface")) return @ptrCast(&eglGetCurrentSurface);
+    if (std.mem.eql(u8, std.mem.span(name), "eglBindTexImage")) return @ptrCast(&eglBindTexImage);
+    if (std.mem.eql(u8, std.mem.span(name), "eglReleaseTexImage")) return @ptrCast(&eglReleaseTexImage);
     return azk_host_egl_get_proc_address(name);
 }
 
@@ -112,4 +116,21 @@ export fn eglPresentationTimeANDROID(display: Handle, surface: Handle, time: i64
 extern fn azk_egl_dupNativeFenceFD(Handle, Handle) callconv(.c) i32;
 export fn eglDupNativeFenceFDANDROID(display: Handle, sync: Handle) callconv(.c) i32 {
     return azk_egl_dupNativeFenceFD(display, sync);
+}
+
+extern fn azk_egl_createWindow(Handle, Handle, Handle, ?[*]const i32) callconv(.c) Handle;
+export fn eglCreateWindowSurface(display: Handle, config: Handle, window: Handle, attributes: ?[*]const i32) callconv(.c) Handle {
+    return azk_egl_createWindow(display, config, window, attributes);
+}
+extern fn azk_egl_currentSurface(i32) callconv(.c) Handle;
+export fn eglGetCurrentSurface(which: i32) callconv(.c) Handle {
+    return azk_egl_currentSurface(which);
+}
+extern fn azk_egl_bindTexImage(Handle, Handle, i32) callconv(.c) u32;
+export fn eglBindTexImage(display: Handle, surface: Handle, buffer: i32) callconv(.c) u32 {
+    return azk_egl_bindTexImage(display, surface, buffer);
+}
+extern fn azk_egl_releaseTexImage(Handle, Handle, i32) callconv(.c) u32;
+export fn eglReleaseTexImage(display: Handle, surface: Handle, buffer: i32) callconv(.c) u32 {
+    return azk_egl_releaseTexImage(display, surface, buffer);
 }

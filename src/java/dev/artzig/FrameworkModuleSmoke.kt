@@ -173,6 +173,7 @@ internal object FrameworkModuleSmoke {
         testStockDebugMemory()
         testStockEgl()
         StockLegacyGlesSmoke.run()
+        StockEglWindowSmoke.run()
         StockLegacyEglSmoke.run()
         testStockGraphicBuffers()
         testStockOverlayProperties()
@@ -1467,12 +1468,14 @@ internal object FrameworkModuleSmoke {
             check(android.opengl.EGL14.eglGetConfigs(display, first, 0, 1, number, 1))
             val original = checkNotNull(first[0])
             check(number[0] == -4 && number[1] == 1 && number[2] == -4)
-            val configs = arrayOf(original, original, original)
+            // Pinned EGL14 JNI converts the entire remainder of the config array.
+            // Match its output extent while still checking a nonzero offset.
+            val configs = arrayOf(original, original)
             val attributes = intArrayOf(android.opengl.EGL14.EGL_RENDERABLE_TYPE,
                 android.opengl.EGL14.EGL_OPENGL_ES2_BIT, android.opengl.EGL14.EGL_SURFACE_TYPE,
                 android.opengl.EGL14.EGL_PBUFFER_BIT, android.opengl.EGL14.EGL_NONE)
             check(android.opengl.EGL14.eglChooseConfig(display, attributes, 0, configs, 1, 1, number, 1))
-            check(configs[0] === original && configs[2] === original && number[1] == 1)
+            check(configs[0] === original && number[1] == 1)
             val types = IntArray(1)
             check(android.opengl.EGL14.eglGetConfigAttrib(display, configs[1], android.opengl.EGL14.EGL_SURFACE_TYPE, types, 0))
             if (types[0] and android.opengl.EGL14.EGL_WINDOW_BIT != 0) {

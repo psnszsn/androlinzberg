@@ -1133,9 +1133,13 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     }) });
     for ([_][]const u8{ "egl", "gbm", "glesv2" }) |lib| egl_backend_tests.root_module.linkSystemLibrary(lib, .{ .needed = true });
-    const run_egl_backend_tests = b.addRunArtifact(egl_backend_tests);
-    b.step("egl-test", "Test EGL offscreen rendering and surface lifetime").dependOn(&run_egl_backend_tests.step);
-    native_test_step.dependOn(&run_egl_backend_tests.step);
+    egl_backend_tests.root_module.addObjectFile(island.file);
+    const run_egl_backend_tests = @import("build/command.zig").create(b);
+    setApplicationEnvironment(run_egl_backend_tests, application_tree);
+    run_egl_backend_tests.prependPathEnvironment("LD_LIBRARY_PATH", application_tree.path(b, "lib"));
+    run_egl_backend_tests.addFileArg(egl_backend_tests.getEmittedBin());
+    b.step("egl-test", "Test EGL offscreen rendering and surface lifetime").dependOn(&run_egl_backend_tests.run.step);
+    native_test_step.dependOn(&run_egl_backend_tests.run.step);
     native_test_step.dependOn(&run_process_memory_tests.step);
     native_test_step.dependOn(&session_test_run.step);
     const proc_parser_test = b.addTest(.{ .root_module = b.createModule(.{
