@@ -4,6 +4,8 @@ namespace android {
 class IPCThreadState {
 public:
   static constexpr int32_t kUnsetWorkSource = -1;
+  // Unlike the Binder driver, AZKB never implicitly demotes dispatch workers.
+  static void disableBackgroundScheduling(bool) {}
   static IPCThreadState *self() {
     thread_local IPCThreadState state;
     return &state;

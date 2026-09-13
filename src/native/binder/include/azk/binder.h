@@ -43,6 +43,7 @@ void *azk_parcel_cppView(AParcel *, void *(*)(AParcel *), void (*)(void *));
 int32_t azk_binder_transact(AIBinder *, uint32_t, const AParcel *, AParcel *,
                             uint32_t);
 uint32_t azk_binder_callFlags(void);
+AIBinder *azk_binder_contextObject(void);
 const void *azk_binder_servingStack(void);
 uint64_t azk_binder_clearCallingIdentity(void);
 void azk_binder_restoreCallingIdentity(uint64_t);

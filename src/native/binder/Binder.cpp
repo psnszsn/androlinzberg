@@ -4,6 +4,8 @@
 #include <android/binder_ibinder_platform.h>
 #include <azk/binder.h>
 #include <binder/IInterface.h>
+#include <binder/BpBinder.h>
+#include <binder/IPCThreadState.h>
 #include <binder/Parcel.h>
 #include <utils/String8.h>
 
@@ -105,7 +107,7 @@ const String16 &BBinder::getInterfaceDescriptor() const {
   return name;
 }
 AIBinder *BBinder::acquireNative() {
-  std::lock_guard lock(mutex);
+  std::unique_lock lock(mutex);
   if (weak)
     if (auto *n = AIBinder_Weak_promote(weak))
       return n;
@@ -125,7 +127,39 @@ AIBinder *BBinder::acquireNative() {
     }
     cache[n] = sp<IBinder>::fromExisting(this);
   }
+  auto ext = extension;
+  lock.unlock();
+  if (ext) {
+    auto *e = ext->acquireNative();
+    AIBinder_setExtension(n, e);
+    AIBinder_decStrong(e);
+  }
   return n;
+}
+// Pinned BBinder stores the extension even before its first native export.
+void BBinder::setExtension(const sp<IBinder> &ext) {
+  AIBinder *live = nullptr;
+  sp<IBinder> old;
+  {
+    std::lock_guard lock(mutex);
+    old = std::move(extension);
+    extension = ext;
+    if (weak) live = AIBinder_Weak_promote(weak);
+  }
+  if (live) {
+    auto *e = ext ? ext->acquireNative() : nullptr;
+    AIBinder_setExtension(live, e);
+    if (e) AIBinder_decStrong(e);
+    AIBinder_decStrong(live);
+  }
+}
+status_t IBinder::getExtension(sp<IBinder> *out) {
+  auto *native = acquireNative();
+  AIBinder *extension = nullptr;
+  status_t status = AIBinder_getExtension(native, &extension);
+  AIBinder_decStrong(native);
+  *out = IBinder::fromNative(extension);
+  return status;
 }
 bool IBinder::isBinderAlive() const {
   auto *n = const_cast<IBinder *>(this)->acquireNative();
@@ -190,32 +224,78 @@ status_t BBinder::transact(uint32_t code, const Parcel &input, Parcel *output,
   AIBinder_decStrong(n);
   return rc;
 }
-class BpBinder final : public IBinder {
-  AIBinder *native;
-  mutable std::once_flag descriptorOnce;
-  mutable String16 descriptor;
-  struct Link {
-    wp<IBinder> who;
-    wp<DeathRecipient> observer;
-    void *cookie;
-    AIBinder_DeathRecipient *recipient = nullptr;
-    Link(const sp<IBinder> &b, const sp<DeathRecipient> &d, void *c)
-        : who(b), observer(d), cookie(c) {}
-    ~Link() {
-      if (recipient)
-        AIBinder_DeathRecipient_delete(recipient);
+namespace {
+std::mutex trackingMutex;
+struct ProxyCount { uint32_t count = 0, lastLimit = 0; bool warned = false, limited = false; };
+std::map<uint32_t, ProxyCount> proxyCounts;
+uint32_t totalProxies = 0, highWatermark = 2500, lowWatermark = 2000, warningWatermark = 2250;
+bool countByUid = false;
+binder_proxy_limit_callback limitCallback;
+binder_proxy_warning_callback warningCallback;
+}
+// Follows pinned BpBinder::create/destructor accounting and callback hysteresis.
+// No kernel proxy throttling is enabled on the hosted process domain.
+sp<BpBinder> BpBinder::create(AIBinder *native, std::function<void()> *postTask) {
+  int32_t uid = -1;
+  {
+    std::lock_guard lock(trackingMutex);
+    if (countByUid) {
+      uid = IPCThreadState::self()->getCallingUid();
+      auto &value = proxyCounts[uid];
+      std::function<void(int)> callback;
+      if (value.limited) {
+        if (value.count > value.lastLimit && value.count - value.lastLimit > highWatermark) {
+          callback = limitCallback;
+          value.lastLimit = value.count;
+        }
+      } else if (value.count >= warningWatermark && value.count < highWatermark && !value.warned) {
+        value.warned = true;
+        callback = warningCallback;
+      } else if (value.count >= highWatermark) {
+        value.limited = true;
+        value.lastLimit = value.count;
+        callback = limitCallback;
+      }
+      if (callback) *postTask = [callback, uid] { callback(uid); };
+      ++value.count;
     }
-  };
-  std::mutex linksMutex;
-  std::vector<std::shared_ptr<Link>> links;
-  void forget(const std::shared_ptr<Link> &link) {
+    ++totalProxies;
+  }
+  return sp<BpBinder>::make(native, uid);
+}
+uint32_t BpBinder::getBinderProxyCount() { std::lock_guard lock(trackingMutex); return totalProxies; }
+uint32_t BpBinder::getBinderProxyCount(uint32_t uid) {
+  std::lock_guard lock(trackingMutex);
+  auto i = proxyCounts.find(uid);
+  return i == proxyCounts.end() ? 0 : i->second.count;
+}
+void BpBinder::getCountByUid(Vector<uint32_t> &uids, Vector<uint32_t> &counts) {
+  std::lock_guard lock(trackingMutex);
+  for (const auto &[uid, value] : proxyCounts) { uids.push_back(uid); counts.push_back(value.count); }
+}
+void BpBinder::setCountByUidEnabled(bool enabled) { std::lock_guard lock(trackingMutex); countByUid = enabled; }
+void BpBinder::setBinderProxyCountEventCallback(binder_proxy_limit_callback limit, binder_proxy_warning_callback warning) {
+  std::lock_guard lock(trackingMutex); limitCallback = std::move(limit); warningCallback = std::move(warning);
+}
+void BpBinder::setBinderProxyCountWatermarks(int high, int low, int warning) {
+  std::lock_guard lock(trackingMutex); highWatermark = high; lowWatermark = low; warningWatermark = warning;
+}
+void BpBinder::forget(const std::shared_ptr<Link> &link) {
     std::lock_guard lock(linksMutex);
     std::erase(links, link);
   }
-
-public:
-  explicit BpBinder(AIBinder *n) : native(n) {}
-  ~BpBinder() override {
+BpBinder::~BpBinder() {
+    {
+      std::lock_guard lock(trackingMutex);
+      --totalProxies;
+      if (trackedUid >= 0) {
+        auto i = proxyCounts.find(trackedUid);
+        assert(i != proxyCounts.end() && i->second.count);
+        auto &value = i->second;
+        if (value.count <= lowWatermark) { value.warned = value.limited = false; value.lastLimit = 0; }
+        if (--value.count == 0) proxyCounts.erase(i);
+      }
+    }
     std::vector<std::shared_ptr<Link>> removed;
     {
       std::lock_guard lock(linksMutex);
@@ -231,12 +311,11 @@ public:
     }
     AIBinder_decStrong(native);
   }
-  BpBinder *remoteBinder() override { return this; }
-  AIBinder *acquireNative() override {
+AIBinder *BpBinder::acquireNative() {
     AIBinder_incStrong(native);
     return native;
   }
-  const String16 &getInterfaceDescriptor() const override {
+const String16 &BpBinder::getInterfaceDescriptor() const {
     std::call_once(descriptorOnce, [this] {
       Parcel in, out;
       if (azk_binder_transact(native, INTERFACE_TRANSACTION, in.native(),
@@ -245,13 +324,11 @@ public:
     });
     return descriptor;
   }
-  status_t transact(uint32_t code, const Parcel &input, Parcel *output,
-                    uint32_t flags) override {
+status_t BpBinder::transact(uint32_t code, const Parcel &input, Parcel *output, uint32_t flags) {
     return azk_binder_transact(native, code, input.native(),
                                output ? output->native() : nullptr, flags);
   }
-  status_t linkToDeath(const sp<DeathRecipient> &d, void *cookie,
-                       uint32_t flags) override {
+status_t BpBinder::linkToDeath(const sp<DeathRecipient> &d, void *cookie, uint32_t flags) {
     if (!d)
       return BAD_VALUE;
     if (flags)
@@ -280,8 +357,7 @@ public:
       forget(link);
     return rc;
   }
-  status_t unlinkToDeath(const wp<DeathRecipient> &d, void *cookie,
-                         uint32_t flags, wp<DeathRecipient> *out) override {
+status_t BpBinder::unlinkToDeath(const wp<DeathRecipient> &d, void *cookie, uint32_t flags, wp<DeathRecipient> *out) {
     if (flags)
       return BAD_VALUE;
     std::shared_ptr<Link> found;
@@ -303,7 +379,6 @@ public:
     AIBinder_DeathRecipient_delete(std::exchange(found->recipient, nullptr));
     return OK;
   }
-};
 // A local Binder created through NDK/Java still has local Binder semantics.
 // It cannot expose a C++ IInterface, so generated callers use their Bp helper.
 class NativeLocalBinder final : public BBinder {
@@ -337,24 +412,24 @@ public:
   }
 };
 sp<IBinder> IBinder::fromNative(AIBinder *n) {
-  if (!n)
-    return nullptr;
+  if (!n) return nullptr;
   sp<IBinder> result;
+  bool adopted = false;
+  std::function<void()> postTask;
   {
     std::lock_guard lock(cacheMutex);
-    if (auto i = cache.find(n); i != cache.end())
-      result = i->second.promote();
+    if (auto i = cache.find(n); i != cache.end()) result = i->second.promote();
     if (!result) {
-
-      if (AIBinder_isRemote(n))
-        result = sp<BpBinder>::make(n);
-      else
-        result = sp<NativeLocalBinder>::make(n);
+      result = AIBinder_isRemote(n) ? sp<IBinder>(BpBinder::create(n, &postTask))
+                                    : sp<IBinder>(sp<NativeLocalBinder>::make(n));
       cache[n] = result;
-      return result;
+      adopted = true;
     }
   }
-  AIBinder_decStrong(n);
+  if (!adopted) AIBinder_decStrong(n);
+  // Pinned ProcessState executes proxy-count callbacks outside the handle lock.
+  // JNI callbacks can trigger GC and reenter this cache.
+  if (postTask) postTask();
   return result;
 }
 } // namespace android

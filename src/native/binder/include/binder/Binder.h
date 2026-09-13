@@ -6,6 +6,7 @@ namespace android {
 class BBinder : public IBinder {
   AIBinder_Weak *weak = nullptr;
   std::mutex mutex;
+  sp<IBinder> extension;
 
 public:
   BBinder() = default;
@@ -13,6 +14,7 @@ public:
   const String16 &getInterfaceDescriptor() const override;
   BBinder *localBinder() override { return this; }
   AIBinder *acquireNative() override;
+  void setExtension(const sp<IBinder> &);
   status_t transact(uint32_t, const Parcel &, Parcel *, uint32_t = 0) override;
   status_t dump(int fd, const Vector<String16> &args) override;
   virtual status_t onTransact(uint32_t, const Parcel &, Parcel *, uint32_t = 0);

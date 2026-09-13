@@ -7,6 +7,8 @@
 #include <android/binder_process.h>
 #include <android/gui/BnFpsListener.h>
 #include <binder/IPCThreadState.h>
+#include <binder/BpBinder.h>
+#include <binder/ProcessState.h>
 #include <binder/IResultReceiver.h>
 #include <binder/IMemory.h>
 #include <binder/MemoryDealer.h>
@@ -107,6 +109,11 @@ struct Service final : BBinder {
   }
   status_t onTransact(uint32_t code, const Parcel &in, Parcel *out,
                       uint32_t flags) override {
+    if (code == 19) {
+      auto binder = sp<BBinder>::make();
+      binder->setExtension(sp<BBinder>::make());
+      return out->writeStrongBinder(binder);
+    }
     if (code == 18) {
       auto *state = IPCThreadState::self();
       assert(!state->hasExplicitIdentity() && !state->shouldPropagateWorkSource());
@@ -720,6 +727,50 @@ int main(int argc, char **argv) {
   }
 
   assert(server->remoteBinder() && !server->localBinder());
+  {
+    assert(ProcessState::self()->getContextObject(nullptr));
+    assert(!ProcessState::isDriverFeatureEnabled(ProcessState::DriverFeature::FREEZE_NOTIFICATION));
+    Parcel request, reply;
+    assert(server->transact(19, request, &reply) == OK);
+    auto binder = reply.readStrongBinder();
+    sp<IBinder> extension, again;
+    assert(binder->getExtension(&extension) == OK && extension && extension->remoteBinder());
+    assert(binder->getExtension(&again) == OK && again == extension);
+    auto *native = binder->acquireNative();
+    AIBinder *ndkExtension = nullptr;
+    assert(AIBinder_getExtension(native, &ndkExtension) == OK);
+    assert(IBinder::fromNative(ndkExtension) == extension);
+    AIBinder_decStrong(native);
+    pass("remote extension discovery shares C++/NDK object identity");
+  }
+  {
+    const auto uid = IPCThreadState::self()->getCallingUid();
+    int warnings = 0, limits = 0;
+    BpBinder::setCountByUidEnabled(true);
+    BpBinder::setBinderProxyCountWatermarks(3, 1, 2);
+    BpBinder::setBinderProxyCountEventCallback(
+      [&](int who) { assert(who == uid); assert(BpBinder::getBinderProxyCount(who) >= 4); ++limits; },
+      [&](int who) { assert(who == uid); assert(BpBinder::getBinderProxyCount(who) >= 3); ++warnings; });
+    for (int round = 0; round < 2; ++round) {
+      std::vector<sp<IBinder>> objects;
+      for (int i = 0; i < 5; ++i) {
+        Parcel request, reply;
+        assert(server->transact(19, request, &reply) == OK);
+        objects.push_back(reply.readStrongBinder());
+      }
+      assert(BpBinder::getBinderProxyCount(uid) == 5);
+      Vector<uint32_t> uids, counts;
+      BpBinder::getCountByUid(uids, counts);
+      assert(uids.size() == 1 && uids[0] == uint32_t(uid) && counts[0] == 5);
+      assert(warnings == round + 1 && limits == round + 1);
+      objects.clear();
+      assert(BpBinder::getBinderProxyCount(uid) == 0);
+    }
+    BpBinder::setCountByUidEnabled(false);
+    BpBinder::setBinderProxyCountEventCallback({}, {});
+    BpBinder::setBinderProxyCountWatermarks(2500, 2000, 2250);
+    pass("proxy UID accounting, callbacks outside locks and watermark reset after release");
+  }
   {
     struct StateCallback final : BBinder {
       status_t onTransact(uint32_t, const Parcel &in, Parcel *out, uint32_t) override {

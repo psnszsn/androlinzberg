@@ -558,6 +558,7 @@ const AIBinder = struct {
     /// Extension binder registered via AIBinder_setExtension (retrieved by
     /// AIBinder_getExtension); a strong ref this object owns.
     extension: ?*AIBinder = null,
+    extension_mu: Io.Mutex = .init,
     /// Weak refcount = number of AIBinder_Weak handles + 1 while strong > 0.
     /// The struct memory is freed when this reaches 0, so a weak handle keeps
     /// the control block alive (and promotable-or-null) after the payload is
@@ -2822,6 +2823,19 @@ export fn AIBinder_dump(binder: *AIBinder, fd: i32, args: ?[*]const [*:0]const u
     return STATUS_OK;
 }
 export fn AIBinder_getExtension(binder: *AIBinder, out_ext: *?*AIBinder) callconv(.c) i32 {
+    out_ext.* = null;
+    if (binder.kind == .remote) {
+        const request = AParcel.create();
+        defer request.destroy();
+        const reply = AParcel.create();
+        defer reply.destroy();
+        const status = Runtime.get().transact(binder, EXTENSION_TRANSACTION, request, reply, 0);
+        if (status != STATUS_OK) return status;
+        return AParcel_readStrongBinder(reply, out_ext);
+    }
+    ensureIo();
+    binder.extension_mu.lockUncancelable(g_io);
+    defer binder.extension_mu.unlock(g_io);
     if (binder.extension) |e| {
         _ = e.strong.fetchAdd(1, .monotonic);
         out_ext.* = e;
@@ -2831,9 +2845,13 @@ export fn AIBinder_getExtension(binder: *AIBinder, out_ext: *?*AIBinder) callcon
 export fn AIBinder_setExtension(binder: *AIBinder, ext: ?*AIBinder) callconv(.c) i32 {
     // Retain the new extension before releasing the old, so setting the same
     // object again cannot momentarily drop its last ref and free it.
+    if (binder.kind != .local) return -38; // INVALID_OPERATION
+    ensureIo();
+    binder.extension_mu.lockUncancelable(g_io);
     const old = binder.extension;
     if (ext) |e| _ = e.strong.fetchAdd(1, .monotonic);
     binder.extension = ext;
+    binder.extension_mu.unlock(g_io);
     if (old) |o| AIBinder_decStrong(o);
     return STATUS_OK;
 }
@@ -3993,6 +4011,7 @@ fn bpGetExtension(env: JNIEnvPtr, this: jni.jobject) callconv(.c) jni.jobject {
 const INTERFACE_TRANSACTION: u32 = ('_' << 24) | ('N' << 16) | ('T' << 8) | 'F';
 /// IBinder.PING_TRANSACTION ('_PNG'): answered with an empty OK reply.
 const PING_TRANSACTION: u32 = ('_' << 24) | ('P' << 16) | ('N' << 8) | 'G';
+const EXTENSION_TRANSACTION: u32 = ('_' << 24) | ('E' << 16) | ('X' << 8) | 'T';
 
 /// Pinned BBinder::transact answers ping before onTransact, including for
 /// JavaBBinder. Native objects also answer interface descriptors here; Java
@@ -4000,6 +4019,13 @@ const PING_TRANSACTION: u32 = ('_' << 24) | ('P' << 16) | ('N' << 8) | 'G';
 fn answerBinderControl(target: *AIBinder, code: u32, out: *AParcel) bool {
     const class = target.class orelse return false;
     if (code == PING_TRANSACTION) return true;
+    if (code == EXTENSION_TRANSACTION) {
+        var extension: ?*AIBinder = null;
+        _ = AIBinder_getExtension(target, &extension);
+        defer if (extension) |e| AIBinder_decStrong(e);
+        _ = AParcel_writeStrongBinder(out, extension);
+        return true;
+    }
     if (class == &g_java_forward_class) return false;
     switch (code) {
         INTERFACE_TRANSACTION => {
@@ -4829,4 +4855,8 @@ export fn azk_parcel_allocCount() callconv(.c) usize {
 export fn azk_parcel_freeData(p: *AParcel) callconv(.c) void {
     p.clearContents();
     p.freeDataBuffer();
+}
+
+export fn azk_binder_contextObject() callconv(.c) *AIBinder {
+    return Runtime.get().proxyFor(Client.context_object_id);
 }

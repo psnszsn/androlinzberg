@@ -34,6 +34,17 @@ public:
   virtual bool isBinderAlive() const;
   virtual status_t pingBinder();
   virtual status_t dump(int fd, const Vector<String16> &args);
+  virtual bool checkSubclass(const void *) const { return false; }
+  status_t getExtension(sp<IBinder> *);
+  class FrozenStateChangeCallback : public virtual RefBase {
+  public:
+    enum class State { FROZEN, UNFROZEN };
+    virtual void onStateChanged(const wp<IBinder> &, State) = 0;
+  };
+  // AZKB has no freezer notification source. Match libbinder's unsupported
+  // driver result; ProcessState does not advertise this feature.
+  status_t addFrozenStateChangeCallback(const wp<FrozenStateChangeCallback> &) { return INVALID_OPERATION; }
+  status_t removeFrozenStateChangeCallback(const wp<FrozenStateChangeCallback> &) { return INVALID_OPERATION; }
   class DeathRecipient : public virtual RefBase {
   public:
     virtual void binderDied(const wp<IBinder> &) = 0;
