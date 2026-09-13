@@ -196,6 +196,10 @@
     "libcore": {
       "revision": "fff4fcc0cf7f080cf2511cbb57561482b13b218f",
       "tracked_clean": true
+    },
+    "external/sqlite": {
+      "revision": "f696549905d99b79c505532e2bf7fc17a64a9671",
+      "tracked_clean": true
     }
   },
   "date": "2026-09-13",
@@ -239,14 +243,14 @@
   "registration_scope_note": "23 delegated registration modules, not 23 replaced classes: pointer_icon_jni registers a host cursor helper; media_ndk and aaudio_ndk also export C ABIs. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
-      "sha256": "98255452f482369aa9da12a502c1ef167ec572eb7142fe08ae0078ec396e0ffb",
+      "sha256": "eb95a06fd4672955348cc0f49e98bc7179517241bec7e98cb12521e02c047ca4",
       "defined_symbols": [
         "register_localized_collators",
         "register_android_functions"
       ]
     },
     "lib/art/libbinder_ndk.so": {
-      "sha256": "713ea7a3f875a38548207b622dc55c20d6042f912efd4f5c0649662da395039e",
+      "sha256": "e3b13405e393c577ce133bb397441cd5a4af60e79da498738428811eafb28a34",
       "defined_symbols": [
         "azk_register_binder_jni",
         "AMediaCodec_createDecoderByType",
@@ -294,6 +298,20 @@
       "external/sqlite/android/sqlite3_android.cpp": "e5ca750bf21f06e98873866d21908a2717f4f3bc30b361345252d26556706092",
       "external/sqlite/android/PhoneNumberUtils.cpp": "9b468e524fe2450f1d238ce57afc1473552a86e1e3ec572482291b6db79654b0",
       "external/sqlite/android/OldPhoneNumberUtils.cpp": "0822bf88d7c957b741cfe9ddac0540c019c910a59b398cc8db7311a9cbe6c7ed"
+    },
+    "runtime_revision": "d42afccd",
+    "validation": {
+      "framework_compat_passed": true,
+      "framework_module_passed": true,
+      "cpp_audit_passed": true,
+      "source_identity_passed": true,
+      "testkit_cases": 23,
+      "apk_cases": 28,
+      "apk_recorded_actions": 90,
+      "apk_structured_runtime_issues": 0,
+      "full_acceptance_passed": false,
+      "all_acceptance_targets_passed_across_runs": true,
+      "notes": "The parallel acceptance run exposed a fence-acquisition fixture race (fixed in 1823bb1e) and a desktop clipboard GPU timeout. The single-job run passed clipboard and every other target except an intermittent desktop physical-pointer assertion; stock-task-desktop-test then passed in isolation. No clean aggregate acceptance run is claimed."
     }
   }
 }

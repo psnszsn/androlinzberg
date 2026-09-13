@@ -1,13 +1,14 @@
 # Native client audit
 
 Baseline audited 2026-09-13 at `31ac159f`; Binder JNI and package evidence
-updated through `b7d78a39`; SQLite and utility JNI are described below. **The complete client stack is not stock AOSP.**
+updated through `b7d78a39`; SQLite and utility JNI through `d42afccd`. **The complete client stack is not stock AOSP.**
 The JVM source check covers selected framework source files. Android-native
 implementations, runtime libraries and process placement still contain substantial
 host adaptations.
 
-This is a source and architecture audit, not a new runtime regression run or
-an exhaustive per-method compatibility certification. It traces production
+This is a source and architecture audit, not an exhaustive per-method
+compatibility certification. The follow-up validation record distinguishes
+exercised behavior from source provenance. It traces production
 registration, build selection, native library mappings, host backends and the
 pinned reference. Existing passing acceptance tests establish their exercised
 behavior; they do not establish native provenance or stock process boundaries.
@@ -308,6 +309,14 @@ Perfetto packets, lifecycle callbacks, per-thread state and exception recovery.
 `StockPerfettoSmoke` also checks sanitized `android.os.Trace` events in a capture.
 Shared-memory regressions cover sealed descriptors, retained writable mappings,
 reader visibility and cleanup, including cross-process MemoryIntArray transfer.
+
+Utility validation passed both framework suites, 23 testkit tests and all 28 APK
+tests (90 recorded actions, zero structured runtime issues in the final run).
+Every acceptance target passed across the runs, but neither aggregate run was
+fully green: the single-job run hit an intermittent desktop pointer assertion
+that passed in isolation. The earlier clipboard GPU timeout did not recur.
+The fence-acquisition fixture race found during validation was fixed separately
+in `1823bb1e`. See the JSON validation record for this limitation.
 
 ## Remaining work and acceptance criteria
 
