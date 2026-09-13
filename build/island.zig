@@ -42,6 +42,8 @@ pub const Options = struct {
 };
 
 pub const Result = struct {
+    binder_jni_sources: []const std.Build.LazyPath,
+    binder_jni_includes: []const std.Build.LazyPath,
     file: std.Build.LazyPath,
     step: *std.Build.Step,
 };
@@ -91,7 +93,7 @@ const skia_extra_srcs = [_][]const u8{"tools/SkSharingProc.cpp"};
 const our_srcs = [_][]const u8{
     "src/native/ArtzigGpuPipeline.cpp",         "src/native/HardwareBufferRender.cpp",
     "src/native/RenderNodeReferenceBridge.cpp", "src/native/AospJniBridge.cpp",
-    "src/native/AospParcelAbi.cpp",             "src/native/HostLooper.cpp",
+    "src/native/BinderJniBridge.cpp",           "src/native/HostLooper.cpp",
     "src/native/HostedVideoOutput.cpp",
 };
 
@@ -208,6 +210,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     const G = struct {
         b: *std.Build,
         objects: *std.ArrayList(std.Build.LazyPath),
+        binder_jni_sources: *std.ArrayList(std.Build.LazyPath),
         target: std.Build.ResolvedTarget,
         optimize: std.builtin.OptimizeMode,
         common_includes: []const std.Build.LazyPath,
@@ -244,7 +247,12 @@ pub fn build(b: *std.Build, o: Options) Result {
                 for (self.common_includes) |include| compile.addPrefixedDirectoryArg("-I", include);
                 for (self.host_includes) |include| compile.addPrefixedDirectoryArg("-isystem", include);
                 for (includes) |include| compile.addPrefixedDirectoryArg("-I", include);
-                compile.addFileArg(root.path(self.b, file));
+                const source = root.path(self.b, file);
+                compile.addFileArg(source);
+                for (gen.binder_jni_srcs) |jni_source| {
+                    if (std.mem.eql(u8, file, jni_source))
+                        self.binder_jni_sources.append(self.b.allocator, source) catch @panic("oom");
+                }
                 compile.addArg("-o");
                 const object = compile.addOutputFileArg(self.b.fmt("{s}.o", .{name}));
                 self.objects.append(self.b.allocator, object) catch @panic("oom");
@@ -277,9 +285,11 @@ pub fn build(b: *std.Build, o: Options) Result {
             }
         }
     };
+    var binder_jni_sources: std.ArrayList(std.Build.LazyPath) = .empty;
     var g = G{
         .b = b,
         .objects = &objects,
+        .binder_jni_sources = &binder_jni_sources,
         .target = o.target,
         .optimize = o.optimize,
         .common_includes = common_includes.items,
@@ -495,6 +505,11 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/native/libs/graphicsenv"), &.{ "FeatureOverrides.cpp", "GpuStatsInfo.cpp", "GraphicsEnv.cpp", "IGpuService.cpp" }, graphics_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_os_GraphicsEnvironment.cpp"}, graphics_includes, &.{ "-include", b.pathResolve(&.{"src/native/GraphicsEnvironmentBackend.h"}) });
     g.add(b.path("src/native"), &.{"GraphicsEnvironmentBackend.cpp"}, graphics_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.binder_jni_srcs, &.{
+        o.aosp.path(b, "frameworks/base/core/jni"),
+        o.aosp.path(b, "frameworks/base/core/jni/include"),
+        o.aosp.path(b, "frameworks/native/libs/binderthreadstate/include"),
+    }, &.{});
     for (gen.core_jni_srcs) |file| {
         // The host AndroidRuntime header omits the platform's transitive trace include.
         const extra: []const []const u8 = if (std.mem.eql(u8, file, "android_view_InputEventReceiver.cpp"))
@@ -651,5 +666,5 @@ pub fn build(b: *std.Build, o: Options) Result {
     link.addArgs(o.host_link_flags);
     link.addArgs(&.{ "-ldl", "-lpthread", "-lm", "-lcrypto", "-o" });
     const output = link.addOutputFileArg("libandroid_platform.so");
-    return .{ .file = output, .step = &link.step };
+    return .{ .file = output, .step = &link.step, .binder_jni_sources = binder_jni_sources.items, .binder_jni_includes = common_includes.items };
 }

@@ -995,6 +995,7 @@ int main(int argc, char **argv) {
   dead->wait();
   std::this_thread::sleep_for(50ms);
   assert(unlinked->calls == 0);
+  assert(server->unlinkToDeath(dead) == DEAD_OBJECT);
   pass("C++ death recipient identity and unlink across service process exit");
 }
 

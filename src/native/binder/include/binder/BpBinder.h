@@ -25,6 +25,7 @@ class BpBinder final : public IBinder {
     }
   };
   std::mutex linksMutex;
+  bool obitsSent = false;
   std::vector<std::shared_ptr<Link>> links;
   int32_t trackedUid;
   void forget(const std::shared_ptr<Link> &);

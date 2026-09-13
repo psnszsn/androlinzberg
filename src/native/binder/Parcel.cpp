@@ -176,7 +176,7 @@ Parcel::Parcel() : mParcel(AParcel_create()), mOwned(true) {}
 Parcel::Parcel(AParcel *p) : mParcel(p), mOwned(false) {}
 Parcel::~Parcel() {
   if (mOwned)
-    AParcel_delete(mParcel);
+    azk_parcel_destroyOwned(mParcel);
 }
 Parcel *Parcel::forNative(AParcel *p) {
   if (!p)

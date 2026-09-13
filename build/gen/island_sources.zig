@@ -532,3 +532,9 @@ pub const surface_texture_srcs = [_][]const u8{
     "surfacetexture/surface_texture.cpp",
     "AChoreographer.cpp",
 };
+
+// Kept as a distinct set for native provenance checks.
+pub const binder_jni_srcs = [_][]const u8{
+    "android_util_Binder.cpp",       "android_os_Parcel.cpp",
+    "android_os_ServiceManager.cpp", "android_os_ServiceManagerNative.cpp",
+};

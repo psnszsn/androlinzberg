@@ -1,7 +1,8 @@
 # Stock Binder JNI over the hosted libbinder
 
-Status: implementing. Baseline and Parcel/state foundation are verified;
-Binder facade completion and the JNI switch remain. Baseline: repository `08a54c91`, pinned AOSP
+Status: implementing. Parcel/state and Binder facade foundations are committed;
+stock JNI is selected and focused regression checks pass. Full acceptance
+and fresh-worktree verification remain. Baseline: repository `08a54c91`, pinned AOSP
 `android-16.0.0_r1`. The [native audit](native-client-audit.md#stock-binder-jni-over-the-existing-facade)
 records the compile probes and ownership gaps.
 
@@ -62,8 +63,8 @@ facade headers.
 
 - Plan committed as `2f5cedb1`.
 - Baseline native facade, NDK, ABI and broker checks passed. The JVM/Binder and
-  focused NewPipe launch passed with the Mesa paths documented in
-  libbinder-facade-implementation.md. The first JVM run failed before launch
+  focused NewPipe launch passed with explicit host Mesa paths (see
+  [acceptance testing](acceptance.md)). The first JVM run failed before launch
   because `/run/opengl-driver` was absent; explicit installed Mesa paths fixed
   the environment. Logs and archive hashes are in
   `/tmp/azk-binder-jni-implementation/baseline*`.
@@ -72,9 +73,16 @@ facade headers.
   and string validation, allocation accounting, first work-source header
   mutation, nested identity tokens and state restoration through an actual
   remote nested callback. Logs are `parcel-tests.log`, `parcel-contracts.log`
-  and `parcel-jvm.log` under the same artifact directory. Production still
-  registers the existing Zig JNI. Build-owned original-JNI compilation and
-  symbol/provenance checks remain with the package/build integration stages.
+  and `parcel-jvm.log` under the same artifact directory. Committed as `e3e53e18`.
+- Binder facade interfaces, proxy accounting, extensions and context-object
+  discovery are committed as `ffe951c8`; native facade and NDK checks passed.
+- The four original JNI units now compile and link unchanged. Direct Java/NDK
+  conversion and GC lifetime tests and the production-input provenance audit
+  pass (`stock-jni-reference-fix.log`). Native facade, Binder, focused NewPipe
+  launch and JVM checks pass (`stock-jni-launch-fixed.log`,
+  `stock-jni-jvm-fixed.log`). Regressions exposed the previously accepted null
+  application shared-memory FD, input callbacks deleting borrowed global JNI
+  references and the old unlink-after-death expectation; these now follow AOSP.
 
 ## Stage 1: establish the build and ownership contract
 

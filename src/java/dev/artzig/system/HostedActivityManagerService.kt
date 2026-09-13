@@ -30,6 +30,10 @@ import android.util.Log
  * onServiceConnected.
  */
 class HostedActivityManagerService(private val context: android.content.Context? = null) : android.app.IActivityManager.Stub(), android.app.IActivityManager by unsupported<android.app.IActivityManager>() {
+    // Pinned AMS retains this read-only descriptor for the system process lifetime.
+    private val applicationSharedMemoryFd by lazy {
+        com.android.internal.os.ApplicationSharedMemory.getInstance().readOnlyFileDescriptor
+    }
     override fun asBinder(): android.os.IBinder = this
 
     private val intentCreators by lazy { HostedIntentCreators(context ?: android.app.ActivityThread.currentActivityThread().systemContext) }
@@ -944,7 +948,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
                     android.os.ServiceManager.getService(name)?.let { put(name, it) }
             } else null, android.os.Bundle(), android.os.Build.UNKNOWN,
             null, null, platformCompat?.getDisabledChanges(appInfo),
-            platformCompat?.getLoggableChanges(appInfo), null, null,
+            platformCompat?.getLoggableChanges(appInfo), null, applicationSharedMemoryFd,
             android.os.SystemClock.elapsedRealtime(), android.os.SystemClock.uptimeMillis())
         synchronized(lock) {
             if (processes[record.binder] === record) record.windowProcess?.setThread(record.thread)

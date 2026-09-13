@@ -3736,7 +3736,13 @@ internal object FrameworkModuleSmoke {
         val uid = Binder.getCallingUid()
         packages.bindPackageUid(pkg, uid)
         am.noteProcessPackage(uid, pkg, pkg)
-        am.attachApplication(thread, 0)
+        // This in-process AMS fixture bypasses SystemServer's shared-memory setup.
+        val previousMemory = com.android.internal.os.ApplicationSharedMemory.sInstance
+        com.android.internal.os.ApplicationSharedMemory.create().use { memory ->
+            com.android.internal.os.ApplicationSharedMemory.sInstance = memory
+            try { am.attachApplication(thread, 0) }
+            finally { com.android.internal.os.ApplicationSharedMemory.sInstance = previousMemory }
+        }
         fun intent(name: String) = Intent().setClassName(pkg, "$pkg.$name")
         val base = intent("TaskActivity").setAction("task-removed")
         fun start(name: String) = checkNotNull(am.startService(thread, intent(name), null, false, pkg, null, 0))

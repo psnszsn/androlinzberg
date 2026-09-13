@@ -11,6 +11,7 @@
 extern "C" {
 #endif
 AParcel *AParcel_create(void);
+void azk_parcel_destroyOwned(AParcel *);
 void AParcel_markSensitive(const AParcel *);
 bool AParcel_getAllowFds(const AParcel *);
 int32_t AParcel_getDataSize(const AParcel *);

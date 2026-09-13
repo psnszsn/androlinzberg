@@ -182,15 +182,17 @@ zig build -j10 cpp-audit
   and never touches the C++ allowlist); `src/bionic_translation.cfg` maps the
   soname to it. When loaded into an ART process (`System.load` of its absolute
   path; `JNI_OnLoad` captures the `JavaVM`), the `AIBinder_fromJavaBinder` /
-  `AIBinder_toJavaBinder` / `AParcel_fromJavaParcel` bridge converts binders
-  across the language boundary in-process with true sharing: the real AOSP
-  `android.os.Parcel`'s `mNativePtr` *is* an `AParcel`, a Java `Binder`'s
-  `mObject` is a `JavaBBinderHolder` whose `AIBinder` calls back
-  `Binder.execTransact` with the native parcels, and a `BinderProxy`'s
-  `mNativeData` owns a remote (or native-local) `AIBinder`. The same library
-  registers the Parcel/Binder/BinderProxy/BinderInternal/ServiceManager
-  natives (`framework_jni.zig` → `registerBinderFrameworkNatives`), so one
-  broker connection per process serves Java and native code alike. Local
+  `AIBinder_toJavaBinder` / `AParcel_fromJavaParcel` bridge uses the original
+  Binder/Parcel JNI helpers through `BinderJniBridge.cpp`. Java Parcel stores
+  a real C++ facade Parcel pointer; original JNI owns JavaBBinder holders,
+  JavaBBinder and BinderProxy native data. C++ Parcel owns or borrows shared
+  AParcel storage. The NDK's borrowed view can be deleted without destroying
+  Java's owner, and Binder conversion returns a JNI reference valid after the
+  temporary native owner is released. `framework_jni.zig` invokes the original
+  Binder/Parcel/ServiceManager registrars through an explicitly installed
+  callback table. The dependency direction remains native island -> libbinder
+  -> libbinder_ndk; standalone native programs do not acquire an ART dependency.
+  One broker connection and calling context serve all three languages. Local
   `AIBinder` operations need no broker connection. `framework_jni.zig` is also
   the registrar for the other real `android.os` classes: SystemProperties
   (property area reader, broker set), SharedMemory/MemoryFile (memfd),
@@ -207,9 +209,8 @@ zig build -j10 cpp-audit
   retains its own protocol and AOSP's `HwNoService`/`NoHwServiceManager` fallback;
   no HIDL hardware service manager is installed on the host. Native blob and
   parcel ownership and validation stay in AOSP. The Binder UAPI header is isolated
-  with the other Android kernel headers. `AospJniBridge.cpp` supplies the pinned
-  Binder exception-reporting flow because the main Binder JNI registration and
-  its Java logging globals belong to the hosted Binder bridge.
+  with the other Android kernel headers. HIDL now shares the original Binder
+  JNI exception-reporting implementation and its registered Java logging state.
 - MediaMetrics uses the original Java class, native metrics serialization and
   Binder client, plus the generated `IMediaMetricsService` protocol. The native
   JNI table uses `const` instead of `constexpr` for compatibility with upstream
@@ -402,8 +403,8 @@ macros and callback code that Zig cannot import directly.
   implementations and androidfw's BackupData/BackupHelpers directly. The one
   fixed read-only backup flag they consume comes from an aconfig-generated C++
   header; no native flag-storage provider is required for that constexpr call.
-- `AospParcelAbi.cpp` resolves a Java Parcel's `mNativePtr` to its genuine C++
-  Parcel view. Each native Parcel owns its view; there is no thread-local backing.
+- Pinned `android_os_Parcel.cpp` owns Java's C++ Parcel objects.
+  `BinderJniBridge.cpp` unwraps them for borrowed NDK access to shared storage.
 - `binder/Parcel.cpp` and `binder/Binder.cpp` provide the source API expected by
   pinned C++ consumers over the Zig runtime's C boundary. The installed
   `lib/art/libbinder.so` owns one shared copy of AOSP RefBase, strings, native
@@ -504,9 +505,9 @@ libclang, avoiding mixed C++ standard-library headers. Native consumers link
 both the C++ transport archive and Rust verifier through `input.Library.link`.
 Rust test executables use Zig's C++ linker to preserve the native runtime ABI.
 Stock `android_view_InputChannel.cpp` is also compiled into the JNI island.
-`AospParcelAbi.cpp` supplies the pinned C++ Java/Binder conversion functions
-through the existing Zig Java/NDK conversions, preserving identity and reference
-ownership. `input-channel-jvm-test` checks the Java/native Parcel framing,
+Pinned Binder JNI supplies the C++ Java/Binder conversion functions.
+`BinderJniBridge.cpp` also exposes them to NDK callers, preserving identity and
+reference ownership. `input-channel-jvm-test` checks the Java/native Parcel framing,
 duplication and disposal boundary; its follow-up JVM and full APK suite pass.
 The application now compiles pinned MessageQueue, InputEventReceiver and
 InputEventSender JNI. The former Zig MessageQueue implementation is replaced

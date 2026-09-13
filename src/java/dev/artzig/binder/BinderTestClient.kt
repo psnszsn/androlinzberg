@@ -155,7 +155,8 @@ internal object BinderTestClient {
             dead = true
         }
         check(dead, "calls after death throw DeadObjectException")
-        check(!binder.unlinkToDeath(recipient, 0), "unlinkToDeath after death reports the recipient is gone")
+        // Pinned BinderProxy JNI treats libbinder's DEAD_OBJECT as successful unlink.
+        check(binder.unlinkToDeath(recipient, 0), "unlinkToDeath accepts an already delivered death")
         var gone = false
         for (i in 0 until 100) {
             if (ServiceManager.checkService(BinderTestServer.SERVICE_NAME) == null) { gone = true; break }

@@ -3031,8 +3031,7 @@ below it; in particular, HardwareBuffer storage has since moved out of
 
 The rebase validation of this baseline passed native/Binder/system/JVM tests and
 all 11 APK integration tests (38 recorded steps with no runtime issues). The
-older baseline JVM failures recorded in `libbinder-facade-implementation.md`
-were absent after rebase. Establish fresh results when implementation begins.
+older facade baseline JVM storage-permission failures were absent after rebase. Establish fresh results when implementation begins.
 
 ### Additional verified service and output work (2026-09-06)
 

@@ -101,7 +101,9 @@ public:
     for (size_t i = 0; i < tokens.size(); ++i) {
       auto token = javaObjectForIBinder(c.env, tokens[i]);
       c.env->SetObjectArrayElement(array, i, token);
-      c.env->DeleteLocalRef(token);
+      // Stock JNI returns a borrowed global for JavaBBinder, a local for proxies.
+      if (token && c.env->GetObjectRefType(token) == JNILocalRefType)
+        c.env->DeleteLocalRef(token);
       if (c.failed()) return {};
     }
     // WMS owns the membership snapshot. This callback runs before acquiring
@@ -601,7 +603,10 @@ static jobject hostedDragTarget(JNIEnv *env, jclass, jlong handle, jobject task,
       ui::LogicalDisplayId{display}, x, y);
   const jfloat point[] = {target.x, target.y};
   env->SetFloatArrayRegion(local, 0, 2, point);
-  return javaObjectForIBinder(env, target.token);
+  auto object = javaObjectForIBinder(env, target.token);
+  // The result must outlive this snapshot's last native token reference.
+  return object && env->GetObjectRefType(object) == JNIGlobalRefType
+      ? env->NewLocalRef(object) : object;
 }
 static jboolean handoffDrag(JNIEnv *env, jclass, jlong handle, jobject inputToken) {
   auto owner = get(env, handle);

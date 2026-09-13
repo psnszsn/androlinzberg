@@ -320,6 +320,15 @@ pub const CppAidl = struct {
 };
 
 pub const cpp_aidl = [_]CppAidl{
+    // Typed context-manager interface consumed by original Binder JNI.
+    .{ .root = "frameworks/native/libs/binder/aidl", .input = "android/os/IServiceManager.aidl", .output = "android/os/IServiceManager.cpp" },
+    .{ .root = "frameworks/native/libs/binder/aidl", .input = "android/os/IServiceCallback.aidl", .output = "android/os/IServiceCallback.cpp" },
+    .{ .root = "frameworks/native/libs/binder/aidl", .input = "android/os/IClientCallback.aidl", .output = "android/os/IClientCallback.cpp" },
+    .{ .root = "frameworks/native/libs/binder/aidl", .input = "android/os/Service.aidl", .output = "android/os/Service.cpp" },
+    .{ .root = "frameworks/native/libs/binder/aidl", .input = "android/os/ServiceWithMetadata.aidl", .output = "android/os/ServiceWithMetadata.cpp" },
+    .{ .root = "frameworks/native/libs/binder/aidl", .input = "android/os/ServiceDebugInfo.aidl", .output = "android/os/ServiceDebugInfo.cpp" },
+    .{ .root = "frameworks/native/libs/binder/aidl", .input = "android/os/ConnectionInfo.aidl", .output = "android/os/ConnectionInfo.cpp" },
+
     .{ .root = "frameworks/native/libs/input", .input = "android/os/InputChannelCore.aidl" },
     // Original extractor service plus native audio metadata/interface headers.
     .{ .root = "frameworks/av/media/libmedia/aidl", .input = "android/IMediaExtractorService.aidl", .output = "android/IMediaExtractorService.cpp" },

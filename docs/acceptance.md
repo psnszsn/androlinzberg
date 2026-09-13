@@ -60,6 +60,16 @@ implement client operations through JNI callbacks. Passing this check and the
 UI suite does not establish a fully stock native client; see the
 [native client audit](native-client-audit.md).
 
+## Binder JNI provenance
+
+`binder-jni-source-test -Daosp-reference=/absolute/path/to/clean/aosp` compares
+all four build-selected Binder JNI units against the pin, checks the actual
+facade header search order and verifies unique registrar ownership in the
+native island. It rejects the obsolete Zig JNI and pointer-layout helper.
+The report at `zig-out/test-results/binder-jni-source.json` records source and
+library hashes. This target and `ndk-abi` also run in `acceptance-test`.
+`binder-jni-test` runs the existing Java/NDK conversion and lifetime checks alone.
+
 ## Verify a fresh worktree
 
 Create a new detached worktree at the revision being verified. Before building,

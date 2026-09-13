@@ -29,6 +29,10 @@ internal object SystemServer {
         Looper.prepareMainLooper()
         val uid = BinderSession.assignedUid()
         check(uid == Process.SYSTEM_UID) { "broker assigned uid " + uid + " to the system process" }
+        // Pinned SystemServer initializes the process-wide region before AMS;
+        // AMS passes a read-only descriptor in every bindApplication call.
+        com.android.internal.os.ApplicationSharedMemory.setInstance(
+            com.android.internal.os.ApplicationSharedMemory.create())
         // ro.boot.qemu is never seeded: the real ClipboardService takes its plain path.
         check(!android.os.Build.IS_EMULATOR) { "hosted sessions are not emulators" }
         val frameworkRes = System.getenv("ARTZIG_FRAMEWORK_RES")

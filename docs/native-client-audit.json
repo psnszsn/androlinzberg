@@ -4,8 +4,7 @@
   "scope": "Packaged native source/header files, not compiled translation units or binary identity",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "archive_sha256": "9ca641e184c58083369645a43d31e41cbae782c1577bd163013865612621898e",
-      "unchanged": 12300,
+      "unchanged": 12301,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -116,7 +115,8 @@
         "system/incremental_delivery/incfs/util/include/util/map_ptr.h",
         "system/libbase/properties.cpp"
       ],
-      "missing_reference": []
+      "added": [],
+      "archive_sha256": "29e413b00058ea37b78b5ad8d9cbf6031448fdd5b6ed46f8b7a0b6a1d5118ca8"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -255,5 +255,6 @@
         "AAudio_createStreamBuilder"
       ]
     }
-  }
+  },
+  "framework_package_refresh": "2026-09-13 Binder JNI migration: rechecked against the same clean pinned reference; one additional unchanged CallerUtils header."
 }

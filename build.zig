@@ -1562,6 +1562,7 @@ pub fn build(b: *std.Build) void {
     ndk_bridge_test.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
     ndk_bridge_test.run.setName("run libbinder_ndk JNI bridge test");
     jvm_test_step.dependOn(&ndk_bridge_test.run.step);
+    b.step("binder-jni-test", "Verify stock JNI Java/NDK Binder and Parcel ownership").dependOn(&ndk_bridge_test.run.step);
     const jvm_exit_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(jvm_exit_smoke, application_tree);
     jvm_exit_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));
@@ -1625,6 +1626,7 @@ pub fn build(b: *std.Build) void {
     run.run.setName("run androlinzberg");
     b.step("run", "Run the launcher: zig build run -- <app.apk>").dependOn(&run.run.step);
 
+    const binder_jni_audit = b.step("binder-jni-source-test", "Verify compiled stock Binder JNI inputs, headers and ELF owners");
     const source_identity = b.step("source-identity-test", "Compare exact compiled static sources with a clean pinned AOSP checkout");
     if (b.option([]const u8, "aosp-reference", "Absolute path to the clean pinned AOSP reference checkout")) |reference| {
         const compare = b.addSystemCommand(&.{ "python3", "-B" });
@@ -1649,8 +1651,30 @@ pub fn build(b: *std.Build) void {
         compare.has_side_effects = true;
         const install_report = b.addInstallFileWithDir(report, .prefix, "test-results/source-identity.json");
         source_identity.dependOn(&install_report.step);
+        const binder_compare = b.addSystemCommand(&.{ "python3", "-B" });
+        binder_compare.addFileArg(b.path("tools/binder-jni-audit.py"));
+        binder_compare.addArgs(&.{ "--reference", reference, "--repo" });
+        binder_compare.addDirectoryArg(b.path(""));
+        for (island.binder_jni_sources) |source| {
+            binder_compare.addArg("--source");
+            binder_compare.addFileArg(source);
+        }
+        for (island.binder_jni_includes) |include| {
+            binder_compare.addArg("--include");
+            binder_compare.addDirectoryArg(include);
+        }
+        binder_compare.addArg("--platform");
+        binder_compare.addFileArg(island.file);
+        binder_compare.addArg("--ndk");
+        binder_compare.addArtifactArg(binder_ndk);
+        binder_compare.addArg("--output");
+        const binder_report = binder_compare.addOutputFileArg("binder-jni-source.json");
+        binder_compare.has_side_effects = true;
+        const install_binder_report = b.addInstallFileWithDir(binder_report, .prefix, "test-results/binder-jni-source.json");
+        binder_jni_audit.dependOn(&install_binder_report.step);
     } else {
         source_identity.dependOn(&b.addFail("source-identity-test requires -Daosp-reference=/absolute/path/to/clean/android-16.0.0_r1").step);
+        binder_jni_audit.dependOn(&b.addFail("binder-jni-source-test requires -Daosp-reference=/absolute/path/to/clean/android-16.0.0_r1").step);
     }
 
     const acceptance = b.step("acceptance-test", "Run the complete stock-client acceptance suite and source comparison");
@@ -1720,6 +1744,8 @@ pub fn build(b: *std.Build) void {
         "egl-test",
         "framework-module-test",
         "source-identity-test",
+        "binder-jni-source-test",
+        "ndk-abi",
     }) |name| {
         const required = b.top_level_steps.get(name) orelse
             std.debug.panic("acceptance target does not exist: {s}", .{name});

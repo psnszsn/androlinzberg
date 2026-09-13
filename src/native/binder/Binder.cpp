@@ -338,8 +338,14 @@ status_t BpBinder::linkToDeath(const sp<DeathRecipient> &d, void *cookie, uint32
     link->recipient = AIBinder_DeathRecipient_new([](void *p) {
       auto link = *static_cast<std::shared_ptr<Link> *>(p);
       auto binder = link->who.promote();
-      if (binder)
-        static_cast<BpBinder *>(binder.get())->forget(link);
+      if (binder) {
+        auto *proxy = static_cast<BpBinder *>(binder.get());
+        {
+          std::lock_guard lock(proxy->linksMutex);
+          proxy->obitsSent = true;
+        }
+        proxy->forget(link);
+      }
       if (auto observer = link->observer.promote())
         observer->binderDied(link->who);
     });
@@ -363,6 +369,10 @@ status_t BpBinder::unlinkToDeath(const wp<DeathRecipient> &d, void *cookie, uint
     std::shared_ptr<Link> found;
     {
       std::lock_guard lock(linksMutex);
+      // Pinned BpBinder returns DEAD_OBJECT once its obituary was delivered,
+      // even though the corresponding registration has already been removed.
+      if (obitsSent)
+        return DEAD_OBJECT;
       auto i = std::find_if(links.begin(), links.end(), [&](const auto &l) {
         return (d.unsafe_get() ? l->observer == d : l->cookie == cookie);
       });

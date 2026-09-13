@@ -306,7 +306,7 @@ fn aospDuplicate(init: std.process.Init, root: []const u8, relative: []const u8)
 fn cppBoundary(io: Io, files: []const []const u8) !void {
     const expected = [_][]const u8{
         "src/native/AospJniBridge.cpp",
-        "src/native/AospParcelAbi.cpp",
+        "src/native/BinderJniBridge.cpp",
         "src/native/ArrayUtilsJniBridge.cpp",
         "src/native/ArtzigGpuPipeline.cpp",
         "src/native/GraphicsEnvironmentBackend.cpp",

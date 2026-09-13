@@ -1523,8 +1523,8 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     registerLog(env) catch return -1;
     registerEventLog(env) catch return -1;
     registerSecurityLog(env) catch return -1;
-    // Parcel/Binder/BinderProxy/BinderInternal — the real AOSP classes over the
-    // ndk Runtime/AParcel (co-located there for AParcel/Runtime access).
+    // Original Binder/Parcel/ServiceManager JNI in the native island; the
+    // shared NDK runtime retains only the host bootstrap and conversion seam.
     if (ndk.registerBinderFrameworkNatives(env_opaque) != 0) return -1;
     @import("debug_jni.zig").register(env) catch return -1;
     @import("pointer_icon_jni.zig").register(env, &g_platform_library) catch return -1;

@@ -113,39 +113,6 @@ int android::AndroidRuntime::registerNativeMethods(JNIEnv* env, const char* clas
     return jniRegisterNativeMethods(env, className, gMethods, numMethods);
 }
 
-// Pinned android_util_Binder::binder_report_exception. The main Binder JNI is hosted
-// separately, so resolve its Java collaborators here instead of using that TU's globals.
-namespace android {
-void binder_report_exception(JNIEnv* env, jthrowable exception, const char* message) {
-    env->ExceptionClear();
-    ScopedLocalRef<jclass> log(env, env->FindClass("android/util/Log"));
-    ScopedLocalRef<jstring> tag(env, env->NewStringUTF("JavaBinder"));
-    ScopedLocalRef<jstring> text(env, env->NewStringUTF(message));
-    if (log != nullptr && tag != nullptr && text != nullptr) {
-        jmethodID report = env->GetStaticMethodID(log.get(), "e",
-                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I");
-        if (report != nullptr) env->CallStaticIntMethod(log.get(), report, tag.get(), text.get(), exception);
-    }
-    env->ExceptionClear();
-    ScopedLocalRef<jclass> error(env, env->FindClass("java/lang/Error"));
-    if (error == nullptr) { env->ExceptionClear(); return; }
-    if (!env->IsInstanceOf(exception, error.get())) return;
-    ScopedLocalRef<jclass> threadClass(env, env->FindClass("java/lang/Thread"));
-    if (threadClass != nullptr) {
-        jmethodID current = env->GetStaticMethodID(threadClass.get(), "currentThread", "()Ljava/lang/Thread;");
-        jmethodID dispatch = env->GetMethodID(threadClass.get(), "dispatchUncaughtException", "(Ljava/lang/Throwable;)V");
-        if (current != nullptr && dispatch != nullptr) {
-            ScopedLocalRef<jobject> thread(env, env->CallStaticObjectMethod(threadClass.get(), current));
-            if (thread != nullptr) env->CallVoidMethod(thread.get(), dispatch, exception);
-        }
-    }
-    env->ExceptionClear();
-    env->Throw(exception);
-    env->ExceptionDescribe();
-    env->FatalError("java.lang.Error thrown during hwbinder transaction");
-}
-} // namespace android
-
 namespace android {
 int register_android_os_HidlSupport(JNIEnv*);
 int register_android_os_HwBinder(JNIEnv*);
@@ -605,7 +572,9 @@ extern "C" {
 
 // Memory factories must precede the Binder-side memfd overrides. Surface JNI
 // must follow Binder registration because its class initialization uses Binder.
+void azk_install_stock_binder_jni_bridge();
 int azk_register_runtime_jni(JNIEnv* env) {
+    azk_install_stock_binder_jni_bridge();
     if (!allowTestStackCapture()) return -1;
     env->GetJavaVM(&g_azk_vm);
     if (android::register_com_android_internal_os_ApplicationSharedMemory(env) != 0) return -1;
@@ -1080,4 +1049,10 @@ static int registerStockNativePropertiesSmoke(JNIEnv* env) {
         {"deviceApiLevel", "()I", reinterpret_cast<void*>(nativeDeviceApiLevel)},
     };
     return jniRegisterNativeMethods(env, "dev/artzig/StockNativePropertiesSmoke", methods, 4);
+}
+
+namespace android {
+bool android_util_Log_isVerboseLogEnabled(const char *tag) {
+    return __android_log_is_loggable(ANDROID_LOG_VERBOSE, tag, ANDROID_LOG_INFO);
+}
 }

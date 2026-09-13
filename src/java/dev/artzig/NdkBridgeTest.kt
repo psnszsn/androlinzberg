@@ -2,6 +2,8 @@ package dev.artzig
 
 import android.os.Binder
 import android.os.Parcel
+import android.os.IBinder
+import java.lang.ref.WeakReference
 
 /**
  * In-process test of the libbinder_ndk JNI true-sharing bridge: with the
@@ -13,6 +15,20 @@ import android.os.Parcel
 object NdkBridgeTest {
     @JvmStatic external fun forwardAdd(callback: Binder, a: Int, b: Int): Int
     @JvmStatic external fun makeNativeAdder(): android.os.IBinder
+    @JvmStatic external fun roundTrip(binder: IBinder?): IBinder?
+    @JvmStatic external fun mutateParcel(parcel: Parcel, binder: IBinder): Int
+    @JvmStatic external fun retainBinder(binder: IBinder): Long
+    @JvmStatic external fun releaseBinder(handle: Long)
+
+    private fun retainedJavaBinder(): Pair<Long, WeakReference<IBinder>> {
+        val binder = JavaAdder()
+        return retainBinder(binder) to WeakReference<IBinder>(binder)
+    }
+
+    private fun collect() {
+        System.gc()
+        System.runFinalization()
+    }
 
     /** A local Java Binder the native side calls back into. */
     private class JavaAdder : Binder() {
@@ -44,8 +60,34 @@ object NdkBridgeTest {
         val sum = forwardAdd(JavaAdder(), 20, 22)
         check(sum == 42, "native->Java forward add(20,22)=42 (got $sum)")
 
+        val javaBinder = JavaAdder()
+        check(roundTrip(javaBinder) === javaBinder, "Java Binder round-trip preserves object identity")
+        check(roundTrip(null) == null, "null Binder conversion")
+        val shared = Parcel.obtain()
+        try {
+            shared.writeInt(7)
+            shared.setDataPosition(0)
+            check(mutateParcel(shared, javaBinder) == 7, "NDK reads Java-owned Parcel storage")
+            shared.setDataPosition(4)
+            check(shared.readInt() == 11 && shared.readStrongBinder() === javaBinder && shared.readInt() == 99,
+                "Java reads NDK mutations and Binder after borrowed-view deletion")
+        } finally { shared.recycle() }
+        val (nativeHandle, weakBinder) = retainedJavaBinder()
+        check(nativeHandle != 0L, "native Binder strong reference acquired")
+        try {
+            collect()
+            check(weakBinder.get() != null, "native reference retains Java Binder through GC")
+        } finally { releaseBinder(nativeHandle) }
+        val deadline = System.nanoTime() + 5_000_000_000L
+        while (weakBinder.get() != null && System.nanoTime() < deadline) {
+            collect()
+            Thread.sleep(10)
+        }
+        check(weakBinder.get() == null, "last native release permits Java Binder collection")
+
         // Direction B: Java code calls into a native AIBinder (toJavaBinder).
         val nativeAdder = makeNativeAdder()
+        check(roundTrip(nativeAdder) === nativeAdder, "native Binder round-trip preserves Java proxy identity")
         val data = Parcel.obtain()
         val reply = Parcel.obtain()
         try {
