@@ -84,6 +84,7 @@ namespace android { jobject javaObjectForIBinder(JNIEnv*, const sp<IBinder>&); }
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <unistd.h>
 
 // Pinned AudioSystem JNI capability results and device constants. Keep their
@@ -546,8 +547,38 @@ static int azk_register_dev_artzig_window_HostedInputDevices(JNIEnv* env) {
 // Minimal android::AndroidRuntime backing for core/jni code (getJNIEnv in
 // ApkAssets callbacks). The VM is stored at registration time.
 #include "TestStackCapture.h"
+#include <utils/AndroidThreads.h>
 
 static JavaVM* g_azk_vm = nullptr;
+// Source: pinned AndroidRuntime::startReg/javaCreateThreadEtc/javaThreadShell.
+// ART is embedded by the host, so AndroidRuntime's zygote bootstrap is not used.
+// libutils threads marked canCallJava must stay attached through their entire
+// entry function, including native queues releasing their last JavaBBinder.
+namespace {
+struct AttachedThread {
+    android_thread_func_t entry;
+    void* data;
+    std::string name;
+};
+int attachedThreadMain(void* data) {
+    std::unique_ptr<AttachedThread> thread(static_cast<AttachedThread*>(data));
+    JavaVMAttachArgs args{JNI_VERSION_1_6, thread->name.data(), nullptr};
+    JNIEnv* env = nullptr;
+    if (g_azk_vm->AttachCurrentThread(&env, &args) != JNI_OK) return -1;
+    const int result = thread->entry(thread->data);
+    g_azk_vm->DetachCurrentThread();
+    return result;
+}
+int createAttachedThread(android_thread_func_t entry, void* data, const char* name,
+                         int32_t priority, size_t stackSize, android_thread_id_t* id) {
+    LOG_ALWAYS_FATAL_IF(!name, "Java-capable native thread requires a name");
+    auto* thread = new AttachedThread{entry, data, name};
+    const int result = androidCreateRawThreadEtc(attachedThreadMain, thread, name,
+                                                priority, stackSize, id);
+    if (!result) delete thread;
+    return result;
+}
+}
 extern int register_android_hardware_display_DisplayManagerGlobal(JNIEnv*);
 namespace android {
 extern int register_com_android_server_display_DisplayControl(JNIEnv*);
@@ -577,6 +608,7 @@ int azk_register_runtime_jni(JNIEnv* env) {
     azk_install_stock_binder_jni_bridge();
     if (!allowTestStackCapture()) return -1;
     env->GetJavaVM(&g_azk_vm);
+    androidSetCreateThreadFunc(createAttachedThread);
     if (android::register_com_android_internal_os_ApplicationSharedMemory(env) != 0) return -1;
     return android::register_android_util_MemoryIntArray(env);
 }

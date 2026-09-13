@@ -192,6 +192,10 @@ zig build -j10 cpp-audit
   Binder/Parcel/ServiceManager registrars through an explicitly installed
   callback table. The dependency direction remains native island -> libbinder
   -> libbinder_ndk; standalone native programs do not acquire an ART dependency.
+  The embedded runtime installs AOSP's libutils `canCallJava` thread-creation
+  contract: attachment covers the full native entry function, including queued
+  Binder destruction, and detachment follows native cleanup. A callback's local
+  JNI frame does not end that thread's VM attachment.
   One broker connection and calling context serve all three languages. Local
   `AIBinder` operations need no broker connection. `framework_jni.zig` is also
   the registrar for the other real `android.os` classes: SystemProperties

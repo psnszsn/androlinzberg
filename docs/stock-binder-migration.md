@@ -83,6 +83,14 @@ facade headers.
   `stock-jni-jvm-fixed.log`). Regressions exposed the previously accepted null
   application shared-memory FD, input callbacks deleting borrowed global JNI
   references and the old unlink-after-death expectation; these now follow AOSP.
+- Production switch: `84dc6e75`. Full acceptance exposed an alphabetic allowlist
+  error, fixed and verified by `cpp-audit` in `7dadd078`. All 28 APK cases passed.
+  The desktop stress sequence additionally exposed JavaBBinder destruction on
+  a detached libutils input thread. The embedded runtime now installs the
+  pinned AndroidRuntime `canCallJava` thread hook; the 16-action desktop
+  regression passes with zero issues (`desktop-thread-fix.log`). JVM and Binder
+  regressions pass (`thread-lifecycle-regressions.log`). Fresh-worktree
+  acceptance is pending.
 
 ## Stage 1: establish the build and ownership contract
 
