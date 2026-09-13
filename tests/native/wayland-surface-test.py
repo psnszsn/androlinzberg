@@ -91,12 +91,21 @@ try:
                 assert record.startswith('presented '), record
                 presented = int(record.split()[1])
             assert presented == 6
-            server.stdin.write(b'p')
+            # queueBuffer acknowledges the producer before the owner's event
+            # loop necessarily acquires that frame. Wait for observed acquisition
+            # before checking that an unsignaled fence leaves dispatch responsive.
+            acquisition_deadline = time.monotonic() + .5
             while True:
-                record = line(server, timeout=1)
-                if record.startswith('owner responsive '): break
-                assert record == 'presented 6', record
-            assert record == 'owner responsive frames=6 pendingFence=7', record
+                server.stdin.write(b'p')
+                while True:
+                    remaining = acquisition_deadline - time.monotonic()
+                    assert remaining > 0, 'Owner did not acquire queued fence'
+                    record = line(server, timeout=remaining)
+                    if record.startswith('owner responsive '): break
+                    assert record == 'presented 6', record
+                if record == 'owner responsive frames=6 pendingFence=7': break
+                assert record == 'owner responsive frames=6 pendingFence=0', record
+                time.sleep(.01)
             end = time.monotonic() + .15
             with selectors.DefaultSelector() as selector:
                 selector.register(server.stdout, selectors.EVENT_READ)
