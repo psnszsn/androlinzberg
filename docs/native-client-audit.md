@@ -1,7 +1,7 @@
 # Native client audit
 
 Baseline audited 2026-09-13 at `31ac159f`; Binder JNI and package evidence
-updated through `b7d78a39`. **The complete client stack is not stock AOSP.**
+updated through `b7d78a39`; SQLite and utility JNI are described below. **The complete client stack is not stock AOSP.**
 The JVM source check covers selected framework source files. Android-native
 implementations, runtime libraries and process placement still contain substantial
 host adaptations.
@@ -34,8 +34,8 @@ also does not mean zero unsupported native operations.
 [`native-client-audit.json`](native-client-audit.json) records archive checksums,
 reference revisions, modified native paths and delegated registration modules.
 Both archives were read directly. The framework archive was rechecked during
-the Binder JNI migration: one original CallerUtils header was added, with no
-new native modifications. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
+the Binder and utility JNI migrations: original CallerUtils and SQLite
+extension sources were added, with no new native modifications. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
 `.h`, `.hpp`, `.hxx`, `.S`, `.s` and `.inl` member was compared byte-for-byte
 with the corresponding pinned checkout path. Both current archives contain
 multiple top-level directories; their paths were retained. Tracked reference
@@ -43,7 +43,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 12,301 | 108 | 0 |
+| Framework | 12,306 | 108 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -62,7 +62,7 @@ the build selection; it is not a complete dynamic-symbol resolution audit.
 
 [`main.zig`](../src/main.zig) calls the Binder and graphics registrars and then
 [`host_natives.zig`](../src/platform/host_natives.zig) when booting APK ART.
-[`framework_jni.zig`](../src/binder/framework_jni.zig) has 25 delegated
+[`framework_jni.zig`](../src/binder/framework_jni.zig) has 23 delegated
 registration modules, plus its own registrations and the Binder registrar.
 That number is not a replaced-class count: it includes host-only cursor helpers
 and NDK exports. Merely registering a helper does not prove an app uses it.
@@ -281,31 +281,39 @@ wholesale into system_server.
 | ART and process bootstrap | [ART patches](../artzig/patches/art/), [`runtime_init_jni.zig`](../src/binder/runtime_init_jni.zig), [`activity_jni.zig`](../src/binder/activity_jni.zig); hosted class-loader projection, native-loader callbacks, stack/exit behavior and exec startup | Runtime changes are outside the JVM source identity result. Hosted zygote speaks stock requests but starts a fresh VM, not forked preloaded ART |
 | libc and dynamic loading | [`bionic_translation.cfg`](../src/bionic_translation.cfg), `artzig/src/art.zig`, [`GraphicsEnvironmentBackend.cpp`](../src/native/GraphicsEnvironmentBackend.cpp) | Android sonames map to host or owned implementations; Android linker namespaces are absent and extension requests fail. Restoring native clients is distinct from using full stock bionic/linker |
 | Libcore and files | [libcore patches](../artzig/patches/libcore/), [`host_paths.zig`](../artzig/src/host_paths.zig), AssetsProvider patch | Native path and authenticated-identity translation runs in the process. Move fixed filesystem/identity differences below libcore or document an explicit runtime exception |
-| SystemProperties, Process, SystemClock | [`framework_jni.zig`](../src/binder/framework_jni.zig), [`native_properties.zig`](../src/binder/native_properties.zig) | Owned JNI, broker property state and Linux process/clock operations replace original native implementations |
-| SharedMemory / MemoryFile / ApplicationSharedMemory / MemoryIntArray | Central JNI plus [`application_shared_memory_jni.zig`](../src/binder/application_shared_memory_jni.zig), [`memory_int_array_jni.zig`](../src/binder/memory_int_array_jni.zig) | Memfd ports, some delegated to Kotlin; stock mapping/atomic portions do not imply all JNI is stock. Keep host allocation under stock shared-memory APIs |
+| SystemProperties / SystemClock / Process | Original properties and clock JNI; [`native_properties.zig`](../src/binder/native_properties.zig) supplies broker-backed Bionic hooks | Properties retain hosted state and authorization. Process JNI still adapts Linux process operations and authenticated identities |
+| SharedMemory / MemoryFile / ApplicationSharedMemory / MemoryIntArray | Original JNI, compiled against the existing libcutils sealed-memfd backend | Host adaptation is below JNI; original mapping, atomic access and cleanup are retained |
 | NetworkUtils / process networking / TrafficStats | Central JNI, [`network_utils_internal_jni.zig`](../src/binder/network_utils_internal_jni.zig), [`traffic_stats_jni.zig`](../src/binder/traffic_stats_jni.zig) | Owned socket/fallback behavior. VPN/netd policy and Android per-UID tagging are not implemented by successful ordinary Linux networking |
-| Trace and Java Perfetto data sources | `registerTrace` / `registerPerfetto` in central JNI | Trace tags are always disabled; data-source creation/iteration/packet writes use zero/false/no-op implementations. Separate working native Perfetto tracing does not replace this Java path |
-| Log / EventLog / SecurityLog | Central JNI | Log forwarding and diagnostics callbacks are owned code; event/security log read methods return no events. Full Android logd read behavior is not present |
+| Trace and Java Perfetto data sources | Original JNI and Perfetto SDK | In-process packet capture works; no system traced daemon is installed |
+| Log / EventLog / SecurityLog | Original JNI and liblog; diagnostics observe Java-originated liblog output | Original host log reader returns no historical events; Android logd is absent |
 | Debug / VINTF | [`debug_jni.zig`](../src/binder/debug_jni.zig), [`vintf_jni.zig`](../src/binder/vintf_jni.zig) | Host procfs/allocator/runtime-info implementations and unavailable Android facilities replace original clients |
-| ClassLoaderFactory / CharsetUtils / OverlayConfig | Central JNI | Namespace creation returns null; charset and overlay entry points also have owned registrations. Restore corresponding JNI where its closure is available |
+| ClassLoaderFactory / CharsetUtils / OverlayConfig | Original JNI | Native loader namespaces remain a host seam; charset conversion is original, and OverlayConfig retains the original idmap2 executable probe |
 | SELinux | [`selinux_backend.zig`](../src/native/selinux_backend.zig) | Host policy adapter beneath reused JNI; Android seapp policy is not supplied |
-| SQLite | [`platform_abi.zig`](../src/native/platform_abi.zig) | `LOCALIZED` and `UNICODE` use byte comparison and ignore requested locale. `register_android_functions` only installs those collations, omitting Android SQL functions |
-| Test machinery | Central Log JNI, graphics namespace diagnostics and C++ smoke registrations | Helpers were moved out of `android.*`, but production native registration still calls/requires them. Namespace cleanup did not remove client instrumentation |
+| SQLite | Original `external/sqlite/android` extension over host SQLite/ICU | ICU collation and Android phone-number/file SQL functions are restored; the underlying SQLite library is still a host dependency |
+| Test machinery | liblog output callback, graphics namespace diagnostics and C++ smoke registrations | Helpers are outside `android.*`, but production native registration still calls/requires them |
 
-The SQLite difference is an independently actionable correctness finding.
-Pinned `external/sqlite/android/sqlite3_android.cpp` uses ICU collators and
-registers functions including `PHONE_NUMBERS_EQUAL` and `_DELETE_FILE`;
-stock SQLiteConnection JNI calls those exports. The current replacements can
-change locale-sensitive ordering and omit SQL functions without raising a
-structured unsupported diagnostic. This is confirmed in source, not a newly
-executed SQL regression. It needs original Android SQLite extensions, not a
-new Binder service.
+The utility selection lives in `build/gen/island_sources.zig` and
+`build/island.zig`. Original SystemProperties JNI resolves Bionic property calls
+through `azk/native_properties.h` to the existing broker-backed API. The shared
+memory units use the same renamed libcutils memfd exports as NDK shared memory.
+Log JNI binds its liblog write call through a scoped observer: only Java log
+writes may call the Java diagnostic journal, never arbitrary ART runtime logs.
+These source units are unchanged; those compile-time bindings remain explicit
+native adaptations.
+
+`StockSqliteSmoke` exercises German/Swedish index ordering after locale changes,
+Unicode collation, phone-function overloads and file deletion results.
+`StockUtilityJniSmoke` exercises charset buffer boundaries and actual Java
+Perfetto packets, lifecycle callbacks, per-thread state and exception recovery.
+`StockPerfettoSmoke` also checks sanitized `android.os.Trace` events in a capture.
+Shared-memory regressions cover sealed descriptors, retained writable mappings,
+reader visibility and cleanup, including cross-process MemoryIntArray transfer.
 
 ## Remaining work and acceptance criteria
 
-1. Restore isolated native implementations: SQLite extensions, tracing/logging
-   and available utility JNI closures. Classify missing-service behavior
-   explicitly instead of treating local failure models as stock.
+1. Close remaining Process, Debug, VINTF and networking JNI adaptations against
+   their native dependencies and host policy. Preserve explicit missing-service
+   behavior where Android infrastructure is absent.
 2. Decide whether libbinder and AZKB remain explicit native adaptations or
    whether literal native identity requires replacing them below the restored
    Binder JNI boundary.

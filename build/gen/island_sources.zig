@@ -227,7 +227,6 @@ pub const core_jni_srcs = [_][]const u8{
     "hwbinder/EphemeralStorage.cpp",
     "android_hardware_camera2_CameraMetadata.cpp",
     "android_util_jar_StrictJarFile.cpp",
-    "android_util_MemoryIntArray.cpp",
     "android_hardware_UsbDevice.cpp",
     "android_hardware_UsbDeviceConnection.cpp",
     "android_hardware_UsbRequest.cpp",
@@ -242,7 +241,6 @@ pub const core_jni_srcs = [_][]const u8{
     "android_backup_BackupDataInput.cpp",
     "android_backup_BackupDataOutput.cpp",
     "android_app_backup_FullBackup.cpp",
-    "com_android_internal_os_ApplicationSharedMemory.cpp",
     "android_net_LocalSocketImpl.cpp",
     "android_util_AssetManager.cpp",
     "android_content_res_ApkAssets.cpp",
@@ -403,6 +401,7 @@ pub const liblog_srcs = [_][]const u8{
     "log_event_list.cpp",
     "log_event_write.cpp",
     "logger_name.cpp",
+    "logger_read.cpp",
     "logger_write.cpp",
     "logprint.cpp",
     "properties.cpp",
@@ -537,4 +536,20 @@ pub const surface_texture_srcs = [_][]const u8{
 pub const binder_jni_srcs = [_][]const u8{
     "android_util_Binder.cpp",       "android_os_Parcel.cpp",
     "android_os_ServiceManager.cpp", "android_os_ServiceManagerNative.cpp",
+};
+
+// Unchanged pinned utility JNI, registered before framework startup.
+pub const utility_jni_srcs = [_][]const u8{
+    "android_util_Log.cpp",
+    "android_util_EventLog.cpp",
+    "android_app_admin_SecurityLog.cpp",
+    "com_android_internal_content_om_OverlayConfig.cpp",
+    "com_android_internal_os_ClassLoaderFactory.cpp",
+
+    "android_util_CharsetUtils.cpp",
+    "android_os_SystemClock.cpp",
+    "android_os_Trace.cpp",
+    "android_tracing_PerfettoDataSource.cpp",
+    "android_tracing_PerfettoDataSourceInstance.cpp",
+    "android_tracing_PerfettoProducer.cpp",
 };

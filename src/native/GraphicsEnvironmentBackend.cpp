@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <graphicsenv/GraphicsEnv.h>
 #include <nativeloader/dlext_namespaces.h>
+#include <nativeloader/native_loader.h>
 
 namespace {
 JavaVM* vm;
@@ -43,6 +44,13 @@ jstring nativeState(JNIEnv* env, jclass) {
 }  // namespace
 
 namespace android {
+// Pinned art/libnativeloader/native_loader.cpp::CreateClassLoaderNamespace host
+// branch. ART's full native loader is supplied by the bionic bridge here; its
+// non-namespaced host search paths need no per-class-loader namespace object.
+jstring CreateClassLoaderNamespace(JNIEnv*, int32_t, jobject, bool, jstring,
+                                   jstring, jstring, jstring) {
+    return nullptr;
+}
 extern "C" NativeLoaderNamespace* FindNativeLoaderNamespaceByClassLoader(JNIEnv*, jobject) {
     return nullptr;
 }

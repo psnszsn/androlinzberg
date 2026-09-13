@@ -304,6 +304,8 @@ public final class FrameworkCompatSmoke {
             testSystemProperties()
             testOsTail()
             testSharedMemory()
+            StockSqliteSmoke.run()
+            StockUtilityJniSmoke.run()
             testLocalContentProvider()
             testStockStrictModeRegistration()
             testAospPackageParser(args.firstOrNull())
@@ -809,7 +811,7 @@ public final class FrameworkCompatSmoke {
             android.util.Log.i("FrameworkCompatSmoke", "stock proto streams ok")
         }
 
-        /** Stock IME tracing over the inert hosted Perfetto producer seam. */
+        /** Stock IME tracing with no active Perfetto session. */
         @JvmStatic
         private fun testStockImePerfettoTracing() {
             require(

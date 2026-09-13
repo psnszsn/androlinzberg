@@ -447,6 +447,27 @@ pub fn build(b: *std.Build, o: Options) Result {
     for (gen.libutils_srcs) |file| {
         if (!@import("binder_cpp.zig").sharedUtils(file)) g.add(o.aosp.path(b, "system/core/libutils"), &.{file}, &.{o.aosp.path(b, "system/core/libutils")}, &.{"-DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION"});
     }
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_os_SystemProperties.cpp"}, &.{
+        o.aosp.path(b, "frameworks/base/core/jni"),
+        o.aosp.path(b, "frameworks/base/core/jni/include"),
+    }, &.{ "-include", "azk/native_properties.h" });
+    // Original Android SQL functions and ICU collators share SQLite/ICU with JNI.
+    g.add(o.aosp.path(b, "external/sqlite/android"), &.{ "sqlite3_android.cpp", "PhoneNumberUtils.cpp", "OldPhoneNumberUtils.cpp" }, &.{}, &.{"-DSQLITE_ENABLE_ICU"});
+    const utility_includes = &.{
+        o.aosp.path(b, "art/libnativeloader/include"),
+        o.aosp.path(b, "frameworks/base/core/jni"),
+        o.aosp.path(b, "frameworks/base/core/jni/include"),
+        o.aosp.path(b, "frameworks/native/libs/tracing_perfetto/include"),
+        o.aosp.path(b, "external/perfetto/include"),
+        o.perfetto.headers,
+    };
+    for (gen.utility_jni_srcs) |file| {
+        const flags: []const []const u8 = if (std.mem.eql(u8, file, "android_util_Log.cpp"))
+            &.{"-D__android_log_buf_write=azk_diagnostic_log_buf_write"}
+        else
+            &.{};
+        g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{file}, utility_includes, flags);
+    }
     g.add(o.aosp.path(b, "external/fmtlib"), &gen.fmtlib_srcs, &.{}, &.{});
     g.add(o.aosp.path(b, "frameworks/minikin"), &minikin_srcs, &.{ o.aosp.path(b, "frameworks/minikin/libs"), o.aosp.path(b, "frameworks/minikin/libs/minikin") }, &.{});
     g.add(o.aosp.path(b, "external/skia"), &skia_extra_srcs, &.{}, &.{});
@@ -516,7 +537,7 @@ pub fn build(b: *std.Build, o: Options) Result {
             &.{ aidl_inc, "-include", "utils/Trace.h" }
         else
             &.{aidl_inc};
-        g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{file}, &.{ b.path("src/native/sqlite-compat"), o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), zip_inc, apex_inc, input_compat_inc, binder_inc }, extra);
+        g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{file}, &.{ o.aosp.path(b, "external/sqlite/android"), o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), zip_inc, apex_inc, input_compat_inc, binder_inc }, extra);
     }
     // These pinned files rely on Bionic/transitive includes for all_of, ioctl
     // and EXT4_SUPER_MAGIC. Declare those headers explicitly for host libc++.
@@ -540,9 +561,11 @@ pub fn build(b: *std.Build, o: Options) Result {
         o.aosp.path(b, "frameworks/base/core/jni/include"),
         o.aosp.path(b, "frameworks/native/include/private"),
     }, &.{});
-    // The NDK uses original sealed-memfd operations; Binder retains its existing backing.
+    // NDK and framework JNI share original sealed-memfd operations; Binder retains its backing.
     const ndk_ashmem_flags = &.{
         "-DARTZIG_HOST_MEMFD",
+        "-include",
+        "linux/ashmem.h",
         "-Dashmem_create_region=azk_ndk_ashmem_create_region",
         "-Dashmem_valid=azk_ndk_ashmem_valid",
         "-Dashmem_get_size_region=azk_ndk_ashmem_get_size_region",
@@ -552,6 +575,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         "-Dhas_memfd_support=azk_ndk_has_memfd_support",
     };
     g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{"sharedmem.cpp"}, webview_includes, ndk_ashmem_flags);
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "android_os_SharedMemory.cpp", "android_os_MemoryFile.cpp", "android_util_MemoryIntArray.cpp", "com_android_internal_os_ApplicationSharedMemory.cpp" }, webview_includes, ndk_ashmem_flags);
     g.add(o.aosp.path(b, "system/core/libcutils"), &.{"ashmem-dev.cpp"}, webview_includes, ndk_ashmem_flags);
     // Original OBB parser, quota ioctl and AppFuse client; no hosted mount daemon.
     g.add(o.aosp.path(b, "system/core/libappfuse"), &.{ "FuseAppLoop.cc", "FuseBuffer.cc", "FuseBridgeLoop.cc", "EpollController.cc" }, &.{o.aosp.path(b, "system/core/libappfuse/include")}, &.{});

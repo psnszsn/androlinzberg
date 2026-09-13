@@ -31,6 +31,10 @@ internal object StockPerfettoSmoke {
         try {
             check(category.isEnabled == android.os.Flags.perfettoSdkTracingV2())
             check(!excluded.isEnabled)
+            check(android.os.Trace.isTagEnabled(android.os.Trace.TRACE_TAG_APP))
+            android.os.Trace.traceBegin(android.os.Trace.TRACE_TAG_APP, "jni|slice\nname")
+            android.os.Trace.traceEnd(android.os.Trace.TRACE_TAG_APP)
+            android.os.Trace.instant(android.os.Trace.TRACE_TAG_APP, "jni|instant\nname")
             PerfettoTrace.instant(category, "public-api").emit()
             // The stock public builder accepts an explicit enabled state. Exercise its JNI
             // even when the pinned build's framework tracing flag disables convenience APIs.
@@ -71,6 +75,7 @@ internal object StockPerfettoSmoke {
         val track = output.start(DataSourceConfig.TRACK_EVENT_CONFIG)
         output.write(TrackEventConfig.DISABLED_CATEGORIES, "*")
         output.write(TrackEventConfig.ENABLED_CATEGORIES, "artzig.perfetto.smoke")
+        output.write(TrackEventConfig.ENABLED_CATEGORIES, "app")
         output.end(track)
         output.end(config)
         output.end(source)
@@ -106,8 +111,11 @@ internal object StockPerfettoSmoke {
         check(string(args.getValue("string"), DebugAnnotation.STRING_VALUE) == "stock tracing")
         check(read(argsEvent, TrackEvent.FLOW_IDS) { readLong(it) }.size == 1)
         check(read(argsEvent, TrackEvent.TERMINATING_FLOW_IDS) { readLong(it) }.size == 1)
-        val begin = events.single { int(it, TrackEvent.TYPE) == TrackEvent.TYPE_SLICE_BEGIN }
-        val end = events.single { int(it, TrackEvent.TYPE) == TrackEvent.TYPE_SLICE_END }
+        check(events.any { name(it) == "jni slice name" && int(it, TrackEvent.TYPE) == TrackEvent.TYPE_SLICE_BEGIN })
+        check(events.any { name(it) == "jni instant name" && int(it, TrackEvent.TYPE) == TrackEvent.TYPE_INSTANT })
+        val begin = events.single { name(it) == "slice" && int(it, TrackEvent.TYPE) == TrackEvent.TYPE_SLICE_BEGIN }
+        val end = events.single { int(it, TrackEvent.TYPE) == TrackEvent.TYPE_SLICE_END &&
+            long(it, TrackEvent.TRACK_UUID) == long(begin, TrackEvent.TRACK_UUID) }
         check(name(begin) == "slice")
         check(long(begin, TrackEvent.TRACK_UUID) == long(end, TrackEvent.TRACK_UUID))
         val counters = events.filter { int(it, TrackEvent.TYPE) == TrackEvent.TYPE_COUNTER }

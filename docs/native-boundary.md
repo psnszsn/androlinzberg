@@ -164,8 +164,10 @@ zig build -j10 cpp-audit
 - `src/platform/host_composer.zig` owns the host display's layer validation,
   power state and software vsync worker through `std.Io`. It does not present
   task windows; Wayland owns desktop presentation.
-- `src/native/platform_abi.zig` supplies opaque HardwareBuffer JNI and SQLite
-  compatibility interfaces.
+- `src/native/platform_abi.zig` supplies the remaining opaque native ABI helpers.
+  SQLiteConnection uses the original Android SQLite extension: ICU LOCALIZED
+  and UNICODE collation, phone-number SQL functions and constrained file deletion.
+  It shares the host SQLite and ICU libraries with the original connection JNI.
 - `src/main.zig` starts ART and registers native interfaces.
 - `src/surfaceflinger_main.zig` owns the separately supervised SF process's
   readiness and stdin shutdown through `std.Io`.
@@ -196,16 +198,23 @@ zig build -j10 cpp-audit
   Binder destruction, and detachment follows native cleanup. A callback's local
   JNI frame does not end that thread's VM attachment.
   One broker connection and calling context serve all three languages. Local
-  `AIBinder` operations need no broker connection. `framework_jni.zig` is also
-  the registrar for the other real `android.os` classes: SystemProperties
-  (property area reader, broker set), SharedMemory/MemoryFile (memfd),
-  Process (priorities, signals, /proc; `std.Io` proc-file ownership and pinned
-  field/numeric parsing; authenticated PID/start-time UID translation across
-  hosted user namespaces), SystemClock (`clock_gettime`; all
-  `@CriticalNative`, so the Zig functions take no `JNIEnv`), Trace (the
-  Ravenwood no-op shape: no tag enabled, emitters empty), and
-  `ClassLoaderFactory.createClassloaderNamespace` (null: the bionic bridge has
-  no linker namespaces, loaders search their library path directly).
+  `AIBinder` operations need no broker connection. `framework_jni.zig` invokes
+  the original utility JNI registrars in the native island. SystemProperties
+  uses the existing broker-backed Bionic property hooks; SystemClock and
+  CharsetUtils use the original implementations. Trace and Java Perfetto data
+  sources use the original JNI and native Perfetto SDK, including real
+  in-process capture. A system tracing daemon is not installed.
+  Original Log, EventLog and SecurityLog JNI share liblog. A liblog output
+  callback records emitted Java messages in the diagnostic journal. Only the
+  Log JNI call is marked safe for that Java observer; native ART logs cannot
+  call Java from runtime critical sections. logd is absent,
+  so the original host reader returns no historical events. Original
+  ClassLoaderFactory JNI calls the native loader's host namespace seam:
+  class loaders search their library paths without Android linker namespaces.
+  OverlayConfig also uses its original JNI; external idmap2 availability is
+  still determined by the original executable probe.
+  Process remains a host adaptation for priorities, signals, procfs and
+  authenticated PID/start-time UID translation across hosted user namespaces.
 - HIDL uses the pinned Java runtime, JNI, libhidlbase and libhwbinder inside
   `libandroid_platform.so`. Java and C++ base/manager protocols, plus Java CAS/GNSS
   interfaces, are generated from the original HAL declarations. Hardware Binder
@@ -247,21 +256,13 @@ zig build -j10 cpp-audit
   connectivity alias independently of the launcher. Window surfaces still need
   a presentation adapter compatible with the host EGL driver; this JNI seam
   does not change the existing Wayland backend.
-- `src/binder/application_shared_memory_jni.zig` replaces only the allocation
-  and read-only-duplication ports of stock ApplicationSharedMemory JNI.
-  The Kotlin `ApplicationSharedMemoryBackend` reuses libcore's existing Posix
-  descriptor API to create and seal memfds; it does not add a second native
-  implementation of those syscalls. The compiled AOSP factory supplies the
-  layout size during registration, then its mapping, initialization, feature
-  cache, and cross-process atomics remain in the pinned C++ implementation.
-  Size seals and `F_SEAL_FUTURE_WRITE` retain writable existing mappings while
-  preventing later write access through transferred descriptors.
-- `src/binder/memory_int_array_jni.zig` replaces MemoryIntArray's creation and
-  mapping ports with `MemoryIntArrayBackend`'s sealed memfds through libcore
-  Posix. The stock JNI retains atomic reads/writes, size queries, unmapping,
-  and closure. Failed mapping closes the transferred descriptor and disarms
-  the partially constructed object's finalizer. The pinned ashmem UAPI header
-  is isolated from bionic's other headers in the host C++ include tree.
+- SharedMemory, MemoryFile, ApplicationSharedMemory and MemoryIntArray compile
+  their original JNI over libcutils' sealed-memfd implementation, also used by
+  NDK shared memory. The existing Linux adaptation selects memfd without
+  Android vendor/property or ashmem-ioctl probes. No Kotlin allocation adapters
+  or replacement JNI tables remain. Size seals and `F_SEAL_FUTURE_WRITE` retain
+  writable existing mappings while preventing later writes through transferred
+  descriptors. Original JNI owns mapping, initialization, atomics and cleanup.
 
 - `src/binder/media_crypto_jni.zig` supplies stock MediaCrypto's seven native
   methods at the absent DRM-factory boundary. The original JNI requires

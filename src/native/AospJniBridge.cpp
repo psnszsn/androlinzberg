@@ -303,6 +303,20 @@ extern void com_android_internal_os_ZygoteCommandBuffer_insert(JNIEnv*, jclass, 
 extern jstring com_android_internal_os_ZygoteCommandBuffer_nativeNextArg(JNIEnv*, jclass, jlong);
 extern void com_android_internal_os_ZygoteCommandBuffer_nativeReadFullyAndReset(JNIEnv*, jclass, jlong);
 extern jint com_android_internal_os_ZygoteCommandBuffer_nativeGetCount(JNIEnv*, jclass, jlong);
+extern int register_com_android_internal_os_ClassLoaderFactory(JNIEnv*);
+extern int register_android_os_SystemProperties(JNIEnv*);
+extern int register_android_util_Log(JNIEnv*);
+extern int register_android_util_EventLog(JNIEnv*);
+extern int register_android_app_admin_SecurityLog(JNIEnv*);
+extern int register_com_android_internal_content_om_OverlayConfig(JNIEnv*);
+extern int register_android_os_SharedMemory(JNIEnv*);
+extern int register_android_os_MemoryFile(JNIEnv*);
+extern int register_android_util_CharsetUtils(JNIEnv*);
+extern int register_android_os_SystemClock(JNIEnv*);
+extern int register_android_os_Trace(JNIEnv*);
+extern int register_android_tracing_PerfettoDataSource(JNIEnv*);
+extern int register_android_tracing_PerfettoDataSourceInstance(JNIEnv*);
+extern int register_android_tracing_PerfettoProducer(JNIEnv*);
 extern int register_android_os_PerfettoTrace(JNIEnv*);
 extern void android_os_PerfettoTrace_register(bool);
 extern int register_android_os_PerfettoTrackEventExtra(JNIEnv*);
@@ -611,6 +625,77 @@ int azk_register_runtime_jni(JNIEnv* env) {
     androidSetCreateThreadFunc(createAttachedThread);
     if (android::register_com_android_internal_os_ApplicationSharedMemory(env) != 0) return -1;
     return android::register_android_util_MemoryIntArray(env);
+}
+
+// Host liblog sink: original Log JNI supplies Android validation/filtering.
+// Observe emitted Java messages below JNI. Native ART logging can run while
+// holding runtime locks or disallowing suspension, so it must never call Java.
+static thread_local bool javaLogWrite;
+static jclass diagnosticLogClass;
+static jmethodID diagnosticRecordLog;
+static void diagnosticLogger(const __android_log_message* message) {
+    __android_log_stderr_logger(message);
+    static thread_local bool recording = false;
+    if (!javaLogWrite || recording) return;
+    JNIEnv* env = android::AndroidRuntime::getJNIEnv();
+    if (!env || !diagnosticLogClass) return;
+    recording = true;
+    jthrowable pending = env->ExceptionOccurred();
+    if (pending) env->ExceptionClear();
+    if (env->PushLocalFrame(4) == JNI_OK) {
+        jstring tag = message->tag ? env->NewStringUTF(message->tag) : nullptr;
+        jstring text = env->NewStringUTF(message->message);
+        if (!env->ExceptionCheck())
+            env->CallStaticVoidMethod(diagnosticLogClass, diagnosticRecordLog,
+                                     static_cast<jint>(message->priority), tag, text);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->PopLocalFrame(nullptr);
+    } else {
+        env->ExceptionClear();
+    }
+    if (pending) { env->Throw(pending); env->DeleteLocalRef(pending); }
+    recording = false;
+}
+// Only the original Log JNI unit binds this liblog entry point to this wrapper.
+// liblog still owns filtering, buffer selection, output and the return value.
+int azk_diagnostic_log_buf_write(int buffer, int priority, const char* tag, const char* text) {
+    const bool previous = javaLogWrite;
+    javaLogWrite = true;
+    const int result = __android_log_buf_write(buffer, priority, tag, text);
+    javaLogWrite = previous;
+    return result;
+}
+static int installDiagnosticLogger(JNIEnv* env) {
+    jclass cls = env->FindClass("dev/artzig/ArtzigTestDiagnostics");
+    if (!cls) return -1;
+    diagnosticRecordLog = env->GetStaticMethodID(cls, "recordLog",
+                                               "(ILjava/lang/String;Ljava/lang/String;)V");
+    if (!diagnosticRecordLog) { env->DeleteLocalRef(cls); return -1; }
+    diagnosticLogClass = static_cast<jclass>(env->NewGlobalRef(cls));
+    env->DeleteLocalRef(cls);
+    if (!diagnosticLogClass) return -1;
+    __android_log_set_logger(diagnosticLogger);
+    return 0;
+}
+
+// Original utility registrars run after the hosted property/logging bootstrap.
+int azk_register_utility_jni(JNIEnv* env) {
+    if (android::register_com_android_internal_os_ClassLoaderFactory(env) != 0) return -1;
+    if (android::register_android_os_SystemProperties(env) != 0) return -1;
+    if (android::register_android_util_Log(env) != 0) return -1;
+    if (android::register_android_util_EventLog(env) != 0) return -1;
+    if (android::register_android_app_admin_SecurityLog(env) != 0) return -1;
+    if (android::register_com_android_internal_content_om_OverlayConfig(env) != 0) return -1;
+    if (installDiagnosticLogger(env) != 0) return -1;
+    if (android::register_android_os_SharedMemory(env) != 0) return -1;
+    if (android::register_android_os_MemoryFile(env) != 0) return -1;
+    if (android::register_android_util_CharsetUtils(env) != 0) return -1;
+    if (android::register_android_os_SystemClock(env) != 0) return -1;
+    if (android::register_android_os_Trace(env) != 0) return -1;
+    if (android::register_android_tracing_PerfettoDataSource(env) != 0) return -1;
+    if (android::register_android_tracing_PerfettoDataSourceInstance(env) != 0) return -1;
+    if (android::register_android_tracing_PerfettoProducer(env) != 0) return -1;
+    return 0;
 }
 
 int azk_register_graphics_jni(JNIEnv* env) {
@@ -1081,10 +1166,4 @@ static int registerStockNativePropertiesSmoke(JNIEnv* env) {
         {"deviceApiLevel", "()I", reinterpret_cast<void*>(nativeDeviceApiLevel)},
     };
     return jniRegisterNativeMethods(env, "dev/artzig/StockNativePropertiesSmoke", methods, 4);
-}
-
-namespace android {
-bool android_util_Log_isVerboseLogEnabled(const char *tag) {
-    return __android_log_is_loggable(ANDROID_LOG_VERBOSE, tag, ANDROID_LOG_INFO);
-}
 }

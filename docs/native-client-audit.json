@@ -1,10 +1,10 @@
 {
   "revision": "31ac159fbd38dec3103f0293c1e2781a6366311a",
   "reference": "Pinned checkout described by aosp/README.md; project revisions below",
-  "scope": "Packaged native source/header files; compiled Binder JNI follow-up is recorded separately",
+  "scope": "Packaged native source/header files; compiled Binder and utility JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 12301,
+      "unchanged": 12306,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -116,7 +116,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "29e413b00058ea37b78b5ad8d9cbf6031448fdd5b6ed46f8b7a0b6a1d5118ca8"
+      "archive_sha256": "388612fcfe85c977cb3134744af00adc904ebc9d2bd660e004b4591c893f3737"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -215,8 +215,6 @@
     "src/binder/network_utils_internal_jni.zig",
     "src/binder/debug_jni.zig",
     "src/binder/pointer_icon_jni.zig",
-    "src/binder/application_shared_memory_jni.zig",
-    "src/binder/memory_int_array_jni.zig",
     "src/binder/vintf_jni.zig",
     "src/binder/performance_hint_jni.zig",
     "src/binder/traffic_stats_jni.zig",
@@ -238,7 +236,7 @@
     "src/binder/egl_extensions_jni.zig",
     "src/binder/legacy_egl_jni.zig"
   ],
-  "registration_scope_note": "25 delegated registration modules, not 25 replaced classes: pointer_icon_jni registers a host cursor helper; media_ndk and aaudio_ndk also export C ABIs. Central and C++ registrars are additional.",
+  "registration_scope_note": "23 delegated registration modules, not 23 replaced classes: pointer_icon_jni registers a host cursor helper; media_ndk and aaudio_ndk also export C ABIs. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
       "sha256": "98255452f482369aa9da12a502c1ef167ec572eb7142fe08ae0078ec396e0ffb",
@@ -256,7 +254,7 @@
       ]
     }
   },
-  "framework_package_refresh": "2026-09-13 Binder JNI migration: rechecked against the same clean pinned reference; one additional unchanged CallerUtils header.",
+  "framework_package_refresh": "2026-09-13 SQLite and utility JNI: rechecked against the clean pinned reference; five additional unchanged SQLite native source/header files, no new modifications.",
   "binder_jni_followup": {
     "runtime_revision": "b7d78a39",
     "verified_date": "2026-09-13",
@@ -272,5 +270,30 @@
     "recorded_actions": 329,
     "structured_runtime_issues": 0,
     "details": "docs/acceptance.md#binder-jni-provenance"
+  },
+  "utility_jni_followup": {
+    "verified_date": "2026-09-13",
+    "scope": "16 original utility JNI units and three original SQLite extension implementation units; host properties, sealed memfd, logging and native-loader backends remain explicit adaptations",
+    "source_sha256": {
+      "frameworks/base/core/jni/android_util_Log.cpp": "f005e7b0fabc2f09c377ec8db5ab1895480a279c76202a050044ede644cc9bce",
+      "frameworks/base/core/jni/android_util_EventLog.cpp": "b014f633a8c9cbf69a991781c96c38ed1aaabccfaa882146b816f18ae02357e1",
+      "frameworks/base/core/jni/android_app_admin_SecurityLog.cpp": "f2f55b2d2b27a7464f560f56ff6beb91ea6fdd4178e395a9b8d6b712c2704d8c",
+      "frameworks/base/core/jni/com_android_internal_content_om_OverlayConfig.cpp": "15ff9fcd936145bd4f349192a76a2930822fab7f8d72e510558e8197032c2d8b",
+      "frameworks/base/core/jni/com_android_internal_os_ClassLoaderFactory.cpp": "ce47776a5b1fb1c8096665626fa9d7ff31dc9064a29fb884a2c6cc87e5b94af8",
+      "frameworks/base/core/jni/android_util_CharsetUtils.cpp": "0eadd36c6991d684811ef5f276c7b39003a71f25eb45e8f863cd093397a86270",
+      "frameworks/base/core/jni/android_os_SystemClock.cpp": "e123d7ec32927f6ef9d66ad43100c2803b1910fe8ff8c8b29000d8f8b2e3be96",
+      "frameworks/base/core/jni/android_os_Trace.cpp": "c2de033aed05d8363a071bb46c82c3a446ebd44c32e586a64cdcce26acb6a2c2",
+      "frameworks/base/core/jni/android_tracing_PerfettoDataSource.cpp": "ba509c0cd03d31a7abc542800e9e6088ccc3a2022cc5e2703c137b0aafcb4e12",
+      "frameworks/base/core/jni/android_tracing_PerfettoDataSourceInstance.cpp": "5bdbf9f3ba97de8414d26126dd08bb82f3e85e9ba19ff877ad8dd1ab862639b8",
+      "frameworks/base/core/jni/android_tracing_PerfettoProducer.cpp": "d8a08ad8af0d7e38251a0a0f7fa8fdaee221c466448b3d58e279c9e50e3cf553",
+      "frameworks/base/core/jni/android_os_SystemProperties.cpp": "b9e0219aa5459d7ea0b11cd4f76d535894ed83a121a2b5f29521bc55a3f5997b",
+      "frameworks/base/core/jni/android_os_SharedMemory.cpp": "fca35e6800b1bf9c49b7d0ff16355822e5b7e812675c4cbdd3649c09d1de03a6",
+      "frameworks/base/core/jni/android_os_MemoryFile.cpp": "24e6df11ba61d154d307e4ab77ebd72d55105d3835b0e22566b6f857e851d81f",
+      "frameworks/base/core/jni/android_util_MemoryIntArray.cpp": "367c226d42805a0179df3f31558a657d85f2176ceaaf4a793366fe4838e495d3",
+      "frameworks/base/core/jni/com_android_internal_os_ApplicationSharedMemory.cpp": "9ff81f3ae2819c0b34359aa939bc1bfe8edfda8f3090690f038d8d3a720674ce",
+      "external/sqlite/android/sqlite3_android.cpp": "e5ca750bf21f06e98873866d21908a2717f4f3bc30b361345252d26556706092",
+      "external/sqlite/android/PhoneNumberUtils.cpp": "9b468e524fe2450f1d238ce57afc1473552a86e1e3ec572482291b6db79654b0",
+      "external/sqlite/android/OldPhoneNumberUtils.cpp": "0822bf88d7c957b741cfe9ddac0540c019c910a59b398cc8db7311a9cbe6c7ed"
+    }
   }
 }
