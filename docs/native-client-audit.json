@@ -1,7 +1,7 @@
 {
   "revision": "31ac159fbd38dec3103f0293c1e2781a6366311a",
   "reference": "Pinned checkout described by aosp/README.md; project revisions below",
-  "scope": "Packaged native source/header files, not compiled translation units or binary identity",
+  "scope": "Packaged native source/header files; compiled Binder JNI follow-up is recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
       "unchanged": 12301,
@@ -256,5 +256,21 @@
       ]
     }
   },
-  "framework_package_refresh": "2026-09-13 Binder JNI migration: rechecked against the same clean pinned reference; one additional unchanged CallerUtils header."
+  "framework_package_refresh": "2026-09-13 Binder JNI migration: rechecked against the same clean pinned reference; one additional unchanged CallerUtils header.",
+  "binder_jni_followup": {
+    "runtime_revision": "b7d78a39",
+    "verified_date": "2026-09-13",
+    "scope": "Four compiled Binder JNI units and their facade headers/registrar ownership; libbinder and AZKB remain hosted",
+    "source_sha256": {
+      "android_util_Binder.cpp": "f61479cec5796f8633e20aa965d8d2f553408d5ef99833c7b2edfc88e71cedc0",
+      "android_os_Parcel.cpp": "b0960a573b9580d18397159b4035131da2a209310d380d4376d6d9c7cb13a5f8",
+      "android_os_ServiceManager.cpp": "81051e20fa6d0328045ec161d9e35af4f7f2b063970396105a20d6657d5ed825",
+      "android_os_ServiceManagerNative.cpp": "9a5a2e09b03aed671b502db439124136240dedd6c5f08bf723c9dfc6827df959"
+    },
+    "full_acceptance_passed": true,
+    "apk_cases": 28,
+    "recorded_actions": 329,
+    "structured_runtime_issues": 0,
+    "details": "docs/stock-binder-migration.md"
+  }
 }

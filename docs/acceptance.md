@@ -85,9 +85,15 @@ The acceptance target does not remove caches or create worktrees automatically.
 
 ## Latest verification
 
-The complete command above passed on 2026-09-11 at `c7b6f3e9` in 10 minutes
-36 seconds. All 28 APK integration cases passed; those cases and the WebView,
-video, desktop, IME, drag and clipboard checks produced 323 actions with no
-structured runtime issues. WebView content/video and desktop modal screenshots
-were inspected. Source identity reported 7,081 unchanged AOSP inputs, 62 server
-adaptations and no modified or repository-owned client substitutes.
+Full acceptance passed on 2026-09-13 at runtime commit `b7d78a39` in the detached
+worktree `/tmp/androlinzberg-stock-binder-acceptance`, in about 11 minutes after
+its archive-only build. All 28 APK cases passed. The APK, WebView, desktop, IME,
+drag and clipboard logs contain 329 actions, zero failed actions and no structured
+runtime issues. WebView video and desktop modal screenshots were inspected.
+
+Source identity reports 7,081 unchanged AOSP inputs, 62 server adaptations and
+no modified or repository-owned client substitutes. Binder JNI provenance
+confirms four unchanged production units, matching facade headers and unique
+registrar ownership; NDK ABI checks pass. Installed library hashes match the
+reports. Archive hashes, commits, commands and retained artifacts are recorded
+in [the completed Binder migration](stock-binder-migration.md).
