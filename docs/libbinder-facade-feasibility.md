@@ -5,7 +5,8 @@ full libgui compatibility is not yet established.
 
 Reviewed on 2026-09-05 against repository source `cbd4362` and pinned AOSP
 `android-16.0.0_r1`. This evaluates an alternative to
-[replacing the native Binder implementation](stock-binder-migration.md).
+[replacing the native Binder implementation](cpp-binder-transport.md).
+The current follow-up is [stock JNI over the implemented facade](stock-binder-migration.md).
 
 ## Verdict
 

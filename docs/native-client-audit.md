@@ -186,6 +186,92 @@ compatible kernel Binder path or a narrowly defined driver/OS boundary below
 them. Keeping the present facade would be an explicit exception to the goal.
 Service-backed audio/media alone cannot resolve this distinction.
 
+### Stock Binder JNI over the existing facade
+
+The implementation sequence and completion gates are maintained in the
+[Binder JNI migration plan](stock-binder-migration.md).
+
+Investigated 2026-09-13 against `08a54c91` and the pinned
+`android-16.0.0_r1` reference. **Keeping AZKB and compiling unchanged AOSP JNI
+against the hosted C++ libbinder is a feasible migration direction.** The two
+Binder/Parcel JNI units call C++ libbinder interfaces rather than opening the
+kernel driver themselves. Replacing the transport is not a prerequisite for
+restoring those JNI sources. The result would still have a hosted libbinder
+and NDK implementation; it would not make the entire native client stock.
+
+An object-compilation probe used the unchanged reference JNI files, production
+facade headers first, packaged AOSP support headers, and the production host
+prelude. It used Zig C++23, with exceptions and RTTI disabled. No replacement
+method declarations or implementations were added to make the probe pass.
+
+| Original JNI unit | Compile result against current facade |
+|---|---|
+| `android_os_Parcel.cpp` | Fails with 16 compiler diagnostics |
+| `android_util_Binder.cpp` | Fails with 39 compiler diagnostics, including cascading errors |
+| `android_os_ServiceManager.cpp` | Compiles to an object |
+| `android_os_ServiceManagerNative.cpp` | Blocked by generated `android/os/IServiceManager.h` outside this probe's include closure |
+
+These are diagnostic counts, not unique missing-method counts or an exhaustive
+link dependency inventory. Full commands, source hashes and compiler output
+are retained locally in `/tmp/azk-stock-binder-jni-audit/results.json` and the
+adjacent per-source `.log` files. The successful object was not linked or run.
+
+The concrete work is:
+
+1. **Complete the facade interfaces and their behavior.** Parcel needs string8
+   reads, data/range comparison, Binder/FD range queries, allocation/blob
+   accounting, and interface-token/work-source operations. IPCThreadState
+   needs explicit identity, StrictMode, work-source and scheduling interfaces.
+   Binder needs subclass checks, extensions, stability and frozen-state
+   interfaces. Proxy count tracking and callbacks also need implementations;
+   their declarations in the original header conceal these link-time gaps.
+   Extract the current private `BpBinder` class into a matching facade header:
+   the probe currently falls through to AOSP's incompatible class definition.
+   Compiling both definitions would not establish a valid C++ ABI.
+2. **Switch Java native ownership together.** Currently `Parcel.mNativePtr`
+   holds a Zig `AParcel*`; stock JNI expects a C++ `Parcel*`. Binder's holder
+   and BinderProxy's native data also have different layouts. Stock JNI should
+   own its C++ holders/proxies and facade Parcel objects, while facade Parcel
+   continues to own or borrow AZKB storage. Rework `AParcel_fromJavaParcel`,
+   `AIBinder_fromJavaBinder` and `AIBinder_toJavaBinder` to unwrap/wrap through
+   that boundary. Retire the conflicting conversions in
+   [`AospParcelAbi.cpp`](../src/native/AospParcelAbi.cpp), duplicate JNI
+   registrations and Zig finalizers in the same transition. Otherwise the
+   migration risks interpreting one native object layout as another or
+   recursively calling the Java/NDK conversion helpers.
+3. **Route Java callbacks through stock JavaBBinder.** The existing
+   `BBinder::acquireNative` route already dispatches AZKB transactions to a C++
+   `onTransact` with borrowed facade Parcels. Stock `JavaBBinder` can use this
+   route. The old `javaForwardTransact` passes raw AParcel addresses to Java
+   and must no longer own this path. Preserve Java/native identity, strong and
+   weak references, death-recipient cleanup, and native worker attachment.
+4. **Expose the existing context object and complete service-manager glue.**
+   [`Broker.zig`](../src/binder/Broker.zig) already serves `IServiceManager` on
+   reserved object ID 1. `ProcessState::getContextObject` can return its C++
+   wrapper; a replacement broker or service registry is unnecessary for this
+   step. The companion JNI requires the generated native IServiceManager
+   interface and its `IServiceManagerFFI` entry point, which returns that typed
+   interface. Compilation of the ordinary ServiceManager JNI alone does not
+   validate this companion or service discovery at runtime.
+5. **Correct state semantics below JNI.** Existing Parcel work-source
+   replacement returns false and reading returns -1; interface tokens write
+   fixed StrictMode/work-source values. Proxy accounting is stubbed. Runtime
+   transaction frames restore caller UID/PID but do not save/restore the
+   separate StrictMode, work-source and explicit-identity thread locals.
+   Follow pinned Parcel/IPCThreadState semantics, including nested callbacks
+   and identity tokens. Unsupported optional freeze notifications should be
+   reported as unsupported, rather than claiming working subscriptions.
+
+Land facade behavior first, then switch the JNI ownership/registration closure
+as one coherent change. Add the original sources to the package/build selection
+and resolve their helper symbols in the existing native library arrangement.
+Validate Java-to-C++ and C++-to-Java calls, local-object round trips, remote
+identity, nested callbacks, oneway ordering, Parcel/FD ownership, death and
+unlink races, exception propagation, service waits and thread-state restoration.
+Then run framework smokes and the complete APK integration suite, including
+native graphics consumers of Java Parcels. None of those runtime checks was
+rerun for this source-only investigation.
+
 ## Graphics, input and WebView
 
 **App-side adaptations remain:**
@@ -273,8 +359,9 @@ new Binder service.
 2. Restore isolated stock native implementations first: SQLite extensions,
    tracing/logging and available utility JNI closures. Classify missing-service
    behavior explicitly instead of treating local failure models as stock.
-3. Decide the Binder driver/transport and runtime exceptions. These affect
-   nearly every stock native service client and determine what “100%” means.
+3. Restore stock Binder/Parcel JNI over the existing facade using the ownership
+   migration above. Retain AZKB as an explicit native adaptation; replacing
+   libbinder itself is a separate decision if literal native identity is required.
 4. Restore audio JNI/libaudioclient/AAudio and service protocols; place the
    existing PipeWire backend behind them. Require real audio output in addition
    to track position, callbacks and service-death tests.

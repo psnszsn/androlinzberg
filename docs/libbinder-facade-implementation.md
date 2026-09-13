@@ -3,8 +3,8 @@
 Decision: retain the Zig Parcel, Binder objects and AZKB transport as the shared
 implementation. Supply the C++ source API expected by pinned Android 16 consumers,
 reusing AOSP RefBase, strings and interface helpers. JNI/NDK and future native Zig
-clients share the same runtime and encoding. This supersedes the proposed native
-implementation replacement in `stock-binder-migration.md`.
+clients share the same runtime and encoding. This records the original facade
+implementation. The next migration is [stock JNI over this facade](stock-binder-migration.md).
 
 ## Scope and completion gates
 

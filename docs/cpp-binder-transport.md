@@ -1,8 +1,8 @@
 # C++ libbinder over the hosted Binder transport
 
-Status: investigated; implementation and runtime validation pending.
-
-The actionable sequence is in [the stock native Binder migration plan](stock-binder-migration.md).
+Status: historical investigation of replacing native Binder internals. The
+project subsequently implemented the hosted C++ facade. The current
+[JNI migration plan](stock-binder-migration.md) retains that facade and AZKB.
 
 Follow-up: [the Zig-backed C++ facade assessment](libbinder-facade-feasibility.md)
 demonstrates another viable direction. The Parcel mismatch below prevents
