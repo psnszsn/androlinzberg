@@ -127,3 +127,10 @@ pub export fn azk_egl_defaultDisplay(device: Handle) callconv(.c) Handle {
 pub export fn azk_egl_initCount(display: Handle) callconv(.c) i32 {
     return egl_backend.initCount(g_io, display);
 }
+
+pub export fn azk_egl_presentationTime(display: Handle, surface: Handle, time: i64) callconv(.c) u32 {
+    return egl_backend.presentationTime(display, surface, time);
+}
+pub export fn azk_egl_dupNativeFenceFD(display: Handle, sync: Handle) callconv(.c) i32 {
+    return egl_backend.dupNativeFenceFD(display, sync);
+}

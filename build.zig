@@ -661,6 +661,7 @@ pub fn build(b: *std.Build) void {
     const island = @import("build/island.zig").build(b, .{
         .host_paths_library = artzig_dep.namedLazyPath("host-paths-library"),
         .host_paths_headers = artzig_dep.namedLazyPath("host-paths-headers"),
+        .media_generated = generated.native.media,
         .hwui_stats = generated.native.hwui_stats,
         .surfaceflinger_generated = generated.native.surfaceflinger,
         .target = target,
@@ -859,15 +860,6 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.addImport("event_fd", event_fd_mod);
     surface_queue_mod.addImport("event_fd", event_fd_mod);
-    const hardware_snapshot_mod = b.createModule(.{
-        .root_source_file = b.path("src/platform/hardware_snapshot.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-        .imports = &.{
-            .{ .name = "art", .module = art_mod },
-        },
-    });
     const message_queue_mod = b.createModule(.{
         .root_source_file = b.path("src/platform/message_queue.zig"),
         .target = target,
@@ -888,7 +880,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "art", .module = art_mod },
             .{ .name = "audio", .module = audio_mod },
             .{ .name = "codec_jni", .module = codec_jni_mod },
-            .{ .name = "hardware_snapshot", .module = hardware_snapshot_mod },
             .{ .name = "message_queue", .module = message_queue_mod },
         },
     });
@@ -923,7 +914,6 @@ pub fn build(b: *std.Build) void {
     b.step("data-transfer-test", "Test bounded Wayland offer streams, deadlines and cancellation")
         .dependOn(&b.addRunArtifact(data_transfer_tests).step);
     const codec_jni_check = b.addTest(.{ .root_module = codec_jni_mod });
-    const hardware_snapshot_check = b.addTest(.{ .root_module = hardware_snapshot_mod });
     const apk_optimizer_check = b.addTest(.{ .root_module = apk_optimizer_mod });
     const run_apk_optimizer_tests = b.addRunArtifact(apk_optimizer_check);
     const dexopt_transaction_test = b.addSystemCommand(&.{ "bash", "tools/test-dexopt-apk.sh" });
@@ -1159,7 +1149,6 @@ pub fn build(b: *std.Build) void {
     native_test_step.dependOn(&run_audio_tests.step);
     native_test_step.dependOn(&run_wayland_tests.step);
     native_test_step.dependOn(&codec_jni_check.step);
-    native_test_step.dependOn(&hardware_snapshot_check.step);
     native_test_step.dependOn(&run_apk_optimizer_tests.step);
     native_test_step.dependOn(&dexopt_transaction_test.step);
     native_test_step.dependOn(&run_test_control.step);

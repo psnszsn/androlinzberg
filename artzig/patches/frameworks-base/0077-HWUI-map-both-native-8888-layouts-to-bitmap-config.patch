@@ -1,0 +1,18 @@
+Subject: [PATCH] HWUI: map both native 8888 layouts to the Android bitmap config
+
+Android hardware buffers use RGBA and host Skia uses BGRA for N32. Both
+layouts represent Bitmap.Config.ARGB_8888. Normalize the native color-type
+mapping so the original Bitmap JNI can be registered without an override.
+
+--- a/libs/hwui/jni/Graphics.cpp
++++ b/libs/hwui/jni/Graphics.cpp
+@@ -361,7 +361,8 @@
+     switch (colorType) {
+         case kRGBA_F16_SkColorType:
+             return kRGBA_16F_LegacyBitmapConfig;
+-        case kN32_SkColorType:
++        case kRGBA_8888_SkColorType:
++        case kBGRA_8888_SkColorType:
+             return kARGB_8888_LegacyBitmapConfig;
+         case kARGB_4444_SkColorType:
+             return kARGB_4444_LegacyBitmapConfig;

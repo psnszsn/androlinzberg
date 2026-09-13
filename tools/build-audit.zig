@@ -314,7 +314,6 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
         "src/native/HostInputDispatcher.cpp",
         "src/native/HostLooper.cpp",
         "src/native/HostedVideoOutput.cpp",
-        "src/native/RenderNodeReferenceBridge.cpp",
         // Original ToneGenerator callback/RefBase ABI over the existing PCM output.
         "src/native/ToneOutput.cpp",
         "src/native/binder/Binder.cpp",

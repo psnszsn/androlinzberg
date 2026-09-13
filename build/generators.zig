@@ -37,6 +37,7 @@ pub const GeneratedJvm = struct {
 };
 
 pub const GeneratedNative = struct {
+    media: @import("graphics.zig").Generated,
     hwui_stats: @import("graphics.zig").Generated,
     incremental_sysprop_headers: LazyPath,
     incremental_sysprop_source: LazyPath,
@@ -490,6 +491,12 @@ fn aidlCpp(
         for (declarations.cpp_aidl) |dependency| {
             const found = include_roots.getOrPut(b.allocator, dependency.root) catch @panic("OOM");
             if (!found.found_existing) run.addPrefixedDirectoryArg("-I", aosp.path(dependency.root));
+        }
+        if (std.mem.startsWith(u8, entry.root, "hardware/interfaces/drm/")) {
+            // libmediadrm selects the frozen android.hardware.drm-V1-ndk ABI.
+            run.addArgs(&.{ "--version=1", "--hash=3a0197fb44863256da9034c26e721b1eee12d1be" });
+            run.addPrefixedDirectoryArg("-I", aosp.path("hardware/interfaces/common/aidl"));
+            run.addPrefixedDirectoryArg("-I", aosp.path("hardware/interfaces/drm/common/aidl"));
         }
         if (entry.vintf_stable) run.addArgs(&.{ "--structured", "--stability=vintf" });
         run.addArg("-h");
@@ -1225,6 +1232,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     hwui_stats.addArg("--cpp");
     _ = hwui_stats_sources.addCopyFile(hwui_stats.addOutputFileArg(hwui_stats_spec.stem ++ ".cpp"), hwui_stats_spec.stem ++ ".cpp");
 
+    const media_proto = b.addRunArtifact(o.protoc);
+    media_proto.addPrefixedDirectoryArg("-I", o.aosp.path("frameworks/av/drm/libmediadrm"));
+    const media_proto_output = media_proto.addPrefixedOutputDirectoryArg("--cpp_out=", "media-protos");
+    for (declarations.media_native_protos) |file|
+        media_proto.addFileArg(o.aosp.path(b.fmt("frameworks/av/drm/libmediadrm/{s}", .{file})));
+    const media = @import("graphics.zig").Generated{ .headers = media_proto_output, .sources = media_proto_output };
     const aidl_java = aidlJava(b, o.aosp, runner);
     const hidl_java = hidlJava(b, o.aosp, runner);
     const hidl_cpp = hidlCpp(b, o.aosp, runner);
@@ -1271,7 +1284,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     for (hidl_cpp.headers) |path| path.addStepDependencies(aggregate);
     for (hidl_cpp.sources) |path| path.addStepDependencies(aggregate);
     for (aconfig_java.cpp_headers) |path| path.addStepDependencies(aggregate);
-    inline for (.{ gui, renderengine, perfetto, surfaceflinger, input, input_dispatcher }) |native| {
+    inline for (.{ gui, renderengine, perfetto, surfaceflinger, input, input_dispatcher, media }) |native| {
         native.headers.addStepDependencies(aggregate);
         native.sources.addStepDependencies(aggregate);
     }
@@ -1293,6 +1306,7 @@ pub fn build(b: *std.Build, o: Options) Result {
             .system_features_processor_dependencies = system_features_java.dependencies,
         },
         .native = .{
+            .media = media,
             .hwui_stats = .{ .headers = hwui_stats_headers.getDirectory(), .sources = hwui_stats_sources.getDirectory() },
             .aidl_header_roots = aidl_cpp.headers,
             .aidl_source_roots = aidl_cpp.sources,

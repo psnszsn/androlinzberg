@@ -100,5 +100,16 @@ export fn eglGetProcAddress(name: [*:0]const u8) callconv(.c) ?*const anyopaque 
     if (std.mem.eql(u8, std.mem.span(name), "eglReleaseThread")) return @ptrCast(&eglReleaseThread);
     if (std.mem.eql(u8, std.mem.span(name), "eglInitialize")) return @ptrCast(&eglInitialize);
     if (std.mem.eql(u8, std.mem.span(name), "eglTerminate")) return @ptrCast(&eglTerminate);
+    if (std.mem.eql(u8, std.mem.span(name), "eglPresentationTimeANDROID")) return @ptrCast(&eglPresentationTimeANDROID);
+    if (std.mem.eql(u8, std.mem.span(name), "eglDupNativeFenceFDANDROID")) return @ptrCast(&eglDupNativeFenceFDANDROID);
     return azk_host_egl_get_proc_address(name);
+}
+
+extern fn azk_egl_presentationTime(Handle, Handle, i64) callconv(.c) u32;
+export fn eglPresentationTimeANDROID(display: Handle, surface: Handle, time: i64) callconv(.c) u32 {
+    return azk_egl_presentationTime(display, surface, time);
+}
+extern fn azk_egl_dupNativeFenceFD(Handle, Handle) callconv(.c) i32;
+export fn eglDupNativeFenceFDANDROID(display: Handle, sync: Handle) callconv(.c) i32 {
+    return azk_egl_dupNativeFenceFD(display, sync);
 }

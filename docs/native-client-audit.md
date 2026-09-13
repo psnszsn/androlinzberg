@@ -1,7 +1,7 @@
 # Native client audit
 
 Baseline audited 2026-09-13 at `31ac159f`; Binder JNI and package evidence
-updated through `b7d78a39`; SQLite and utility JNI through `d42afccd`. **The complete client stack is not stock AOSP.**
+updated through `b7d78a39`; SQLite and utility JNI through `d42afccd`; media/graphics JNI follow-up recorded below. **The complete client stack is not stock AOSP.**
 The JVM source check covers selected framework source files. Android-native
 implementations, runtime libraries and process placement still contain substantial
 host adaptations.
@@ -35,8 +35,8 @@ also does not mean zero unsupported native operations.
 [`native-client-audit.json`](native-client-audit.json) records archive checksums,
 reference revisions, modified native paths and delegated registration modules.
 Both archives were read directly. The framework archive was rechecked during
-the Binder and utility JNI migrations: original CallerUtils and SQLite
-extension sources were added, with no new native modifications. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
+the Binder, utility and media/graphics JNI migrations. The latest refresh adds
+original DRM clients/protocols and enables native hardware-bitmap snapshots. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
 `.h`, `.hpp`, `.hxx`, `.S`, `.s` and `.inl` member was compared byte-for-byte
 with the corresponding pinned checkout path. Both current archives contain
 multiple top-level directories; their paths were retained. Tracked reference
@@ -44,7 +44,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 12,306 | 108 | 0 |
+| Framework | 12,414 | 109 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -147,13 +147,19 @@ Closing this family requires stock JNI, native MediaCodec and NDK callers,
 with FFmpeg/VA-API behind the component/service boundary they use. The existing
 decoder and Wayland presentation backends need not be rewritten to do that.
 
+MediaCrypto and MediaDrm now compile original JNI, JCrypto/JDrm, CryptoHal,
+DrmHal, metrics and AIDL/HIDL factory clients. The frozen DRM V1 NDK protocol
+and DRM 1.0–1.4 HIDL protocols are generated from the pin. The host advertises
+no VINTF DRM instances and has no HIDL service manager or DRM plugin, so this
+restores client provenance, not protected playback. The resource-manager client
+is linked for session bookkeeping; no resource-manager service is added.
+
 ### Missing-service clients are also non-stock
 
 | Client | Current implementation and behavior | Stock boundary to restore |
 |---|---|---|
 | MediaPlayer | [`media_player_jni.zig`](../src/binder/media_player_jni.zig) and `HostedMediaPlayer` model client state and absent-service errors locally; this is not the FFmpeg playback path | Original JNI and native MediaPlayer to `IMediaPlayerService` / `media.player` |
 | MediaMetadataRetriever | [`media_metadata_retriever_jni.zig`](../src/binder/media_metadata_retriever_jni.zig) models a null remote retriever; setters fail and retrieval returns no data | Original JNI/libmedia retriever and media-player service |
-| MediaCrypto / MediaDrm | [`media_crypto_jni.zig`](../src/binder/media_crypto_jni.zig), [`media_drm_jni.zig`](../src/binder/media_drm_jni.zig) implement absent-plugin results and cleanup | Original JCrypto/JDrm, ICrypto/IDrm and DRM factory discovery |
 | Legacy Camera | [`legacy_camera_jni.zig`](../src/binder/legacy_camera_jni.zig) and `HostedLegacyCamera` implement absent-camera failures | Original Camera JNI/CameraBase to `media.camera` |
 | SystemSensorManager | [`sensor_manager_jni.zig`](../src/binder/sensor_manager_jni.zig) returns empty discovery and unavailable queues/channels | Original JNI/libsensor to `sensorservice` |
 | PerformanceHintManager | [`performance_hint_jni.zig`](../src/binder/performance_hint_jni.zig) returns no manager and rejects sessions | Original JNI/native hint client, IHintManager and associated power-service boundary |
@@ -231,18 +237,20 @@ commands and generated reports.
   CanvasContext, RenderThread-related code, layer updates, bitmap and WebView
   functor paths also differ from the reference. Stock RenderNode/Canvas Java
   and an existing SurfaceFlinger do not remove these modifications.
-- [`egl_jni.zig`](../src/binder/egl_jni.zig),
-  [`legacy_egl_jni.zig`](../src/binder/legacy_egl_jni.zig) and
-  [`egl_extensions_jni.zig`](../src/binder/egl_extensions_jni.zig) replace JNI;
+- [`egl_jni.zig`](../src/binder/egl_jni.zig) and
+  [`legacy_egl_jni.zig`](../src/binder/legacy_egl_jni.zig) replace JNI.
+  EGLExt and EGL15 use the original JNI; the host EGL export seam resolves
+  Android extensions through the Mesa driver dispatcher;
   [`egl_support.zig`](../src/platform/egl_support.zig) and the native EGL
   backend translate Android display, buffer, image and pbuffer operations to
   the host driver. Generated GLES bindings are reused, with native fixes for
   JNI array bases/bounds and host pixel ordering.
-- [`hardware_snapshot.zig`](../src/platform/hardware_snapshot.zig) replaces
-  HardwareRenderer's `nCreateHardwareBitmap` with a host Kotlin snapshot path.
-  [`AospJniBridge.cpp`](../src/native/AospJniBridge.cpp) also overrides
-  Bitmap's `nativeConfig` after registering stock Bitmap JNI, to account for
-  host pixel layouts.
+- HardwareRenderer snapshots use AOSP's AImageReader / RenderProxy algorithm.
+  A build guard enables it on the host; Bitmap's native buffer factory delegates
+  GPU import to the existing render-thread owner. The Kotlin snapshot and its
+  JNI/RenderNode ownership bridges have been deleted.
+- Bitmap uses its original JNI registration. The native GraphicsJNI color-type
+  mapper recognizes both RGBA and BGRA as ARGB_8888; the JNI override is gone.
 - The selected, unchanged AOSP `libs/hostgraphics/ADisplay.cpp` synthesizes one
   1080-by-1920, 60 Hz display. This is a host implementation, not the Android
   physical-display client, and does not establish actual Wayland output
@@ -341,3 +349,17 @@ closure, an explicit adaptation inventory, JNI-registration provenance, and
 ELF/soname resolution checks. Process tests must prove backend placement and
 service death/reconnection. Merely adding servers, retaining the replacement
 JNI, and passing the existing UI suite would not complete this work.
+
+## Media and graphics JNI follow-up validation
+
+The native build, C++ audit, NDK ABI checks, framework compatibility and module
+suites, source-identity check, NewPipe launch and full APK integration suite
+passed for this batch. The APK suite ran 28 cases and the testkit ran 23 tests;
+recorded actions contain no structured runtime issues. Hardware snapshot tests
+check pixels, dimensions, invalid sizes and RenderNode ownership. DRM tests
+check absent-factory results, argument validation and failed-object cleanup;
+they do not certify protected playback. No aggregate acceptance run is claimed.
+
+The refreshed framework archive and its dependency pin are current, and the
+build is installed in `zig-out`. Source hashes and validation counts are in
+`native-client-audit.json`.

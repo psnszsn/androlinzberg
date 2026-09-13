@@ -523,7 +523,6 @@ fn bootHeadless(init: std.process.Init, role: runtime_identity.Role) !Headless {
     try bindPlatformIo(&lib, init.io);
     const identity = try runtime_identity.prepare(init, &lib, role, null);
     const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
-    const hwui = try lookupHwuiBridges(&lib);
     const looper_poll = lib.lookup(host_natives.LooperPollStateFn, "azk_looper_poll_state") orelse return error.SymbolNotFound;
     const framework_jar = try std.fs.path.join(arena, &.{ tree, "framework", "framework.jar" });
     _ = setenv("ARTZIG_FRAMEWORK_JAR", try arena.dupeSentinel(u8, framework_jar, 0), 1);
@@ -553,7 +552,7 @@ fn bootHeadless(init: std.process.Init, role: runtime_identity.Role) !Headless {
         // Choreographer lookup initializes DisplayManagerGlobal's sysprop fields.
         try registerBinderJni(arena, tree, @ptrCast(rt.env), &lib);
         if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
-        try host_natives.register(init.io, @ptrCast(rt.env), hwui, looper_poll);
+        try host_natives.register(init.io, @ptrCast(rt.env), looper_poll);
     }
     return .{ .rt = rt, .tree = tree };
 }
@@ -585,7 +584,6 @@ fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8, role: runtime_id
     var lib = try std.DynLib.open(island_path);
     try bindPlatformIo(&lib, init.io);
     const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
-    const hwui = try lookupHwuiBridges(&lib);
     const looper_poll = lib.lookup(host_natives.LooperPollStateFn, "azk_looper_poll_state") orelse return error.SymbolNotFound;
 
     const identity = try runtime_identity.prepare(init, &lib, role, apk_abs);
@@ -612,13 +610,13 @@ fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8, role: runtime_id
         // Choreographer lookup initializes DisplayManagerGlobal's sysprop fields.
         try registerBinderJni(arena, tree, @ptrCast(rt.env), &lib);
         if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
-        try host_natives.register(init.io, @ptrCast(rt.env), hwui, looper_poll);
+        try host_natives.register(init.io, @ptrCast(rt.env), looper_poll);
     }
     return .{ .rt = rt, .tree = tree };
 }
 
 // ---------------------------------------------------------------------------
-// Native platform registration and RenderNode snapshot ownership. Stock HWUI
+// Native platform registration. Stock HWUI
 // queues Android surfaces; only the session presenter communicates with Wayland.
 
 const RegisterFn = *const fn (env: *anyopaque) callconv(.c) c_int;
@@ -626,15 +624,6 @@ const BindPlatformIoFn = *const fn (
     userdata: ?*anyopaque,
     vtable: *const std.Io.VTable,
 ) callconv(.c) void;
-const RetainRenderNodeFn = *const fn (node: *anyopaque) callconv(.c) void;
-
-fn lookupHwuiBridges(lib: *std.DynLib) !host_natives.HwuiBridges {
-    return .{
-        .retain_render_node = lib.lookup(RetainRenderNodeFn, "azk_hwui_retain_render_node") orelse return error.SymbolNotFound,
-        .release_render_node = lib.lookup(RetainRenderNodeFn, "azk_hwui_release_render_node") orelse return error.SymbolNotFound,
-    };
-}
-
 fn bindPlatformIo(lib: *std.DynLib, io: std.Io) !void {
     const bind = lib.lookup(BindPlatformIoFn, "azk_platform_bind_io") orelse
         return error.SymbolNotFound;

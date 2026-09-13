@@ -9118,3 +9118,27 @@ F aosp external/sqlite/android/PhoneNumberUtils.cpp
 F aosp external/sqlite/android/PhoneNumberUtils.h
 F aosp external/sqlite/android/OldPhoneNumberUtils.cpp
 F aosp external/sqlite/android/NOTICE
+
+# Original EGL window ABI and DRM native client / factory protocols.
+D aosp frameworks/native/opengl/libs/EGL/include
+D aosp frameworks/av/drm/libmediadrm
+D aosp hardware/interfaces/drm/1.0
+D aosp hardware/interfaces/drm/1.1
+D aosp hardware/interfaces/drm/1.2
+D aosp hardware/interfaces/drm/1.3
+D aosp hardware/interfaces/drm/1.4
+D aosp hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1
+D aosp hardware/interfaces/common/support
+D aosp frameworks/av/services/mediaresourcemanager/aidl
+D aosp external/jsoncpp/include
+D aosp external/jsoncpp/src/lib_json
+F aosp frameworks/base/core/java/android/companion/virtualnative/IVirtualDeviceManagerNative.aidl
+F aosp frameworks/av/media/libmedia/include/media/CounterMetric.h
+F aosp frameworks/av/media/libmedia/include/media/EventMetric.h
+F aosp frameworks/av/media/libmedia/include/media/PluginMetricsReporting.h
+F aosp frameworks/native/headers/media_plugin/media/drm/DrmAPI.h
+F aosp frameworks/base/media/jni/android_media_MediaCrypto.cpp
+F aosp frameworks/base/media/jni/android_media_MediaCrypto.h
+F aosp frameworks/base/media/jni/android_media_MediaDrm.cpp
+F aosp frameworks/base/media/jni/android_media_MediaDrm.h
+F aosp external/jsoncpp/LICENSE

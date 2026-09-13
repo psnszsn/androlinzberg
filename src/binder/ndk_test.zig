@@ -25,6 +25,8 @@ extern fn AIBinder_Class_define(
     onDestroy: ?*const fn (?*anyopaque) callconv(.c) void,
     onTransact: ?*const fn (*AIBinder, u32, *const AParcel, *AParcel) callconv(.c) i32,
 ) callconv(.c) *AIBinder_Class;
+extern fn AIBinder_Class_setTransactionCodeToFunctionNameMap(clazz: ?*AIBinder_Class, names: ?[*]const ?[*:0]const u8, length: usize) callconv(.c) void;
+extern fn AIBinder_Class_getFunctionName(clazz: ?*AIBinder_Class, code: u32) callconv(.c) ?[*:0]const u8;
 extern fn AIBinder_new(clazz: *const AIBinder_Class, args: ?*anyopaque) callconv(.c) *AIBinder;
 extern fn AIBinder_prepareTransaction(binder: *AIBinder, in: *?*AParcel) callconv(.c) i32;
 extern fn AIBinder_transact(binder: *AIBinder, code: u32, in: *?*AParcel, out: *?*AParcel, flags: u32) callconv(.c) i32;
@@ -44,6 +46,7 @@ extern fn AParcel_readInt32Array(parcel: *const AParcel, arrayData: ?*anyopaque,
 extern fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 
 const TRANSACT_ADD: u32 = 1;
+const transaction_names = [_]?[*:0]const u8{ "add", null, "last" };
 const TRANSACT_ECHO: u32 = 2;
 const TRANSACT_ARR: u32 = 3;
 
@@ -184,6 +187,14 @@ pub fn main(init: std.process.Init) !void {
     }.f;
 
     const class = AIBinder_Class_define("dev.artzig.ndk.ITest", null, null, onTransact);
+    check(AIBinder_Class_getFunctionName(class, 1) == null, "unset transaction name map", &failures);
+    AIBinder_Class_setTransactionCodeToFunctionNameMap(class, &transaction_names, transaction_names.len);
+    check(AIBinder_Class_getFunctionName(class, 1) == transaction_names[0] and
+        AIBinder_Class_getFunctionName(class, 3) == transaction_names[2], "transaction names borrow the original strings and use one-based codes", &failures);
+    check(AIBinder_Class_getFunctionName(class, 0) == null and
+        AIBinder_Class_getFunctionName(class, 2) == null and
+        AIBinder_Class_getFunctionName(class, 4) == null and
+        AIBinder_Class_getFunctionName(class, std.math.maxInt(u32)) == null, "transaction name holes and bounds return null", &failures);
     const service = AIBinder_new(class, null);
     check(AIBinder_ping(service) == 0, "local ping bypasses the user transaction handler", &failures);
     check(AIBinder_ping(null) == std.math.minInt(i32) + 8, "null ping returns STATUS_UNEXPECTED_NULL", &failures);

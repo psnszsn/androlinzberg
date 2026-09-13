@@ -531,6 +531,7 @@ const AIBinder_Class = struct {
     /// Whether user transactions carry an interface-descriptor token (AOSP
     /// default; cleared by AIBinder_Class_disableInterfaceTokenHeader).
     token_header: bool = true,
+    transaction_names: ?[]const ?[*:0]const u8 = null,
     /// Optional dump handler (AIBinder_Class_setOnDump) and shell-command
     /// handler (AIBinder_Class_setHandleShellCommand); the latter is never
     /// invoked in the hosted environment but is stored for ABI fidelity.
@@ -2811,6 +2812,21 @@ export fn AIBinder_Class_getDescriptor(clazz: *const AIBinder_Class) callconv(.c
     // The descriptor is stored as a plain slice; re-expose it NUL-terminated.
     // It was duped from a NUL-terminated C string, so a terminator follows.
     return @ptrCast(clazz.descriptor.ptr);
+}
+// Pinned ndk/ibinder.cpp AIBinder_Class::setTransactionCodeMap/getFunctionName.
+// The hosted class owns the transaction callbacks, so retain the same borrowed,
+// process-lifetime name table here. AOSP requires one assignment before use.
+export fn AIBinder_Class_setTransactionCodeToFunctionNameMap(clazz: ?*AIBinder_Class, names: ?[*]const ?[*:0]const u8, length: usize) callconv(.c) void {
+    const class = clazz orelse @panic("transaction function map requires a class");
+    const values = names orelse @panic("transaction function map requires names");
+    if (class.transaction_names != null) @panic("transaction function map is already set");
+    class.transaction_names = values[0..length];
+}
+export fn AIBinder_Class_getFunctionName(clazz: ?*AIBinder_Class, code: u32) callconv(.c) ?[*:0]const u8 {
+    const class = clazz orelse @panic("transaction function lookup requires a class");
+    const names = class.transaction_names orelse return null;
+    if (code < FIRST_CALL_TRANSACTION or code - FIRST_CALL_TRANSACTION >= names.len) return null;
+    return names[code - FIRST_CALL_TRANSACTION];
 }
 export fn AIBinder_Class_setOnDump(clazz: *AIBinder_Class, onDump: ?AIBinder_onDump) callconv(.c) void {
     clazz.on_dump = onDump;

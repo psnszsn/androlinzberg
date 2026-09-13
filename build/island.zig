@@ -7,6 +7,7 @@ const std = @import("std");
 const gen = @import("gen/island_sources.zig");
 
 pub const Options = struct {
+    media_generated: @import("graphics.zig").Generated,
     hwui_stats: @import("graphics.zig").Generated,
     surfaceflinger_generated: @import("graphics.zig").Generated,
     target: std.Build.ResolvedTarget,
@@ -91,10 +92,9 @@ const minikin_srcs = [_][]const u8{
 const skia_extra_srcs = [_][]const u8{"tools/SkSharingProc.cpp"};
 
 const our_srcs = [_][]const u8{
-    "src/native/ArtzigGpuPipeline.cpp",         "src/native/HardwareBufferRender.cpp",
-    "src/native/RenderNodeReferenceBridge.cpp", "src/native/AospJniBridge.cpp",
-    "src/native/BinderJniBridge.cpp",           "src/native/HostLooper.cpp",
-    "src/native/HostedVideoOutput.cpp",
+    "src/native/ArtzigGpuPipeline.cpp", "src/native/HardwareBufferRender.cpp",
+    "src/native/AospJniBridge.cpp",     "src/native/BinderJniBridge.cpp",
+    "src/native/HostLooper.cpp",        "src/native/HostedVideoOutput.cpp",
 };
 
 pub fn build(b: *std.Build, o: Options) Result {
@@ -375,7 +375,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     // Keep Android's loader declarations separate from the host libc headers.
     const extractor_headers = b.addWriteFiles();
     _ = extractor_headers.addCopyFile(o.aosp.path(b, "bionic/libc/include/android/dlext.h"), "android/dlext.h");
-    const extractor_includes = &.{
+    const extractor_includes = &[_]std.Build.LazyPath{
         o.aosp.path(b, "frameworks/av/media/module/extractors/wav/include"),
         o.aosp.path(b, "frameworks/av/media/module/extractors/mp3/include"),
         o.aosp.path(b, "frameworks/av/media/module/extractors/aac/include"),
@@ -427,6 +427,25 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/av/media/module/metadatautils"), &.{"MetaDataUtils.cpp"}, extractor_includes, &.{});
     g.add(o.aosp.path(b, "system/libhidl/transport/token/1.0/utils"), &.{"HybridInterface.cpp"}, extractor_includes, &.{});
     g.add(o.aosp.path(b, "system/libhidl/transport/allocator/1.0/utils"), &.{"FrameworkUtils.cpp"}, extractor_includes, &.{});
+    const drm_includes = extractor_includes ++ &[_]std.Build.LazyPath{
+        o.aosp.path(b, "frameworks/av/drm/libmediadrm/include"),
+        o.aosp.path(b, "frameworks/av/drm/libmediadrm/interface"),
+        o.aosp.path(b, "hardware/interfaces/common/support/include"),
+        o.aosp.path(b, "external/jsoncpp/include"),
+        o.media_generated.headers,
+        o.aosp.path(b, "external/protobuf/src"),
+    };
+    g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{ "android_media_MediaCrypto.cpp", "android_media_MediaDrm.cpp" }, drm_includes, &.{"-Dbetoh64=be64toh"});
+    g.add(o.aosp.path(b, "frameworks/av/drm/libmediadrm"), &.{
+        "CryptoHal.cpp",        "CryptoHalAidl.cpp", "CryptoHalHidl.cpp",      "DrmUtils.cpp",               "DrmStatus.cpp",
+        "DrmHal.cpp",           "DrmHalAidl.cpp",    "DrmHalHidl.cpp",         "DrmHalListener.cpp",         "DrmSessionManager.cpp",
+        "DrmMetricsLogger.cpp", "DrmMetrics.cpp",    "DrmMetricsConsumer.cpp", "PluginMetricsReporting.cpp",
+    }, drm_includes, &.{ "-Dbetoh64=be64toh", "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections" });
+    for (@import("generator_sources.zig").media_native_protos) |file|
+        g.add(o.media_generated.sources, &.{b.fmt("{s}.pb.cc", .{file[0 .. file.len - 6]})}, drm_includes, &.{});
+    g.add(o.surfaceflinger_generated.sources, &.{"android/hardware/drm/HdcpLevels.cpp"}, drm_includes, &.{});
+    g.add(o.aosp.path(b, "hardware/interfaces/common/support"), &.{"NativeHandle.cpp"}, drm_includes, &.{});
+    g.add(o.aosp.path(b, "external/jsoncpp/src/lib_json"), &.{ "json_reader.cpp", "json_value.cpp", "json_writer.cpp" }, drm_includes, &.{ "-DJSON_USE_EXCEPTION=0", "-DJSONCPP_NO_LOCALE_SUPPORT" });
     g.add(o.aosp.path(b, "frameworks/av/services/mediaextractor"), &.{"MediaExtractorService.cpp"}, extractor_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/av/media/module/esds"), &.{"ESDS.cpp"}, extractor_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/av/media/module/extractors/wav"), &.{"WAVExtractor.cpp"}, extractor_includes, &.{"-DGETEXTRACTORDEF=azk_wav_extractor_def"});
@@ -499,6 +518,10 @@ pub fn build(b: *std.Build, o: Options) Result {
 
     g.add(o.aosp.path(b, "frameworks/native/libs/tonemap"), &.{"tonemap.cpp"}, &.{}, &.{});
 
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_opengl_EGLExt.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{
+        "-DeglPresentationTimeANDROID=azk_egl_presentationTime",
+        "-DeglDupNativeFenceFDANDROID=azk_egl_dupNativeFenceFD",
+    });
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_opengl_EGL15.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni/android/opengl"), &.{ "util.cpp", "poly_clip.cpp" }, &.{ apex_inc, b.path("src/native"), o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), o.aosp.path(b, "frameworks/native/opengl/include") }, &.{"-DARTZIG_HOST_GRAPHICS"});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_bitmap.cpp"}, &.{ apex_inc, hw_jni_inc }, &.{});

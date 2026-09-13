@@ -561,3 +561,23 @@ test "GBM pbuffers render, preserve pixels across swaps, and survive deferred de
     try std.testing.expectEqual(@as(u32, 1), querySurface(io, display, empty, width_key, &value));
     try std.testing.expectEqual(@as(i32, 0), value);
 }
+
+// Android exports these entry points from libEGL; GLVND publishes extension
+// entry points through its driver dispatcher. Keep this ABI difference below
+// the original EGLExt JNI, including the driver's error and fence ownership.
+pub fn presentationTime(display: Handle, surface: Handle, time: i64) u32 {
+    const Function = *const fn (Handle, Handle, i64) callconv(.c) u32;
+    const function: Function = @ptrCast(eglGetProcAddress("eglPresentationTimeANDROID") orelse {
+        fail(bad_match);
+        return 0;
+    });
+    return function(display, surface, time);
+}
+pub fn dupNativeFenceFD(display: Handle, sync: Handle) i32 {
+    const Function = *const fn (Handle, Handle) callconv(.c) i32;
+    const function: Function = @ptrCast(eglGetProcAddress("eglDupNativeFenceFDANDROID") orelse {
+        fail(bad_parameter);
+        return -1;
+    });
+    return function(display, sync);
+}

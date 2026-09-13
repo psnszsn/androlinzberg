@@ -83,6 +83,8 @@ framework_patches = tuple(
         (73, "-package-settings-diagnostics-without-pms-stub.patch"),
         (74, "-stock-package-archiver-with-hosted-authority.patch"),
         (75, "-local-socket-authenticated-process-credentials.patch"),
+        (76, "-HWUI-use-stock-hardware-bitmap-snapshot.patch"),
+        (77, "-HWUI-map-both-native-8888-layouts-to-bitmap-config.patch"),
     )
 )
 

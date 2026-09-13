@@ -1,0 +1,54 @@
+Subject: [PATCH] HWUI: use stock hardware bitmap snapshots on the host
+
+The host now provides AImageReader, native buffer queues and RenderProxy.
+Enable the original implementation through those native interfaces instead
+of overriding HardwareRenderer JNI with a Kotlin HardwareBufferRenderer.
+The host Skia import must run on the owning render thread. Bind Bitmap's
+color-space factory to the existing native RenderProxy import at that seam,
+leaving the snapshot's AImageReader / RenderProxy algorithm intact.
+
+--- a/libs/hwui/jni/android_graphics_HardwareRenderer.cpp
++++ b/libs/hwui/jni/android_graphics_HardwareRenderer.cpp
+@@ -731,6 +731,6 @@
+ static jobject android_view_ThreadedRenderer_createHardwareBitmapFromRenderNode(JNIEnv* env,
+         jobject clazz, jlong renderNodePtr, jint jwidth, jint jheight) {
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_GRAPHICS)
+     RenderNode* renderNode = reinterpret_cast<RenderNode*>(renderNodePtr);
+     if (jwidth <= 0 || jheight <= 0) {
+         ALOGW("Invalid width %d or height %d", jwidth, jheight);
+
+--- a/libs/hwui/hwui/Bitmap.h
++++ b/libs/hwui/hwui/Bitmap.h
+@@ -98,6 +98,10 @@
+                                     size_t size, bool readOnly, int64_t id);
+     static sk_sp<Bitmap> createFrom(const SkImageInfo&, SkPixelRef&);
+ #ifdef ARTZIG_HOST_GPU
++#ifndef __ANDROID__
++    static sk_sp<Bitmap> createFrom(AHardwareBuffer* hardwareBuffer, sk_sp<SkColorSpace> colorSpace,
++                                    BitmapPalette palette = BitmapPalette::Unknown);
++#endif
+     static sk_sp<Bitmap> createFrom(AHardwareBuffer* hardwareBuffer, sk_sp<SkImage> image,
+                                     BitmapPalette palette = BitmapPalette::Unknown);
+ #endif
+
+--- a/libs/hwui/hwui/Bitmap.cpp
++++ b/libs/hwui/hwui/Bitmap.cpp
+@@ -248,6 +248,17 @@
+ }
+ 
+ #ifdef ARTZIG_HOST_GPU
++#ifndef __ANDROID__
++sk_sp<Bitmap> Bitmap::createFrom(AHardwareBuffer* hardwareBuffer, sk_sp<SkColorSpace> colorSpace,
++                                 BitmapPalette palette) {
++    // Bitmap::createFrom's buffer ownership is implemented by the existing
++    // host Skia import on its owning render thread.
++    auto bitmap = uirenderer::renderthread::RenderProxy::wrapHardwareBuffer(
++            hardwareBuffer, std::move(colorSpace));
++    if (bitmap) bitmap->mPalette = palette;
++    return bitmap;
++}
++#endif
+ sk_sp<Bitmap> Bitmap::createFrom(AHardwareBuffer* hardwareBuffer, sk_sp<SkImage> image,
+                                  BitmapPalette palette) {
+     return hardwareBuffer && image

@@ -202,6 +202,9 @@ extern int register_android_graphics_Typeface(JNIEnv*);
 extern int register_android_hardware_SyncFence(JNIEnv*);
 extern int register_android_media_PublicFormatUtils(JNIEnv*);
 extern int register_android_opengl_jni_EGL15(JNIEnv*);
+extern int register_android_opengl_jni_EGLExt(JNIEnv*);
+extern int register_android_media_Crypto(JNIEnv*);
+extern int register_android_media_Drm(JNIEnv*);
 extern "C" int azk_register_legacy_gles_backend(JNIEnv*);
 extern int register_com_google_android_gles_jni_GLImpl(JNIEnv*);
 extern int register_android_opengl_jni_GLES20(JNIEnv*);
@@ -386,22 +389,6 @@ bool artzig::getGlBitmapPixels(JNIEnv* env, jobject bitmap, SkBitmap* upload) {
             source.readPixels(upload->info(), upload->getPixels(), upload->rowBytes(), 0, 0);
 }
 
-static jint azk_Bitmap_nativeConfig(JNIEnv*, jclass, jlong bitmap_handle) {
-    android::Bitmap& bitmap = android::bitmap::toBitmap(bitmap_handle);
-    if (bitmap.isHardware()) {
-        return GraphicsJNI::kHardware_LegacyBitmapConfig;
-    }
-
-    // Skia's native N32 color type aliases one of RGBA_8888/BGRA_8888.
-    // Android's mapper handles that alias, but host-created bitmaps can use
-    // the other byte order. Both are Bitmap.Config.ARGB_8888 at the Java API.
-    const SkColorType color_type = bitmap.info().colorType();
-    if (color_type == kRGBA_8888_SkColorType || color_type == kBGRA_8888_SkColorType) {
-        return GraphicsJNI::kARGB_8888_LegacyBitmapConfig;
-    }
-    return GraphicsJNI::colorTypeToLegacyBitmapConfig(color_type);
-}
-
 // Test the original JNI value conversion without requiring a hardware service.
 static jobject roundTripHidlMemory(JNIEnv* env, jclass, jobject memory) {
     const auto* native = android::JHidlMemory::fromJava(env, memory);
@@ -482,17 +469,6 @@ static int registerHostedZygoteCommandBuffer(JNIEnv* env) {
     };
 #undef ZYGOTE_PARSER_METHOD
     return jniRegisterNativeMethods(env, "com/android/internal/os/ZygoteCommandBuffer", methods, 7);
-}
-
-static int azk_register_android_graphics_Bitmap(JNIEnv* env) {
-    if (register_android_graphics_Bitmap(env) < 0) return -1;
-
-    jclass bitmap_class = env->FindClass("android/graphics/Bitmap");
-    if (bitmap_class == nullptr) return -1;
-    const JNINativeMethod methods[] = {
-            {"nativeConfig", "(J)I", reinterpret_cast<void*>(azk_Bitmap_nativeConfig)},
-    };
-    return env->RegisterNatives(bitmap_class, methods, 1);
 }
 
 int azk_register_HostInputDispatcher(JNIEnv*);
@@ -726,6 +702,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_android_hardware_SyncFence),
             E(register_android_media_PublicFormatUtils),
             E(register_android_opengl_jni_EGL15),
+            E(register_android_opengl_jni_EGLExt),
             E(azk_register_legacy_gles_backend),
             E(register_com_google_android_gles_jni_GLImpl),
             E(android::register_android_os_SELinux),
@@ -739,6 +716,8 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_os_HwBlob),
             E(android::register_android_os_HwParcel),
             E(android::register_android_media_MediaMetrics),
+            E(register_android_media_Crypto),
+            E(register_android_media_Drm),
             E(azk_register_media_metrics_smoke),
             E(azk_register_media_extractor_service),
             E(azk_register_audio_manager_smoke),
@@ -772,7 +751,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_graphics_Color),
             E(android::register_android_graphics_ColorSpace),
             E(register_android_graphics_Graphics),
-            E(azk_register_android_graphics_Bitmap),
+            E(register_android_graphics_Bitmap),
             E(registerBpfMap),
             E(register_android_graphics_BitmapFactory),
             E(register_android_graphics_BitmapRegionDecoder),

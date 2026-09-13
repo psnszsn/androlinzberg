@@ -320,6 +320,53 @@ pub const CppAidl = struct {
 };
 
 pub const cpp_aidl = [_]CppAidl{
+    .{ .backend = .ndk, .root = "frameworks/av/services/mediaresourcemanager/aidl", .input = "android/media/ClientConfigParcel.aidl", .output = "android/media/ClientConfigParcel.cpp" },
+    .{ .backend = .ndk, .root = "frameworks/av/services/mediaresourcemanager/aidl", .input = "android/media/ClientInfoParcel.aidl", .output = "android/media/ClientInfoParcel.cpp" },
+    .{ .backend = .ndk, .root = "frameworks/av/services/mediaresourcemanager/aidl", .input = "android/media/IResourceManagerClient.aidl", .output = "android/media/IResourceManagerClient.cpp" },
+    .{ .backend = .ndk, .root = "frameworks/av/services/mediaresourcemanager/aidl", .input = "android/media/IResourceManagerService.aidl", .output = "android/media/IResourceManagerService.cpp" },
+    .{ .backend = .ndk, .root = "frameworks/av/services/mediaresourcemanager/aidl", .input = "android/media/MediaResourceParcel.aidl", .output = "android/media/MediaResourceParcel.cpp" },
+    .{ .backend = .ndk, .root = "frameworks/av/services/mediaresourcemanager/aidl", .input = "android/media/MediaResourcePolicyParcel.aidl", .output = "android/media/MediaResourcePolicyParcel.cpp" },
+    .{ .backend = .ndk, .root = "frameworks/av/services/mediaresourcemanager/aidl", .input = "android/media/MediaResourceSubType.aidl", .output = "android/media/MediaResourceSubType.cpp" },
+    .{ .backend = .ndk, .root = "frameworks/av/services/mediaresourcemanager/aidl", .input = "android/media/MediaResourceType.aidl", .output = "android/media/MediaResourceType.cpp" },
+    .{ .root = "frameworks/base/core/java", .input = "android/companion/virtualnative/IVirtualDeviceManagerNative.aidl", .output = "android/companion/virtualnative/IVirtualDeviceManagerNative.cpp" },
+
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/CryptoSchemes.aidl", .output = "android/hardware/drm/CryptoSchemes.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/DecryptArgs.aidl", .output = "android/hardware/drm/DecryptArgs.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/DestinationBuffer.aidl", .output = "android/hardware/drm/DestinationBuffer.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/DrmMetric.aidl", .output = "android/hardware/drm/DrmMetric.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/DrmMetricGroup.aidl", .output = "android/hardware/drm/DrmMetricGroup.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/DrmMetricNamedValue.aidl", .output = "android/hardware/drm/DrmMetricNamedValue.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/DrmMetricValue.aidl", .output = "android/hardware/drm/DrmMetricValue.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/EventType.aidl", .output = "android/hardware/drm/EventType.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/ICryptoPlugin.aidl", .output = "android/hardware/drm/ICryptoPlugin.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/IDrmFactory.aidl", .output = "android/hardware/drm/IDrmFactory.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/IDrmPlugin.aidl", .output = "android/hardware/drm/IDrmPlugin.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/IDrmPluginListener.aidl", .output = "android/hardware/drm/IDrmPluginListener.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/KeyRequest.aidl", .output = "android/hardware/drm/KeyRequest.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/KeyRequestType.aidl", .output = "android/hardware/drm/KeyRequestType.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/KeySetId.aidl", .output = "android/hardware/drm/KeySetId.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/KeyStatus.aidl", .output = "android/hardware/drm/KeyStatus.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/KeyStatusType.aidl", .output = "android/hardware/drm/KeyStatusType.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/KeyType.aidl", .output = "android/hardware/drm/KeyType.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/KeyValue.aidl", .output = "android/hardware/drm/KeyValue.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/LogMessage.aidl", .output = "android/hardware/drm/LogMessage.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/LogPriority.aidl", .output = "android/hardware/drm/LogPriority.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/Mode.aidl", .output = "android/hardware/drm/Mode.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/NumberOfSessions.aidl", .output = "android/hardware/drm/NumberOfSessions.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/OfflineLicenseState.aidl", .output = "android/hardware/drm/OfflineLicenseState.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/OpaqueData.aidl", .output = "android/hardware/drm/OpaqueData.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/Pattern.aidl", .output = "android/hardware/drm/Pattern.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/ProvideProvisionResponseResult.aidl", .output = "android/hardware/drm/ProvideProvisionResponseResult.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/ProvisionRequest.aidl", .output = "android/hardware/drm/ProvisionRequest.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/SecureStop.aidl", .output = "android/hardware/drm/SecureStop.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/SecureStopId.aidl", .output = "android/hardware/drm/SecureStopId.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/SecurityLevel.aidl", .output = "android/hardware/drm/SecurityLevel.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/SharedBuffer.aidl", .output = "android/hardware/drm/SharedBuffer.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/Status.aidl", .output = "android/hardware/drm/Status.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/SubSample.aidl", .output = "android/hardware/drm/SubSample.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/SupportedContentType.aidl", .output = "android/hardware/drm/SupportedContentType.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/drm/aidl/aidl_api/android.hardware.drm/1", .input = "android/hardware/drm/Uuid.aidl", .output = "android/hardware/drm/Uuid.cpp" },
+
     // Typed context-manager interface consumed by original Binder JNI.
     .{ .root = "frameworks/native/libs/binder/aidl", .input = "android/os/IServiceManager.aidl", .output = "android/os/IServiceManager.cpp" },
     .{ .root = "frameworks/native/libs/binder/aidl", .input = "android/os/IServiceCallback.aidl", .output = "android/os/IServiceCallback.cpp" },
@@ -597,6 +644,40 @@ pub const HidlCpp = struct {
 
 /// Soong libhidlbase's generated C++ protocol sources and headers.
 pub const hidl_cpp = [_]HidlCpp{
+    .{ .fqname = "android.hardware.drm@1.0", .sources = &.{
+        "android/hardware/drm/1.0/CryptoFactoryAll.cpp",
+        "android/hardware/drm/1.0/CryptoPluginAll.cpp",
+        "android/hardware/drm/1.0/DrmFactoryAll.cpp",
+        "android/hardware/drm/1.0/DrmPluginAll.cpp",
+        "android/hardware/drm/1.0/DrmPluginListenerAll.cpp",
+        "android/hardware/drm/1.0/types.cpp",
+    } },
+    .{ .fqname = "android.hardware.drm@1.1", .sources = &.{
+        "android/hardware/drm/1.1/CryptoFactoryAll.cpp",
+        "android/hardware/drm/1.1/DrmFactoryAll.cpp",
+        "android/hardware/drm/1.1/DrmPluginAll.cpp",
+        "android/hardware/drm/1.1/types.cpp",
+    } },
+    .{ .fqname = "android.hardware.drm@1.2", .sources = &.{
+        "android/hardware/drm/1.2/CryptoFactoryAll.cpp",
+        "android/hardware/drm/1.2/CryptoPluginAll.cpp",
+        "android/hardware/drm/1.2/DrmFactoryAll.cpp",
+        "android/hardware/drm/1.2/DrmPluginAll.cpp",
+        "android/hardware/drm/1.2/DrmPluginListenerAll.cpp",
+        "android/hardware/drm/1.2/types.cpp",
+    } },
+    .{ .fqname = "android.hardware.drm@1.3", .sources = &.{
+        "android/hardware/drm/1.3/CryptoFactoryAll.cpp",
+        "android/hardware/drm/1.3/DrmFactoryAll.cpp",
+    } },
+    .{ .fqname = "android.hardware.drm@1.4", .sources = &.{
+        "android/hardware/drm/1.4/CryptoFactoryAll.cpp",
+        "android/hardware/drm/1.4/CryptoPluginAll.cpp",
+        "android/hardware/drm/1.4/DrmFactoryAll.cpp",
+        "android/hardware/drm/1.4/DrmPluginAll.cpp",
+        "android/hardware/drm/1.4/types.cpp",
+    } },
+
     .{ .fqname = "android.hidl.token@1.0", .sources = &.{"android/hidl/token/1.0/TokenManagerAll.cpp"} },
     .{ .fqname = "android.hardware.cas.native@1.0", .sources = &.{
         "android/hardware/cas/native/1.0/DescramblerAll.cpp",
@@ -4297,3 +4378,6 @@ pub const stats_java = .{
     .{ .module = "expresslog", .package = "com.android.modules.expresslog", .class = "StatsExpressLog" },
     .{ .module = "hwui", .package = "com.android.os.coregraphics", .class = "HwuiStatsLog" },
 };
+
+// libmediadrmmetrics: original schema, generated by the pinned protoc.
+pub const media_native_protos = [_][]const u8{"protos/metrics.proto"};

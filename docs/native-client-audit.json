@@ -1,10 +1,10 @@
 {
   "revision": "31ac159fbd38dec3103f0293c1e2781a6366311a",
   "reference": "Pinned checkout described by aosp/README.md; project revisions below",
-  "scope": "Packaged native source/header files; compiled Binder and utility JNI follow-ups are recorded separately",
+  "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 12306,
+      "unchanged": 12414,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -49,6 +49,7 @@
         "frameworks/base/libs/hwui/hwui/Bitmap.h",
         "frameworks/base/libs/hwui/hwui/ImageDecoder.cpp",
         "frameworks/base/libs/hwui/jni/Bitmap.cpp",
+        "frameworks/base/libs/hwui/jni/Graphics.cpp",
         "frameworks/base/libs/hwui/jni/HardwareBufferHelpers.cpp",
         "frameworks/base/libs/hwui/jni/Path.cpp",
         "frameworks/base/libs/hwui/jni/PathIterator.cpp",
@@ -116,7 +117,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "388612fcfe85c977cb3134744af00adc904ebc9d2bd660e004b4591c893f3737"
+      "archive_sha256": "abc96f5c3dba63e3f986e801cb04e3d7be73672306d9f8413a58214d93565594"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -222,11 +223,9 @@
     "src/binder/vintf_jni.zig",
     "src/binder/performance_hint_jni.zig",
     "src/binder/traffic_stats_jni.zig",
-    "src/binder/media_crypto_jni.zig",
     "src/binder/media_metadata_retriever_jni.zig",
     "src/binder/media_player_jni.zig",
     "src/binder/sensor_manager_jni.zig",
-    "src/binder/media_drm_jni.zig",
     "src/binder/legacy_camera_jni.zig",
     "src/binder/media_codec_list_jni.zig",
     "src/binder/activity_jni.zig",
@@ -237,20 +236,22 @@
     "src/binder/aaudio_ndk.zig",
     "src/binder/runtime_init_jni.zig",
     "src/binder/egl_jni.zig",
-    "src/binder/egl_extensions_jni.zig",
     "src/binder/legacy_egl_jni.zig"
   ],
-  "registration_scope_note": "23 delegated registration modules, not 23 replaced classes: pointer_icon_jni registers a host cursor helper; media_ndk and aaudio_ndk also export C ABIs. Central and C++ registrars are additional.",
+  "registration_scope_note": "20 delegated registration modules, not 20 replaced classes: pointer_icon_jni registers a host cursor helper; media_ndk and aaudio_ndk also export C ABIs. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
-      "sha256": "eb95a06fd4672955348cc0f49e98bc7179517241bec7e98cb12521e02c047ca4",
+      "sha256": "284cae06de937d7a5919af42ed239883d7cc0a78c8698c18364b347e81bed6ac",
       "defined_symbols": [
         "register_localized_collators",
-        "register_android_functions"
+        "register_android_functions",
+        "register_android_media_Crypto",
+        "register_android_media_Drm",
+        "register_android_opengl_jni_EGLExt"
       ]
     },
     "lib/art/libbinder_ndk.so": {
-      "sha256": "e3b13405e393c577ce133bb397441cd5a4af60e79da498738428811eafb28a34",
+      "sha256": "e7327febe569a855b8a4155fb8a821ee446795371e64e62225fa8ada89687076",
       "defined_symbols": [
         "azk_register_binder_jni",
         "AMediaCodec_createDecoderByType",
@@ -258,7 +259,7 @@
       ]
     }
   },
-  "framework_package_refresh": "2026-09-13 SQLite and utility JNI: rechecked against the clean pinned reference; five additional unchanged SQLite native source/header files, no new modifications.",
+  "framework_package_refresh": "2026-09-13 media/graphics JNI: original DRM JNI, native clients, protocols and JsonCpp; native snapshot enablement and bitmap color mapping. Rechecked against the clean pinned reference.",
   "binder_jni_followup": {
     "runtime_revision": "b7d78a39",
     "verified_date": "2026-09-13",
@@ -312,6 +313,43 @@
       "full_acceptance_passed": false,
       "all_acceptance_targets_passed_across_runs": true,
       "notes": "The parallel acceptance run exposed a fence-acquisition fixture race (fixed in 1823bb1e) and a desktop clipboard GPU timeout. The single-job run passed clipboard and every other target except an intermittent desktop physical-pointer assertion; stock-task-desktop-test then passed in isolation. No clean aggregate acceptance run is claimed."
+    }
+  },
+  "media_graphics_jni_followup": {
+    "scope": "Original MediaCrypto, MediaDrm and EGLExt JNI; native hardware snapshots and original Bitmap JNI registration. MediaCodec, MediaPlayer, metadata retrieval, EGL10/EGL14 and the HWUI backend remain pending.",
+    "source_sha256": {
+      "frameworks/base/media/jni/android_media_MediaCrypto.cpp": "10b92130e4a8535f689bc5c4254d0d842cfdbba8c6609c4f0879785365316612",
+      "frameworks/base/media/jni/android_media_MediaDrm.cpp": "0cb734d461d82c6735e09bf6a3391f65fd9ba5276c4f1a63e4b91fd0ccc138ec",
+      "frameworks/base/core/jni/android_opengl_EGLExt.cpp": "118727e16e82a74c1fdee2c0e7d71364eed1741daaf6997663a43a07021713aa",
+      "frameworks/av/drm/libmediadrm/CryptoHal.cpp": "93d2834f604086386148acecb454b3c678419221191f65bd4cad21bee193df0c",
+      "frameworks/av/drm/libmediadrm/CryptoHalAidl.cpp": "c114b1208e73dfdb5092023a7a0258f7ea6b04d6492ba8e7ee0a0f93aaa49f19",
+      "frameworks/av/drm/libmediadrm/CryptoHalHidl.cpp": "997357ad6e0ec4245a2d023f1d5131d63b0a4b5f6efb7e87682b0686e4c01a72",
+      "frameworks/av/drm/libmediadrm/DrmUtils.cpp": "2e70616180dd8ffefc20e043aef26460f9b001220c3e425c4107be1888ccd1f5",
+      "frameworks/av/drm/libmediadrm/DrmStatus.cpp": "c82758ce3978fd20abb138bb6d59fe61b8831b791632852685d34de7ab2b4a41",
+      "frameworks/av/drm/libmediadrm/DrmHal.cpp": "cfcd4b0988740a4ddae7c661ce2ae1747e7b5c67979b095a18f834e54cea4d53",
+      "frameworks/av/drm/libmediadrm/DrmHalAidl.cpp": "a1ceb060dbe99e42fb86652d1e90f52879bc36ec9cddd44a15303dbd32e8d4b0",
+      "frameworks/av/drm/libmediadrm/DrmHalHidl.cpp": "5ceb0acd7a61023c886a9a6c0ef7d321bdf75f319adba1a061928041fe0dd887",
+      "frameworks/av/drm/libmediadrm/DrmHalListener.cpp": "b8ff392eafa995dead8926dee2c1ddafd2fc1108d798a7af33f0798180e8dd0a",
+      "frameworks/av/drm/libmediadrm/DrmSessionManager.cpp": "a583b0e04039570a686b131b51c54ab84a0db21e18e2a1828a810573b351d40d",
+      "frameworks/av/drm/libmediadrm/DrmMetricsLogger.cpp": "08a26821c4a957fe95f98cde13c19cd9b94a549f61c681dd108ac2503a23ad1e",
+      "frameworks/av/drm/libmediadrm/DrmMetrics.cpp": "b1de77eed15c32201ff3153294bc8d3a36f6c0f8ac662b19557cfbc24d2cdeb6",
+      "frameworks/av/drm/libmediadrm/DrmMetricsConsumer.cpp": "a8e76b7dd91eca5cb32c11d587c4342f5060b1b38502a2b394a197f70c664687",
+      "frameworks/av/drm/libmediadrm/PluginMetricsReporting.cpp": "89ce74aa7057a8f6721d49cdca2ba558905f4e402208f2cc070c99bebb5c5766"
+    },
+    "validation": {
+      "native_build_passed": true,
+      "cpp_audit_passed": true,
+      "ndk_abi_tests_passed": true,
+      "framework_compat_passed": true,
+      "framework_module_passed": true,
+      "source_identity_passed": true,
+      "newpipe_launch_passed": true,
+      "full_apk_suite_passed": true,
+      "testkit_cases": 23,
+      "apk_cases": 28,
+      "apk_recorded_actions": 88,
+      "apk_structured_runtime_issues": 0,
+      "full_acceptance_run": false
     }
   }
 }

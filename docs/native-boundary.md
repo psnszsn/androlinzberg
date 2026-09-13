@@ -150,9 +150,11 @@ zig build -j10 cpp-audit
   as Java clients. No new decoding or audio presentation backend is introduced.
   MediaDescrambler JNI uses the original CAS protocols and service discovery;
   the host does not supply a CAS hardware service.
-- `src/platform/hardware_snapshot.zig` registers HardwareRenderer snapshot JNI
-  through HardwareBufferRenderer. `RenderNodeReferenceBridge.cpp` transfers
-  native RenderNode ownership to the adopted Java wrapper; it owns no window.
+- HardwareRenderer snapshots use the original AImageReader / RenderProxy
+  native flow. Bitmap's host buffer factory imports through the existing native
+  render-thread owner; no Java snapshot or RenderNode ownership bridge remains.
+- MediaCrypto and MediaDrm use original JNI and native DRM clients, including
+  generated AIDL/HIDL factory protocols. The host supplies no DRM plugin.
 - `src/platform/graphics_buffer.zig` owns GBM allocation/import, metadata,
   mapping and DMA-BUF descriptors. Stock libui and AHardwareBuffer use it.
   Per-process mapper admission caps registered handles at 1,024 and charged
@@ -263,14 +265,6 @@ zig build -j10 cpp-audit
   or replacement JNI tables remain. Size seals and `F_SEAL_FUTURE_WRITE` retain
   writable existing mappings while preventing later writes through transferred
   descriptors. Original JNI owns mapping, initialization, atomics and cleanup.
-
-- `src/binder/media_crypto_jni.zig` supplies stock MediaCrypto's seven native
-  methods at the absent DRM-factory boundary. The original JNI requires
-  ICrypto and Android AIDL/HIDL DRM plugins. Capability queries return false,
-  construction reports the pinned NO_INIT MediaCryptoException, and released
-  or uninitialized objects retain the stock argument failures and safe cleanup.
-  No decryption implementation is supplied. The installed libmedia_jni alias
-  exposes the registered framework JNI library under the stock load name.
 
 - `src/binder/vintf_jni.zig` implements VintfRuntimeInfo's independently cached
   runtime-info groups. Uname reuses libcore Posix JNI; CPU and SELinux policy
