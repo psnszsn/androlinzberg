@@ -12,6 +12,28 @@ import java.time.Duration
 
 /** Public EGL 1.5 contracts against the existing real offscreen EGL context. */
 internal object StockEgl15Smoke {
+    private external fun nativeDisplaySnapshot(library: String): DoubleArray?
+
+    private fun displays() {
+        val path = checkNotNull(System.getenv("ARTZIG_INSTALL_ROOT")) + "/lib/libandroid_platform.so"
+        val ids = com.android.server.display.DisplayControl.getPhysicalDisplayIds()
+        check(ids.isNotEmpty())
+        val expected = ids.flatMap { id ->
+            val info = checkNotNull(android.view.SurfaceControl.getDynamicDisplayInfo(id))
+            val staticInfo = checkNotNull(android.view.SurfaceControl.getStaticDisplayInfo(id))
+            val mode = info.supportedDisplayModes.single { it.id == info.activeDisplayModeId }
+            listOf(if (staticInfo.isInternal) 0.0 else 1.0, mode.width.toDouble(),
+                mode.height.toDouble(), mode.peakRefreshRate.toDouble(),
+                info.supportedDisplayModes.maxOf { it.peakRefreshRate }.toDouble(),
+                mode.appVsyncOffsetNanos.toDouble())
+        }.toDoubleArray()
+        repeat(2) {
+            val actual = checkNotNull(nativeDisplaySnapshot(path))
+            check(actual.contentEquals(expected)) { "native display ${actual.toList()} != compositor ${expected.toList()}" }
+        }
+        println("stock-native-display: physical modes, refresh rates and vsync offsets match SurfaceFlinger")
+    }
+
     private external fun nativePbufferInterop(library: String, display: Long, surface: Long): Boolean
 
     private fun nativeInterop(display: EGLDisplay) {
@@ -34,6 +56,7 @@ internal object StockEgl15Smoke {
     }
 
     fun run(display: EGLDisplay, context: EGLContext) {
+        displays()
         check(EGL15.EGL_NO_DISPLAY == EGL14.EGL_NO_DISPLAY)
         check(EGL15.EGL_NO_CONTEXT == EGL14.EGL_NO_CONTEXT)
         check(EGL15.EGL_NO_SYNC == null && EGL15.EGL_NO_IMAGE == null)

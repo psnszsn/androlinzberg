@@ -240,7 +240,7 @@
   "registration_scope_note": "19 delegated registration modules, not 19 replaced classes: pointer_icon_jni registers a host cursor helper; egl_interop_test registers only dev.artzig test helpers; media_ndk and aaudio_ndk also export C ABIs. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
-      "sha256": "a4434a2a9dbf5029cfef2a0363f558d295263ad88525f072da14bb0b87ecdfe1",
+      "sha256": "1a8979281c4e9391c18c20fcbcae2f26e088f2fb29fa2e17138ed6c6ee11ec74",
       "defined_symbols": [
         "register_localized_collators",
         "register_android_functions",
@@ -252,7 +252,7 @@
       ]
     },
     "lib/art/libbinder_ndk.so": {
-      "sha256": "d513405945207c4b5bb084ecbf404d2c303e0ff705c3c36701a8cf0fe837ae35",
+      "sha256": "3c467b592672d6c10c418975795159ed22ecc25fb3db2f66ef24de6498ce92d3",
       "defined_symbols": [
         "azk_register_binder_jni",
         "AMediaCodec_createDecoderByType",
@@ -370,6 +370,26 @@
       "egl_test": "passed",
       "framework_module_test": "passed",
       "framework_compat_test": "passed",
+      "newpipe_launch": "passed",
+      "integration_test_cases": 28,
+      "testkit_tests": 23,
+      "recorded_actions": 88,
+      "runtime_issues": 0,
+      "aggregate_acceptance": "not run"
+    }
+  },
+  "native_display_followup": {
+    "scope": "Original ADisplay client to SurfaceFlinger; excludes fixed hostgraphics display metadata. Hosted compositor/display policy remains.",
+    "source_sha256": {
+      "frameworks/native/libs/nativedisplay/ADisplay.cpp": "bf360154258a09ca9948d7468372cf248565315d6c94b5dfeb076eb36e54e657"
+    },
+    "validation": {
+      "native_build_cpp_audit": "passed",
+      "framework_module_test": "passed",
+      "framework_compat_test": "passed",
+      "buffer_jvm_test": "passed",
+      "surface_buffer_jvm_test": "passed",
+      "surface_client_jvm_test": "passed",
       "newpipe_launch": "passed",
       "integration_test_cases": 28,
       "testkit_tests": 23,

@@ -491,9 +491,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "external/fmtlib"), &gen.fmtlib_srcs, &.{}, &.{});
     g.add(o.aosp.path(b, "frameworks/minikin"), &minikin_srcs, &.{ o.aosp.path(b, "frameworks/minikin/libs"), o.aosp.path(b, "frameworks/minikin/libs/minikin") }, &.{});
     g.add(o.aosp.path(b, "external/skia"), &skia_extra_srcs, &.{}, &.{});
-    for (gen.hostgraphics_srcs) |file| {
-        if (!std.mem.eql(u8, file, "Fence.cpp") and !std.mem.eql(u8, file, "ANativeWindow.cpp")) g.add(o.aosp.path(b, "frameworks/base/libs/hostgraphics"), &.{file}, &.{}, &.{});
-    }
+    // Query the real compositor instead of hostgraphics' fixed display.
+    g.add(o.aosp.path(b, "frameworks/native/libs/nativedisplay"), &.{"ADisplay.cpp"}, &.{}, &.{});
     for (gen.fn_ui_srcs) |file| {
         const shared = for (@import("graphics.zig").ui_sources) |source| {
             if (std.mem.eql(u8, file, source)) break true;

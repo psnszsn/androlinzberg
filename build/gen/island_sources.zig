@@ -87,11 +87,6 @@ pub const skia_extra_srcs = [_][]const u8{
     "modules/skcms/src/skcms_TransformBaseline.cc",
 };
 
-pub const hostgraphics_srcs = [_][]const u8{
-    "ADisplay.cpp",
-    "ANativeWindow.cpp",
-};
-
 pub const jni_srcs = [_][]const u8{
     "jni/android_graphics_animation_NativeInterpolatorFactory.cpp",
     "jni/android_graphics_animation_RenderNodeAnimator.cpp",

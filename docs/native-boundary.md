@@ -242,6 +242,11 @@ zig build -j10 cpp-audit
   remain owned by their Java streams. Binder object counts come from the hosted
   Binder runtime. Android-only debuggerd, malloc_debug, memtrack, and heap-tracing
   facilities retain failure results or explicit unsupported diagnostics.
+- Original `libs/nativedisplay/ADisplay.cpp` reads physical display metadata and
+  composition preferences through SurfaceComposerClient. The build excludes
+  hostgraphics' fixed display implementation. A native API regression compares
+  dimensions, refresh rates, type and app-vsync offsets with Java's compositor
+  queries and repeats acquisition/release.
 - EGLImpl (EGL10), EGL14, EGL15 and EGLExt compile original AOSP JNI. Display
   reference counts, offscreen GBM drawables and Android native-window ownership
   live in `src/native/egl_backend.zig`. `EglWindow.cpp` bridges Mesa's GBM driver

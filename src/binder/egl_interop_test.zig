@@ -104,6 +104,37 @@ fn nativeBufferInterop(library: *std.DynLib, get_proc: *const fn ([*:0]const u8)
     return gl_error() == 0 and std.mem.eql(u8, &result, &.{ 0x33, 0x66, 0x99, 0xff });
 }
 
+// Call the pinned C++ ADisplay interface through its opaque pointer ABI.
+fn nativeDisplaySnapshot(env: Env, _: jni.jobject, path: jni.jstring) callconv(.c) jni.jdoubleArray {
+    const name = env.*.*.GetStringUTFChars.?(env, path, null) orelse return null;
+    defer env.*.*.ReleaseStringUTFChars.?(env, path, name);
+    var library = std.DynLib.open(std.mem.span(name)) catch return null;
+    defer library.close();
+    const acquire = library.lookup(*const fn (*?[*]Handle) callconv(.c) i32, "_ZN7android32ADisplay_acquirePhysicalDisplaysEPPPNS_8ADisplayE") orelse return null;
+    const release = library.lookup(*const fn (?[*]Handle) callconv(.c) void, "_ZN7android16ADisplay_releaseEPPNS_8ADisplayE") orelse return null;
+    const config = library.lookup(*const fn (Handle, *Handle) callconv(.c) i32, "_ZN7android25ADisplay_getCurrentConfigEPNS_8ADisplayEPPNS_14ADisplayConfigE") orelse return null;
+    const kind = library.lookup(*const fn (Handle) callconv(.c) i32, "_ZN7android23ADisplay_getDisplayTypeEPNS_8ADisplayE") orelse return null;
+    const width = library.lookup(*const fn (Handle) callconv(.c) i32, "_ZN7android23ADisplayConfig_getWidthEPNS_14ADisplayConfigE") orelse return null;
+    const height = library.lookup(*const fn (Handle) callconv(.c) i32, "_ZN7android24ADisplayConfig_getHeightEPNS_14ADisplayConfigE") orelse return null;
+    const fps = library.lookup(*const fn (Handle) callconv(.c) f32, "_ZN7android21ADisplayConfig_getFpsEPNS_14ADisplayConfigE") orelse return null;
+    const max_fps = library.lookup(*const fn (Handle) callconv(.c) f32, "_ZN7android27ADisplay_getMaxSupportedFpsEPNS_8ADisplayE") orelse return null;
+    const offset = library.lookup(*const fn (Handle) callconv(.c) i64, "_ZN7android37ADisplayConfig_getAppVsyncOffsetNanosEPNS_14ADisplayConfigE") orelse return null;
+    var displays: ?[*]Handle = null;
+    const count = acquire(&displays);
+    if (count <= 0) return null;
+    defer release(displays);
+    const values = std.heap.c_allocator.alloc(f64, @as(usize, @intCast(count)) * 6) catch return null;
+    defer std.heap.c_allocator.free(values);
+    for (displays.?[0..@intCast(count)], 0..) |display, i| {
+        var mode: Handle = null;
+        if (config(display, &mode) != 0) return null;
+        values[i * 6 ..][0..6].* = .{ @floatFromInt(kind(display)), @floatFromInt(width(mode)), @floatFromInt(height(mode)), fps(mode), max_fps(display), @floatFromInt(offset(mode)) };
+    }
+    const result = env.*.*.NewDoubleArray.?(env, @intCast(values.len)) orelse return null;
+    env.*.*.SetDoubleArrayRegion.?(env, result, 0, @intCast(values.len), values.ptr);
+    return result;
+}
+
 fn nativeMethod(name: [*:0]const u8, signature: [*:0]const u8, function: anytype) jni.JNINativeMethod {
     return .{ .name = @constCast(name), .signature = @constCast(signature), .fnPtr = @ptrCast(@constCast(function)) };
 }
@@ -111,6 +142,7 @@ pub fn register(env: Env) !void {
     const cls = env.*.*.FindClass.?(env, "dev/artzig/StockEgl15Smoke") orelse return error.NoClass;
     defer env.*.*.DeleteLocalRef.?(env, cls);
     const methods = [_]jni.JNINativeMethod{
+        nativeMethod("nativeDisplaySnapshot", "(Ljava/lang/String;)[D", &nativeDisplaySnapshot),
         nativeMethod("nativePbufferInterop", "(Ljava/lang/String;JJ)Z", &nativePbufferInterop),
     };
     if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;

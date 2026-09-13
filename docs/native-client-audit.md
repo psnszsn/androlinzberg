@@ -250,10 +250,11 @@ commands and generated reports.
   JNI/RenderNode ownership bridges have been deleted.
 - Bitmap uses its original JNI registration. The native GraphicsJNI color-type
   mapper recognizes both RGBA and BGRA as ARGB_8888; the JNI override is gone.
-- The selected, unchanged AOSP `libs/hostgraphics/ADisplay.cpp` synthesizes one
-  1080-by-1920, 60 Hz display. This is a host implementation, not the Android
-  physical-display client, and does not establish actual Wayland output
-  properties. Stock native source identity alone would miss this distinction.
+- ADisplay compiles original `libs/nativedisplay/ADisplay.cpp` and queries
+  SurfaceFlinger for physical displays, modes, refresh rates, vsync offsets and
+  composition preferences. The fixed hostgraphics display implementation is
+  excluded. The compositor still owns the hosted display policy and hardware
+  description; this does not independently discover additional Wayland outputs.
 - libui's allocator/mapper selects
   [`HostGralloc.cpp`](../src/native/graphics/HostGralloc.cpp) and
   [`graphics_buffer.zig`](../src/platform/graphics_buffer.zig). This boundary
@@ -370,3 +371,10 @@ validation and disconnect fixes. Window tests check EGL10/EGL14 pixels,
 timestamps, GL state, SurfaceTexture resize and independent native ownership.
 The two original JNI files match the pinned reference byte for byte; the
 archive contents and dependency pin are unchanged by this follow-up.
+
+The ADisplay follow-up passed framework module/compatibility tests, the
+GraphicBuffer/HardwareBuffer/SyncFence, Surface queue and SurfaceControl/vsync
+suites, NewPipe launch and all 28 APK cases. Its native display snapshots match
+Java's SurfaceFlinger queries. The final APK run recorded 88 actions with no
+structured runtime issues. The installed libraries and their hashes are current;
+this source selection requires no archive changes.
