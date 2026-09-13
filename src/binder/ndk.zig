@@ -170,6 +170,9 @@ const Entry = struct {
     }
 };
 
+var g_parcel_alloc_size = std.atomic.Value(usize).init(0);
+var g_parcel_alloc_count = std.atomic.Value(usize).init(0);
+
 pub const AParcel = struct {
     data: std.ArrayListUnmanaged(u8) = .empty,
     entries: std.ArrayListUnmanaged(Entry) = .empty,
@@ -193,6 +196,7 @@ pub const AParcel = struct {
     cpp_destroy: ?*const fn (*anyopaque) callconv(.c) void = null,
     err: i32 = STATUS_OK,
     sensitive: bool = false,
+    request_header: ?usize = null,
 
     fn create() *AParcel {
         const p = alloc.create(AParcel) catch @panic("oom");
@@ -201,11 +205,19 @@ pub const AParcel = struct {
     }
     fn destroy(p: *AParcel) void {
         p.clearContents();
-        p.data.deinit(alloc);
+        p.freeDataBuffer();
         p.entries.deinit(alloc);
         p.fds.deinit(alloc);
         if (p.cpp_view) |view| if (p.cpp_destroy) |destroy_view| destroy_view(view);
         alloc.destroy(p);
+    }
+    fn freeDataBuffer(p: *AParcel) void {
+        if (p.data.capacity != 0) {
+            _ = g_parcel_alloc_size.fetchSub(p.data.capacity, .monotonic);
+            _ = g_parcel_alloc_count.fetchSub(1, .monotonic);
+        }
+        p.data.deinit(alloc);
+        p.data = .empty;
     }
     /// Clears data, object entries, and any received descriptors, resetting the
     /// read/write position — the shared teardown for reset()/unmarshal(), which
@@ -220,6 +232,7 @@ pub const AParcel = struct {
         if (p.sensitive) std.crypto.secureZero(u8, p.data.allocatedSlice());
         p.data.clearRetainingCapacity();
         p.pos = 0;
+        p.request_header = null;
         p.err = STATUS_OK;
         // Detach before calling object destructors: they can reenter Binder.
         for (entries.items) |e| e.release();
@@ -271,6 +284,7 @@ pub const AParcel = struct {
     fn reserve(p: *AParcel, size: usize) i32 {
         if (size > std.math.maxInt(i32)) return STATUS_BAD_VALUE;
         if (size <= p.data.capacity) return STATUS_OK;
+        const previous_capacity = p.data.capacity;
         if (!p.sensitive) {
             p.data.ensureTotalCapacity(alloc, size) catch return STATUS_NO_MEMORY;
         } else {
@@ -282,6 +296,8 @@ pub const AParcel = struct {
             p.data.deinit(alloc);
             p.data = next;
         }
+        _ = g_parcel_alloc_size.fetchAdd(p.data.capacity - previous_capacity, .monotonic);
+        if (previous_capacity == 0) _ = g_parcel_alloc_count.fetchAdd(1, .monotonic);
         return STATUS_OK;
     }
 
@@ -420,8 +436,9 @@ pub const AParcel = struct {
     /// This is the single wire format shared by every peer (NDK, JVM Parcel, and
     /// the broker's IServiceManager decoder) after the android.os flip.
     fn writeInterfaceToken(p: *AParcel, descriptor: []const u8) void {
-        p.writeI32(0); // strict-mode policy
-        p.writeI32(-1); // work source (kUnsetWorkSource)
+        p.writeI32(tl_strict_policy | @as(i32, @bitCast(@as(u32, 1) << 31)));
+        azk_parcel_noteRequestHeader(p);
+        p.writeI32(if (tl_propagate_work_source) tl_work_source else -1);
         p.writeI32(interface_header); // 'SYST'
         p.writeString(descriptor, @intCast(descriptor.len));
     }
@@ -429,9 +446,11 @@ pub const AParcel = struct {
     /// parcel positioned just after the token; a short/malformed token counts
     /// as a mismatch.
     fn enforceInterfaceToken(p: *AParcel, descriptor: []const u8) bool {
-        _ = p.readI32() orelse return false; // strict-mode policy
-        _ = p.readI32() orelse return false; // work source
-        _ = p.readI32() orelse return false; // interface header marker
+        const policy = p.readI32() orelse return false;
+        tl_strict_policy = if (Runtime.current_flags & FLAG_ONEWAY != 0) 0 else policy;
+        azk_parcel_noteRequestHeader(p);
+        tl_work_source = p.readI32() orelse return false;
+        if ((p.readI32() orelse return false) != interface_header) return false;
         const s = p.readString() catch return false;
         defer alloc.free(s);
         return std.mem.eql(u8, s, descriptor);
@@ -1157,7 +1176,9 @@ const Runtime = struct {
             current_caller_uid = in.caller_uid;
             // Oneway transactions have no waiting caller; AOSP reports pid 0.
             current_caller_pid = if (oneway) 0 else in.caller_pid;
+            const policy = ThreadPolicy.enter();
             binder_status = target.?.class.?.on_transact.?(target.?, in.code, in.parcel, out);
+            policy.restore();
             current_flags = prev_flags;
             serving_stack = prev_stack;
             current_in_transaction = prev_in_transaction;
@@ -1255,7 +1276,8 @@ const Runtime = struct {
             }
             p.entries.append(alloc, entry) catch @panic("oom");
         }
-        p.data.appendSlice(alloc, rest[entries_len..]) catch @panic("oom");
+        if (p.reserve(rest.len - entries_len) != STATUS_OK) return error.OutOfMemory;
+        p.data.appendSliceAssumeCapacity(rest[entries_len..]);
         for (p.fds.items) |fd| closeFd(fd);
         p.fds.clearRetainingCapacity();
         p.owns_fds = false;
@@ -1619,7 +1641,7 @@ const Runtime = struct {
                     const sensitive = o.sensitive;
                     const allow_fds = o.allow_fds;
                     o.clearContents();
-                    o.data.deinit(alloc);
+                    o.freeDataBuffer();
                     o.entries.deinit(alloc);
                     o.fds.deinit(alloc);
                     o.* = p.*;
@@ -3353,13 +3375,10 @@ fn pHasFileDescriptors(handle: jni.jlong) callconv(.c) jni.jboolean {
     return jni.JNI_FALSE;
 }
 fn pReplaceCallingWorkSourceUid(handle: jni.jlong, uid: jni.jint) callconv(.c) jni.jboolean {
-    _ = handle;
-    _ = uid;
-    return jni.JNI_FALSE;
+    return if (azk_parcel_replaceWorkSource(parcelOf(handle), @bitCast(uid))) jni.JNI_TRUE else jni.JNI_FALSE;
 }
 fn pReadCallingWorkSourceUid(handle: jni.jlong) callconv(.c) jni.jint {
-    _ = handle;
-    return -1; // kUnsetWorkSource
+    return @bitCast(azk_parcel_readWorkSource(parcelOf(handle)));
 }
 fn pGetOpenAshmemSize(handle: jni.jlong) callconv(.c) jni.jlong {
     _ = handle;
@@ -3378,7 +3397,7 @@ fn pSetDataSize(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, size: jni.ji
 fn pSetDataCapacity(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, size: jni.jint) callconv(.c) void {
     _ = env;
     _ = cls;
-    if (size > 0) parcelOf(handle).data.ensureTotalCapacity(alloc, @intCast(size)) catch @panic("oom");
+    if (size > 0) _ = parcelOf(handle).reserve(@intCast(size));
 }
 fn pWriteString8(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, str: jni.jstring) callconv(.c) void {
     _ = cls;
@@ -3760,6 +3779,29 @@ fn pGetGlobalAllocCount(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) jni.jlong 
 threadlocal var tl_strict_policy: i32 = 0;
 threadlocal var tl_work_source: i32 = -1; // kUnsetWorkSource
 threadlocal var tl_has_identity: bool = false;
+threadlocal var tl_propagate_work_source: bool = false;
+
+// Pinned IPCThreadState::executeCommand BR_TRANSACTION saves these alongside
+// caller UID/PID. AZKB owns dispatch, including nested synchronous callbacks.
+const ThreadPolicy = struct {
+    strict: i32,
+    work: i32,
+    propagate: bool,
+    explicit: bool,
+    fn enter() ThreadPolicy {
+        const saved = ThreadPolicy{ .strict = tl_strict_policy, .work = tl_work_source, .propagate = tl_propagate_work_source, .explicit = tl_has_identity };
+        tl_work_source = -1;
+        tl_propagate_work_source = false;
+        tl_has_identity = false;
+        return saved;
+    }
+    fn restore(saved: ThreadPolicy) void {
+        tl_strict_policy = saved.strict;
+        tl_work_source = saved.work;
+        tl_propagate_work_source = saved.propagate;
+        tl_has_identity = saved.explicit;
+    }
+};
 var g_holder_mu: Io.Mutex = .init;
 
 // Process identity override set by dev.artzig.BinderSession before the first
@@ -3860,40 +3902,28 @@ fn bHasExplicitIdentity() callconv(.c) jni.jboolean {
     return if (tl_has_identity) jni.JNI_TRUE else jni.JNI_FALSE;
 }
 fn bClearCallingIdentity() callconv(.c) jni.jlong {
-    const uid: u64 = if (Runtime.current_in_transaction) Runtime.current_caller_uid else Runtime.get().uid;
-    const pid_u: u32 = @bitCast(if (Runtime.current_in_transaction) Runtime.current_caller_pid else Runtime.get().pid);
-    const token: i64 = @bitCast((uid << 32) | pid_u);
-    Runtime.current_caller_uid = Runtime.get().uid;
-    Runtime.current_caller_pid = Runtime.get().pid;
-    tl_has_identity = true;
-    return token;
+    return @bitCast(azk_binder_clearCallingIdentity());
 }
 fn bRestoreCallingIdentity(token: jni.jlong) callconv(.c) void {
-    const t: u64 = @bitCast(token);
-    Runtime.current_caller_uid = @intCast(t >> 32);
-    Runtime.current_caller_pid = @bitCast(@as(u32, @truncate(t)));
+    azk_binder_restoreCallingIdentity(@bitCast(token));
 }
 fn bSetThreadStrictModePolicy(policy: jni.jint) callconv(.c) void {
-    tl_strict_policy = policy;
+    azk_binder_setStrictModePolicy(policy);
 }
 fn bGetThreadStrictModePolicy() callconv(.c) jni.jint {
-    return tl_strict_policy;
+    return azk_binder_getStrictModePolicy();
 }
 fn bSetCallingWorkSourceUid(ws: jni.jint) callconv(.c) jni.jlong {
-    const old = tl_work_source;
-    tl_work_source = ws;
-    return @intCast(@as(u32, @bitCast(old)));
+    return @bitCast(azk_binder_setWorkSource(@bitCast(ws), true));
 }
 fn bGetCallingWorkSourceUid() callconv(.c) jni.jint {
-    return tl_work_source;
+    return @bitCast(azk_binder_getWorkSource());
 }
 fn bClearCallingWorkSource() callconv(.c) jni.jlong {
-    const old = tl_work_source;
-    tl_work_source = -1;
-    return @intCast(@as(u32, @bitCast(old)));
+    return bSetCallingWorkSourceUid(-1);
 }
 fn bRestoreCallingWorkSource(token: jni.jlong) callconv(.c) void {
-    tl_work_source = @bitCast(@as(u32, @truncate(@as(u64, @bitCast(token)))));
+    azk_binder_restoreWorkSource(@bitCast(token));
 }
 
 // ----- Binder normal natives -----------------------------------------------
@@ -4686,15 +4716,46 @@ export fn azk_binder_callFlags() callconv(.c) u32 {
 export fn azk_binder_servingStack() callconv(.c) ?*const anyopaque {
     return Runtime.serving_stack;
 }
+// Pinned IPCThreadState token layout includes explicit identity in PID bit 30.
 export fn azk_binder_clearCallingIdentity() callconv(.c) u64 {
-    const token = (@as(u64, @intCast(AIBinder_getCallingUid())) << 32) | @as(u32, @bitCast(AIBinder_getCallingPid()));
+    const pid: u32 = @bitCast(AIBinder_getCallingPid());
+    const token = (@as(u64, @intCast(AIBinder_getCallingUid())) << 32) |
+        (pid & ~@as(u32, 1 << 30)) | (if (tl_has_identity) @as(u32, 1 << 30) else 0);
     Runtime.current_caller_uid = Runtime.get().uid;
     Runtime.current_caller_pid = Runtime.get().pid;
+    tl_has_identity = true;
     return token;
 }
 export fn azk_binder_restoreCallingIdentity(token: u64) callconv(.c) void {
     Runtime.current_caller_uid = @truncate(token >> 32);
-    Runtime.current_caller_pid = @bitCast(@as(u32, @truncate(token)));
+    const pid: u32 = @truncate(token);
+    Runtime.current_caller_pid = @bitCast(if (pid & (1 << 31) != 0) pid | (1 << 30) else pid & ~@as(u32, 1 << 30));
+    tl_has_identity = pid & (1 << 30) != 0;
+}
+export fn azk_binder_hasExplicitIdentity() callconv(.c) bool {
+    return tl_has_identity;
+}
+export fn azk_binder_getStrictModePolicy() callconv(.c) i32 {
+    return tl_strict_policy;
+}
+export fn azk_binder_setStrictModePolicy(policy: i32) callconv(.c) void {
+    tl_strict_policy = policy;
+}
+export fn azk_binder_getWorkSource() callconv(.c) u32 {
+    return @bitCast(tl_work_source);
+}
+export fn azk_binder_setWorkSource(uid: u32, propagate: bool) callconv(.c) u64 {
+    const token = @as(u64, @as(u32, @bitCast(tl_work_source))) | (@as(u64, @intFromBool(tl_propagate_work_source)) << 32);
+    tl_work_source = @bitCast(uid);
+    if (propagate) tl_propagate_work_source = true;
+    return token;
+}
+export fn azk_binder_restoreWorkSource(token: u64) callconv(.c) void {
+    tl_work_source = @bitCast(@as(u32, @truncate(token)));
+    tl_propagate_work_source = token & (@as(u64, 1) << 32) != 0;
+}
+export fn azk_binder_shouldPropagateWorkSource() callconv(.c) bool {
+    return tl_propagate_work_source;
 }
 export fn azk_binder_flush() callconv(.c) void {
     // Frames and releases are flushed synchronously by sendFrame. Acquiring its
@@ -4718,4 +4779,54 @@ pub fn debugBinderCounts() struct { local: i32, proxy: i32, death: i32 } {
         .proxy = @bitCast(runtime.proxies.count()),
         .death = @bitCast(g_debug_deaths.load(.monotonic)),
     };
+}
+
+// Pinned Parcel operations over hosted object slots (four-byte AZKB entries).
+export fn azk_parcel_hasObjectsInRange(p: *const AParcel, offset: usize, len: usize, fds: bool, result: *bool) callconv(.c) i32 {
+    if (offset > std.math.maxInt(i32) or len > std.math.maxInt(i32) or
+        offset > p.data.items.len or len > p.data.items.len - offset) return STATUS_BAD_VALUE;
+    result.* = false;
+    for (p.entries.items) |entry| {
+        if (entry.offset < offset or @as(usize, entry.offset) + 4 > offset + len) continue;
+        if (if (fds) entry.kind == .file_descriptor else entry.kind == .binder_local or entry.kind == .binder_remote) {
+            result.* = true;
+            break;
+        }
+    }
+    return STATUS_OK;
+}
+export fn azk_parcel_ownedFd(p: *const AParcel, index: usize) callconv(.c) c_int {
+    if (index >= p.entries.items.len) return -1;
+    const e = p.entries.items[index];
+    return if (e.kind == .file_descriptor and e.owns_fd) e.fd else -1;
+}
+export fn azk_parcel_noteRequestHeader(p_const: *const AParcel) callconv(.c) void {
+    const p = @constCast(p_const);
+    if (p.request_header == null) p.request_header = p.pos;
+}
+export fn azk_parcel_replaceWorkSource(p: *AParcel, uid: u32) callconv(.c) bool {
+    const position = p.request_header orelse return false;
+    const saved = p.pos;
+    defer p.pos = saved;
+    p.pos = position;
+    p.writeI32(@bitCast(uid));
+    return p.err == STATUS_OK;
+}
+export fn azk_parcel_readWorkSource(p_const: *const AParcel) callconv(.c) u32 {
+    const p = @constCast(p_const);
+    const position = p.request_header orelse return std.math.maxInt(u32);
+    const saved = p.pos;
+    defer p.pos = saved;
+    p.pos = position;
+    return @bitCast(p.readI32() orelse 0);
+}
+export fn azk_parcel_allocSize() callconv(.c) usize {
+    return g_parcel_alloc_size.load(.monotonic);
+}
+export fn azk_parcel_allocCount() callconv(.c) usize {
+    return g_parcel_alloc_count.load(.monotonic);
+}
+export fn azk_parcel_freeData(p: *AParcel) callconv(.c) void {
+    p.clearContents();
+    p.freeDataBuffer();
 }

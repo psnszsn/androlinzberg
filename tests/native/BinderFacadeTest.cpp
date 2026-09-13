@@ -107,6 +107,29 @@ struct Service final : BBinder {
   }
   status_t onTransact(uint32_t code, const Parcel &in, Parcel *out,
                       uint32_t flags) override {
+    if (code == 18) {
+      auto *state = IPCThreadState::self();
+      assert(!state->hasExplicitIdentity() && !state->shouldPropagateWorkSource());
+      assert(in.enforceInterface(String16("state.service")));
+      assert(state->getStrictModePolicy() == int32_t(0x80000025));
+      assert(state->getCallingWorkSourceUid() == 4321);
+      auto callback = in.readStrongBinder();
+      int uid = state->getCallingUid(), pid = state->getCallingPid();
+      auto identity = state->clearCallingIdentity();
+      auto work = state->setCallingWorkSourceUid(9876);
+      state->setStrictModePolicy(0x48);
+      Parcel request, reply;
+      assert(request.writeInterfaceToken(String16("state.callback")) == OK);
+      assert(callback->transact(1, request, &reply) == OK && reply.readInt32() == 42);
+      assert(state->hasExplicitIdentity() && state->getCallingUid() == ownUid);
+      assert(state->getCallingWorkSourceUid() == 9876 && state->shouldPropagateWorkSource());
+      assert(state->getStrictModePolicy() == 0x48);
+      state->restoreCallingWorkSource(work);
+      state->restoreCallingIdentity(identity);
+      assert(!state->hasExplicitIdentity() && !state->shouldPropagateWorkSource());
+      assert(state->getCallingUid() == uid && state->getCallingPid() == pid);
+      return out->writeInt32(42);
+    }
     if (code == DROP_TRANSIENT) {
       auto target = in.readStrongBinder();
       assert(target && target->remoteBinder());
@@ -698,6 +721,36 @@ int main(int argc, char **argv) {
 
   assert(server->remoteBinder() && !server->localBinder());
   {
+    struct StateCallback final : BBinder {
+      status_t onTransact(uint32_t, const Parcel &in, Parcel *out, uint32_t) override {
+        auto *state = IPCThreadState::self();
+        assert(!state->hasExplicitIdentity());
+        assert(in.enforceInterface(String16("state.callback")));
+        assert(state->getStrictModePolicy() == int32_t(0x80000048));
+        assert(state->getCallingWorkSourceUid() == 9876 && !state->shouldPropagateWorkSource());
+        state->clearCallingIdentity(); // dispatch must restore even unbalanced changes
+        state->setCallingWorkSourceUid(1111);
+        state->setStrictModePolicy(0);
+        return out->writeInt32(42);
+      }
+    };
+    auto *state = IPCThreadState::self();
+    auto identity = state->clearCallingIdentity();
+    auto work = state->setCallingWorkSourceUid(4321);
+    int policy = state->getStrictModePolicy();
+    state->setStrictModePolicy(0x25);
+    Parcel request, reply;
+    request.writeInterfaceToken(String16("state.service"));
+    request.writeStrongBinder(sp<StateCallback>::make());
+    assert(server->transact(18, request, &reply) == OK && reply.readInt32() == 42);
+    assert(state->hasExplicitIdentity() && state->shouldPropagateWorkSource());
+    assert(state->getCallingWorkSourceUid() == 4321 && state->getStrictModePolicy() == 0x25);
+    state->restoreCallingWorkSource(work);
+    state->restoreCallingIdentity(identity);
+    state->setStrictModePolicy(policy);
+    pass("nested remote callbacks restore identity, StrictMode and work-source propagation");
+  }
+  {
     auto *native = AIBinder_fromPlatformBinder(server);
     auto converted = AIBinder_toPlatformBinder(native);
     assert(converted == server);
@@ -981,6 +1034,54 @@ struct Tracked final : BBinder {
   ~Tracked() override { ++destroyed; }
 };
 void parcelTests() {
+  {
+    auto count = Parcel::getGlobalAllocCount(), size = Parcel::getGlobalAllocSize();
+    Parcel a, b;
+    assert(Parcel::getGlobalAllocCount() == count);
+    a.writeInt32(1); b.writeInt32(2);
+    assert(a.compareData(b) < 0 && b.compareData(a) > 0);
+    int result = 99;
+    assert(a.compareDataInRange(0, b, 0, 4, &result) == OK && result < 0);
+    assert(a.compareDataInRange(SIZE_MAX, b, 0, 1, &result) == BAD_VALUE);
+    assert(a.compareDataInRange(4, b, 4, 0, &result) == OK && result == 0);
+    assert(Parcel::getGlobalAllocCount() == count + 2);
+    assert(Parcel::getGlobalAllocSize() == size + a.dataCapacity() + b.dataCapacity());
+    a.freeData(); b.freeData();
+    assert(Parcel::getGlobalAllocCount() == count && Parcel::getGlobalAllocSize() == size);
+    assert(!a.replaceCallingWorkSourceUid(123));
+    auto *state = IPCThreadState::self();
+    auto work = state->setCallingWorkSourceUid(123);
+    a.writeInterfaceToken(String16("first"));
+    auto position = a.dataPosition();
+    assert(a.readCallingWorkSourceUid() == 123 && a.dataPosition() == position);
+    assert(a.replaceCallingWorkSourceUid(456) && a.dataPosition() == position);
+    a.writeInterfaceToken(String16("second"));
+    assert(a.readCallingWorkSourceUid() == 456);
+    state->restoreCallingWorkSource(work);
+    a.freeData();
+    assert(a.readCallingWorkSourceUid() == uint32_t(-1));
+    a.writeString8(String8("hello")); a.setDataPosition(0);
+    size_t length = 0;
+    assert(std::string(a.readString8Inplace(&length)) == "hello" && length == 5);
+    a.freeData(); a.writeInt32(1); a.writeInt32(0x7878); a.setDataPosition(0);
+    assert(a.readString8Inplace(&length) == nullptr && length == 0);
+    a.freeData(); a.writeStrongBinder(sp<BBinder>::make());
+    bool found = false;
+    assert(a.hasBinders(&found) == OK && found);
+    assert(a.hasBindersInRange(0, 3, &found) == OK && !found);
+    assert(a.hasBindersInRange(0, 4, &found) == OK && found);
+    assert(a.hasFileDescriptorsInRange(0, 4, &found) == OK && !found);
+    assert(a.hasBindersInRange(1, 4, &found) == BAD_VALUE);
+    auto *thread = IPCThreadState::self();
+    bool explicitBefore = thread->hasExplicitIdentity();
+    auto outer = thread->clearCallingIdentity();
+    auto inner = thread->clearCallingIdentity();
+    thread->restoreCallingIdentity(inner);
+    assert(thread->hasExplicitIdentity());
+    thread->restoreCallingIdentity(outer);
+    assert(thread->hasExplicitIdentity() == explicitBefore);
+    pass("Parcel range/string validation, allocation accounting, work-source headers and nested identity tokens");
+  }
   {
     // GPU AIDL out vectors carry only a count, with the stock allocation cap.
     Parcel p;

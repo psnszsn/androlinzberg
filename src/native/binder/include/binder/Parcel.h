@@ -93,7 +93,21 @@ public:
       return BAD_VALUE;
     return AParcel_appendFrom(p->mParcel, mParcel, start, count);
   }
-  void freeData() { AParcel_reset(mParcel); }
+  void freeData() { azk_parcel_freeData(mParcel); }
+  static size_t getGlobalAllocSize() { return azk_parcel_allocSize(); }
+  static size_t getGlobalAllocCount() { return azk_parcel_allocCount(); }
+  size_t getOpenAshmemSize() const;
+  int compareData(const Parcel &) const;
+  status_t compareDataInRange(size_t, const Parcel &, size_t, size_t, int *) const;
+  status_t hasBinders(bool *result) const { return hasBindersInRange(0, dataSize(), result); }
+  status_t hasBindersInRange(size_t offset, size_t len, bool *result) const {
+    return azk_parcel_hasObjectsInRange(mParcel, offset, len, false, result);
+  }
+  status_t hasFileDescriptorsInRange(size_t offset, size_t len, bool *result) const {
+    return azk_parcel_hasObjectsInRange(mParcel, offset, len, true, result);
+  }
+  bool replaceCallingWorkSourceUid(uint32_t uid) { return azk_parcel_replaceWorkSource(mParcel, uid); }
+  uint32_t readCallingWorkSourceUid() const { return azk_parcel_readWorkSource(mParcel); }
   void markForBinder(const sp<IBinder> &) {
   } // All hosted endpoints share one encoding.
   bool isForRpc() const { return false; }
@@ -256,11 +270,14 @@ public:
     return s ? write(s, strlen(s) + 1) : BAD_VALUE;
   }
   const char *readCString() const;
+  const char *readString8Inplace(size_t *) const;
   status_t writeNoException();
   int32_t readExceptionCode() const;
   status_t writeInterfaceToken(const String16 &);
+  status_t writeInterfaceToken(const char16_t *, size_t);
   bool enforceInterface(const String16 &,
                         class IPCThreadState * = nullptr) const;
+  bool enforceInterface(const char16_t *, size_t, class IPCThreadState * = nullptr) const;
   bool checkInterface(const IBinder *b) const {
     return b && enforceInterface(b->getInterfaceDescriptor());
   }

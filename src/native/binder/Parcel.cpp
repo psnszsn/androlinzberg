@@ -1,5 +1,6 @@
 #include <binder/Parcel.h>
 #include <binder/Status.h>
+#include <binder/IPCThreadState.h>
 #include <cerrno>
 #include <fcntl.h>
 #include <utils/Unicode.h>
@@ -457,23 +458,66 @@ const char *Parcel::readCString() const {
     return nullptr;
   return static_cast<const char *>(readInplace(end - start + 1));
 }
+// Follows pinned Parcel::writeInterfaceToken/enforceInterface. The AZKB
+// storage and transaction state own the host seam; all callers share SYST.
 status_t Parcel::writeInterfaceToken(const String16 &d) {
-  auto s = writeInt32(0);
-  if (s)
-    return s;
-  if ((s = writeInt32(-1)))
-    return s;
-  if ((s = writeInt32(0x53595354)))
-    return s;
-  return writeString16(d);
+  return writeInterfaceToken(d.c_str(), d.size());
 }
-bool Parcel::enforceInterface(const String16 &d, IPCThreadState *) const {
-  int32_t policy, work, header;
-  if (readInt32(&policy) || readInt32(&work) || readInt32(&header) ||
-      header != 0x53595354)
-    return false;
-  String16 got;
-  return readString16(&got) == OK && got == d;
+status_t Parcel::writeInterfaceToken(const char16_t *d, size_t len) {
+  auto *state = IPCThreadState::self();
+  writeInt32(state->getStrictModePolicy() | (1 << 31)); // PENALTY_GATHER
+  azk_parcel_noteRequestHeader(mParcel);
+  writeInt32(state->shouldPropagateWorkSource() ? state->getCallingWorkSourceUid()
+                                              : IPCThreadState::kUnsetWorkSource);
+  writeInt32(0x53595354);
+  return writeString16(d, len);
+}
+bool Parcel::enforceInterface(const String16 &d, IPCThreadState *state) const {
+  return enforceInterface(d.c_str(), d.size(), state);
+}
+bool Parcel::enforceInterface(const char16_t *d, size_t len, IPCThreadState *state) const {
+  if (!state) state = IPCThreadState::self();
+  int32_t policy = readInt32();
+  state->setStrictModePolicy((state->getLastTransactionBinderFlags() & IBinder::FLAG_ONEWAY) ? 0 : policy);
+  azk_parcel_noteRequestHeader(mParcel);
+  state->setCallingWorkSourceUidWithoutPropagation(readInt32());
+  if (readInt32() != 0x53595354) return false;
+  size_t gotLen;
+  const char16_t *got = readString16Inplace(&gotLen);
+  return got && gotLen == len && (!len || memcmp(got, d, len * sizeof(char16_t)) == 0);
+}
+// Pinned Parcel comparison and string validation, operating on AZKB bytes.
+int Parcel::compareData(const Parcel &other) const {
+  if (dataSize() != other.dataSize()) return dataSize() < other.dataSize() ? -1 : 1;
+  return dataSize() ? memcmp(data(), other.data(), dataSize()) : 0;
+}
+status_t Parcel::compareDataInRange(size_t offset, const Parcel &other,
+                                  size_t otherOffset, size_t len, int *result) const {
+  if (len > INT32_MAX || offset > INT32_MAX || otherOffset > INT32_MAX ||
+      offset > dataSize() || len > dataSize() - offset ||
+      otherOffset > other.dataSize() || len > other.dataSize() - otherOffset) return BAD_VALUE;
+  *result = len ? memcmp(data() + offset, other.data() + otherOffset, len) : 0;
+  return OK;
+}
+const char *Parcel::readString8Inplace(size_t *outLen) const {
+  int32_t size = readInt32();
+  if (size >= 0 && size < INT32_MAX) {
+    const char *str = static_cast<const char *>(readInplace(size + 1));
+    if (str && str[size] == 0) { *outLen = size; return str; }
+  }
+  *outLen = 0;
+  return nullptr;
+}
+size_t Parcel::getOpenAshmemSize() const {
+  size_t result = 0;
+  for (size_t i = 0; i < objectsCount(); ++i) {
+    int fd = azk_parcel_ownedFd(mParcel, i);
+    if (fd < 0 || !ashmem_valid(fd)) continue;
+    int size = ashmem_get_size_region(fd);
+    if (size < 0) continue;
+    if (__builtin_add_overflow(result, static_cast<size_t>(size), &result)) return SIZE_MAX;
+  }
+  return result;
 }
 status_t Parcel::writeStrongBinder(const sp<IBinder> &b) {
   auto *n = b ? b->acquireNative() : nullptr;
