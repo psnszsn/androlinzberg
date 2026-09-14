@@ -462,6 +462,10 @@ status_t Parcel::readString16Vector(
   return readNullableValue(
       *this, v, [this](auto *values) { return readVector(values); });
 }
+status_t Parcel::readByteVector(std::optional<std::vector<uint8_t>> *v) const {
+  return readNullableValue(
+      *this, v, [this](auto *values) { return readVector(values); });
+}
 const char *Parcel::readCString() const {
   if (!dataAvail())
     return nullptr;

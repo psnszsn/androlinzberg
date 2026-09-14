@@ -580,6 +580,10 @@ public:
   status_t readByteVector(std::vector<uint8_t> *v) const {
     return readVector(v);
   }
+  status_t writeByteVector(const std::optional<std::vector<uint8_t>> &v) {
+    return v ? writeVector(*v) : writeInt32(-1);
+  }
+  status_t readByteVector(std::optional<std::vector<uint8_t>> *v) const;
   status_t writeInt32Vector(const std::vector<int32_t> &v) {
     return writeVector(v);
   }

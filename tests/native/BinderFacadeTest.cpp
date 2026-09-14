@@ -671,6 +671,21 @@ int main(int argc, char **argv) {
     assert(p.writeInt32(-2) == OK);
     p.setDataPosition(0);
     assert(p.readString16Vector(&result) == UNEXPECTED_NULL);
+    using Bytes = std::optional<std::vector<uint8_t>>;
+    const Bytes bytes = std::vector<uint8_t>{0, 255, 42};
+    Parcel b;
+    assert(b.writeByteVector(bytes) == OK && b.writeInt32(73) == OK);
+    assert(b.writeByteVector(Bytes{}) == OK);
+    b.setDataPosition(0);
+    assert(b.readInt32() == 3);
+    const auto* raw = static_cast<const uint8_t*>(b.readInplace(3));
+    assert(raw && raw[0] == 0 && raw[1] == 255 && raw[2] == 42);
+    assert(b.readInt32() == 73 && b.readInt32() == -1);
+    b.setDataPosition(0);
+    Bytes copy;
+    assert(b.readByteVector(&copy) == OK && copy == bytes);
+    assert(b.readInt32() == 73);
+    assert(b.readByteVector(&copy) == OK && !copy);
     pass("nullable WorkSource names preserve null containers, null elements and stock invalid-size behavior");
   }
   {
