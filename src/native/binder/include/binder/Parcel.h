@@ -579,6 +579,14 @@ public:
   status_t writeInt32Vector(const std::vector<int32_t> &v) {
     return writeVector(v);
   }
+  // Pinned Parcel::writeInt32Array: validate length before the null marker and
+  // serialize the same counted int32 payload used by generated Java AIDL.
+  status_t writeInt32Array(size_t len, const int32_t *values) {
+    if (len > INT32_MAX) return BAD_VALUE;
+    if (!values) return writeInt32(-1);
+    status_t status = writeInt32(static_cast<int32_t>(len));
+    return status == OK ? write(values, len * sizeof(*values)) : status;
+  }
   status_t readInt32Vector(std::vector<int32_t> *v) const {
     return readVector(v);
   }

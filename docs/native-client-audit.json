@@ -4,7 +4,7 @@
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 13372,
+      "unchanged": 13419,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -112,7 +112,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "0de4850460f6dc0dda08694fe925b636c6056f88c94e6eb792aedf8b5b25aac3"
+      "archive_sha256": "82c71fba8db4d8b0cc4f1f806c811db0971baf42195b5e2bd09f0bd87aaa284f"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -481,5 +481,27 @@
       "implementation": "android_get_application_target_sdk_version queries cached VMRuntime.getTargetSdkVersion; temporary native thread attachment is released; unset/non-application targets report platform FUTURE.",
       "validation": "Framework smoke passed for targets 28, 35, 10000, 0 and -1 on attached Java and detached native threads; final SDK value restored."
     }
+  },
+  "codec2_resource_service_followup": {
+    "reference": "android-16.0.0_r1",
+    "source_selection": "build/codec2_sources.zig resource_groups; original SimpleC2Component and SimpleC2Interface added to client closure",
+    "service_implementation": "Original ResourceManagerService, ResourceManagerServiceNew, ResourceObserverService, reclaim policies, resource tracking, metrics, UID observer and native process/battery/activity/scheduling clients",
+    "generated": "Frozen resourceobserver V1 NDK ABI and media_metrics stats generated from pinned sources; native ProcessStateEnum and Java IProcessInfoService generated from original AIDL",
+    "processinfo": "Hosted service reads framework state from the locked live process registry and Linux oom_score_adj; preserves score permission ordering, absent PID sentinels and pending TOP/newest launch boosts",
+    "validation": {
+      "raw_source_tests": "54 original tests passed: 46 resource manager (old/new), 7 observer, 1 service log; normal exit with authenticated hosted Binder",
+      "binder-cpp-test": "Passed counted int32 array, null/empty and oversized length contracts, and live thread-pool query",
+      "packaged_build": "Passed media-resource-test (all 54 original tests), codec2-client-test, framework-module-test, cpp-audit and ndk-abi (135 reference symbols, 162 exports)",
+      "framework-module-test": "Passed process-info validation/permissions, Linux score and generated wire contracts; video pooled/nested/reset/power/rounding/snapshot and permission contracts",
+      "integration-launch": "NewPipe launchesHomeWithoutRuntimeIssues passed",
+      "integration-test": "All 28 tests passed: 91 actions with zero structured runtime issues; testkit 23 tests passed",
+      "installed_build": "Default installed build refreshed successfully with the current archive and pin"
+    },
+    "limits": [
+      "Resource service is compiled and tested but not yet published by the production session",
+      "Production MediaCodec JNI/NDK and decoding remain hosted until component-store and native service-process integration is complete",
+      "UID observer registration in system_server remains required before enabling the original resource service; isolated-UID remapping and Android battery history/energy estimates are not provided by the video session counters"
+    ],
+    "video_battery_accounting": "IBatteryStats video start/stop/reset feed pooled per-UID and global on-battery timers, enforce UPDATE_DEVICE_STATS, emit original codec state stats, and expose session microseconds in dumps; power transitions share the ordered event queue"
   }
 }

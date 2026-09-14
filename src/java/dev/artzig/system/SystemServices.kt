@@ -84,6 +84,7 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.ACTIVITY_SERVICE, activityManager, true,
             android.os.IServiceManager.DUMP_FLAG_PRIORITY_CRITICAL or android.os.IServiceManager.DUMP_FLAG_PRIORITY_NORMAL or
                 android.os.IServiceManager.DUMP_FLAG_PROTO)
+        android.os.ServiceManager.addService("processinfo", activityManager.processInfo)
         // C++ PermissionCache uses android.os.IPermissionController over these same authorities.
         android.os.ServiceManager.addService("permission",
             HostedNativePermissionController(context, activityManager))

@@ -1,6 +1,7 @@
 //! Exact pinned Soong source groups used by the native codec client closure.
 const Group = struct { root: []const u8, files: []const []const u8, flags: []const []const u8 = &.{} };
 pub const groups = [_]Group{
+    .{ .root = "frameworks/av/media/codec2/components/base", .files = &.{ "SimpleC2Component.cpp", "SimpleC2Interface.cpp" } },
     // Native codec capabilities, media-service clients and rendering contracts.
     .{ .root = "frameworks/av/camera", .files = &.{ "ICamera.cpp", "ICameraClient.cpp", "ICameraRecordingProxy.cpp" } },
     .{ .root = "frameworks/av/media/libmedia", .files = &.{ "MediaResource.cpp", "MediaResourcePolicy.cpp", "AudioCapabilities.cpp", "CodecCapabilities.cpp", "CodecCapabilitiesUtils.cpp", "EncoderCapabilities.cpp", "VideoCapabilities.cpp", "IMediaPlayerService.cpp", "IMediaPlayer.cpp", "IMediaPlayerClient.cpp", "IMediaRecorder.cpp", "IMediaRecorderClient.cpp", "IRemoteDisplay.cpp", "IRemoteDisplayClient.cpp", "IStreamSource.cpp", "IMediaMetadataRetriever.cpp", "IMediaDeathNotifier.cpp", "BufferingSettings.cpp", "mediaplayer.cpp", "mediametadataretriever.cpp", "MediaProfiles.cpp", "Metadata.cpp", "omx/1.0/WOmx.cpp" } },
@@ -184,7 +185,23 @@ pub const groups = [_]Group{
         "Gralloc4.cpp",
     } },
 };
+pub const resource_groups = [_]Group{
+    .{ .root = "frameworks/av/services/mediaresourcemanager", .files = &.{ "UidObserver.cpp", "ResourceManagerServiceNew.cpp", "IMediaResourceMonitor.cpp", "ResourceObserverService.cpp", "ClientImportanceReclaimPolicy.cpp", "DefaultResourceModel.cpp", "ResourceManagerMetrics.cpp", "ProcessPriorityReclaimPolicy.cpp", "ServiceLog.cpp", "ResourceTracker.cpp", "ResourceManagerServiceUtils.cpp", "ResourceManagerService.cpp" } },
+    .{ .root = "frameworks/av/media/utils", .files = &.{ "ProcessInfo.cpp", "BatteryNotifier.cpp", "SchedulingPolicyService.cpp", "ISchedulingPolicyService.cpp" } },
+    .{ .root = "frameworks/native/libs/binder", .files = &.{ "ActivityManager.cpp", "IActivityManager.cpp", "IUidObserver.cpp", "IProcessInfoService.cpp", "IBatteryStats.cpp" } },
+};
+
 pub const includes = [_][]const u8{
+    "frameworks/av/media/utils/include",
+    "system/core/libprocessgroup/include",
+    "frameworks/native/libs/binder/include_activitymanager",
+    "frameworks/native/libs/binder/include_processinfo",
+    "frameworks/native/libs/binder/include_batterystats",
+    "frameworks/av/services/mediaresourcemanager",
+    "frameworks/av/media/codec2/components/base/include",
+    "packages/modules/StatsD/lib/libstatspull/include",
+    "packages/modules/StatsD/lib/libstatssocket/include",
+
     "frameworks/av/camera/include",
     "frameworks/av/camera/include/camera",
     "system/media/camera/include",

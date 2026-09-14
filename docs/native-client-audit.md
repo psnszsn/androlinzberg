@@ -36,7 +36,7 @@ also does not mean zero unsupported native operations.
 reference revisions, modified native paths and delegated registration modules.
 Both archives were read directly. The framework archive was rechecked during
 the Binder, utility and media/graphics JNI migrations. The latest refresh adds
-original Codec2 and bufferpool2 protocols, implementation and tests. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
+original Codec2, bufferpool2 and media resource service protocols, implementations and tests. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
 `.h`, `.hpp`, `.hxx`, `.S`, `.s` and `.inl` member was compared byte-for-byte
 with the corresponding pinned checkout path. Both current archives contain
 multiple top-level directories; their paths were retained. Tracked reference
@@ -44,7 +44,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 13,372 | 104 | 0 |
+| Framework | 13,419 | 104 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -451,3 +451,40 @@ The APK run recorded 89 actions with no structured runtime issues; the testkit
 passed 23 tests. The installed production codec path still uses the hosted
 implementation; decoder service integration and replacement of the hosted JNI/NDK
 implementations remain pending.
+
+
+### Original media resource service and process information
+
+`media-resource-service` compiles the pinned resource manager (both legacy and
+new policy implementations), resource observer, metrics, reclaim policies and
+native process/activity/battery clients. Its observer V1 NDK ABI and media
+metrics are generated from the pinned inputs. `media-resource-test` runs AOSP's
+three separate test executables: 46 manager tests, seven observer tests and one
+service-log test. Both raw-source probes and the packaged build pass all 54
+and exit normally.
+
+The production `processinfo` Binder service now uses the hosted AMS process
+registry and Linux `/proc/<pid>/oom_score_adj`. It preserves AOSP's permission
+check before array validation, unknown-PID values and the newest pending
+foreground launch's priority boost. It does not install Android memory scoring
+or LMKD. The new framework smoke checks these contracts and the generated
+Binder wire decoder; the packaged framework module suite passes.
+
+The battery service implements the original resource manager's video start,
+stop and reset calls, with permission checks and stock media-codec stats events.
+Its session timers count microseconds only while on battery. Concurrent UIDs
+share the pooled duration; multiple codecs within one UID retain nesting.
+Power changes and activity/video updates use one ordered event queue. Timer
+checks cover power changes, nested starts/stops, reset, pooled rounding and
+read-only snapshots, including permission rejection. The packaged suite passes.
+These counters do not implement isolated-UID remapping,
+Android battery history or energy estimation.
+
+The resource service is not yet published by the production session. Its
+native codec process, component store and UID notifications remain to be
+connected before enabling stock MediaCodec.
+
+The C++ audit, NDK ABI check (135 reference symbols, 162 exports), codec client
+link test and NewPipe launch regression pass. All 28 APK tests pass, with
+91 actions and zero structured runtime issues; the testkit passes 23 tests.
+The installed build and archive pin are current.

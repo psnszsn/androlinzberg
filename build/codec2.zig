@@ -23,6 +23,11 @@ pub fn isClientProtocol(entry: declarations.CppAidl) bool {
                 std.mem.eql(u8, entry.input, "android/IOMXBufferSource.aidl")));
 }
 
+pub fn isResourceProtocol(entry: declarations.CppAidl) bool {
+    return std.mem.startsWith(u8, entry.root, "frameworks/av/services/mediaresourcemanager/aidl_api/") or
+        std.mem.eql(u8, entry.input, "android/app/ProcessStateEnum.aidl");
+}
+
 pub const Options = struct {
     target: std.Build.ResolvedTarget,
     aosp: std.Build.LazyPath,
@@ -32,6 +37,7 @@ pub const Options = struct {
     package_native_sources: std.Build.LazyPath,
     host_include_roots: []const std.Build.LazyPath,
     generated: graphics.Generated,
+    media_stats: graphics.Generated,
     gui_generated: graphics.Generated,
     headers: []const std.Build.LazyPath,
     sources: []const std.Build.LazyPath,
@@ -61,6 +67,9 @@ fn configure(b: *std.Build, mod: *std.Build.Module, o: Options) void {
 pub const Libraries = struct {
     transport: *std.Build.Step.Compile,
     client: *std.Build.Step.Compile,
+    resources: *std.Build.Step.Compile,
+    aosp: std.Build.LazyPath,
+    flags: []const []const u8,
 };
 
 pub fn build(b: *std.Build, o: Options) Libraries {
@@ -117,7 +126,13 @@ pub fn build(b: *std.Build, o: Options) Libraries {
     const exe = b.addExecutable(.{ .name = "codec2-params-test", .root_module = params });
     const run = b.addRunArtifact(exe);
     b.step("codec2-params-test", "Run original Codec2 parameter and scalar contract tests").dependOn(&run.step);
-    return .{ .transport = library, .client = client };
+    const client_flags = clientFlags(b, flags);
+    const resources = buildResources(b, o, client, client_flags);
+    return .{ .transport = library, .client = client, .resources = resources, .aosp = o.aosp, .flags = client_flags };
+}
+
+fn clientFlags(b: *std.Build, flags: []const []const u8) []const []const u8 {
+    return std.mem.concat(b.allocator, []const u8, &.{ flags, &.{ "-Wno-invalid-specialization", "-Wno-macro-redefined", "-Wno-deprecated-declarations", "-Wno-deprecated-enum-enum-conversion", "-Wno-reorder-init-list", "-Wno-inconsistent-missing-override", "-Wno-nontrivial-memcall", "-D__ANDROID__", "-D__ANDROID_API__=36", "-D__ANDROID_MIN_SDK_VERSION__=36", "-include", b.pathResolve(&.{"src/native/codec2/Compat.h"}) } }) catch @panic("OOM");
 }
 
 fn buildClients(b: *std.Build, o: Options, flags: []const []const u8, transport: *std.Build.Step.Compile) *std.Build.Step.Compile {
@@ -139,7 +154,7 @@ fn buildClients(b: *std.Build, o: Options, flags: []const []const u8, transport:
     // Pinned C2EasyEnum specializes traits which newer host libc++ diagnoses.
     // Keep AOSP's enum representation. Compat.h also includes Binder logging
     // before each source supplies its own LOG_TAG.
-    const client_flags = std.mem.concat(b.allocator, []const u8, &.{ flags, &.{ "-Wno-invalid-specialization", "-Wno-macro-redefined", "-Wno-deprecated-declarations", "-Wno-deprecated-enum-enum-conversion", "-Wno-reorder-init-list", "-Wno-inconsistent-missing-override", "-Wno-nontrivial-memcall", "-D__ANDROID__", "-D__ANDROID_API__=36", "-D__ANDROID_MIN_SDK_VERSION__=36", "-include", b.pathResolve(&.{"src/native/codec2/Compat.h"}) } }) catch @panic("OOM");
+    const client_flags = clientFlags(b, flags);
     mod.addCSourceFile(.{ .file = o.aosp.path(b, "system/memory/libion/ion.c"), .flags = &.{ "-std=gnu11", "-include", b.pathResolve(&.{"src/native/codec2/CompatC.h"}) } });
     mod.addCSourceFile(.{ .file = o.aosp.path(b, "bionic/libc/bionic/get_device_api_level.cpp"), .language = .c, .flags = &.{ "-std=c11", "-D_Nonnull=" } });
     mod.addCSourceFile(.{ .file = o.aosp.path(b, "system/core/libcutils/properties.cpp"), .flags = std.mem.concat(b.allocator, []const u8, &.{ client_flags, &.{ "-include", b.pathResolve(&.{"src/native/graphics/include/azk/graphics_compat.h"}) } }) catch @panic("OOM") });
@@ -180,4 +195,40 @@ pub fn clientTest(b: *std.Build, libraries: Libraries, platform: std.Build.LazyP
     mod.linkLibrary(ndk);
     const exe = b.addExecutable(.{ .name = "codec2-client-test", .root_module = mod });
     @import("surfaceflinger.zig").runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, "codec2-client", "Link the complete stock codec client and verify NDK crypto metadata ownership", .standalone, null, &.{platform});
+}
+
+fn buildResources(b: *std.Build, o: Options, client: *std.Build.Step.Compile, flags: []const []const u8) *std.Build.Step.Compile {
+    const mod = b.createModule(.{ .target = o.target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true, .pic = true });
+    mod.include_dirs = client.root_module.include_dirs.clone(b.allocator) catch @panic("OOM");
+    mod.addIncludePath(o.media_stats.headers);
+    for (@import("codec2_sources.zig").resource_groups) |group|
+        mod.addCSourceFiles(.{ .root = o.aosp.path(b, group.root), .files = group.files, .flags = flags });
+    mod.addCSourceFile(.{ .file = o.media_stats.sources.path(b, "stats_media_metrics.cpp"), .flags = flags });
+    for (declarations.cpp_aidl, o.sources) |entry, root| {
+        if (isResourceProtocol(entry)) if (entry.output) |source|
+            mod.addCSourceFile(.{ .file = root.path(b, source), .flags = flags });
+    }
+    const library = b.addLibrary(.{ .name = "media_resource_service", .root_module = mod });
+    b.step("media-resource-service", "Compile original codec resource management and host service clients").dependOn(&library.step);
+    return library;
+}
+
+pub fn resourceTests(b: *std.Build, libraries: Libraries, platform: std.Build.LazyPath, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile, broker: *std.Build.Step.Compile) void {
+    const all = b.step("media-resource-test", "Run original resource manager, observer and service log tests");
+    // Soong builds these separately: their shared fixture defines non-inline symbols.
+    inline for (.{ "ResourceManagerService", "ResourceObserverService", "ServiceLog" }, .{ "media-resource-manager", "media-resource-observer", "media-service-log" }) |source, name| {
+        const mod = b.createModule(.{ .target = libraries.client.root_module.resolved_target.?, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
+        mod.include_dirs = libraries.resources.root_module.include_dirs.clone(b.allocator) catch @panic("OOM");
+        mod.addIncludePath(libraries.aosp.path(b, "external/googletest/googletest"));
+        mod.addIncludePath(libraries.aosp.path(b, "external/googletest/googletest/include"));
+        mod.addCSourceFile(.{ .file = libraries.aosp.path(b, "frameworks/av/services/mediaresourcemanager/test/" ++ source ++ "_test.cpp"), .flags = libraries.flags });
+        mod.addCSourceFiles(.{ .root = libraries.aosp.path(b, "external/googletest/googletest"), .files = &.{ "src/gtest-all.cc", "src/gtest_main.cc" }, .flags = libraries.flags });
+        mod.linkLibrary(libraries.resources);
+        mod.addObjectFile(platform);
+        mod.linkLibrary(binder);
+        mod.linkLibrary(ndk);
+        const exe = b.addExecutable(.{ .name = name ++ "-test", .root_module = mod });
+        @import("surfaceflinger.zig").runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, name, "Run original " ++ source ++ " tests", .standalone, null, &.{platform});
+        all.dependOn(&b.top_level_steps.get(name ++ "-test").?.step);
+    }
 }

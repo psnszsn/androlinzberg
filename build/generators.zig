@@ -39,6 +39,7 @@ pub const GeneratedJvm = struct {
 pub const GeneratedNative = struct {
     media: @import("graphics.zig").Generated,
     hwui_stats: @import("graphics.zig").Generated,
+    media_stats: @import("graphics.zig").Generated,
     codec2_sysprop: struct { headers: LazyPath, source: LazyPath },
     incremental_sysprop_headers: LazyPath,
     incremental_sysprop_source: LazyPath,
@@ -491,6 +492,13 @@ fn aidlCpp(
         var include_roots: std.StringHashMapUnmanaged(void) = .empty;
         include_roots.put(b.allocator, entry.root, {}) catch @panic("OOM");
         for (declarations.cpp_aidl) |dependency| {
+            // The frozen observer interface and the live resource-manager tree
+            // contain the same observer names. Soong resolves each against its
+            // selected version, never both definitions in one compilation.
+            const observer_root = "frameworks/av/services/mediaresourcemanager/aidl_api/";
+            const frozen_observer = std.mem.startsWith(u8, entry.root, observer_root);
+            if (frozen_observer and std.mem.eql(u8, dependency.root, "frameworks/av/services/mediaresourcemanager/aidl")) continue;
+            if (!frozen_observer and std.mem.startsWith(u8, dependency.root, observer_root)) continue;
             const found = include_roots.getOrPut(b.allocator, dependency.root) catch @panic("OOM");
             if (!found.found_existing) run.addPrefixedDirectoryArg("-I", aosp.path(dependency.root));
         }
@@ -1246,6 +1254,15 @@ pub fn build(b: *std.Build, o: Options) Result {
     _ = hwui_stats_headers.addCopyFile(hwui_stats.addOutputFileArg(hwui_stats_spec.stem ++ ".h"), hwui_stats_spec.stem ++ ".h");
     hwui_stats.addArg("--cpp");
     _ = hwui_stats_sources.addCopyFile(hwui_stats.addOutputFileArg(hwui_stats_spec.stem ++ ".cpp"), hwui_stats_spec.stem ++ ".cpp");
+    const media_stats_headers = b.addWriteFiles();
+    const media_stats_sources = b.addWriteFiles();
+    const media_stats = b.addRunArtifact(stats_tool);
+    media_stats.setCwd(@import("stats_tool.zig").templates(b, o.aosp.path("")));
+    const media_stats_spec = declarations.media_native_stats;
+    media_stats.addArgs(&.{ "--module", media_stats_spec.module, "--namespace", media_stats_spec.namespace, "--importHeader", media_stats_spec.stem ++ ".h", "--header" });
+    _ = media_stats_headers.addCopyFile(media_stats.addOutputFileArg(media_stats_spec.stem ++ ".h"), media_stats_spec.stem ++ ".h");
+    media_stats.addArg("--cpp");
+    _ = media_stats_sources.addCopyFile(media_stats.addOutputFileArg(media_stats_spec.stem ++ ".cpp"), media_stats_spec.stem ++ ".cpp");
 
     const media_proto = b.addRunArtifact(o.protoc);
     media_proto.addPrefixedDirectoryArg("-I", o.aosp.path("frameworks/av/drm/libmediadrm"));
@@ -1326,6 +1343,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         },
         .native = .{
             .media = media,
+            .media_stats = .{ .headers = media_stats_headers.getDirectory(), .sources = media_stats_sources.getDirectory() },
             .hwui_stats = .{ .headers = hwui_stats_headers.getDirectory(), .sources = hwui_stats_sources.getDirectory() },
             .aidl_header_roots = aidl_cpp.headers,
             .aidl_source_roots = aidl_cpp.sources,

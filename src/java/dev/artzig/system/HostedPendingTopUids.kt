@@ -10,6 +10,7 @@ internal class HostedPendingTopUids(private val now: () -> Long = android.os.Sys
     @Synchronized fun add(uid: Int, pid: Int) {
         if (!pending.containsKey(uid)) pending[uid] = Pending(pid, now())
     }
+    @Synchronized fun time(uid: Int, pid: Int): Long = pending[uid]?.takeIf { it.pid == pid }?.since ?: -1L
     @Synchronized fun contains(uid: Int): Boolean = pending.containsKey(uid)
     @Synchronized fun delete(uid: Int, updateStarted: Long) {
         if (pending[uid]?.let { updateStarted >= it.since } == true) pending.remove(uid)

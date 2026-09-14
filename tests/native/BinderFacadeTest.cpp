@@ -650,6 +650,24 @@ int main(int argc, char **argv) {
     return 0;
   }
   parcelTests();
+  {
+    const int32_t values[] = {INT32_MIN, -1, 42, INT32_MAX};
+    Parcel parcel;
+    assert(parcel.writeInt32Array(4, values) == OK);
+    assert(parcel.writeInt32Array(0, values) == OK);
+    assert(parcel.writeInt32Array(4, nullptr) == OK);
+    const auto position = parcel.dataPosition();
+    assert(parcel.writeInt32Array(size_t(-1), nullptr) == BAD_VALUE);
+    assert(parcel.writeInt32Array(size_t(INT32_MAX) + 1, values) == BAD_VALUE);
+    assert(parcel.dataPosition() == position);
+    parcel.setDataPosition(0);
+    std::vector<int32_t> returned;
+    assert(parcel.readInt32Vector(&returned) == OK);
+    assert(returned == std::vector<int32_t>(values, values + 4));
+    assert(parcel.readInt32Vector(&returned) == OK && returned.empty());
+    assert(parcel.readInt32() == -1 && parcel.dataAvail() == 0);
+    pass("int32 arrays preserve signed values, empty/null distinction and rejected-length position");
+  }
   blobTests();
   wp<Listener> weak;
   {
@@ -729,6 +747,7 @@ int main(int argc, char **argv) {
   assert(server->remoteBinder() && !server->localBinder());
   {
     assert(ProcessState::self()->getContextObject(nullptr));
+    assert(ProcessState::self()->isThreadPoolStarted());
     assert(!ProcessState::isDriverFeatureEnabled(ProcessState::DriverFeature::FREEZE_NOTIFICATION));
     Parcel request, reply;
     assert(server->transact(19, request, &reply) == OK);

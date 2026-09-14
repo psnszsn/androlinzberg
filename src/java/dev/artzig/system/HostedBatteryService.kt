@@ -47,6 +47,7 @@ class HostedBatteryService(private val activityManager: HostedActivityManagerSer
     private val lock = Any()
     private var snapshot: Snapshot = readSnapshot()
     private val activityUsage = HostedActivityBatteryUsage(isOnBattery(snapshot))
+    private val videoUsage = HostedVideoBatteryUsage(isOnBattery(snapshot))
     private var sequence = 0
     private val executor = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "BatteryService").apply { isDaemon = true } }
 
@@ -110,13 +111,39 @@ class HostedBatteryService(private val activityManager: HostedActivityManagerSer
     }
 
     /**
-     * Stock IBatteryStats transport with the BatteryManager client path served.
-     * Every method outside that path deliberately fails through the shared
-     * unsupported delegate so an exercised API is recorded as unimplemented.
+     * Stock IBatteryStats transport for BatteryManager and codec video timers.
+     * Other methods fail through the shared unsupported diagnostic delegate.
      */
     val batteryStats: IBatteryStats.Stub = object : IBatteryStats.Stub(),
         IBatteryStats by unsupported<IBatteryStats>() {
         override fun asBinder(): android.os.IBinder = this
+
+        // BatteryStatsService checks UPDATE_DEVICE_STATS before queuing a
+        // timestamped timer change, then emits MEDIA_CODEC_STATE_CHANGED.
+        private fun video(uid: Int, state: Int) {
+            val caller = android.os.Binder.getCallingUid()
+            if (activityManager.checkUidPermission(android.Manifest.permission.UPDATE_DEVICE_STATS, caller) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED)
+                throw SecurityException("Video battery accounting requires android.permission.UPDATE_DEVICE_STATS")
+            synchronized(lock) {
+                val timestamp = android.os.SystemClock.elapsedRealtime()
+                executor.execute {
+                    when (state) {
+                        com.android.internal.util.FrameworkStatsLog.MEDIA_CODEC_STATE_CHANGED__STATE__ON -> videoUsage.start(uid, timestamp)
+                        com.android.internal.util.FrameworkStatsLog.MEDIA_CODEC_STATE_CHANGED__STATE__OFF -> videoUsage.stop(uid, timestamp)
+                        else -> videoUsage.reset(timestamp)
+                    }
+                }
+            }
+            com.android.internal.util.FrameworkStatsLog.write_non_chained(
+                com.android.internal.util.FrameworkStatsLog.MEDIA_CODEC_STATE_CHANGED, uid, null, state)
+        }
+        override fun noteStartVideo(uid: Int) = video(uid,
+            com.android.internal.util.FrameworkStatsLog.MEDIA_CODEC_STATE_CHANGED__STATE__ON)
+        override fun noteStopVideo(uid: Int) = video(uid,
+            com.android.internal.util.FrameworkStatsLog.MEDIA_CODEC_STATE_CHANGED__STATE__OFF)
+        override fun noteResetVideo() = video(-1,
+            com.android.internal.util.FrameworkStatsLog.MEDIA_CODEC_STATE_CHANGED__STATE__RESET)
 
         override fun isCharging(): Boolean {
             val s = synchronized(lock) { snapshot }
@@ -137,6 +164,8 @@ class HostedBatteryService(private val activityManager: HostedActivityManagerSer
             writer.println("Hosted session activity durations while on battery (milliseconds):")
             for (value in values) writer.println("uid=${value.uid} foreground=${value.foregroundMs} " +
                 "cpu=${value.foregroundCpuMs} processes=${value.processCpuMs}")
+            val video = executor.submit<HostedVideoBatteryUsage.Snapshot> { videoUsage.snapshot() }.get(2, TimeUnit.SECONDS)
+            writer.println("Hosted session video duration on battery (microseconds): total=${video.totalUs} uid=${video.uidUs}")
         }
     }
 
@@ -146,15 +175,21 @@ class HostedBatteryService(private val activityManager: HostedActivityManagerSer
     }
 
     private fun update() {
-        val timestamp = android.os.SystemClock.elapsedRealtime()
         val fresh = readSnapshot()
         val changed = synchronized(lock) {
-            if (fresh == snapshot) false else { snapshot = fresh; true }
+            if (fresh == snapshot) false else {
+                snapshot = fresh
+                val timestamp = android.os.SystemClock.elapsedRealtime()
+                // Queue under the same lock as activity/video events: an event
+                // already waiting on this executor precedes the power change.
+                executor.execute {
+                    activityUsage.powerChanged(isOnBattery(fresh), timestamp)
+                    videoUsage.powerChanged(isOnBattery(fresh), timestamp)
+                }
+                true
+            }
         }
-        if (changed) {
-            activityUsage.powerChanged(isOnBattery(fresh), timestamp)
-            sendBatteryChangedIntent(fresh)
-        }
+        if (changed) sendBatteryChangedIntent(fresh)
     }
 
     /** BatteryService.sendBatteryChangedIntentLocked. */

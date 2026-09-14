@@ -211,6 +211,8 @@ internal object FrameworkModuleSmoke {
         dev.artzig.system.HostedPowerLocalSmoke.run()
         dev.artzig.system.HostedConfigurationUsageSmoke.run()
         dev.artzig.system.HostedProcessObserversSmoke.run()
+        dev.artzig.system.HostedProcessInfoSmoke.run()
+        dev.artzig.system.HostedVideoBatteryUsageSmoke.run()
         dev.artzig.system.DesktopDeviceStateSmoke.run(ActivityThread.currentActivityThread().systemContext)
         dev.artzig.window.HostedDesktopWindowPolicySmoke.run(ActivityThread.currentActivityThread().systemContext)
         dev.artzig.window.HostedSessionDisplaySmoke.run(ActivityThread.currentActivityThread().systemContext)

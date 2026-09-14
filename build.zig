@@ -361,6 +361,7 @@ pub fn build(b: *std.Build) void {
         .hidl_headers = generated.native.hidl_header_roots,
         .flag_headers = generated.native.aconfig_header_roots,
         .flag_sources = generated.native.aconfig_sources,
+        .media_stats = generated.native.media_stats,
         .sysprop_headers = generated.native.codec2_sysprop.headers,
         .sysprop_source = generated.native.codec2_sysprop.source,
         .binder = binder_cpp,
@@ -721,6 +722,7 @@ pub fn build(b: *std.Build) void {
     codec2_island_options.codec2 = codec2;
     const codec2_island = @import("build/island.zig").build(b, codec2_island_options);
     @import("build/codec2.zig").clientTest(b, codec2, codec2_island.file, binder_cpp, binder_ndk, binder_broker);
+    @import("build/codec2.zig").resourceTests(b, codec2, codec2_island.file, binder_cpp, binder_ndk, binder_broker);
     const idmap2 = @import("build/idmap2.zig").build(b, .{
         .aosp = aosp,
         .target = target,

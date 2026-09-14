@@ -513,6 +513,17 @@ class HostedActivityManagerService(private val context: android.content.Context?
         get() = checkNotNull(com.android.server.LocalServices.getService(
             com.android.server.wm.ActivityTaskManagerInternal::class.java))
     internal val pendingTopUids = HostedPendingTopUids()
+    internal val processInfo by lazy {
+        HostedProcessInfoService(lock, { pid ->
+            processes.values.firstOrNull { it.pid == pid && !it.removed }?.let {
+                HostedProcessInfoService.Entry(it.reportedProcState, pendingTopUids.time(it.uid, pid))
+            }
+        }, {
+            enforceCallingPermission(android.Manifest.permission.GET_PROCESS_STATE_AND_OOM_SCORE,
+                "getProcessStatesAndOomScoresForPIDs()")
+        })
+    }
+
     private val importanceHandler by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
     private val cpuTracker by lazy { com.android.internal.os.ProcessCpuTracker(false) }
     private val cpuUpdatePending = java.util.concurrent.atomic.AtomicBoolean(false)

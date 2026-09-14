@@ -16,6 +16,8 @@ public:
     return state;
   }
   void startThreadPool() { ABinderProcess_startThreadPool(); }
+  // The hosted runtime owns the pool whose state this AOSP query exposes.
+  bool isThreadPoolStarted() const { return ABinderProcess_isThreadPoolStarted(); }
   // ProcessState names the joining thread; the hosted pool has no kernel driver id.
   void giveThreadPoolName() { androidSetThreadName("Binder:AZKB"); }
   status_t setThreadPoolMaxThreadCount(size_t count) {
