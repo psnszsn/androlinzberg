@@ -24,6 +24,8 @@ import com.android.server.utils.TimingsTraceAndSlog
 internal object SystemServices {
     private const val TAG = "SystemServer"
     private external fun nativeCreateMediaExtractorService(): android.os.IBinder
+    private external fun nativeCreateAudioPolicyService(): android.os.IBinder
+    private external fun nativeCreateAudioFlingerService(): android.os.IBinder
 
     @JvmStatic
     fun start(context: Context, stockWindows: StockWindowServices, onBootComplete: () -> Unit) {
@@ -211,8 +213,10 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.INCIDENT_SERVICE, HostedIncidentManagerService())
         android.os.ServiceManager.addService(Context.INCIDENT_COMPANION_SERVICE, HostedIncidentCompanionService())
         android.os.ServiceManager.addService(Context.DEVICE_IDLE_CONTROLLER, HostedDeviceIdleController())
-        // Audio capability/session policy and media services; rendering stays in the native backend.
-        android.os.ServiceManager.addService(HostedAudioIds.SERVICE, HostedAudioIdService())
+        // Native audio services behind stock libaudioclient: media.audio_policy selects the
+        // host output, media.audio_flinger owns tracks and renders through PipeWire.
+        android.os.ServiceManager.addService("media.audio_policy", nativeCreateAudioPolicyService())
+        android.os.ServiceManager.addService("media.audio_flinger", nativeCreateAudioFlingerService())
         android.os.ServiceManager.addService(Context.AUDIO_SERVICE, HostedAudioService(android.os.PermissionEnforcer.fromContext(context), context))
         android.os.ServiceManager.addService(Context.MEDIA_ROUTER_SERVICE, HostedMediaRouterService(context, packageManager))
         val mediaSessions = HostedMediaSessionService()

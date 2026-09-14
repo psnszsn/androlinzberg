@@ -315,10 +315,15 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
         "src/native/HostInputDispatcher.cpp",
         "src/native/HostLooper.cpp",
         "src/native/HostedVideoOutput.cpp",
-        // Original ToneGenerator callback/RefBase ABI over the existing PCM output.
-        "src/native/ToneOutput.cpp",
+        // Host audio services behind the pinned libaudioclient AIDL (src/native/audio).
+        "src/native/audio/AudioServiceJni.cpp",
+        "src/native/audio/HostAudioFlinger.cpp",
+        "src/native/audio/HostAudioPolicyService.cpp",
+        "src/native/audio/HostAudioTrack.cpp",
+        "src/native/audio/HostSchedPolicy.cpp",
         "src/native/binder/Binder.cpp",
         "src/native/binder/Parcel.cpp",
+        "src/native/binder/ServiceNotifications.cpp",
         "src/native/graphics/HostComposer.cpp",
         "src/native/graphics/HostGralloc.cpp",
         "src/native/graphics/HostRenderEngineCapabilities.cpp",

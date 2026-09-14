@@ -31,7 +31,6 @@ internal object HostedAAudio {
         val config = intArrayOf(0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 10, 0)
         val callbacks = LongArray(4)
         var sessionId = -1 // AAUDIO_SESSION_ID_NONE
-        var legacyStream: Int? = null
     }
     private class Stream(val track: AudioTrack, val rate: Int, val channels: Int,
         val format: Int, val burst: Int, val callbackFrames: Int, val callbacks: LongArray,
@@ -70,7 +69,6 @@ internal object HostedAAudio {
             when (key) {
                 12 -> builder.config[0] = channelMask(value)
                 13 -> builder.sessionId = value
-                14 -> builder.legacyStream = value
                 else -> builder.config[key] = value
             }
         }
@@ -82,9 +80,9 @@ internal object HostedAAudio {
     @JvmStatic fun open(id: Long): Long {
         val builder = builders[id] ?: return NULL.toLong()
         val (config, callbacks, identity) = synchronized(builder) {
-            Triple(builder.config.copyOf(), builder.callbacks.copyOf(), builder.sessionId to builder.legacyStream)
+            Triple(builder.config.copyOf(), builder.callbacks.copyOf(), builder.sessionId)
         }
-        val (sessionId, legacyStream) = identity
+        val sessionId = identity
         if (sessionId < -1) return ARGUMENT.toLong()
         val validation = validate(config)
         if (validation != 0) return validation.toLong()
@@ -113,9 +111,6 @@ internal object HostedAAudio {
         val attributes = AudioAttributes.Builder().setUsage(config[5].takeIf { it != 0 } ?: AudioAttributes.USAGE_MEDIA)
             .setContentType(config[8])
         val track = try {
-            // ToneGenerator's native AudioTrack requests an Android legacy stream.
-            // Preserve the stock attribute mapping at this existing output seam.
-            if (legacyStream != null) attributes.setInternalLegacyStreamType(legacyStream)
             val trackBuilder = AudioTrack.Builder().setAudioAttributes(attributes.build()).setAudioFormat(audioFormat.build())
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .setBufferSizeInBytes(config[4].coerceAtLeast(burst * 8) * frameBytes)

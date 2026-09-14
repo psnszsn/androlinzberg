@@ -5,6 +5,8 @@
 #include <utils/String8.h>
 #include <utils/Vector.h>
 #include <log/log.h>
+#include <functional>
+#include <variant>
 namespace android {
 class IServiceManager : public virtual RefBase {
 public:
@@ -35,6 +37,18 @@ public:
     AIBinder_decStrong(n);
     return s;
   }
+  // Follows AOSP CppBackendShim::registerForNotifications over the broker's
+  // IServiceCallback route (ServiceNotifications.cpp in the native island).
+  class LocalRegistrationCallback : public virtual RefBase {
+  public:
+    virtual void onServiceRegistration(const String16 &name,
+                                       const sp<IBinder> &binder) = 0;
+    virtual ~LocalRegistrationCallback() {}
+  };
+  status_t registerForNotifications(const String16 &name,
+                                    const sp<LocalRegistrationCallback> &cb);
+  status_t unregisterForNotifications(const String16 &name,
+                                      const sp<LocalRegistrationCallback> &cb);
 };
 inline sp<IServiceManager> defaultServiceManager() {
   static sp<IServiceManager> manager = sp<IServiceManager>::make();

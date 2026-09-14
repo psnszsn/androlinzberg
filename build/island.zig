@@ -91,11 +91,20 @@ const minikin_srcs = [_][]const u8{
 // skia TUs the framework needs that are not part of //:skia (tools/)
 const skia_extra_srcs = [_][]const u8{"tools/SkSharingProc.cpp"};
 
+// Host media.audio_flinger / media.audio_policy services behind stock libaudioclient.
+const audio_host_interfaces = [_][]const u8{
+    "android/media/IAudioFlingerService.aidl",
+    "android/media/IAudioPolicyService.aidl",
+    "android/media/IAudioTrack.aidl",
+};
+const audio_host_srcs = [_][]const u8{
+    "AudioServiceJni.cpp", "HostAudioFlinger.cpp", "HostAudioPolicyService.cpp", "HostAudioTrack.cpp", "HostSchedPolicy.cpp", "azk_pipewire.c",
+};
 const our_srcs = [_][]const u8{
     "src/native/ArtzigGpuPipeline.cpp", "src/native/HardwareBufferRender.cpp",
     "src/native/AospJniBridge.cpp",     "src/native/EglWindow.cpp",
     "src/native/BinderJniBridge.cpp",   "src/native/HostLooper.cpp",
-    "src/native/HostedVideoOutput.cpp",
+    "src/native/HostedVideoOutput.cpp", "src/native/binder/ServiceNotifications.cpp",
 };
 
 pub fn build(b: *std.Build, o: Options) Result {
@@ -648,11 +657,57 @@ pub fn build(b: *std.Build, o: Options) Result {
         o.aosp.path(b, "frameworks/av/media/libaaudio/src"),
     }) catch @panic("OOM");
     g.add(o.aosp.path(b, "frameworks/av/media/libaudiofoundation"), &.{"AudioContainers.cpp"}, bridge_includes.items, &.{});
-    // Original tone descriptors/sequencer/JNI, with AudioFlinger output replaced
-    // by the existing hosted AAudio/AudioTrack operation at the native boundary.
-    g.add(o.aosp.path(b, "frameworks/av/media/libaudioclient"), &.{"ToneGenerator.cpp"}, bridge_includes.items, &.{"-DARTZIG_HOST_AUDIO"});
-    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_media_ToneGenerator.cpp"}, bridge_includes.items, &.{"-DARTZIG_HOST_AUDIO"});
-    g.add(b.path("src/native"), &.{"ToneOutput.cpp"}, bridge_includes.items, &.{});
+    // Stock libaudioclient, its AIDL conversions and the original audio JNI over
+    // hosted media.audio_flinger / media.audio_policy services (src/native/audio).
+    const audio_headers = b.addWriteFiles();
+    _ = audio_headers.addCopyFile(o.aosp.path(b, "bionic/libc/include/sys/system_properties.h"), "sys/system_properties.h");
+    var audio_includes: std.ArrayList(std.Build.LazyPath) = .empty;
+    audio_includes.appendSlice(b.allocator, bridge_includes.items) catch @panic("OOM");
+    audio_includes.appendSlice(b.allocator, &.{
+        audio_headers.getDirectory(),
+        o.aosp.path(b, "frameworks/av/media/libaudioclient/include/media"),
+        o.aosp.path(b, "frameworks/av/media/utils/include"),
+        o.aosp.path(b, "frameworks/av/media/libshmem/include"),
+        o.aosp.path(b, "frameworks/av/media/libnbaio/include_mono"),
+        fn_inc,
+        b.path("src/native/audio"),
+    }) catch @panic("OOM");
+    const audio_flags = [_][]const u8{ "-D__unused=__attribute__((__unused__))", "-DARTZIG_HOST_THREAD_PRIORITY", "-D__BIONIC_AVAILABILITY_GUARD(x)=1", "-D__INTRODUCED_IN(x)=", "-DARTZIG_SHARED_PROPERTIES" };
+    g.add(o.aosp.path(b, "frameworks/av/media/libaudioclient"), &.{
+        "ToneGenerator.cpp",       "AudioTrack.cpp",          "AudioSystem.cpp",          "AudioTrackShared.cpp",   "IAudioFlinger.cpp",
+        "AidlConversion.cpp",      "PlayerBase.cpp",           "TrackPlayerBase.cpp",    "AudioPolicy.cpp",
+        "AudioProductStrategy.cpp", "AudioVolumeGroup.cpp",    "PolicyAidlConversion.cpp", "VolumeGroupAttributes.cpp",
+        "AudioRecord.cpp",         "AudioEffect.cpp",          "RecordingActivityTracker.cpp",
+    }, audio_includes.items, &audio_flags);
+    g.add(o.aosp.path(b, "frameworks/av/media/audioaidlconversion"), &.{"AidlConversionCppNdk.cpp"}, audio_includes.items, &audio_flags);
+    g.add(o.aosp.path(b, "frameworks/av/media/libaudiofoundation"), &.{ "AudioDeviceTypeAddr.cpp", "AudioGain.cpp", "AudioPort.cpp", "AudioProfile.cpp", "DeviceDescriptorBase.cpp" }, audio_includes.items, &audio_flags);
+    g.add(o.aosp.path(b, "frameworks/av/media/libmediahelper"), &.{ "TypeConverter.cpp", "AudioParameter.cpp", "AudioValidator.cpp" }, audio_includes.items, &audio_flags);
+    g.add(o.aosp.path(b, "frameworks/av/media/libshmem"), &.{ "ShmemCompat.cpp", "ShmemUtil.cpp" }, audio_includes.items, &audio_flags);
+    g.add(o.aosp.path(b, "frameworks/av/media/utils"), &.{"ServiceSingleton.cpp"}, audio_includes.items, &audio_flags);
+    g.add(o.aosp.path(b, "frameworks/native/services/audiomanager"), &.{"IAudioManager.cpp"}, audio_includes.items, &audio_flags);
+    g.add(o.aosp.path(b, "system/media/audio_utils"), &.{ "mutex.cpp", "threads.cpp", "format.c", "StringUtils.cpp", "roundup.c", "minifloat.c" }, audio_includes.items, &audio_flags);
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{
+        "android_media_AudioSystem.cpp",           "android_media_AudioTrack.cpp",        "android_media_AudioRecord.cpp",
+        "android_media_AudioAttributes.cpp",       "android_media_AudioDeviceAttributes.cpp", "android_media_AudioEffectDescriptor.cpp",
+        "android_media_AudioProductStrategies.cpp", "android_media_AudioVolumeGroups.cpp", "android_media_MicrophoneInfo.cpp",
+        "android_media_AudioTrackCallback.cpp",    "android_media_DeviceCallback.cpp",    "android_media_audio_common_AidlConversion.cpp",
+        "android_media_ToneGenerator.cpp",
+    }, audio_includes.items, &audio_flags);
+    // Unsupported-by-default Bn bases mirror the generated service interfaces.
+    const unsupported_headers = b.addWriteFiles();
+    for (o.aidl_header_roots, @import("generator_sources.zig").cpp_aidl) |root, entry| {
+        for (audio_host_interfaces) |interface| {
+            if (!std.mem.eql(u8, entry.input, interface)) continue;
+            const gen_unsupported = b.addSystemCommand(&.{ "python3", "-B" });
+            gen_unsupported.addFileArg(b.path("tools/gen-unsupported-cpp.py"));
+            gen_unsupported.addFileArg(root.path(b, b.fmt("{s}.h", .{interface[0 .. interface.len - ".aidl".len]})));
+            const out = gen_unsupported.addOutputDirectoryArg("unsupported");
+            gen_unsupported.setName(b.fmt("generate unsupported base for {s}", .{interface}));
+            _ = unsupported_headers.addCopyDirectory(out, "", .{});
+        }
+    }
+    audio_includes.append(b.allocator, unsupported_headers.getDirectory()) catch @panic("OOM");
+    g.add(b.path("src/native/audio"), &audio_host_srcs, audio_includes.items, &audio_flags);
     // Original parameter contracts and pure format/channel conversion routines.
     // Unused service/MMAP routines are hidden sections removed by the island linker.
     g.add(o.aosp.path(b, "frameworks/av/media/libaaudio/src"), &.{ "core/AAudioStreamParameters.cpp", "utility/AAudioUtilities.cpp" }, bridge_includes.items, &.{ "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections" });

@@ -526,6 +526,50 @@ public:
       return OK;
     }
   }
+  // Fixed-size arrays share the vector wire format: a size prefix, then elements.
+  template <class T, size_t N> status_t writeFixedArray(const std::array<T, N> &v) {
+    auto s = writeInt32(static_cast<int32_t>(N));
+    if (s)
+      return s;
+    for (const auto &x : v)
+      if ((s = writeData(x)))
+        return s;
+    return OK;
+  }
+  template <class T, size_t N>
+  status_t writeFixedArray(const std::optional<std::array<T, N>> &v) {
+    return v ? writeFixedArray(*v) : writeInt32(-1);
+  }
+  template <class T, size_t N> status_t readFixedArray(std::array<T, N> *v) const {
+    int32_t n;
+    auto s = readInt32(&n);
+    if (s)
+      return s;
+    if (n != static_cast<int32_t>(N))
+      return BAD_VALUE;
+    for (auto &x : *v)
+      if ((s = readData(&x)))
+        return s;
+    return OK;
+  }
+  template <class T, size_t N>
+  status_t readFixedArray(std::optional<std::array<T, N>> *v) const {
+    int32_t n;
+    auto s = readInt32(&n);
+    if (s)
+      return s;
+    if (n < 0) {
+      v->reset();
+      return OK;
+    }
+    if (n != static_cast<int32_t>(N))
+      return BAD_VALUE;
+    v->emplace();
+    for (auto &x : **v)
+      if ((s = readData(&x)))
+        return s;
+    return OK;
+  }
   status_t writeByteVector(const std::vector<uint8_t> &v) {
     return writeVector(v);
   }

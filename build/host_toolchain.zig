@@ -17,14 +17,13 @@ pub const Result = struct {
     island: LibrarySet,
     skia: IncludeSet,
     codec: IncludeSet,
-    pipewire: LibrarySet,
 };
 
 const island_packages = [_][]const u8{
     "harfbuzz",   "harfbuzz-icu", "freetype2",  "fontconfig", "icu-uc",  "icu-i18n",
     "libpng",     "zlib",         "openssl",    "sqlite3",    "egl",     "gl",
     "gbm",        "libdrm",       "expat",      "libjpeg",    "libwebp", "libwebpdemux",
-    "libwebpmux", "glesv2",       "libselinux", "glesv1_cm",
+    "libwebpmux", "glesv2",       "libselinux", "glesv1_cm",  "libpipewire-0.3",
 };
 
 pub fn discover(b: *std.Build) Result {
@@ -32,7 +31,6 @@ pub fn discover(b: *std.Build) Result {
         .island = librarySet(b, &island_packages),
         .skia = includeSet(b, &.{ "fontconfig", "expat", "freetype2", "libpng", "egl", "libjpeg", "glesv2", "libwebp", "libwebpdemux", "libwebpmux" }),
         .codec = includeSet(b, &.{ "libavcodec", "libavutil", "libva", "libdrm" }),
-        .pipewire = librarySet(b, &.{"libpipewire-0.3"}),
     };
 }
 

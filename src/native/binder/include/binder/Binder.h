@@ -18,6 +18,10 @@ public:
   status_t transact(uint32_t, const Parcel &, Parcel *, uint32_t = 0) override;
   status_t dump(int fd, const Vector<String16> &args) override;
   virtual status_t onTransact(uint32_t, const Parcel &, Parcel *, uint32_t = 0);
+  // Kernel binder thread scheduling hints; the broker's host threads have no
+  // per-object policy, so these are observationally irrelevant here.
+  void setMinSchedulerPolicy(int, int) {}
+  void setInheritRt(bool) {}
 };
 // Source note: pinned Binder.cpp BpRefBase lifecycle. The surrounding file
 // depends on kernel Binder; these reference transitions are transport agnostic.

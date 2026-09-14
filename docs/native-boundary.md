@@ -103,16 +103,21 @@ zig build -j10 cpp-audit
   GPU pixels, transferred fences, ordered commit/completion callbacks, latch
   statistics and independent task outputs. The former unsupported exports were
   deleted.
-- `src/platform/audio.zig` retains the PCM ring, PipeWire state and timing operations,
-  registered on `dev.artzig.HostedPcmStream`. Verbatim AudioTrack Java calls the
-  pinned 54-method interface in `src/binder/audio_track_jni.zig`, which checks all
-  Kotlin bridge descriptors at startup. `HostedAudioTrackBackend` owns stream
-  lifetime, client queue allocation, blocking/nonblocking writes, PCM conversion,
-  drain/flush and position accounting. The Java client owns public validation and
-  PlayerBase registration. Reported latency is allocated frames divided by sample
-  rate; downstream host-device latency is not measured. Native features outside the
-  existing stream's capabilities retain explicit unsupported diagnostics or pinned
-  failure results. The PipeWire backend implementation is unchanged.
+- Audio playback uses the stock client stack: verbatim AudioTrack/AudioSystem/
+  AudioRecord/ToneGenerator Java, the original `android_media_Audio*.cpp` JNI and
+  the pinned `libaudioclient` (AudioTrack, AudioSystem, the AudioTrackShared
+  control block, AIDL conversions) over the hosted Binder. The Android side of
+  the seam is `src/native/audio`: `HostAudioFlinger` and `HostAudioPolicyService`
+  implement the generated `IAudioFlingerService` / `IAudioPolicyService` for one
+  primary output on one speaker device, and `HostAudioTrack` is the per-track
+  `IAudioTrack` over the pinned `AudioTrackServerProxy`. Unimplemented service
+  operations come from generated `Bn*Unsupported` bases
+  (`tools/gen-unsupported-cpp.py`) that fail with `EX_UNSUPPORTED_OPERATION`.
+  The Linux side is `azk_pipewire.c`: one PipeWire playback stream per track
+  (PipeWire resamples and mixes), or a null sink consuming frames in real time
+  when no daemon is reachable, like AOSP's stub audio HAL. Reported latency is
+  the output's 40 ms plus the track buffer; time stretching and post-creation
+  sample-rate changes are logged as unimplemented and play at the original rate.
 - `src/codec/jni.zig` registers the eight existing decoder operations on
   `dev.artzig.HostedCodecEngine`. Verbatim MediaCodec Java enters the pinned JNI
   interface in `src/binder/media_codec_jni.zig`. `HostedMediaCodecBackend` owns
@@ -122,15 +127,15 @@ zig build -j10 cpp-audit
   secure/block/encoder and additional surface/resource operations report explicit
   diagnostics or pinned failure results. The FFmpeg and presentation engines are
   unchanged.
-- `src/binder/aaudio_ndk.zig` exports 42 AAudio entry points over stock AudioTrack.
+- `src/binder/aaudio_ndk.zig` exports the AAudio entry points over stock AudioTrack.
   HostedAAudio owns callback submission and stream lifecycle; original native
   AAudioStreamParameters, AAudioUtilities and AudioContainers validate parameters
   and convert channel/format values. The shared JNI scope preserves calling-thread
   attachment. Callback storage is allocated before publishing a stream and remains
-  owned until close drains delivery. PCM16/float playback uses the existing stream;
-  capture/MMAP/offload and unavailable formats/devices retain failure results.
-  Performance is NONE, sharing is SHARED, and the 10ms submission quantum is not a
-  measurement of the PipeWire device period. The PipeWire implementation is unchanged.
+  owned until close drains delivery. PCM16/float playback uses the stock AudioTrack
+  path above; capture/MMAP/offload and unavailable formats/devices retain failure
+  results. Performance is NONE, sharing is SHARED, and the 10ms submission quantum
+  is not a measurement of the PipeWire device period.
 - `src/binder/media_ndk.zig` exports 24 NDK codec entry points. Its Kotlin module
   `HostedNdkMediaCodec` shares the stock Java MediaCodec client, preserving codec
   lifecycle and callback ownership across native calls. The C++ helpers in
@@ -351,11 +356,20 @@ zig build -j10 cpp-audit
   through the dedicated controller.
 
 
-`src/platform/azk_pipewire.c` is a small PipeWire adapter. It contains the C
-macros and callback code that Zig cannot import directly.
+`src/native/audio/azk_pipewire.c` is a small PipeWire adapter used by the host
+AudioFlinger tracks. It contains the C macros and callback code around
+`pw_stream`; stream ownership stays with the C++ track adapter.
 
 ## C++ boundary
 
+- `audio/HostAudioFlinger.cpp`, `audio/HostAudioPolicyService.cpp` and
+  `audio/HostAudioTrack.cpp` implement the pinned AudioFlinger / AudioPolicy /
+  IAudioTrack AIDL for the host output, following AudioFlinger::createTrack,
+  PlaybackThread::Track and AudioPolicyManager::getOutputForAttr, with the
+  default engine's product strategy table. They exist because the interfaces
+  and the shared control block are AOSP C++; the stock services cannot be
+  compiled without audio HALs. `audio/HostSchedPolicy.cpp` is libprocessgroup's
+  non-Android branch (no cgroups).
 - `graphics/HostGralloc.cpp` implements the pinned AOSP GrallocMapper/Allocator
   interfaces over `platform/graphics_buffer.zig`. AOSP retains GraphicBuffer
   validation and accounting. GBM objects, imports, metadata and descriptor

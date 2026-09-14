@@ -114,25 +114,28 @@ internal object StockAudioFoundationSmoke {
         val devices = AudioManager().getDevices(AudioManager.GET_DEVICES_OUTPUTS)
         check(devices.size == 1)
         val device = devices.single()
-        check(device.id == 1 && device.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)
-        check(device.productName.toString() == "artzig" && device.address.isEmpty())
+        check(device.id > 0 && device.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)
+        check(device.productName.toString() == "Speaker" && device.address.isEmpty())
         check(device.isSink && !device.isSource)
-        check(device.sampleRates.contentEquals(intArrayOf(44_100, 48_000)))
-        check(device.channelCounts.contentEquals(intArrayOf(1, 2)))
-        check(device.channelMasks.contentEquals(intArrayOf(AudioFormat.CHANNEL_OUT_MONO, AudioFormat.CHANNEL_OUT_STEREO)))
-        check(device.encodings.contentEquals(intArrayOf(AudioFormat.ENCODING_PCM_16BIT)))
+        // Stock AudioPort merges the profiles' values into sets; compare without order.
+        check(device.sampleRates.sortedArray().contentEquals(intArrayOf(44_100, 48_000))) { device.sampleRates.contentToString() }
+        check(device.channelCounts.sortedArray().contentEquals(intArrayOf(1, 2))) { device.channelCounts.contentToString() }
+        check(device.channelMasks.sortedArray().contentEquals(intArrayOf(AudioFormat.CHANNEL_OUT_MONO, AudioFormat.CHANNEL_OUT_STEREO))) { device.channelMasks.contentToString() }
+        check(device.encodings.sortedArray().contentEquals(intArrayOf(AudioFormat.ENCODING_PCM_16BIT, AudioFormat.ENCODING_PCM_FLOAT))) { device.encodings.contentToString() }
         check(AudioManager().getDevices(AudioManager.GET_DEVICES_INPUTS).isEmpty())
         check(AudioManager.getDeviceForPortId(device.id, AudioManager.GET_DEVICES_OUTPUTS) != null)
         check(AudioManager.getDeviceForPortId(device.id, AudioManager.GET_DEVICES_INPUTS) == null)
         val ports = arrayListOf<AudioPort>()
         val generation = IntArray(1)
+        // The speaker device port and the primary mix port, joined by the output's patch.
         check(AudioSystem.listAudioPorts(ports, generation) == AudioManager.SUCCESS)
-        check(ports.size == 1 && generation[0] != 0)
-        check(AudioSystem.listAudioPorts(ports, generation) == AudioManager.SUCCESS && ports.size == 2)
+        check(ports.size == 2 && generation[0] != 0) { "ports ${ports.size}" }
+        check(ports.any { it.role() == AudioPort.ROLE_SINK } && ports.any { it.role() == AudioPort.ROLE_SOURCE })
         val patches = arrayListOf<AudioPatch>()
         val patchGeneration = IntArray(1)
         check(AudioSystem.listAudioPatches(patches, patchGeneration) == AudioManager.SUCCESS)
-        check(patches.isEmpty() && patchGeneration[0] == generation[0])
+        check(patches.size == 1 && patchGeneration[0] == generation[0]) { "patches ${patches.size}" }
+        check(patches.single().sinks().single().port().id() == device.id)
         check(AudioSystem.listAudioPorts(null, generation) == AudioManager.ERROR_BAD_VALUE)
         check(AudioSystem.listAudioPatches(patches, IntArray(2)) == AudioManager.ERROR_BAD_VALUE)
     }
@@ -144,8 +147,9 @@ internal object StockAudioFoundationSmoke {
         check(CamcorderProfile.get(CamcorderProfile.QUALITY_HIGH) == null)
         check(!CamcorderProfile.hasProfile(CamcorderProfile.QUALITY_HIGH))
         check(AudioEffect.queryEffects() == null)
+        // AudioFlinger reports no input buffer: stock AudioRecord maps that to ERROR_BAD_VALUE.
         check(AudioRecord.getMinBufferSize(48_000, AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT) == AudioRecord.ERROR)
+            AudioFormat.ENCODING_PCM_16BIT) == AudioRecord.ERROR_BAD_VALUE)
         val record = AudioRecord(MediaRecorder.AudioSource.MIC, 48_000,
             AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, 4096)
         try {

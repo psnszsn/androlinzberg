@@ -14,7 +14,7 @@
 # The archive generator must apply the selected frameworks-base,
 # incremental_delivery, minikin, and system/libbase patches before packaging,
 # then revert them.
-# Rules: D=129 F=6411 total=6540
+# Rules: D=253 F=8773 total=9049
 D aosp external/fmtlib
 D aosp system/tools/xsdc/src/main/java
 F aosp prebuilts/misc/common/commons-cli/commons-cli-1.2.jar
@@ -9095,11 +9095,85 @@ F aosp frameworks/base/core/jni/filesystem_utils.h
 F aosp frameworks/proto_logging/stats/enums/stats/devicepolicy/jarjar-rules.txt
 D aosp system/core/libappfuse
 
-# Original tone client, JNI and synthesizer over the existing hosted audio output.
+# Original tone client and JNI over stock libaudioclient.
 F aosp frameworks/base/media/java/android/media/ToneGenerator.java
 F aosp frameworks/base/core/jni/android_media_ToneGenerator.cpp
 F aosp frameworks/av/media/libaudioclient/ToneGenerator.cpp
-F aosp frameworks/av/media/libaudioclient/include/media/ToneGenerator.h
+
+# Stock libaudioclient (AudioTrack/AudioSystem/AudioRecord/AudioEffect clients,
+# shared control block, AIDL conversions) and the original audio JNI; the host
+# media.audio_flinger / media.audio_policy services in src/native/audio serve
+# the generated protocols.
+D aosp frameworks/av/aidl/android/media/audio
+D aosp frameworks/av/aidl/com
+D aosp frameworks/av/media/audioaidlconversion/include
+D aosp frameworks/av/media/libaudioclient/aidl
+D aosp frameworks/av/media/libaudioclient/include
+D aosp frameworks/av/media/libaudiofoundation/include
+D aosp frameworks/av/media/libmediahelper/include
+D aosp frameworks/av/media/libshmem/aidl
+D aosp frameworks/av/media/libshmem/include
+D aosp frameworks/av/media/utils/include
+D aosp frameworks/native/include/audiomanager
+D aosp system/media/audio_utils/include
+F aosp frameworks/av/include/private/media/AudioEffectShared.h
+F aosp frameworks/av/include/private/media/AudioTrackShared.h
+F aosp frameworks/av/media/audio/aconfig/audio.aconfig
+F aosp frameworks/av/media/audio/aconfig/audioclient.aconfig
+F aosp frameworks/av/media/audio/aconfig/audioserver.aconfig
+F aosp frameworks/av/media/audioaidlconversion/AidlConversionCppNdk.cpp
+F aosp frameworks/av/media/libaudioclient/AidlConversion.cpp
+F aosp frameworks/av/media/libaudioclient/AudioEffect.cpp
+F aosp frameworks/av/media/libaudioclient/AudioPolicy.cpp
+F aosp frameworks/av/media/libaudioclient/AudioProductStrategy.cpp
+F aosp frameworks/av/media/libaudioclient/AudioRecord.cpp
+F aosp frameworks/av/media/libaudioclient/AudioSystem.cpp
+F aosp frameworks/av/media/libaudioclient/AudioTrack.cpp
+F aosp frameworks/av/media/libaudioclient/AudioTrackShared.cpp
+F aosp frameworks/av/media/libaudioclient/AudioVolumeGroup.cpp
+F aosp frameworks/av/media/libaudioclient/IAudioFlinger.cpp
+F aosp frameworks/av/media/libaudioclient/PlayerBase.cpp
+F aosp frameworks/av/media/libaudioclient/PolicyAidlConversion.cpp
+F aosp frameworks/av/media/libaudioclient/RecordingActivityTracker.cpp
+F aosp frameworks/av/media/libaudioclient/TrackPlayerBase.cpp
+F aosp frameworks/av/media/libaudioclient/VolumeGroupAttributes.cpp
+F aosp frameworks/av/media/libaudiofoundation/AudioDeviceTypeAddr.cpp
+F aosp frameworks/av/media/libaudiofoundation/AudioGain.cpp
+F aosp frameworks/av/media/libaudiofoundation/AudioPort.cpp
+F aosp frameworks/av/media/libaudiofoundation/AudioProfile.cpp
+F aosp frameworks/av/media/libaudiofoundation/DeviceDescriptorBase.cpp
+F aosp frameworks/av/media/libmediahelper/AudioParameter.cpp
+F aosp frameworks/av/media/libmediahelper/AudioValidator.cpp
+F aosp frameworks/av/media/libmediahelper/TypeConverter.cpp
+F aosp frameworks/av/media/libmedia/include/media/Modulo.h
+F aosp frameworks/av/media/libnbaio/include_mono/media/nbaio/SingleStateQueue.h
+F aosp frameworks/av/media/libshmem/ShmemCompat.cpp
+F aosp frameworks/av/media/libshmem/ShmemUtil.cpp
+F aosp frameworks/av/media/utils/ServiceSingleton.cpp
+F aosp frameworks/base/media/java/android/media/AudioMixPortConfig.java
+F aosp frameworks/base/media/java/android/media/AudioMixPort.java
+F aosp frameworks/base/media/java/android/media/AudioRecordRoutingProxy.java
+F aosp frameworks/base/media/java/android/media/AudioTrackRoutingProxy.java
+F aosp frameworks/base/media/jni/android_media_PlaybackParams.h
+F aosp frameworks/base/media/jni/android_media_VolumeShaper.h
+F aosp frameworks/native/services/audiomanager/IAudioManager.cpp
+F aosp system/hardware/interfaces/media/aidl/android/media/audio/common/AudioDualMonoMode.aidl
+F aosp system/hardware/interfaces/media/aidl/android/media/audio/common/AudioEncapsulationMetadataType.aidl
+F aosp system/hardware/interfaces/media/aidl/android/media/audio/common/AudioGainMode.aidl
+F aosp system/hardware/interfaces/media/aidl/android/media/audio/common/AudioOutputFlags.aidl
+F aosp system/hardware/interfaces/media/aidl/android/media/audio/common/AudioPlaybackRate.aidl
+F aosp system/hardware/interfaces/media/aidl/android/media/audio/common/Boolean.aidl
+F aosp system/hardware/interfaces/media/aidl/android/media/audio/common/Byte.aidl
+F aosp system/hardware/interfaces/media/aidl/android/media/audio/common/Double.aidl
+F aosp system/hardware/interfaces/media/aidl/android/media/audio/common/Float.aidl
+F aosp system/hardware/interfaces/media/aidl/android/media/audio/common/Long.aidl
+F aosp system/hardware/interfaces/media/aidl/android/media/audio/common/Void.aidl
+F aosp system/media/audio_utils/format.c
+F aosp system/media/audio_utils/minifloat.c
+F aosp system/media/audio_utils/mutex.cpp
+F aosp system/media/audio_utils/roundup.c
+F aosp system/media/audio_utils/StringUtils.cpp
+F aosp system/media/audio_utils/threads.cpp
 
 # Original Bionic device SDK query used by native application libraries.
 F aosp bionic/libc/bionic/get_device_api_level.cpp

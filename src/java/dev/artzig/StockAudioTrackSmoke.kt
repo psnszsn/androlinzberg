@@ -19,9 +19,10 @@ internal object StockAudioTrackSmoke {
             check(track.state == AudioTrack.STATE_INITIALIZED)
             check(track.audioSessionId > 0 && track.streamType == AudioManager.STREAM_MUSIC)
             check(track.bufferCapacityInFrames == 2048)
-            check(track.latency == 256)
+            // AudioFlinger output latency plus the track buffer: 40 ms + 2048 frames at 8 kHz.
+            check(track.latency == 296) { "latency ${track.latency}" }
             check(track.setBufferSizeInFrames(64) == 64)
-            check(track.latency == 256)
+            check(track.latency == 296)
             track.setVolume(0f)
             val input = ByteBuffer.allocateDirect(200).apply { position(8) }
             check(track.write(input, 128, AudioTrack.WRITE_NON_BLOCKING) == 128)
@@ -33,9 +34,13 @@ internal object StockAudioTrackSmoke {
             check(track.write(shortArrayOf(0, 1, -1, 32767), 1, 2, AudioTrack.WRITE_NON_BLOCKING) == 2)
             check(track.write(shortArrayOf(0), 1, 1, AudioTrack.WRITE_NON_BLOCKING) == AudioTrack.ERROR_BAD_VALUE)
             track.play()
+            // Below the 64-frame start threshold the mixer keeps waiting for data.
+            Thread.sleep(50)
+            check(track.playbackHeadPosition == 0)
+            check(track.write(ShortArray(62), 0, 62, AudioTrack.WRITE_NON_BLOCKING) == 62)
             val deadline = System.nanoTime() + 2_000_000_000L
             while (track.playbackHeadPosition < 2 && System.nanoTime() < deadline) Thread.sleep(5)
-            check(track.playbackHeadPosition >= 2)
+            check(track.playbackHeadPosition >= 2) { "head ${track.playbackHeadPosition}" }
             track.pause()
             check(track.playState == AudioTrack.PLAYSTATE_PAUSED)
             track.flush()
@@ -47,7 +52,9 @@ internal object StockAudioTrackSmoke {
             params.setAudioFallbackMode(android.media.PlaybackParams.AUDIO_FALLBACK_MODE_DEFAULT)
             check(track.playbackParams.audioFallbackMode == android.media.PlaybackParams.AUDIO_FALLBACK_MODE_FAIL)
             check(track.playbackParams.audioStretchMode == android.media.PlaybackParams.AUDIO_STRETCH_MODE_VOICE)
-            check(runCatching { track.playbackParams = android.media.PlaybackParams().setSpeed(2f) }.exceptionOrNull() is IllegalArgumentException)
+            // Stock mixer tracks accept time stretching through the shared control block.
+            track.playbackParams = android.media.PlaybackParams().setSpeed(2f)
+            check(track.playbackParams.speed == 2f)
             track.stop()
         } finally { track.release() }
         check(track.state == AudioTrack.STATE_UNINITIALIZED)
@@ -67,27 +74,30 @@ internal object StockAudioTrackSmoke {
     }
 
     private fun releaseUnblocksWriter(format: AudioFormat) {
+        // Stock AudioTrack::write only blocks on an active track; a whole extra buffer
+        // needs more than one mixer cycle, and release() interrupts the wait.
         val track = AudioTrack.Builder().setAudioFormat(format).setBufferSizeInBytes(4096).build()
         val started = java.util.concurrent.CountDownLatch(1)
         val finished = java.util.concurrent.CountDownLatch(1)
         val result = java.util.concurrent.atomic.AtomicReference<Result<Int>>()
+        val bytes = ByteArray(track.bufferSizeInFrames * 2)
         val writer = Thread({
             started.countDown()
-            result.set(runCatching { track.write(byteArrayOf(0, 0), 0, 2, AudioTrack.WRITE_BLOCKING) })
+            result.set(runCatching { track.write(bytes, 0, bytes.size, AudioTrack.WRITE_BLOCKING) })
             finished.countDown()
         }, "AudioTrackBlockingWriteTest").apply { isDaemon = true }
         try {
-            val bytes = ByteArray(track.bufferSizeInFrames * 2)
             check(track.write(bytes, 0, bytes.size, AudioTrack.WRITE_NON_BLOCKING) == bytes.size)
+            track.play()
             writer.start()
             check(started.await(1, java.util.concurrent.TimeUnit.SECONDS))
             check(!finished.await(50, java.util.concurrent.TimeUnit.MILLISECONDS))
             track.release()
             check(finished.await(2, java.util.concurrent.TimeUnit.SECONDS))
             val observed = checkNotNull(result.get())
-            // JNI may observe the released context before entering write, or an interrupted write.
-            check(observed.getOrNull() == AudioTrack.ERROR_INVALID_OPERATION ||
-                observed.exceptionOrNull() is IllegalStateException) { observed }
+            // The interrupted write returns what was accepted, or the released context is observed.
+            val written = observed.getOrNull()
+            check((written != null && written < bytes.size) || observed.exceptionOrNull() is IllegalStateException) { observed }
         } finally { track.release(); writer.interrupt(); writer.join(1000) }
     }
 }

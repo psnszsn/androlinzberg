@@ -3,7 +3,9 @@ Subject: [PATCH] libutils: expose Linux thread priority helpers to host graphics
 
 The pinned implementations only call Linux setpriority/getpriority; make this
 transport-independent functionality available without selecting Android-only
-scheduling, process-group or thread creation paths.
+scheduling, process-group or thread creation paths. Thread::getTid() has the
+same Linux-only body (pthread to kernel id) and is required by the stock
+AudioTrack/AudioRecord client threads.
 
 --- a/libutils/include/utils/AndroidThreads.h
 +++ b/libutils/include/utils/AndroidThreads.h
@@ -16,8 +18,37 @@ scheduling, process-group or thread creation paths.
  // Change the priority AND scheduling group of a particular thread.  The priority
  // should be one of the ANDROID_PRIORITY constants.  Returns INVALID_OPERATION
  // if the priority set failed, else another value if just the group set failed;
+--- a/libutils/include/utils/Thread.h
++++ b/libutils/include/utils/Thread.h
+@@ -75,7 +75,7 @@
+     // Indicates whether this thread is running or not.
+             bool        isRunning() const;
+ 
+-#if defined(__ANDROID__)
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_THREAD_PRIORITY)
+     // Return the thread's kernel ID, same as the thread itself calling gettid(),
+     // or -1 if the thread is not running.
+             pid_t       getTid() const;
+@@ -106,7 +106,7 @@
+     volatile bool           mExitPending;
+     volatile bool           mRunning;
+             sp<Thread>      mHoldSelf;
+-#if defined(__ANDROID__)
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_THREAD_PRIORITY)
+     // legacy for debugging, not used by getTid() as it is set by the child thread
+     // and so is not initialized until the child reaches that point
+             pid_t           mTid;
 --- a/libutils/Threads.cpp
 +++ b/libutils/Threads.cpp
+@@ -183,7 +183,7 @@
+     return 1;
+ }
+ 
+-#if defined(__ANDROID__)
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_THREAD_PRIORITY)
+ static pthread_t android_thread_id_t_to_pthread(android_thread_id_t thread)
+ {
+     return (pthread_t) thread;
 @@ -309,7 +309,7 @@
      gCreateThreadFn = func;
  }
@@ -27,3 +58,12 @@ scheduling, process-group or thread creation paths.
  int androidSetThreadPriority(pid_t tid, int pri)
  {
      int rc = 0;
+@@ -832,7 +832,7 @@
+     return mRunning;
+ }
+ 
+-#if defined(__ANDROID__)
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_THREAD_PRIORITY)
+ pid_t Thread::getTid() const
+ {
+     // mTid is not defined until the child initializes it, and the caller may need it earlier

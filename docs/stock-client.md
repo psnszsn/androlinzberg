@@ -25,7 +25,9 @@ capability. Selected server sources retain documented adaptations; see
 - Hosted services implement named, shared-isolated and external instances,
   authenticated process identities, binding lifetime, failure/restart handling,
   notification ownership and package/user query and snapshot operations.
-- AOSP ToneGenerator synthesis uses a patched native output through hosted AAudio.
+- Stock AudioTrack, AudioSystem and ToneGenerator (Java, JNI and libaudioclient)
+  reach the hosted `media.audio_flinger` / `media.audio_policy` services; the
+  shared control block, timestamps and underrun accounting are the AOSP ones.
   WallpaperService is available, while desktop-wide live-wallpaper presentation
   remains unsupported.
 - The unchanged official AOSP WebView 140.0.7339.15 provider supports HTML,
@@ -46,11 +48,13 @@ service records, including Chromium renderers, use the primary exec launcher;
 the dedicated WebView controller has separate preload and isolated-launch tests.
 Full Android SELinux/device sandbox equivalence is not provided.
 
-Wayland presentation runs in the separate task presenter. The PipeWire adapter
-and FFmpeg codec backend run inside app processes; PipeWire connects to the
-desktop's external audio daemon. These are not native Android audio/codec
-service clients. Specific unsupported desktop operations and recovery behavior
-are documented in [desktop behavior and limits](desktop.md).
+Wayland presentation runs in the separate task presenter. The PipeWire audio
+sink runs in the system process behind the native AudioFlinger adapter and
+connects to the desktop's external audio daemon (a real-time null sink stands
+in when none is reachable). The FFmpeg codec backend still runs inside app
+processes and is not a native Android codec service client. Specific
+unsupported desktop operations and recovery behavior are documented in
+[desktop behavior and limits](desktop.md).
 
 ## Verification
 

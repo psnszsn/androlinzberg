@@ -829,30 +829,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "azk_codec", .module = codec_mod },
         },
     });
-    const pipewire_tc = b.addTranslateC(.{
-        .root_source_file = b.path("src/platform/azk_pipewire.h"),
-        .target = target,
-        .optimize = optimize,
-    });
-    pipewire_tc.addIncludePath(b.path("src/platform"));
-    const audio_mod = b.createModule(.{
-        .root_source_file = b.path("src/platform/audio.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-        .imports = &.{
-            .{ .name = "art", .module = art_mod },
-            .{ .name = "pipewire", .module = pipewire_tc.createModule() },
-        },
-    });
-    audio_mod.addIncludePath(b.path("src/platform"));
-    audio_mod.addCSourceFile(.{
-        .file = b.path("src/platform/azk_pipewire.c"),
-        .flags = &.{ "-std=c11", "-D_GNU_SOURCE" },
-    });
-    for (host_toolchain.pipewire.include_roots) |root| audio_mod.addSystemIncludePath(root);
-    for (host_toolchain.pipewire.library_roots) |root| audio_mod.addLibraryPath(root);
-    audio_mod.linkSystemLibrary("pipewire-0.3", .{ .needed = true, .use_pkg_config = .no });
     const event_fd_mod = b.createModule(.{
         .root_source_file = b.path("src/platform/event_fd.zig"),
         .target = target,
@@ -878,7 +854,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "art", .module = art_mod },
-            .{ .name = "audio", .module = audio_mod },
             .{ .name = "codec_jni", .module = codec_jni_mod },
             .{ .name = "message_queue", .module = message_queue_mod },
         },
@@ -887,8 +862,6 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("apk_optimizer", apk_optimizer_mod);
     exe.rdynamic = true;
 
-    const audio_tests = b.addTest(.{ .root_module = audio_mod });
-    const run_audio_tests = b.addRunArtifact(audio_tests);
     const wayland_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/platform/wayland.zig"),
@@ -1150,7 +1123,6 @@ pub fn build(b: *std.Build) void {
     const proc_parser_run = b.addRunArtifact(proc_parser_test);
     b.step("proc-parser-test", "Verify AOSP process numeric parsing").dependOn(&proc_parser_run.step);
     native_test_step.dependOn(&proc_parser_run.step);
-    native_test_step.dependOn(&run_audio_tests.step);
     native_test_step.dependOn(&run_wayland_tests.step);
     native_test_step.dependOn(&codec_jni_check.step);
     native_test_step.dependOn(&run_apk_optimizer_tests.step);

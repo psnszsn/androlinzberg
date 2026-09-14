@@ -75,48 +75,40 @@ and NDK exports, plus a dev.artzig EGL test helper. Merely registering a helper 
 Current playback path:
 
 ```text
-app: stock AudioTrack.java
-  -> audio_track_jni.zig
-  -> HostedAudioTrackBackend.kt
-  -> HostedPcmStream -> platform/audio.zig -> PipeWire client library
-host desktop: PipeWire daemon -> output device
+app: stock AudioTrack.java / AudioSystem.java / ToneGenerator.java
+  -> original android_media_AudioTrack.cpp, android_media_AudioSystem.cpp, ...
+  -> pinned libaudioclient (AudioTrack, AudioSystem, AudioTrackShared, AIDL conversions)
+  -> hosted Binder: media.audio_policy, media.audio_flinger, per-track IAudioTrack
+system process: src/native/audio (HostAudioPolicyService, HostAudioFlinger, HostAudioTrack)
+  -> shared control block (memfd) + azk_pipewire.c stream per track
+host desktop: PipeWire daemon -> output device (or a real-time null sink)
 ```
 
-The native track lifecycle, buffering and playback state live in the app.
-[`HostedAudioTrackBackend`](../src/java/dev/artzig/HostedAudioTrackBackend.kt)
-creates the PCM stream directly. In pinned AOSP,
-`frameworks/base/core/jni/android_media_AudioTrack.cpp` creates native
-`AudioTrack`; `frameworks/av/media/libaudioclient/AudioTrack.cpp::createTrack_l`
-uses `AudioSystem::get_audio_flinger()` and `IAudioFlinger::createTrack`.
-That native client and shared-memory track protocol are replaced here.
+The client stack is stock down to the Binder transport: the Java classes, the
+JNI and `libaudioclient` are the pinned sources, compiled unchanged. The
+`AudioTrackShared` control block, timestamps, underrun counters, start
+threshold, volume shaper and session ids follow the AOSP protocol because the
+pinned client and server proxies are both compiled. The services are host
+adaptations (`docs/native-boundary.md`): `HostAudioPolicyService` follows
+`AudioPolicyManager::getOutputForAttr` and the default engine's product
+strategy table for one speaker device; `HostAudioFlinger` follows
+`AudioFlinger::createTrack` and `PlaybackThread::Track` for one primary output
+(48 kHz, float, 1024-frame period, 40 ms latency). The stock
+`AudioFlinger`/`AudioPolicyManager` remain uncompiled because they require
+audio HALs. AudioRecord, effects, MMAP/offload and direct outputs fail with
+the AOSP status for an absent input/HAL feature. The AudioSystem JNI's
+property listener uses a host `CachedProperty` (libbase patch) that polls the
+shared property area.
 
-[`audio_system_jni.zig`](../src/binder/audio_system_jni.zig) also implements
-AudioSystem, AudioRecord, MediaRecorder, AudioEffect, port events, policy
-strategies/groups and CamcorderProfile native boundaries. It describes a
-logical output, reports unsupported policy operations and retains absent
-recording/effect failures. It is not native AudioSystem talking to AudioFlinger
-and AudioPolicyService. The real hosted `audio` Java Binder service and
-`artzig.audio_ids` authority in
-[`SystemServices.kt`](../src/java/dev/artzig/system/SystemServices.kt) handle
-policy/session operations; they do not constitute an AudioFlinger PCM server.
+[`aaudio_ndk.zig`](../src/binder/aaudio_ndk.zig) still implements the public
+AAudio C calls through `HostedAAudio` and the (now stock) Java AudioTrack; the
+stock `libaaudio` legacy path is the remaining replacement in this family.
 
-[`aaudio_ndk.zig`](../src/binder/aaudio_ndk.zig) implements the public C calls
-through `HostedAAudio` and Java AudioTrack. Stock AAudio has both legacy
-AudioTrack and internal service/MMAP paths; reusing its parameter utilities
-does not make this replacement stock. ToneGenerator's synthesizer is reused,
-but its native AudioTrack output is patched to
-[`ToneOutput.cpp`](../src/native/ToneOutput.cpp), which calls hosted AAudio.
-
-**Additional source-confirmed behavior:**
-[`audio.zig`](../src/platform/audio.zig) retains a stream if `azk_pw_open` fails
-and advances a fallback playback clock while consuming queued PCM. Playback
-position advancing therefore does not prove audible PipeWire output. This
-audit did not reproduce an output-device failure.
-
-To close this family, reuse stock audio JNI/libaudioclient/AAudio and provide
-their audio policy, track and service interfaces. Keep PipeWire behind the
-audio service/HAL boundary. Reusing the existing PipeWire backend is possible;
-moving that backend alone does not restore the omitted client protocols.
+**Additional source-confirmed behavior:** when no PipeWire daemon is reachable,
+each track renders to a null sink that consumes frames in real time (the
+audio.stub HAL model), so playback position advancing does not prove audible
+output; verification of actual PipeWire delivery needs a daemon with a
+capturable sink.
 
 ### MediaCodec and its NDK API
 
@@ -334,9 +326,10 @@ in `1823bb1e`. See the JSON validation record for this limitation.
 2. Decide whether libbinder and AZKB remain explicit native adaptations or
    whether literal native identity requires replacing them below the restored
    Binder JNI boundary.
-3. Restore audio JNI/libaudioclient/AAudio and service protocols; place the
-   existing PipeWire backend behind them. Require real audio output in addition
-   to track position, callbacks and service-death tests.
+3. Restore the stock `libaaudio` legacy path over the now-stock AudioTrack
+   client, and verify actual PipeWire delivery of a known PCM sequence against
+   a controlled sink in addition to track position, callbacks and
+   service-death tests.
 4. Restore codec/player/NDK clients and their services; put the existing FFmpeg
    engine behind the selected component interface. Verify app/service process
    placement as well as decoding, buffers, callbacks and failure handling.

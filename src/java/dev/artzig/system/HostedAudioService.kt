@@ -37,6 +37,20 @@ internal class HostedAudioService(private val enforcer: PermissionEnforcer, priv
         setMultiAudioFocusEnabled_enforcePermission()
         focus.setMultiFocus(enabled)
     }
+    // AudioService.AudioManagerNativeImpl: the interface audioserver/libaudioclient
+    // use for permission barriers and hardening events. Permission state is published
+    // synchronously here, so the barrier has nothing to wait for; hardening mutes
+    // and port mute events are reported by the native services and only logged.
+    private val native = object : IAudioManagerNative.Stub() {
+        override fun playbackHardeningEvent(uid: Int, type: Byte, bypassed: Boolean) {
+            android.util.Log.i("AudioService", "playbackHardeningEvent uid=$uid type=$type bypassed=$bypassed")
+        }
+        override fun permissionUpdateBarrier() {}
+        override fun portMuteEvent(portId: Int, event: Int) {
+            android.util.Log.i("AudioService", "portMuteEvent portId=$portId event=$event")
+        }
+    }
+    override fun getNativeInterface(): IAudioManagerNative = native
     override fun isVolumeFixed(): Boolean = true
 
     // Pinned AudioService's navigation/home effect switches start disabled and

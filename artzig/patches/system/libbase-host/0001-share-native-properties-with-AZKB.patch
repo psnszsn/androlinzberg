@@ -4,8 +4,26 @@ Subject: [PATCH] libbase: route hosted properties through the session area
 Keep the pinned GetProperty default and typed parsing behavior. Hosted reads
 use the same snapshots as SystemProperties; writes use broker authorization.
 Disable the separate host map, including its eager static initialization.
-The ART source package does not select this patch.
+CachedProperty, which the stock AudioSystem JNI uses for its property
+listener, reads the shared area and polls for changes because the area
+exposes no per-property serials. The ART source package does not select
+this patch.
 
+diff --git a/include/android-base/properties.h b/include/android-base/properties.h
+index 067fbf4..22fdb45 100644
+--- a/include/android-base/properties.h
++++ b/include/android-base/properties.h
+@@ -71,7 +71,7 @@ bool WaitForPropertyCreation(const std::string& key, std::chrono::milliseconds r
+                                                          std::chrono::milliseconds::max());
+ #endif
+ 
+-#if defined(__BIONIC__) && __cplusplus >= 201703L
++#if (defined(__BIONIC__) || defined(ARTZIG_SHARED_PROPERTIES)) && __cplusplus >= 201703L
+ // Cached system property lookup. For code that needs to read the same property multiple times,
+ // this class helps optimize those lookups.
+ class CachedProperty {
+diff --git a/properties.cpp b/properties.cpp
+index 9fd44a8..0f3e04e 100644
 --- a/properties.cpp
 +++ b/properties.cpp
 @@ -16,6 +16,10 @@
@@ -19,7 +37,14 @@ The ART source package does not select this patch.
  #if defined(__BIONIC__)
  #include <sys/system_properties.h>
  #endif
-@@ -31,7 +35,7 @@
+@@ -25,13 +29,14 @@
+ #include <limits>
+ #include <set>
+ #include <string>
++#include <thread>
+ 
+ #include <android-base/parsebool.h>
+ #include <android-base/parseint.h>
  #include <android-base/strings.h>
  #include <android-base/thread_annotations.h>
  
@@ -28,7 +53,7 @@ The ART source package does not select this patch.
  
  // Here lies a rudimentary implementation of system properties for non-Bionic
  // platforms. We are using weak symbols here because we want to allow
-@@ -158,6 +162,13 @@
+@@ -158,6 +163,13 @@ template uint64_t GetUintProperty(const std::string&, uint64_t, uint64_t);
  
  std::string GetProperty(const std::string& key, const std::string& default_value) {
    std::string property_value;
@@ -42,7 +67,7 @@ The ART source package does not select this patch.
    const prop_info* pi = __system_property_find(key.c_str());
    if (pi == nullptr) return default_value;
  
-@@ -168,6 +179,7 @@
+@@ -168,6 +180,7 @@ std::string GetProperty(const std::string& key, const std::string& default_value
          *property_value = value;
        },
        &property_value);
@@ -50,7 +75,7 @@ The ART source package does not select this patch.
    // If the property exists but is empty, also return the default value.
    // Since we can't remove system properties, "empty" is traditionally
    // the same as "missing" (this was true for cutils' property_get).
-@@ -175,7 +187,11 @@
+@@ -175,7 +188,11 @@ std::string GetProperty(const std::string& key, const std::string& default_value
  }
  
  bool SetProperty(const std::string& key, const std::string& value) {
@@ -62,3 +87,73 @@ The ART source package does not select this patch.
  }
  
  #if defined(__BIONIC__)
+@@ -366,5 +383,69 @@ bool CachedBoolProperty::Get(bool default_value) {
+ 
+ #endif
+ 
++#if defined(ARTZIG_SHARED_PROPERTIES)
++// Host seam: the shared area exposes reads but no per-property serials, so a
++// cached property compares values and waits by polling the area.
++CachedProperty::CachedProperty(std::string property_name)
++    : property_name_(std::move(property_name)),
++      prop_info_(nullptr),
++      cached_area_serial_(0),
++      cached_property_serial_(0),
++      is_read_only_(android::base::StartsWith(property_name_, "ro.")),
++      read_only_property_(nullptr) {
++  cached_value_[0] = '\0';
++}
++
++CachedProperty::CachedProperty(const char* property_name)
++    : CachedProperty(std::string(property_name)) {}
++
++const char* CachedProperty::Get(bool* changed) {
++  const std::string value = GetProperty(property_name_, "");
++  const bool differs = value != cached_value_;
++  if (differs) {
++    const size_t length = std::min(value.size(), sizeof(cached_value_) - 1);
++    memcpy(cached_value_, value.data(), length);
++    cached_value_[length] = '\0';
++  }
++  if (changed != nullptr) *changed = differs;
++  return cached_value_;
++}
++
++const char* CachedProperty::WaitForChange(std::chrono::milliseconds relative_timeout) {
++  const auto start = std::chrono::steady_clock::now();
++  for (;;) {
++    bool changed = false;
++    Get(&changed);
++    if (changed) return cached_value_;
++    if (relative_timeout != std::chrono::milliseconds::max() &&
++        std::chrono::steady_clock::now() - start >= relative_timeout) {
++      return nullptr;
++    }
++    std::this_thread::sleep_for(std::chrono::milliseconds(50));
++  }
++}
++
++CachedBoolProperty::CachedBoolProperty(std::string property_name)
++    : cached_parsed_property_(std::move(property_name),
++                              [](const char* value) -> std::optional<bool> {
++                                switch (ParseBool(value)) {
++                                  case ParseBoolResult::kError:
++                                    return std::nullopt;
++                                  case ParseBoolResult::kFalse:
++                                    return false;
++                                  case ParseBoolResult::kTrue:
++                                    return true;
++                                }
++                              }) {}
++
++std::optional<bool> CachedBoolProperty::GetOptional() {
++  return cached_parsed_property_.Get();
++}
++
++bool CachedBoolProperty::Get(bool default_value) {
++  return GetOptional().value_or(default_value);
++}
++#endif
++
+ }  // namespace base
+ }  // namespace android

@@ -101,10 +101,6 @@ export fn AAudioStreamBuilder_setSamplesPerFrame(handle: Handle, value: i32) cal
 export fn AAudioStreamBuilder_setSessionId(handle: Handle, value: i32) callconv(.c) void {
     set(handle, 13, value);
 }
-/// Native ToneGenerator's legacy stream attribution over the existing track.
-export fn azk_aaudio_set_legacy_stream(handle: Handle, value: i32) callconv(.c) void {
-    set(handle, 14, value);
-}
 fn callback(handle: Handle, is_error: bool, function: Handle, userdata: Handle) void {
     const scope = Scope.enter() orelse return;
     defer scope.leave();
@@ -305,8 +301,11 @@ pub fn register(env: Env, platform: *std.DynLib) !void {
     if (env.*.*.RegisterNatives.?(env, backend, &natives, natives.len) != 0) return error.RegisterFailed;
 }
 
-fn check(condition: bool) !void {
-    if (!condition) return error.AAudioContract;
+fn check(condition: bool, src: std.builtin.SourceLocation) !void {
+    if (!condition) {
+        std.debug.print("AAudio contract failed at {s}:{d}\n", .{ src.file, src.line });
+        return error.AAudioContract;
+    }
 }
 const SmokeState = struct {
     count: std.atomic.Value(u32) = .init(0),
@@ -329,87 +328,87 @@ fn failed(_: Handle, userdata: Handle, _: i32) callconv(.c) void {
     state.bad.store(true, .release);
 }
 fn smoke() !void {
-    try check(AAudio_createStreamBuilder(null) == null_error);
-    try check(AAudioStreamBuilder_delete(null) == null_error);
+    try check(AAudio_createStreamBuilder(null) == null_error, @src());
+    try check(AAudioStreamBuilder_delete(null) == null_error, @src());
     var builder: Handle = null;
-    try check(AAudio_createStreamBuilder(&builder) == 0 and builder != null);
+    try check(AAudio_createStreamBuilder(&builder) == 0 and builder != null, @src());
     defer _ = AAudioStreamBuilder_delete(builder);
     var stream: Handle = @ptrFromInt(1);
     AAudioStreamBuilder_setSampleRate(builder, 1);
-    try check(AAudioStreamBuilder_openStream(builder, &stream) == -880 and stream == null);
+    try check(AAudioStreamBuilder_openStream(builder, &stream) == -880 and stream == null, @src());
     AAudioStreamBuilder_setSampleRate(builder, 8000);
     AAudioStreamBuilder_setChannelCount(builder, 1);
     AAudioStreamBuilder_setFormat(builder, 1);
     AAudioStreamBuilder_setFramesPerDataCallback(builder, 64);
     AAudioStreamBuilder_setDirection(builder, 1);
-    try check(AAudioStreamBuilder_openStream(builder, &stream) == -889 and stream == null);
+    try check(AAudioStreamBuilder_openStream(builder, &stream) == -889 and stream == null, @src());
     AAudioStreamBuilder_setDirection(builder, 0);
-    try check(AAudioStreamBuilder_openStream(builder, &stream) == 0 and stream != null);
+    try check(AAudioStreamBuilder_openStream(builder, &stream) == 0 and stream != null, @src());
     defer _ = AAudioStream_close(stream);
-    try check(AAudioStream_getSessionId(stream) == -1);
-    try check(AAudioStream_getDeviceId(stream) == 0);
+    try check(AAudioStream_getSessionId(stream) == -1, @src());
+    try check(AAudioStream_getDeviceId(stream) > 0, @src());
     AAudioStreamBuilder_setSessionId(builder, -2);
     var session_stream: Handle = null;
-    try check(AAudioStreamBuilder_openStream(builder, &session_stream) == -898 and session_stream == null);
+    try check(AAudioStreamBuilder_openStream(builder, &session_stream) == -898 and session_stream == null, @src());
     AAudioStreamBuilder_setSessionId(builder, 0);
-    try check(AAudioStreamBuilder_openStream(builder, &session_stream) == 0);
+    try check(AAudioStreamBuilder_openStream(builder, &session_stream) == 0, @src());
     const session = AAudioStream_getSessionId(session_stream);
-    try check(session > 0 and AAudioStream_close(session_stream) == 0);
+    try check(session > 0 and AAudioStream_close(session_stream) == 0, @src());
     AAudioStreamBuilder_setSessionId(builder, session);
-    try check(AAudioStreamBuilder_openStream(builder, &session_stream) == 0);
-    try check(AAudioStream_getSessionId(session_stream) == session and AAudioStream_close(session_stream) == 0);
+    try check(AAudioStreamBuilder_openStream(builder, &session_stream) == 0, @src());
+    try check(AAudioStream_getSessionId(session_stream) == session and AAudioStream_close(session_stream) == 0, @src());
     AAudioStreamBuilder_setSessionId(builder, -1);
-    try check(AAudioStream_getState(stream) == 2 and AAudioStream_getFormat(stream) == 1);
-    try check(AAudioStream_getSampleRate(stream) == 8000 and AAudioStream_getChannelCount(stream) == 1);
+    try check(AAudioStream_getState(stream) == 2 and AAudioStream_getFormat(stream) == 1, @src());
+    try check(AAudioStream_getSampleRate(stream) == 8000 and AAudioStream_getChannelCount(stream) == 1, @src());
     const burst = AAudioStream_getFramesPerBurst(stream);
-    try check(burst == 80 and AAudioStream_setBufferSizeInFrames(stream, 1) == burst);
+    try check(burst == 80 and AAudioStream_setBufferSizeInFrames(stream, 1) == burst, @src());
     var next: i32 = 0;
-    try check(AAudioStream_waitForStateChange(stream, 2, &next, 0) == -885 and next == 2);
-    try check(AAudioStream_waitForStateChange(stream, 0, null, 0) == 0);
+    try check(AAudioStream_waitForStateChange(stream, 2, &next, 0) == -885 and next == 2, @src());
+    try check(AAudioStream_waitForStateChange(stream, 0, null, 0) == 0, @src());
     var position: i64 = -1;
     var timestamp: i64 = -1;
-    try check(AAudioStream_getTimestamp(stream, 1, &position, &timestamp) == -895);
-    try check(position == -1 and timestamp == -1);
+    try check(AAudioStream_getTimestamp(stream, 1, &position, &timestamp) == -895, @src());
+    try check(position == -1 and timestamp == -1, @src());
     var pcm: [320]u8 = undefined;
     @memset(&pcm, 0);
-    try check(AAudioStream_write(stream, &pcm, 160, 0) == burst);
-    try check(AAudioStream_write(stream, &pcm, 160, 0) == 0);
-    try check(AAudioStream_getFramesWritten(stream) == burst and AAudioStream_getFramesRead(stream) == 0);
-    try check(AAudioStream_requestStart(stream) == 0);
-    try check(AAudioStream_getDeviceId(stream) == 1);
-    try check(AAudioStream_requestStart(stream) == -895);
+    try check(AAudioStream_write(stream, &pcm, 160, 0) == burst, @src());
+    try check(AAudioStream_write(stream, &pcm, 160, 0) == 0, @src());
+    try check(AAudioStream_getFramesWritten(stream) == burst and AAudioStream_getFramesRead(stream) == 0, @src());
+    try check(AAudioStream_requestStart(stream) == 0, @src());
+    try check(AAudioStream_getDeviceId(stream) > 0, @src());
+    try check(AAudioStream_requestStart(stream) == -895, @src());
     const io = @import("ndk.zig").frameworkIo();
     for (0..1000) |_| {
         if (AAudioStream_getFramesRead(stream) >= burst) break;
         std.Io.sleep(io, .fromMilliseconds(2), .awake) catch {};
     }
-    try check(AAudioStream_getFramesRead(stream) >= burst and AAudioStream_getState(stream) == 4);
-    try check(AAudioStream_requestFlush(stream) == -895);
-    try check(AAudioStream_requestPause(stream) == 0 and AAudioStream_getState(stream) == 6);
-    try check(AAudioStream_requestFlush(stream) == 0 and AAudioStream_getState(stream) == 8);
-    try check(AAudioStream_getFramesRead(stream) == AAudioStream_getFramesWritten(stream));
-    try check(AAudioStream_requestStop(stream) == 0 and AAudioStream_getState(stream) == 10);
-    try check(AAudioStream_getDeviceId(stream) == 1);
+    try check(AAudioStream_getFramesRead(stream) >= burst and AAudioStream_getState(stream) == 4, @src());
+    try check(AAudioStream_requestFlush(stream) == -895, @src());
+    try check(AAudioStream_requestPause(stream) == 0 and AAudioStream_getState(stream) == 6, @src());
+    try check(AAudioStream_requestFlush(stream) == 0 and AAudioStream_getState(stream) == 8, @src());
+    try check(AAudioStream_getFramesRead(stream) == AAudioStream_getFramesWritten(stream), @src());
+    try check(AAudioStream_requestStop(stream) == 0 and AAudioStream_getState(stream) == 10, @src());
+    try check(AAudioStream_getDeviceId(stream) > 0, @src());
 
     var callback_state: SmokeState = .{};
     var callback_stream: Handle = null;
     AAudioStreamBuilder_setDataCallback(builder, @ptrCast(@constCast(&fill)), &callback_state);
     AAudioStreamBuilder_setErrorCallback(builder, @ptrCast(@constCast(&failed)), &callback_state);
-    try check(AAudioStreamBuilder_openStream(builder, &callback_stream) == 0);
+    try check(AAudioStreamBuilder_openStream(builder, &callback_stream) == 0, @src());
     defer _ = AAudioStream_close(callback_stream);
-    try check(AAudioStream_setBufferSizeInFrames(callback_stream, 160) == 160);
-    try check(AAudioStream_requestStart(callback_stream) == 0);
-    try check(AAudioStream_write(callback_stream, &pcm, 0, 0) == -895);
+    try check(AAudioStream_setBufferSizeInFrames(callback_stream, 160) == 160, @src());
+    try check(AAudioStream_requestStart(callback_stream) == 0, @src());
+    try check(AAudioStream_write(callback_stream, &pcm, 0, 0) == -895, @src());
     var timed = false;
     for (0..1000) |_| {
         timed = AAudioStream_getTimestamp(callback_stream, 1, &position, &timestamp) == 0;
         if (timed or callback_state.bad.load(.acquire)) break;
         std.Io.sleep(io, .fromMilliseconds(2), .awake) catch {};
     }
-    try check(timed and position > 0 and timestamp > 0);
-    try check(callback_state.count.load(.acquire) > 0 and !callback_state.bad.load(.acquire));
-    try check(AAudioStream_requestStop(callback_stream) == 0);
-    try check(AAudioStream_getFramesRead(callback_stream) == AAudioStream_getFramesWritten(callback_stream));
+    try check(timed and position > 0 and timestamp > 0, @src());
+    try check(callback_state.count.load(.acquire) > 0 and !callback_state.bad.load(.acquire), @src());
+    try check(AAudioStream_requestStop(callback_stream) == 0, @src());
+    try check(AAudioStream_getFramesRead(callback_stream) == AAudioStream_getFramesWritten(callback_stream), @src());
 }
 fn runSmoke(env: Env, _: jni.jclass) callconv(.c) void {
     smoke() catch |err| {

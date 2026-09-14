@@ -16,8 +16,6 @@
         "external/skia/src/gpu/ganesh/GrAHardwareBufferUtils.cpp",
         "external/skia/src/gpu/ganesh/gl/AHardwareBufferGL.cpp",
         "external/skia/src/image/SkImage_AndroidFactories.cpp",
-        "frameworks/av/media/libaudioclient/ToneGenerator.cpp",
-        "frameworks/av/media/libaudioclient/include/media/ToneGenerator.h",
         "frameworks/av/media/libstagefright/MediaExtractorFactory.cpp",
         "frameworks/av/media/ndk/NdkImageReader.cpp",
         "frameworks/base/core/jni/android/opengl/util.cpp",
@@ -25,7 +23,6 @@
         "frameworks/base/core/jni/android_hardware_camera2_CameraMetadata.cpp",
         "frameworks/base/core/jni/android_hardware_camera2_utils_SurfaceUtils.cpp",
         "frameworks/base/core/jni/android_media_ImageReader.cpp",
-        "frameworks/base/core/jni/android_media_ToneGenerator.cpp",
         "frameworks/base/core/jni/android_media_Utils.cpp",
         "frameworks/base/core/jni/android_net_LocalSocketImpl.cpp",
         "frameworks/base/core/jni/android_opengl_GLES20.cpp",
@@ -231,13 +228,12 @@
     "src/binder/media_codec_list_jni.zig",
     "src/binder/activity_jni.zig",
     "src/binder/audio_system_jni.zig",
-    "src/binder/audio_track_jni.zig",
     "src/binder/media_codec_jni.zig",
     "src/binder/media_ndk.zig",
     "src/binder/aaudio_ndk.zig",
     "src/binder/runtime_init_jni.zig"
   ],
-  "registration_scope_note": "19 delegated registration modules, not 19 replaced classes: pointer_icon_jni registers a host cursor helper; egl_interop_test registers only dev.artzig test helpers; media_ndk and aaudio_ndk also export C ABIs. Central and C++ registrars are additional.",
+  "registration_scope_note": "18 delegated registration modules, not 18 replaced classes: pointer_icon_jni registers a host cursor helper; egl_interop_test registers only dev.artzig test helpers; media_ndk and aaudio_ndk also export C ABIs. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
       "sha256": "1a8979281c4e9391c18c20fcbcae2f26e088f2fb29fa2e17138ed6c6ee11ec74",

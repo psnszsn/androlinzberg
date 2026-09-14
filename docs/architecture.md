@@ -92,8 +92,11 @@ drag-and-drop and accessibility cross host adapters with task/window identity.
 ### Media
 
 FFmpeg implements the hosted MediaCodec path inside each app process. The
-decoder can use VA-API when a suitable device is available. The app-side
-PipeWire adapter connects to the desktop audio daemon. MediaExtractor uses
+decoder can use VA-API when a suitable device is available. Audio uses the
+stock AudioTrack/AudioSystem clients and `libaudioclient` over Binder to the
+system process's `media.audio_flinger` and `media.audio_policy` services, which
+render each track through a PipeWire stream (`src/native/audio`); PCM travels
+through the AOSP shared control block, not through Binder. MediaExtractor uses
 original native clients over Binder to the system process's `media.extractor`
 service. These boundaries are detailed in the [native client audit](native-client-audit.md).
 
@@ -198,8 +201,9 @@ media policy and device capabilities. Their implementations live in
 [`src/java/dev/artzig/system/`](../src/java/dev/artzig/system/); some reuse AOSP
 services and others implement hosted policy on stock interfaces. Missing
 hardware and unsupported operations retain explicit capability or failure
-results. Audio output and codec execution still run in app processes, as
-explained in the [native client audit](native-client-audit.md).
+results. Audio tracks are served by the system process's native AudioFlinger
+and policy adapters; codec execution still runs in app processes, as explained
+in the [native client audit](native-client-audit.md).
 
 ## Framework seams
 

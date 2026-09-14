@@ -52,6 +52,18 @@ extern "C" AMediaFormat* azk_media_format_from_map(JNIEnv* env, jobject map) {
 #include "MediaExtractorService.h"
 #include <binder/PermissionCache.h>
 namespace android { jobject javaObjectForIBinder(JNIEnv*, const sp<IBinder>&); }
+// Original audio JNI over stock libaudioclient; the services live in src/native/audio.
+extern int register_android_media_AudioDeviceAttributes(JNIEnv* env);
+extern int register_android_media_AudioEffectDescriptor(JNIEnv* env);
+extern int register_android_media_AudioRecord(JNIEnv* env);
+extern int register_android_media_AudioSystem(JNIEnv* env);
+extern int register_android_media_AudioTrack(JNIEnv* env);
+extern int register_android_media_AudioAttributes(JNIEnv* env);
+extern int register_android_media_AudioProductStrategies(JNIEnv* env);
+extern int register_android_media_AudioVolumeGroups(JNIEnv* env);
+extern int register_android_media_MicrophoneInfo(JNIEnv* env);
+extern int register_android_media_audio_common_AidlConversion(JNIEnv* env);
+extern "C" int azk_register_audio_services(JNIEnv* env);
 #include "com_android_internal_os_Zygote.h"
 #include <android-base/stringprintf.h>
 #include <nativehelper/ScopedUtfChars.h>
@@ -89,17 +101,6 @@ namespace android { jobject javaObjectForIBinder(JNIEnv*, const sp<IBinder>&); }
 
 // Pinned AudioSystem JNI capability results and device constants. Keep their
 // definitions in the original native audio headers; the hosted JNI lives in Zig.
-extern "C" int azk_audio_framework_capability(int key) {
-    switch (key) {
-        case 0: return FCC_LIMIT;
-        case 1: return SAMPLE_RATE_HZ_MAX;
-        case 2: return SAMPLE_RATE_HZ_MIN;
-        case 3: return AUDIO_DEVICE_OUT_SPEAKER;
-        case 4: return AUDIO_CHANNEL_OUT_MONO;
-        case 5: return AUDIO_CHANNEL_OUT_STEREO;
-        default: return -1;
-    }
-}
 
 // The exit smoke must fail deterministically if ART's exit hook runs libc
 // destructors while Java/native worker threads are still active.
@@ -217,7 +218,6 @@ extern int register_android_opengl_jni_GLES32(JNIEnv*);
 extern int register_android_media_ImageReader(JNIEnv*);
 extern int register_android_media_ImageWriter(JNIEnv*);
 extern int register_android_media_ToneGenerator(JNIEnv*);
-extern "C" int azk_register_tone_smoke(JNIEnv*);
 extern int register_android_hardware_camera2_utils_SurfaceUtils(JNIEnv*);
 
 namespace android {
@@ -724,6 +724,17 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_android_media_Drm),
             E(azk_register_media_metrics_smoke),
             E(azk_register_media_extractor_service),
+            E(register_android_media_AudioDeviceAttributes),
+            E(register_android_media_AudioEffectDescriptor),
+            E(register_android_media_AudioSystem),
+            E(register_android_media_AudioRecord),
+            E(register_android_media_AudioTrack),
+            E(register_android_media_AudioAttributes),
+            E(register_android_media_AudioProductStrategies),
+            E(register_android_media_AudioVolumeGroups),
+            E(register_android_media_MicrophoneInfo),
+            E(register_android_media_audio_common_AidlConversion),
+            E(azk_register_audio_services),
             E(azk_register_audio_manager_smoke),
             E(registerStockHidlMemorySmoke),
             E(registerStockNdkLooperSmoke),
@@ -832,7 +843,6 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_android_media_ImageReader),
             E(register_android_media_ImageWriter),
             E(register_android_media_ToneGenerator),
-            E(azk_register_tone_smoke),
             E(android::register_android_view_VelocityTracker),
             E(android::register_android_view_KeyCharacterMap),
             E(azk_register_dev_artzig_window_HostedInputDevices),

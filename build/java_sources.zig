@@ -4051,6 +4051,11 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/media/java/android/media/AudioDeviceVolumeManager.java");
     try c.file("$FB/media/java/android/media/AudioManager.java");
     try c.file("$FB/media/java/android/media/AudioTrack.java");
+    // Routing proxies and mix ports the original AudioSystem JNI resolves at registration.
+    try c.file("$FB/media/java/android/media/AudioMixPort.java");
+    try c.file("$FB/media/java/android/media/AudioMixPortConfig.java");
+    try c.file("$FB/media/java/android/media/AudioRecordRoutingProxy.java");
+    try c.file("$FB/media/java/android/media/AudioTrackRoutingProxy.java");
     try c.file("$FB/media/java/android/media/DrmInitData.java");
     try c.file("$FB/media/java/android/media/MediaCas.java");
     try c.file("$FB/media/java/android/media/MediaCasException.java");
