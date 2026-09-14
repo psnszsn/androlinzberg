@@ -557,6 +557,14 @@ pub const cpp_aidl = [_]CppAidl{
     .{ .vintf_stable = true, .root = "system/hardware/interfaces/media/aidl", .input = "android/media/audio/common/Void.aidl", .output = "android/media/audio/common/Void.cpp" },
     .{ .root = "frameworks/av/aidl", .input = "android/media/IAudioManagerNative.aidl", .output = "android/media/IAudioManagerNative.cpp" },
     .{ .root = "frameworks/av/media/libaudioclient/aidl", .input = "android/media/IPlayer.aidl", .output = "android/media/IPlayer.cpp" },
+    // Stock libaaudio: the AAudio service protocol its builder probes before the legacy path.
+    .{ .root = "frameworks/av/media/libaaudio/src/binding/aidl", .input = "aaudio/Endpoint.aidl", .output = "aaudio/Endpoint.cpp" },
+    .{ .root = "frameworks/av/media/libaaudio/src/binding/aidl", .input = "aaudio/IAAudioClient.aidl", .output = "aaudio/IAAudioClient.cpp" },
+    .{ .root = "frameworks/av/media/libaaudio/src/binding/aidl", .input = "aaudio/IAAudioService.aidl", .output = "aaudio/IAAudioService.cpp" },
+    .{ .root = "frameworks/av/media/libaaudio/src/binding/aidl", .input = "aaudio/RingBuffer.aidl", .output = "aaudio/RingBuffer.cpp" },
+    .{ .root = "frameworks/av/media/libaaudio/src/binding/aidl", .input = "aaudio/SharedRegion.aidl", .output = "aaudio/SharedRegion.cpp" },
+    .{ .root = "frameworks/av/media/libaaudio/src/binding/aidl", .input = "aaudio/StreamParameters.aidl", .output = "aaudio/StreamParameters.cpp" },
+    .{ .root = "frameworks/av/media/libaaudio/src/binding/aidl", .input = "aaudio/StreamRequest.aidl", .output = "aaudio/StreamRequest.cpp" },
     .{ .root = "frameworks/av/media/libaudioclient/aidl", .input = "android/media/AudioHalVersion.aidl", .output = "android/media/AudioHalVersion.cpp" },
 };
 
@@ -2487,6 +2495,7 @@ pub const aconfig = [_]Aconfig{
 
     .{ .package = "android.media.soundtrigger", .container = "system", .source = .aosp, .declarations = &.{"frameworks/av/media/audio/aconfig/soundtrigger.aconfig"} },
     .{ .package = "android.service.voice.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/service/voice/flags/flags.aconfig"} },
+    .{ .package = "com.android.media.aaudio", .cpp_header = true, .container = "system", .source = .aosp, .declarations = &.{"frameworks/av/media/audio/aconfig/aaudio.aconfig"} },
     .{ .package = "com.android.media.audioserver", .cpp_header = true, .container = "system", .source = .aosp, .declarations = &.{"frameworks/av/media/audio/aconfig/audioserver.aconfig"} },
     .{ .package = "android.media.audiopolicy", .cpp_header = true, .container = "system", .source = .aosp, .declarations = &.{"frameworks/av/media/audio/aconfig/audiopolicy_framework.aconfig"} },
     .{ .package = "com.android.server.accessibility", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/services/accessibility/accessibility.aconfig"} },

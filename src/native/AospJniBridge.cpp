@@ -64,6 +64,7 @@ extern int register_android_media_AudioVolumeGroups(JNIEnv* env);
 extern int register_android_media_MicrophoneInfo(JNIEnv* env);
 extern int register_android_media_audio_common_AidlConversion(JNIEnv* env);
 extern "C" int azk_register_audio_services(JNIEnv* env);
+extern "C" int azk_register_aaudio_smoke(JNIEnv* env);
 #include "com_android_internal_os_Zygote.h"
 #include <android-base/stringprintf.h>
 #include <nativehelper/ScopedUtfChars.h>
@@ -735,6 +736,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_android_media_MicrophoneInfo),
             E(register_android_media_audio_common_AidlConversion),
             E(azk_register_audio_services),
+            E(azk_register_aaudio_smoke),
             E(azk_register_audio_manager_smoke),
             E(registerStockHidlMemorySmoke),
             E(registerStockNdkLooperSmoke),

@@ -13,7 +13,7 @@ pub fn resolve(a: std.mem.Allocator, io: std.Io, tree: []const u8) ![]const art.
         .{ "libEGL.so", "lib/art/libazk_egl.so" },
         .{ "libbinder.so", "lib/art/libbinder.so" },
         .{ "libbinder_ndk.so", "lib/art/libbinder_ndk.so" },
-        .{ "libaaudio.so", "lib/art/libbinder_ndk.so" },
+        .{ "libaaudio.so", "lib/libandroid_platform.so" },
         .{ "libandroid.so", "lib/libandroid_platform.so" },
         .{ "libmediandk.so", "lib/libandroid_platform.so" },
         .{ "libjnigraphics.so", "lib/libandroid_platform.so" },

@@ -13,7 +13,6 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/StockMediaCodecSmoke.kt",
     "src/java/dev/artzig/StockNdkMediaCodecSmoke.kt",
     "src/java/dev/artzig/HostedNdkMediaCodec.kt",
-    "src/java/dev/artzig/HostedAAudio.kt",
     "src/java/dev/artzig/StockAAudioSmoke.kt",
     "src/java/dev/artzig/StockToneSmoke.kt",
     "src/java/dev/artzig/StockResourcePathSmoke.kt",

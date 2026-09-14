@@ -58,7 +58,7 @@ of its Android implementation.
 Installed-DSO spot checks also found `register_localized_collators` and
 `register_android_functions` defined in `libandroid_platform.so`, and
 `azk_register_binder_jni`, `AMediaCodec_createDecoderByType` and
-`AAudio_createStreamBuilder` in the hosted `libbinder_ndk.so`. This corroborates
+`AAudio_createStreamBuilder` in `libandroid_platform.so`. This corroborates
 the build selection; it is not a complete dynamic-symbol resolution audit.
 
 [`main.zig`](../src/main.zig) calls the Binder and graphics registrars and then
@@ -70,7 +70,7 @@ and NDK exports, plus a dev.artzig EGL test helper. Merely registering a helper 
 
 ## Audio and media: app-side replacements
 
-### AudioTrack, audio policy and AAudio
+### AudioTrack, audio policy and AAudio (stock)
 
 Current playback path:
 
@@ -100,9 +100,9 @@ the AOSP status for an absent input/HAL feature. The AudioSystem JNI's
 property listener uses a host `CachedProperty` (libbase patch) that polls the
 shared property area.
 
-[`aaudio_ndk.zig`](../src/binder/aaudio_ndk.zig) still implements the public
-AAudio C calls through `HostedAAudio` and the (now stock) Java AudioTrack; the
-stock `libaaudio` legacy path is the remaining replacement in this family.
+`libaaudio.so` is the stock library: its legacy `AudioStreamTrack` path runs
+over the stock AudioTrack client, and its MMAP client is never selected because
+the host AudioFlinger reports no MMAP policy.
 
 **Additional source-confirmed behavior:** when no PipeWire daemon is reachable,
 each track renders to a null sink that consumes frames in real time (the
@@ -326,9 +326,8 @@ in `1823bb1e`. See the JSON validation record for this limitation.
 2. Decide whether libbinder and AZKB remain explicit native adaptations or
    whether literal native identity requires replacing them below the restored
    Binder JNI boundary.
-3. Restore the stock `libaaudio` legacy path over the now-stock AudioTrack
-   client, and verify actual PipeWire delivery of a known PCM sequence against
-   a controlled sink in addition to track position, callbacks and
+3. Verify actual PipeWire delivery of a known PCM sequence against a
+   controlled sink in addition to track position, callbacks and
    service-death tests.
 4. Restore codec/player/NDK clients and their services; put the existing FFmpeg
    engine behind the selected component interface. Verify app/service process

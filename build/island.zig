@@ -98,7 +98,7 @@ const audio_host_interfaces = [_][]const u8{
     "android/media/IAudioTrack.aidl",
 };
 const audio_host_srcs = [_][]const u8{
-    "AudioServiceJni.cpp", "HostAudioFlinger.cpp", "HostAudioPolicyService.cpp", "HostAudioTrack.cpp", "HostSchedPolicy.cpp", "azk_pipewire.c",
+    "AAudioSmoke.cpp",     "AudioServiceJni.cpp", "HostAudioFlinger.cpp", "HostAudioPolicyService.cpp", "HostAudioTrack.cpp", "HostSchedPolicy.cpp", "azk_pipewire.c",
 };
 const our_srcs = [_][]const u8{
     "src/native/ArtzigGpuPipeline.cpp", "src/native/HardwareBufferRender.cpp",
@@ -685,7 +685,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/av/media/libshmem"), &.{ "ShmemCompat.cpp", "ShmemUtil.cpp" }, audio_includes.items, &audio_flags);
     g.add(o.aosp.path(b, "frameworks/av/media/utils"), &.{"ServiceSingleton.cpp"}, audio_includes.items, &audio_flags);
     g.add(o.aosp.path(b, "frameworks/native/services/audiomanager"), &.{"IAudioManager.cpp"}, audio_includes.items, &audio_flags);
-    g.add(o.aosp.path(b, "system/media/audio_utils"), &.{ "mutex.cpp", "threads.cpp", "format.c", "StringUtils.cpp", "roundup.c", "minifloat.c" }, audio_includes.items, &audio_flags);
+    g.add(o.aosp.path(b, "system/media/audio_utils"), &.{ "mutex.cpp", "threads.cpp", "format.c", "StringUtils.cpp", "roundup.c", "minifloat.c", "Balance.cpp" }, audio_includes.items, &audio_flags);
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{
         "android_media_AudioSystem.cpp",           "android_media_AudioTrack.cpp",        "android_media_AudioRecord.cpp",
         "android_media_AudioAttributes.cpp",       "android_media_AudioDeviceAttributes.cpp", "android_media_AudioEffectDescriptor.cpp",
@@ -707,10 +707,15 @@ pub fn build(b: *std.Build, o: Options) Result {
         }
     }
     audio_includes.append(b.allocator, unsupported_headers.getDirectory()) catch @panic("OOM");
+    // Stock libaaudio: the public C ABI over its legacy AudioTrack/AudioRecord path.
+    // The MMAP client compiles but is never selected: the host reports no MMAP policy.
+    var aaudio_includes: std.ArrayList(std.Build.LazyPath) = .empty;
+    aaudio_includes.appendSlice(b.allocator, audio_includes.items) catch @panic("OOM");
+    for ([_][]const u8{ "binding", "client", "core", "fifo", "flowgraph", "legacy", "utility" }) |dir| {
+        aaudio_includes.append(b.allocator, o.aosp.path(b, b.fmt("frameworks/av/media/libaaudio/src/{s}", .{dir}))) catch @panic("OOM");
+    }
+    g.add(o.aosp.path(b, "frameworks/av/media/libaaudio/src"), &gen.libaaudio_srcs, aaudio_includes.items, &(audio_flags ++ [_][]const u8{"-DAAUDIO_API=__attribute__((visibility(\"default\")))"}));
     g.add(b.path("src/native/audio"), &audio_host_srcs, audio_includes.items, &audio_flags);
-    // Original parameter contracts and pure format/channel conversion routines.
-    // Unused service/MMAP routines are hidden sections removed by the island linker.
-    g.add(o.aosp.path(b, "frameworks/av/media/libaaudio/src"), &.{ "core/AAudioStreamParameters.cpp", "utility/AAudioUtilities.cpp" }, bridge_includes.items, &.{ "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections" });
     g.add(b.path(""), &our_srcs, bridge_includes.items, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"core_jni_helpers.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.input_handle_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});

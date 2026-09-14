@@ -14,7 +14,7 @@
 # The archive generator must apply the selected frameworks-base,
 # incremental_delivery, minikin, and system/libbase patches before packaging,
 # then revert them.
-# Rules: D=253 F=8773 total=9049
+# Rules: D=254 F=8770 total=9047
 D aosp external/fmtlib
 D aosp system/tools/xsdc/src/main/java
 F aosp prebuilts/misc/common/commons-cli/commons-cli-1.2.jar
@@ -7931,11 +7931,6 @@ F aosp hardware/interfaces/cas/aidl/aidl_api/android.hardware.cas/1/.hash
 F aosp frameworks/base/media/java/android/media/AudioTrack.java
 
 # Original AAudio parameter validation and format/channel conversions.
-F aosp frameworks/av/media/libaaudio/src/core/AAudioStreamParameters.cpp
-F aosp frameworks/av/media/libaaudio/src/core/AAudioStreamParameters.h
-F aosp frameworks/av/media/libaaudio/src/utility/AAudioUtilities.cpp
-F aosp frameworks/av/media/libaaudio/src/utility/AAudioUtilities.h
-F aosp frameworks/av/media/libaaudio/src/core/AudioGlobal.h
 F aosp frameworks/av/media/libaaudio/include/aaudio/AAudio.h
 F aosp frameworks/av/media/libaaudio/include/aaudio/AAudioTesting.h
 F aosp frameworks/av/media/libaaudio/include/system/aaudio/AAudio.h
@@ -9174,6 +9169,12 @@ F aosp system/media/audio_utils/mutex.cpp
 F aosp system/media/audio_utils/roundup.c
 F aosp system/media/audio_utils/StringUtils.cpp
 F aosp system/media/audio_utils/threads.cpp
+
+# Stock libaaudio (public C ABI, legacy AudioTrack/AudioRecord path, MMAP client and
+# its service protocol) over the stock audio client.
+D aosp frameworks/av/media/libaaudio/src
+F aosp frameworks/av/media/audio/aconfig/aaudio.aconfig
+F aosp system/media/audio_utils/Balance.cpp
 
 # Original Bionic device SDK query used by native application libraries.
 F aosp bionic/libc/bionic/get_device_api_level.cpp
