@@ -346,11 +346,14 @@ pub fn build(b: *std.Build) void {
     const hidl = @import("build/hidl.zig").build(b, target, aosp, generated.native.hidl_header_roots, generated.native.hidl_sources, binder_cpp);
     const graphics = @import("build/graphics.zig").build(b, target, optimize, aosp, generated.native.gui, hidl);
     const gui_host = graphics.gui;
-    _ = @import("build/codec2.zig").build(b, .{
+    const codec2 = @import("build/codec2.zig").build(b, .{
         .target = target,
         .aosp = aosp,
         .renderengine_headers = generated.native.renderengine.headers,
+        .renderengine_sources = generated.native.renderengine.sources,
         .package_native_headers = generated.native.input_dispatcher.headers,
+        .package_native_sources = generated.native.input_dispatcher.sources,
+        .host_include_roots = host_toolchain.island.include_roots,
         .generated = .{ .headers = generated.native.surfaceflinger.headers, .sources = generated.native.surfaceflinger.sources },
         .gui_generated = generated.native.gui,
         .headers = generated.native.aidl_header_roots,
@@ -678,7 +681,7 @@ pub fn build(b: *std.Build) void {
         .dependOn(&stats_jni.step);
 
     // --- native island: hwui + JNI + our shims, linked against static Skia
-    const island = @import("build/island.zig").build(b, .{
+    const island_options: @import("build/island.zig").Options = .{
         .host_paths_library = artzig_dep.namedLazyPath("host-paths-library"),
         .host_paths_headers = artzig_dep.namedLazyPath("host-paths-headers"),
         .media_generated = generated.native.media,
@@ -711,8 +714,13 @@ pub fn build(b: *std.Build) void {
         .host_libraries = host_toolchain.island.libraries,
         .host_link_flags = host_toolchain.island.link_flags,
         .aosp = aosp,
-    });
+    };
+    const island = @import("build/island.zig").build(b, island_options);
     b.step("island", "Build libandroid_platform.so").dependOn(island.step);
+    var codec2_island_options = island_options;
+    codec2_island_options.codec2 = codec2;
+    const codec2_island = @import("build/island.zig").build(b, codec2_island_options);
+    @import("build/codec2.zig").clientTest(b, codec2, codec2_island.file, binder_cpp, binder_ndk, binder_broker);
     const idmap2 = @import("build/idmap2.zig").build(b, .{
         .aosp = aosp,
         .target = target,

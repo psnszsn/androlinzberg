@@ -27,7 +27,10 @@ pub const Options = struct {
     target: std.Build.ResolvedTarget,
     aosp: std.Build.LazyPath,
     renderengine_headers: std.Build.LazyPath,
+    renderengine_sources: std.Build.LazyPath,
     package_native_headers: std.Build.LazyPath,
+    package_native_sources: std.Build.LazyPath,
+    host_include_roots: []const std.Build.LazyPath,
     generated: graphics.Generated,
     gui_generated: graphics.Generated,
     headers: []const std.Build.LazyPath,
@@ -55,7 +58,12 @@ fn configure(b: *std.Build, mod: *std.Build.Module, o: Options) void {
     }) |path| mod.addIncludePath(o.aosp.path(b, path));
 }
 
-pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
+pub const Libraries = struct {
+    transport: *std.Build.Step.Compile,
+    client: *std.Build.Step.Compile,
+};
+
+pub fn build(b: *std.Build, o: Options) Libraries {
     const flags = &[_][]const u8{ "-std=gnu++23", "-fno-exceptions", "-fno-rtti", "-fno-sanitize=undefined", "-fno-strict-aliasing", "-D_GNU_SOURCE", "-D__ANDROID_HOST__", "-DBUFFERPOOL_CLONE_HANDLES", "-D__INTRODUCED_IN(x)=", "-D__ANDROID_API_U__=34", "-D__ANDROID_API_S__=31", "-D__unused=__attribute__((unused))", "-Wno-deprecated-anon-enum-enum-conversion", "-Wno-deprecated-enum-compare", "-fno-char8_t", "-include", b.pathResolve(&.{"src/native/azk_prelude.h"}) };
     const mod = b.createModule(.{ .target = o.target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true, .pic = true });
     configure(b, mod, o);
@@ -73,7 +81,7 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
     mod.linkLibrary(o.gui);
     const library = b.addLibrary(.{ .name = "codec2_transport", .root_module = mod });
     b.step("codec2-transport", "Compile pinned Codec2 protocols and bufferpool2").dependOn(&library.step);
-    buildClients(b, o, flags, library);
+    const client = buildClients(b, o, flags, library);
 
     const pool_test = b.createModule(.{ .target = o.target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
     configure(b, pool_test, o);
@@ -109,10 +117,10 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
     const exe = b.addExecutable(.{ .name = "codec2-params-test", .root_module = params });
     const run = b.addRunArtifact(exe);
     b.step("codec2-params-test", "Run original Codec2 parameter and scalar contract tests").dependOn(&run.step);
-    return library;
+    return .{ .transport = library, .client = client };
 }
 
-fn buildClients(b: *std.Build, o: Options, flags: []const []const u8, transport: *std.Build.Step.Compile) void {
+fn buildClients(b: *std.Build, o: Options, flags: []const []const u8, transport: *std.Build.Step.Compile) *std.Build.Step.Compile {
     const selected = @import("codec2_sources.zig");
     const mod = b.createModule(.{ .target = o.target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true, .pic = true });
     configure(b, mod, o);
@@ -127,6 +135,7 @@ fn buildClients(b: *std.Build, o: Options, flags: []const []const u8, transport:
     for (o.hidl_headers) |header| mod.addIncludePath(header);
     for (o.flag_headers) |header| mod.addIncludePath(header);
     for (selected.includes) |path| mod.addIncludePath(o.aosp.path(b, path));
+    for (o.host_include_roots) |path| mod.addSystemIncludePath(path);
     // Pinned C2EasyEnum specializes traits which newer host libc++ diagnoses.
     // Keep AOSP's enum representation. Compat.h also includes Binder logging
     // before each source supplies its own LOG_TAG.
@@ -139,6 +148,11 @@ fn buildClients(b: *std.Build, o: Options, flags: []const []const u8, transport:
         mod.addCSourceFiles(.{ .root = o.aosp.path(b, group.root), .files = group.files, .flags = group_flags });
     }
     mod.addCSourceFile(.{ .file = o.sysprop_source, .flags = client_flags });
+    mod.addCSourceFile(.{ .file = o.renderengine_sources.path(b, "SurfaceFlingerProperties.sysprop.cpp"), .flags = client_flags });
+    for (declarations.input_dispatcher_pm_aidl) |file| {
+        const root = "frameworks/native/libs/binder/aidl/";
+        mod.addCSourceFile(.{ .file = o.package_native_sources.path(b, b.fmt("{s}.cpp", .{file[root.len .. file.len - ".aidl".len]})), .flags = client_flags });
+    }
     for (o.flag_sources) |source| mod.addCSourceFile(.{ .file = source, .flags = client_flags });
     for (declarations.cpp_aidl, o.sources) |entry, root| {
         if (isClientProtocol(entry)) if (entry.output) |source|
@@ -154,4 +168,16 @@ fn buildClients(b: *std.Build, o: Options, flags: []const []const u8, transport:
     allocator_test.linkLibrary(o.binder);
     allocator_test.linkLibrary(o.ndk);
     @import("surfaceflinger.zig").runTest(b, allocator_test, o.binder, o.ndk, o.broker, "codec2-allocator", "Verify original Codec2 linear allocation and imported storage", .standalone, null);
+    return library;
+}
+
+pub fn clientTest(b: *std.Build, libraries: Libraries, platform: std.Build.LazyPath, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile, broker: *std.Build.Step.Compile) void {
+    const mod = b.createModule(.{ .target = libraries.client.root_module.resolved_target.?, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
+    mod.include_dirs = libraries.client.root_module.include_dirs;
+    mod.addCSourceFile(.{ .file = b.path("tests/native/Codec2ClientTest.cpp"), .flags = &.{ "-std=gnu++17", "-UNDEBUG", "-D__INTRODUCED_IN(x)=", "-D__ANDROID_API__=36" } });
+    mod.addObjectFile(platform);
+    mod.linkLibrary(binder);
+    mod.linkLibrary(ndk);
+    const exe = b.addExecutable(.{ .name = "codec2-client-test", .root_module = mod });
+    @import("surfaceflinger.zig").runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, "codec2-client", "Link the complete stock codec client and verify NDK crypto metadata ownership", .standalone, null, &.{platform});
 }

@@ -1,4 +1,5 @@
 #include "core/AAudioStreamParameters.h"
+#include <thread>
 // Reuse pinned AAudio validation and channel/format conversions at the host seam.
 extern "C" int azk_aaudio_channel_mask(int count) {
     return AAudioConvert_channelCountToMask(count);
@@ -543,6 +544,29 @@ static int azk_register_dev_artzig_window_HostedInputDevices(JNIEnv* env) {
 #include <utils/AndroidThreads.h>
 
 static JavaVM* g_azk_vm = nullptr;
+static jobject g_vm_runtime = nullptr;
+static jmethodID g_get_target_sdk = nullptr;
+// Pinned VMRuntime.setTargetSdkVersionNative forwards the app target to bionic's
+// linker on Android. Hosted ART omits that linker call; query the same VMRuntime
+// value here so stock SurfaceUtils keeps its pre/post-Q buffer-drop behavior.
+// Unset/non-app targets follow the platform linker's __ANDROID_API_FUTURE__.
+extern "C" int android_get_application_target_sdk_version() {
+    constexpr int platformTarget = 10000;
+    if (!g_vm_runtime) return platformTarget;
+    JNIEnv* env = nullptr;
+    const jint state = g_azk_vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    const bool attached = state == JNI_EDETACHED;
+    if (attached) {
+        LOG_ALWAYS_FATAL_IF(g_azk_vm->AttachCurrentThread(&env, nullptr) != JNI_OK,
+                            "Cannot attach native target-SDK query");
+    } else {
+        LOG_ALWAYS_FATAL_IF(state != JNI_OK, "Cannot access native target-SDK query");
+    }
+    const jint target = env->CallIntMethod(g_vm_runtime, g_get_target_sdk);
+    LOG_ALWAYS_FATAL_IF(env->ExceptionCheck(), "VMRuntime target-SDK query failed");
+    if (attached) g_azk_vm->DetachCurrentThread();
+    return target > 0 ? target : platformTarget;
+}
 // Source: pinned AndroidRuntime::startReg/javaCreateThreadEtc/javaThreadShell.
 // ART is embedded by the host, so AndroidRuntime's zygote bootstrap is not used.
 // libutils threads marked canCallJava must stay attached through their entire
@@ -679,6 +703,18 @@ int azk_register_utility_jni(JNIEnv* env) {
 
 int azk_register_graphics_jni(JNIEnv* env) {
     env->GetJavaVM(&g_azk_vm);
+    if (!g_vm_runtime) {
+        ScopedLocalRef<jclass> runtimeClass(env, env->FindClass("dalvik/system/VMRuntime"));
+        if (!runtimeClass.get()) return -1;
+        const auto getRuntime = env->GetStaticMethodID(runtimeClass.get(), "getRuntime", "()Ldalvik/system/VMRuntime;");
+        if (!getRuntime) return -1;
+        g_get_target_sdk = env->GetMethodID(runtimeClass.get(), "getTargetSdkVersion", "()I");
+        if (!g_get_target_sdk) return -1;
+        ScopedLocalRef<jobject> runtime(env, env->CallStaticObjectMethod(runtimeClass.get(), getRuntime));
+        if (!runtime.get() || env->ExceptionCheck()) return -1;
+        g_vm_runtime = env->NewGlobalRef(runtime.get());
+        if (!g_vm_runtime) return -1;
+    }
     const JNINativeMethod exitSmokeMethods[] = {
         {"installLibcExitTrap", "()V", reinterpret_cast<void*>(installLibcExitTrap)},
     };
@@ -1153,12 +1189,27 @@ extern "C" int android_get_device_api_level();
 static jint nativeDeviceApiLevel(JNIEnv*, jclass) {
     return android_get_device_api_level();
 }
+static jint nativeApplicationTargetSdk(JNIEnv*, jclass, jboolean worker) {
+    if (!worker) return android_get_application_target_sdk_version();
+    jint target = -1;
+    std::thread thread([&] {
+        JNIEnv* env = nullptr;
+        LOG_ALWAYS_FATAL_IF(g_azk_vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_EDETACHED,
+                            "Target-SDK test worker should start detached");
+        target = android_get_application_target_sdk_version();
+        LOG_ALWAYS_FATAL_IF(g_azk_vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_EDETACHED,
+                            "Target-SDK query leaked a worker attachment");
+    });
+    thread.join();
+    return target;
+}
 static int registerStockNativePropertiesSmoke(JNIEnv* env) {
     const JNINativeMethod methods[] = {
         {"find", "(Ljava/lang/String;)J", reinterpret_cast<void*>(findNativeProperty)},
         {"observe", "(JLjava/lang/String;Ljava/lang/String;)J", reinterpret_cast<void*>(testNativeProperty)},
         {"put", "(Ljava/lang/String;Ljava/lang/String;)I", reinterpret_cast<void*>(setNativeProperty)},
         {"deviceApiLevel", "()I", reinterpret_cast<void*>(nativeDeviceApiLevel)},
+        {"applicationTargetSdk", "(Z)I", reinterpret_cast<void*>(nativeApplicationTargetSdk)},
     };
-    return jniRegisterNativeMethods(env, "dev/artzig/StockNativePropertiesSmoke", methods, 4);
+    return jniRegisterNativeMethods(env, "dev/artzig/StockNativePropertiesSmoke", methods, 5);
 }

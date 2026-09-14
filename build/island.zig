@@ -40,6 +40,9 @@ pub const Options = struct {
     host_libraries: []const []const u8,
     host_link_flags: []const []const u8,
     aosp: std.Build.LazyPath,
+    /// Optional stock codec closure; enabled by its native acceptance executable
+    /// until the component and resource-manager services are ready for apps.
+    codec2: ?@import("codec2.zig").Libraries = null,
 };
 
 pub const Result = struct {
@@ -719,7 +722,9 @@ pub fn build(b: *std.Build, o: Options) Result {
         o.aosp.path(b, "frameworks/av/include"),
         o.aosp.path(b, "frameworks/av/media/ndk/include"),
     };
-    g.add(o.aosp.path(b, "frameworks/av/media/module/foundation"), &gen.media_format_foundation_srcs, media_format_includes, &.{});
+    // Include AMessage/AString's original Parcel methods now that libbinder is
+    // available. The host-only variant omits methods native MediaCodec needs.
+    g.add(o.aosp.path(b, "frameworks/av/media/module/foundation"), &gen.media_format_foundation_srcs, media_format_includes, &.{"-D__ANDROID__"});
     g.add(o.aosp.path(b, "frameworks/av/media/ndk"), &.{"NdkMediaFormat.cpp"}, media_format_includes, &.{"-DEXPORT=__attribute__((visibility(\"default\")))"});
     g.add(o.aosp.path(b, "frameworks/av/media/libmedia"), &.{"NdkMediaFormatPriv.cpp"}, media_format_includes, &.{});
     const image_reader_includes = media_format_includes ++ &[_]std.Build.LazyPath{
@@ -766,6 +771,14 @@ pub fn build(b: *std.Build, o: Options) Result {
     link.addFileArg(o.protobuf.getEmittedBin());
     link.addFileArg(o.input.native.getEmittedBin());
     link.addFileArg(o.input.verifier);
+    if (o.codec2) |codec2| {
+        // Share libgui/foundation globals with JNI in one ELF image. Linking
+        // another static libgui into a client executable duplicates global
+        // construction/destruction (notably LayerStatePermissions).
+        link.addArg("-Wl,-u,AMediaCodec_createCodecByName");
+        link.addFileArg(codec2.client.getEmittedBin());
+        link.addFileArg(codec2.transport.getEmittedBin());
+    }
     link.addFileArg(o.gui.getEmittedBin());
     link.addFileArg(o.hidl.getEmittedBin());
     link.addFileArg(o.ui.getEmittedBin());

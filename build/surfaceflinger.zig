@@ -143,10 +143,10 @@ pub const ClientMode = enum { standalone, application, system };
 
 pub fn runTest(b: *std.Build, mod: *std.Build.Module, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile, broker: *std.Build.Step.Compile, name: []const u8, description: []const u8, mode: ClientMode, service: ?*std.Build.Step.Compile) void {
     const exe = b.addExecutable(.{ .name = b.fmt("{s}-test", .{name}), .root_module = mod });
-    runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, name, description, mode, service);
+    runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, name, description, mode, service, &.{});
 }
 
-pub fn runBinaryTest(b: *std.Build, exe: std.Build.LazyPath, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile, broker: *std.Build.Step.Compile, name: []const u8, description: []const u8, mode: ClientMode, service: ?*std.Build.Step.Compile) void {
+pub fn runBinaryTest(b: *std.Build, exe: std.Build.LazyPath, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile, broker: *std.Build.Step.Compile, name: []const u8, description: []const u8, mode: ClientMode, service: ?*std.Build.Step.Compile, extra_libraries: []const std.Build.LazyPath) void {
     const run = @import("command.zig").create(b);
     run.addArg("python3");
     run.addFileArg(b.path("tools/binder-facade-test.py"));
@@ -167,6 +167,10 @@ pub fn runBinaryTest(b: *std.Build, exe: std.Build.LazyPath, binder: *std.Build.
     run.addFileArg(binder.getEmittedBin());
     run.addArg("--library");
     run.addFileArg(ndk.getEmittedBin());
+    for (extra_libraries) |library| {
+        run.addArg("--library");
+        run.addFileArg(library);
+    }
     run.addArg("--output");
     const output = run.addOutputDirectoryArg(name);
     run.run.has_side_effects = true;

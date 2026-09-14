@@ -1,6 +1,11 @@
 //! Exact pinned Soong source groups used by the native codec client closure.
 const Group = struct { root: []const u8, files: []const []const u8, flags: []const []const u8 = &.{} };
 pub const groups = [_]Group{
+    // Native codec capabilities, media-service clients and rendering contracts.
+    .{ .root = "frameworks/av/camera", .files = &.{ "ICamera.cpp", "ICameraClient.cpp", "ICameraRecordingProxy.cpp" } },
+    .{ .root = "frameworks/av/media/libmedia", .files = &.{ "MediaResource.cpp", "MediaResourcePolicy.cpp", "AudioCapabilities.cpp", "CodecCapabilities.cpp", "CodecCapabilitiesUtils.cpp", "EncoderCapabilities.cpp", "VideoCapabilities.cpp", "IMediaPlayerService.cpp", "IMediaPlayer.cpp", "IMediaPlayerClient.cpp", "IMediaRecorder.cpp", "IMediaRecorderClient.cpp", "IRemoteDisplay.cpp", "IRemoteDisplayClient.cpp", "IStreamSource.cpp", "IMediaMetadataRetriever.cpp", "IMediaDeathNotifier.cpp", "BufferingSettings.cpp", "mediaplayer.cpp", "mediametadataretriever.cpp", "MediaProfiles.cpp", "Metadata.cpp", "omx/1.0/WOmx.cpp" } },
+    .{ .root = "frameworks/av/media/libstagefright", .files = &.{ "VideoRenderQualityTracker.cpp", "colorconversion/SoftwareRenderer.cpp", "colorconversion/ColorConverter.cpp" } },
+    .{ .root = "external/libyuv", .files = &.{ "source/compare.cc", "source/compare_common.cc", "source/compare_gcc.cc", "source/compare_msa.cc", "source/compare_neon.cc", "source/compare_neon64.cc", "source/convert.cc", "source/convert_argb.cc", "source/convert_from.cc", "source/convert_from_argb.cc", "source/convert_jpeg.cc", "source/convert_to_argb.cc", "source/convert_to_i420.cc", "source/cpu_id.cc", "source/mjpeg_decoder.cc", "source/mjpeg_validate.cc", "source/planar_functions.cc", "source/rotate.cc", "source/rotate_any.cc", "source/rotate_argb.cc", "source/rotate_common.cc", "source/rotate_gcc.cc", "source/rotate_msa.cc", "source/rotate_neon.cc", "source/rotate_neon64.cc", "source/row_any.cc", "source/row_common.cc", "source/row_gcc.cc", "source/row_msa.cc", "source/row_neon.cc", "source/row_neon64.cc", "source/row_rvv.cc", "source/scale.cc", "source/scale_any.cc", "source/scale_argb.cc", "source/scale_common.cc", "source/scale_gcc.cc", "source/scale_msa.cc", "source/scale_neon.cc", "source/scale_neon64.cc", "source/scale_rgb.cc", "source/scale_rvv.cc", "source/scale_uv.cc", "source/video_common.cc" }, .flags = &.{ "-DHAVE_JPEG", "-DLIBYUV_UNLIMITED_DATA", "-fexceptions" } },
     .{ .root = "frameworks/av/media/module/foundation", .files = &.{ "ColorUtils.cpp", "ColorUtils_fill.cpp" } },
     .{ .root = "frameworks/av/media/module/foundation", .files = &@import("gen/island_sources.zig").media_format_foundation_srcs },
     .{ .root = "frameworks/av/media/libstagefright", .files = &.{ "MediaCodec.cpp", "MediaCodecList.cpp", "MediaCodecListOverrides.cpp", "ACodec.cpp", "ACodecBufferChannel.cpp", "AHierarchicalStateMachine.cpp", "BufferImpl.cpp", "CodecErrorLog.cpp", "CryptoAsync.cpp", "OMXClient.cpp", "OmxInfoBuilder.cpp" } },
@@ -180,6 +185,11 @@ pub const groups = [_]Group{
     } },
 };
 pub const includes = [_][]const u8{
+    "frameworks/av/camera/include",
+    "frameworks/av/camera/include/camera",
+    "system/media/camera/include",
+    "frameworks/av/media/audioaidlconversion/include",
+    "frameworks/av/media/liberror/include",
     "frameworks/av/media/module/foundation/include/media/stagefright/foundation",
     "frameworks/av/media/ndk",
     "frameworks/av/media/libmediahelper/include",

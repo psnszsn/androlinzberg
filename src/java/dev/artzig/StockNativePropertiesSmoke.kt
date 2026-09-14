@@ -8,9 +8,22 @@ internal object StockNativePropertiesSmoke {
     private external fun observe(handle: Long, key: String, expected: String): Long
     private external fun put(key: String, value: String?): Int
     private external fun deviceApiLevel(): Int
+    private external fun applicationTargetSdk(worker: Boolean): Int
 
     fun run() {
         check(deviceApiLevel() == android.os.Build.VERSION.SDK_INT)
+        val runtime = dalvik.system.VMRuntime.getRuntime()
+        val originalTarget = runtime.targetSdkVersion
+        try {
+            for (target in intArrayOf(28, 35, 10000, 0, -1)) {
+                runtime.setTargetSdkVersion(target)
+                val expected = if (target > 0) target else 10000
+                check(applicationTargetSdk(false) == expected)
+                check(applicationTargetSdk(true) == expected)
+            }
+        } finally {
+            runtime.setTargetSdkVersion(originalTarget)
+        }
         val key = "debug.azk.native.property"
         check(find("ro.azk.native.missing") == 0L)
         SystemProperties.set(key, "first")
@@ -34,6 +47,6 @@ internal object StockNativePropertiesSmoke {
         val longValue = SystemProperties.get(longKey)
         check(longValue.length > 91)
         check(observe(find(longKey), longKey, longValue) >= 0)
-        println("stock-native-properties: PASS shared handles, updates, reentrant callbacks, long values and write permissions")
+        println("stock-native-properties: PASS shared handles, updates, reentrant callbacks, long values, write permissions and native target SDK across attached/detached threads")
     }
 }

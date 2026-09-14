@@ -44,7 +44,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 13,275 | 104 | 0 |
+| Framework | 13,372 | 104 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -426,9 +426,28 @@ release, and zero retained buffers/bytes.
 
 The `codec2-client` target compiles the pinned CCodec, Codec2 client/component
 wrappers, allocators and native MediaCodec/NDK closure from the refreshed
-archive. The native GUI, GPU buffer and Codec2 transport tests pass.
+archive. The closure includes the original media capabilities, resource records,
+player/recorder and camera Binder interfaces, render-quality tracker, software
+color conversion, libyuv, SurfaceFlinger properties and native package-manager
+protocols.
+
+`codec2-client-test` links that closure in a test-only `libandroid_platform.so`.
+GUI and foundation globals have one owner in that ELF image; linking a second
+static libgui into its executable caused duplicate global destruction. The
+test checks that the native codec factory and crypto metadata functions resolve
+to the original implementation, verifies metadata ownership and invalid-argument
+results, and exits normally. It does not create a codec or decode media.
+The shared foundation build now enables AOSP's `AMessage`/`AString` Parcel
+methods, which its host-only variant omitted.
+
+Hosted ART now exposes the application's native target-SDK query through the
+existing `VMRuntime` value. Stock `SurfaceUtils` needs it to choose buffer-drop
+behavior. The framework smoke covers old/current/unset targets on Java and
+detached native threads, checks attachment cleanup, and restores the target.
+
+The native GUI, GPU buffer and Codec2 transport tests pass.
 The C++ audit, NDK ABI check, framework module suite and all 28 APK tests pass.
-The APK run recorded 90 actions with no structured runtime issues; the testkit
-passed 23 tests. This static library is not yet linked into the production codec
-path; decoder service integration and replacement of the hosted JNI/NDK
+The APK run recorded 89 actions with no structured runtime issues; the testkit
+passed 23 tests. The installed production codec path still uses the hosted
+implementation; decoder service integration and replacement of the hosted JNI/NDK
 implementations remain pending.

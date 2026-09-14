@@ -4,7 +4,7 @@
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 13275,
+      "unchanged": 13372,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -112,7 +112,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "235f7464c42cb981b136501a84127622378808caab28072e0cfd682e2c604f13"
+      "archive_sha256": "0de4850460f6dc0dda08694fe925b636c6056f88c94e6eb792aedf8b5b25aac3"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -445,7 +445,7 @@
   },
   "codec2_native_clients_followup": {
     "date": "2026-09-14",
-    "scope": "Original hybrid libgui producer interfaces, shared pinned HIDL runtime, stock native codec client build closure, and CPU-only gralloc BLOB storage. Production MediaCodec still uses the hosted app-side implementation.",
+    "scope": "Original hybrid libgui interfaces, shared HIDL runtime, stock native codec client compilation/link closure, CPU-only gralloc BLOB storage and the hosted ART target-SDK query. Production MediaCodec still uses the hosted app-side implementation.",
     "source_selection": "build/codec2_sources.zig",
     "restored_original_sources": [
       "frameworks/native/libs/gui/IGraphicBufferProducer.cpp",
@@ -456,7 +456,7 @@
     "validation": {
       "gui-test": "passed, including original hybrid interfaces, GPU DMA-BUF identity and fence lifetime, buffer budgets, caller identity and absent-service checks",
       "codec2-transport-test": "passed, including shared BLOB storage and mutation across processes, DMA-BUF identity, bufferpool transfer and service death",
-      "codec2-client": "passed: archive-based static compilation of original MediaCodec, CCodec, Codec2 and NDK codec/format clients; production linking and service activation remain pending",
+      "codec2-client": "passed: original native client closure compiled from packaged sources and linked in the test framework; production service activation remains pending",
       "newpipe_launch": "passed with zero structured runtime issues",
       "aggregate_acceptance": "not run",
       "codec2-allocator-test": "passed: original C2AllocatorBlob capacity, map bounds, overlapping maps, imported storage after exporter release and zero retained buffers/bytes",
@@ -465,10 +465,21 @@
       "ndk-abi": "all 135 reference symbols exported",
       "framework-module-test": "passed",
       "integration_test_cases": 28,
-      "recorded_actions": 90,
+      "recorded_actions": 89,
       "runtime_issues": 0,
-      "testkit_tests": 23
+      "testkit_tests": 23,
+      "codec2-client-test": "passed with original-symbol ownership and normal process exit"
     },
-    "production_codec_replaced": false
+    "production_codec_replaced": false,
+    "native_link": {
+      "target": "codec2-client-test",
+      "framework_variant": "Original codec and JNI code link in one test-only libandroid_platform.so; the installed production framework is not switched until its services are ready.",
+      "reason": "A second static libgui in the test executable duplicated LayerStatePermissions global destruction. The combined ELF owns GUI/foundation globals once. AMessage/AString now include their original Android Parcel methods.",
+      "validation": "Passed: full original NDK factory linked; dladdr verifies that factory and crypto metadata APIs resolve to the test framework rather than hosted libbinder_ndk exports; metadata copies and invalid arguments checked; ordinary process shutdown succeeds."
+    },
+    "runtime_sdk": {
+      "implementation": "android_get_application_target_sdk_version queries cached VMRuntime.getTargetSdkVersion; temporary native thread attachment is released; unset/non-application targets report platform FUTURE.",
+      "validation": "Framework smoke passed for targets 28, 35, 10000, 0 and -1 on attached Java and detached native threads; final SDK value restored."
+    }
   }
 }
