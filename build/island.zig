@@ -572,6 +572,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "system/incremental_delivery/incfs"), &.{ "incfs_ndk.c", "incfs.cpp", "MountRegistry.cpp", "path.cpp" }, &.{}, &.{"-D_FILE_OFFSET_BITS=64"});
     g.add(o.incremental_sysprop_source.dirname(), &.{"IncrementalProperties.sysprop.cpp"}, &.{}, &.{});
     for (o.aidl_source_roots, @import("generator_sources.zig").cpp_aidl) |root, entry| {
+        // Codec2's native library owns its work and bufferpool protocols.
+        if (@import("codec2.zig").isProtocol(entry)) continue;
         if (entry.output) |output| g.add(root, &.{output}, extractor_includes, &.{});
     }
     g.add(o.aosp.path(b, "frameworks/native/libs/input"), &gen.input_srcs, &.{ fn_inc, o.aosp.path(b, "frameworks/native/libs/input"), input_compat_inc, binder_inc }, &.{aidl_inc});

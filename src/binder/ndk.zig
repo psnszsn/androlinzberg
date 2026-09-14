@@ -1790,8 +1790,10 @@ export fn AStatus_getStatus(status: *const AStatus) callconv(.c) i32 {
 export fn AStatus_getMessage(status: *const AStatus) callconv(.c) [*:0]const u8 {
     return if (status.message) |m| @ptrCast(m.ptr) else "";
 }
-export fn AStatus_delete(status: *AStatus) callconv(.c) void {
-    status.destroy();
+export fn AStatus_delete(status: ?*AStatus) callconv(.c) void {
+    // Pinned ndk/status.cpp uses delete, including its null-pointer no-op.
+    // Generated proxies replace an empty ScopedAStatus on transport failure.
+    if (status) |value| value.destroy();
 }
 
 // ----- AParcel
@@ -2585,10 +2587,13 @@ export fn AIBinder_DeathRecipient_new(onBinderDied: ?*const fn (?*anyopaque) cal
     d.* = .{ .on_died = onBinderDied };
     return d;
 }
-export fn AIBinder_DeathRecipient_setOnUnlinked(recipient: *AIBinder_DeathRecipient, onUnlinked: ?*const fn (?*anyopaque) callconv(.c) void) callconv(.c) void {
-    recipient.on_unlinked = onUnlinked;
+export fn AIBinder_DeathRecipient_setOnUnlinked(recipient: ?*AIBinder_DeathRecipient, onUnlinked: ?*const fn (?*anyopaque) callconv(.c) void) callconv(.c) void {
+    if (recipient) |value| value.on_unlinked = onUnlinked;
 }
-export fn AIBinder_DeathRecipient_delete(recipient: *AIBinder_DeathRecipient) callconv(.c) void {
+export fn AIBinder_DeathRecipient_delete(value: ?*AIBinder_DeathRecipient) callconv(.c) void {
+    // Pinned ndk/ibinder.cpp accepts null. ScopedAIBinder_DeathRecipient calls
+    // this when replacing its initially empty value, including static setup.
+    const recipient = value orelse return;
     if (Runtime.instance) |r| {
         var removed = std.ArrayListUnmanaged(*Runtime.DeathLink).empty;
         defer removed.deinit(alloc);

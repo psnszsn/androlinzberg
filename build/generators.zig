@@ -498,6 +498,11 @@ fn aidlCpp(
             run.addPrefixedDirectoryArg("-I", aosp.path("hardware/interfaces/common/aidl"));
             run.addPrefixedDirectoryArg("-I", aosp.path("hardware/interfaces/drm/common/aidl"));
         }
+        if (entry.version) |version| run.addArg(b.fmt("--version={d}", .{version}));
+        if (entry.hash) |hash| run.addArg(b.fmt("--hash={s}", .{hash}));
+        run.addPrefixedDirectoryArg("-I", aosp.path("hardware/interfaces/common/aidl"));
+        run.addPrefixedDirectoryArg("-I", aosp.path("hardware/interfaces/common/fmq/aidl"));
+        run.addPrefixedDirectoryArg("-I", aosp.path("frameworks/native/aidl/gui"));
         if (entry.vintf_stable) run.addArgs(&.{ "--structured", "--stability=vintf" });
         run.addArg("-h");
         const headers = run.addOutputDirectoryArg(b.fmt("aidl-cpp-headers-{d}", .{index}));

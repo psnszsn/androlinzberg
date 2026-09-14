@@ -36,7 +36,7 @@ also does not mean zero unsupported native operations.
 reference revisions, modified native paths and delegated registration modules.
 Both archives were read directly. The framework archive was rechecked during
 the Binder, utility and media/graphics JNI migrations. The latest refresh adds
-original DRM clients/protocols and enables native hardware-bitmap snapshots. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
+original Codec2 and bufferpool2 protocols, implementation and tests. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
 `.h`, `.hpp`, `.hxx`, `.S`, `.s` and `.inl` member was compared byte-for-byte
 with the corresponding pinned checkout path. Both current archives contain
 multiple top-level directories; their paths were retained. Tracked reference
@@ -44,7 +44,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 12,414 | 109 | 0 |
+| Framework | 12,763 | 108 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -375,3 +375,34 @@ suites, NewPipe launch and all 28 APK cases. Its native display snapshots match
 Java's SurfaceFlinger queries. The final APK run recorded 88 actions with no
 structured runtime issues. The installed libraries and their hashes are current;
 this source selection requires no archive changes.
+
+## Codec2 transport preparation
+
+The pinned Codec2 V1 and bufferpool2 V2 NDK protocols and original bufferpool
+implementation compile through `build/codec2.zig`. This is preparation for the
+native codec migration: production MediaCodec JNI and decoding still use the
+existing app-side implementation. No decoder service is advertised yet.
+
+`codec2-transport-test` sends original Codec2 work between two authenticated
+processes. It checks frozen interface versions/hashes, frame metadata, native
+handle and HardwareBuffer DMA-BUF storage identity, shared-buffer mutation,
+original bufferpool transfer
+ownership and service death. `codec2-bufferpool-test` runs all three original
+allocation, reuse and transfer tests. Both pass, as does `binder-cpp-test`.
+The tests exposed and fixed null cleanup in the hosted NDK's `AStatus` and
+death-recipient APIs. The bufferpool test launcher preserves test results and
+uses the same immediate process exit as AndroidRuntime; the original pool owns
+detached workers that must not race host static destruction.
+
+The optional `codec2-params-test` is **not green**: 12 of 14 unchanged AOSP tests
+pass. `ParamOpsTest` and `FlexParamOpsTest` contain four failing comparisons
+between differently typed input/output parameters. The pinned types hide the
+base equality overloads; their implicit boolean conversions compare equal in
+C++17, while the tests expect inequality. Neither the headers nor tests have
+been changed to conceal this upstream mismatch. This diagnostic does not
+exercise decoding or establish stock native MediaCodec completion.
+
+The framework module suite, C++ audit, NDK ABI check and full APK integration
+suite passed after these changes. The APK run covered 28 cases and 88 recorded
+actions with zero structured runtime issues; the testkit passed 23 tests.
+The framework archive and dependency pin were refreshed together.

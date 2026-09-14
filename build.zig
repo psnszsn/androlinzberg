@@ -345,6 +345,18 @@ pub fn build(b: *std.Build) void {
     b.step("binder-cpp", "Build the hosted C++ libbinder facade").dependOn(&binder_cpp.step);
     const graphics = @import("build/graphics.zig").build(b, target, optimize, aosp, generated.native.gui);
     const gui_host = graphics.gui;
+    _ = @import("build/codec2.zig").build(b, .{
+        .target = target,
+        .aosp = aosp,
+        .generated = .{ .headers = generated.native.surfaceflinger.headers, .sources = generated.native.surfaceflinger.sources },
+        .gui_generated = generated.native.gui,
+        .headers = generated.native.aidl_header_roots,
+        .sources = generated.native.aidl_source_roots,
+        .binder = binder_cpp,
+        .ndk = binder_ndk,
+        .broker = binder_broker,
+        .gui = gui_host,
+    });
     const input_transport = @import("build/input.zig").build(b, target, aosp, generated.native.gui, generated.native.input, generated.native.aidl_header_roots, gui_host, binder_cpp, binder_ndk, binder_broker);
     const renderengine = @import("build/renderengine.zig").build(b, target, aosp, generated.native.gui, generated.native.renderengine, gui_host, skia_lib);
     b.step("renderengine", "Compile pinned GL/Ganesh RenderEngine over host graphics").dependOn(&renderengine.step);
