@@ -37,6 +37,7 @@ pub const NamedLibrary = struct {
 
 pub fn build(b: *std.Build, options: Options) LazyPath {
     const tree = b.addWriteFiles();
+    _ = tree.addCopyDirectory(b.path("src/native/codec2/config"), "", .{});
     _ = tree.addCopyFile(options.launcher, "bin/androlinzberg");
     _ = tree.addCopyFile(options.broker, "bin/azk-binder-broker");
     _ = tree.addCopyFile(options.surfaceflinger, "bin/azk-surfaceflinger");

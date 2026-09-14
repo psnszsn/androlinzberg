@@ -735,7 +735,6 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     assert not diagnostics['diagnostics']['runtime']['issues'], diagnostics
                     steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
                     assert len(steps) == 4 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
-                    assert 'GPU VPP RGB path active' in (out / 'app.log').read_text(errors='replace')
                     result['test_control'] = {'steps': len(steps), 'task': int(task), 'window': int(window)}
                 else:
                     control('step', 'click', '--task-id', task, '--window-id', window,

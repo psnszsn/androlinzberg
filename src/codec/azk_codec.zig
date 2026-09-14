@@ -1,10 +1,5 @@
-//! azk_codec: MediaCodec backend over the Nix-provided system FFmpeg.
-//! Called directly by the Zig JNI adapter and also exported as a C ABI for
-//! native tests and the video-layer transport.
-//!
-//! Audio decode path (phase 2 item 3a): send() always accepts a packet by
-//! draining pending frames into an internal queue first; receive() converts
-//! any sample format to interleaved s16.
+//! System FFmpeg backend for the Codec2 service. Video converts directly into
+//! allocator-owned output; native clients own codec state and Surface queues.
 const std = @import("std");
 const c = @import("av");
 
@@ -19,7 +14,6 @@ const Frame = struct {
 };
 
 const VFrame = struct {
-    hardware: ?*c.AzkHardwareFrame = null, // owned legacy VPP output
     decoded: ?*c.AVFrame = null, // retained decoder surface for allocator output
     width: c_int, // decoded/coded dimensions reported to MediaCodec
     height: c_int,
@@ -28,7 +22,6 @@ const VFrame = struct {
     work: ?*c.AVBufferRef = null,
 
     fn release(self: VFrame) void {
-        if (self.hardware) |hardware| c.azk_hardware_frame_release(hardware);
         var decoded = self.decoded;
         c.av_frame_free(&decoded);
         releaseWork(self.work);
@@ -43,8 +36,6 @@ pub const Dec = struct {
     allocator_output: bool = false,
     queue: std.ArrayList(Frame) = .empty,
     vqueue: std.ArrayList(VFrame) = .empty,
-    surface_w: c_int = 0,
-    surface_h: c_int = 0,
     hw_device: ?*c.AVBufferRef = null,
     vaapi_vpp: ?*c.AzkVaapiVpp = null,
     eof_sent: bool = false,
@@ -70,42 +61,19 @@ pub const Dec = struct {
                 const work = try retainWork(self.frame);
                 errdefer releaseWork(work);
                 const pts = if (self.frame.pts != c.AV_NOPTS_VALUE) self.frame.pts else 0;
-                if (self.allocator_output) {
-                    var width: c_int = undefined;
-                    var height: c_int = undefined;
-                    var dataspace: c_int = undefined;
-                    if (c.azk_vaapi_frame_info(self.frame, &width, &height, &dataspace) != 0)
-                        return error.HardwareVideoPresentation;
-                    var decoded = c.av_frame_clone(self.frame) orelse return error.OutOfMemory;
-                    errdefer c.av_frame_free(&decoded);
-                    try self.vqueue.append(gpa, .{
-                        .decoded = decoded,
-                        .width = width,
-                        .height = height,
-                        .dataspace = dataspace,
-                        .pts = pts,
-                        .work = work,
-                    });
-                    continue;
-                }
-                const output = videoPresentationSize(
-                    self.frame.width,
-                    self.frame.height,
-                    self.surface_w,
-                    self.surface_h,
-                );
-                const hardware = c.azk_vaapi_export(
-                    self.frame,
-                    output.width,
-                    output.height,
-                    &self.vaapi_vpp,
-                ) orelse return error.HardwareVideoPresentation;
-                errdefer c.azk_hardware_frame_release(hardware);
+                if (!self.allocator_output) return error.VideoAllocatorRequired;
+                var width: c_int = undefined;
+                var height: c_int = undefined;
+                var dataspace: c_int = undefined;
+                if (c.azk_vaapi_frame_info(self.frame, &width, &height, &dataspace) != 0)
+                    return error.HardwareVideoPresentation;
+                var decoded = c.av_frame_clone(self.frame) orelse return error.OutOfMemory;
+                errdefer c.av_frame_free(&decoded);
                 try self.vqueue.append(gpa, .{
-                    .hardware = hardware,
-                    .width = hardware.*.width,
-                    .height = hardware.*.height,
-                    .dataspace = hardware.*.dataspace,
+                    .decoded = decoded,
+                    .width = width,
+                    .height = height,
+                    .dataspace = dataspace,
                     .pts = pts,
                     .work = work,
                 });
@@ -131,16 +99,6 @@ fn releaseWork(work: ?*c.AVBufferRef) void {
 
 fn workIndex(ref: *c.AVBufferRef) u64 {
     return std.mem.readInt(u64, ref.data[0..8], .little);
-}
-
-const VideoSize = struct { width: c_int, height: c_int };
-
-/// Keep codec buffers at the decoded stream size across SurfaceView resizes.
-/// AOSP SurfaceView.performSurfaceTransaction() applies the destination frame
-/// and position scale in the composition transaction; it does not resize
-/// MediaCodec output buffers to the view. Wayland's viewport is that host seam.
-fn videoPresentationSize(width: c_int, height: c_int, _: c_int, _: c_int) VideoSize {
-    return .{ .width = width, .height = height };
 }
 
 fn avError(e: c_int) c_int {
@@ -249,13 +207,6 @@ pub export fn azk_codec_configure(d: *Dec, extradata: ?[*]const u8, len: c_int, 
     return c.avcodec_open2(d.ctx, null, null);
 }
 
-pub export fn azk_codec_set_video_target(d: *Dec, width: c_int, height: c_int) void {
-    // Retain the current SurfaceView dimensions at the JNI seam, but do not
-    // use them to rebuild the decoder/VPP pipeline.
-    d.surface_w = @max(0, width);
-    d.surface_h = @max(0, height);
-}
-
 /// Select allocator-owned video output before configuring the decoder.
 pub export fn azk_codec_use_video_allocator(d: *Dec) c_int {
     if (!d.is_video or c.avcodec_is_open(d.ctx) != 0) return -1;
@@ -361,36 +312,6 @@ fn receiveAudio(d: *Dec, dst: [*]u8, dst_cap: c_int, out_meta: [*]c_int, out_pts
     return 0;
 }
 
-/// Hardware frames return 3 and transfer an owned AzkHardwareFrame.
-pub export fn azk_codec_receive_video2(d: *Dec, out_meta: [*]c_int, out_pts: *i64, out_handle: *usize) c_int {
-    return receiveVideo(d, out_meta, out_pts, out_handle, null);
-}
-
-pub export fn azk_codec_receive_video_work(d: *Dec, out_meta: [*]c_int, out_pts: *i64, out_handle: *usize, out_work: *u64) c_int {
-    return receiveVideo(d, out_meta, out_pts, out_handle, out_work);
-}
-
-fn receiveVideo(d: *Dec, out_meta: [*]c_int, out_pts: *i64, out_handle: *usize, out_work: ?*u64) c_int {
-    out_handle.* = 0;
-    if (d.allocator_output) return -1;
-    if (d.vqueue.items.len == 0) d.pushDecoded() catch return -1;
-    if (d.vqueue.items.len == 0) {
-        if (d.eof_out) return 2;
-        return 1;
-    }
-    const pending = d.vqueue.items[0];
-    if (out_work) |id| id.* = workIndex(pending.work orelse return -4);
-    out_meta[1] = pending.width;
-    out_meta[2] = pending.height;
-    out_pts.* = pending.pts;
-    const frame = d.vqueue.orderedRemove(0);
-    defer releaseWork(frame.work);
-    out_meta[0] = 0;
-    out_meta[3] = frame.dataspace;
-    out_handle.* = @intFromPtr(frame.hardware.?);
-    return 3;
-}
-
 /// Peek without consuming a decoded surface or its work reference. The caller
 /// allocates the matching C2 block and waits its acquire fence before render.
 pub export fn azk_codec_peek_video_work(d: *Dec, out_meta: [*]c_int, out_pts: *i64, out_work: *u64) c_int {
@@ -448,18 +369,6 @@ pub export fn azk_codec_poll_completed_work(d: *Dec, out_work: *u64) c_int {
     return 0;
 }
 
-pub const HardwareFrame = c.AzkHardwareFrame;
-
-pub fn releaseHardwareFrame(frame: *HardwareFrame) void {
-    c.azk_hardware_frame_release(frame);
-}
-
-test "surface resize keeps codec presentation at decoded dimensions" {
-    try std.testing.expectEqual(VideoSize{ .width = 2842, .height = 2160 }, videoPresentationSize(2842, 2160, 774, 589));
-    try std.testing.expectEqual(VideoSize{ .width = 3840, .height = 2160 }, videoPresentationSize(3840, 2160, 1920, 1080));
-    try std.testing.expectEqual(VideoSize{ .width = 426, .height = 240 }, videoPresentationSize(426, 240, 1920, 1080));
-}
-
 pub export fn azk_codec_flush(d: *Dec) void {
     c.avcodec_flush_buffers(d.ctx);
     c.av_packet_unref(d.pkt);
@@ -499,134 +408,6 @@ pub export fn azk_codec_close(d: *Dec) void {
     gpa.destroy(d);
 }
 
-/// Write a short mp3 file for Java-level MediaCodec tests.
-pub fn writeTestMP3(io: std.Io, path: []const u8) c_int {
-    const enc = c.avcodec_find_encoder_by_name("libmp3lame") orelse return -1;
-    const ectx = c.avcodec_alloc_context3(enc) orelse return -2;
-    defer {
-        var e: ?*c.AVCodecContext = ectx;
-        c.avcodec_free_context(&e);
-    }
-    ectx.*.sample_rate = 44100;
-    c.av_channel_layout_default(&ectx.*.ch_layout, 2);
-    ectx.*.sample_fmt = c.AV_SAMPLE_FMT_S16P;
-    ectx.*.bit_rate = 128000;
-    ectx.*.time_base = .{ .num = 1, .den = 44100 };
-    if (c.avcodec_open2(ectx, null, null) < 0) return -3;
-    const file = std.Io.Dir.cwd().createFile(io, path, .{}) catch return -4;
-    defer file.close(io);
-    const ef = c.av_frame_alloc();
-    defer {
-        var f: ?*c.AVFrame = ef;
-        c.av_frame_free(&f);
-    }
-    ef.*.format = c.AV_SAMPLE_FMT_S16P;
-    ef.*.sample_rate = 44100;
-    c.av_channel_layout_default(&ef.*.ch_layout, 2);
-    ef.*.nb_samples = ectx.*.frame_size;
-    if (c.av_frame_get_buffer(ef, 0) < 0) return -5;
-    const epkt = c.av_packet_alloc();
-    defer {
-        var p: ?*c.AVPacket = epkt;
-        c.av_packet_free(&p);
-    }
-    var total: c_int = 0;
-    var t: usize = 0;
-    for (0..80) |_| {
-        const n: usize = @intCast(ef.*.nb_samples);
-        for (0..2) |ch| {
-            const pl = @as([*]i16, @ptrCast(@alignCast(ef.*.data[ch])))[0..n];
-            for (0..n) |i| {
-                const phase: f32 = @floatFromInt(t + i);
-                pl[i] = @intFromFloat(@sin(phase * 2.0 * std.math.pi * 440.0 / 44100.0) * 12000.0);
-            }
-        }
-        t += n;
-        if (c.avcodec_send_frame(ectx, ef) < 0) return -6;
-        while (c.avcodec_receive_packet(ectx, epkt) == 0) {
-            file.writeStreamingAll(io, epkt.*.data[0..@intCast(epkt.*.size)]) catch return -7;
-            total += epkt.*.size;
-            c.av_packet_unref(epkt);
-        }
-    }
-    return total;
-}
-
-/// Write a short mpeg4 elementary stream as [u32le size][frame]... for
-/// Java-level MediaCodec video tests.
-pub fn writeTestM4V(io: std.Io, path: []const u8) c_int {
-    const enc = c.avcodec_find_encoder_by_name("mpeg4") orelse return -1;
-    const ectx = c.avcodec_alloc_context3(enc) orelse return -2;
-    defer {
-        var e: ?*c.AVCodecContext = ectx;
-        c.avcodec_free_context(&e);
-    }
-    ectx.*.width = 320;
-    ectx.*.height = 240;
-    ectx.*.pix_fmt = c.AV_PIX_FMT_YUV420P;
-    ectx.*.time_base = .{ .num = 1, .den = 30 };
-    ectx.*.bit_rate = 800000;
-    ectx.*.gop_size = 10;
-    if (c.avcodec_open2(ectx, null, null) < 0) return -3;
-    const file = std.Io.Dir.cwd().createFile(io, path, .{}) catch return -4;
-    defer file.close(io);
-    const ef = c.av_frame_alloc();
-    defer {
-        var f: ?*c.AVFrame = ef;
-        c.av_frame_free(&f);
-    }
-    ef.*.format = c.AV_PIX_FMT_YUV420P;
-    ef.*.width = 320;
-    ef.*.height = 240;
-    if (c.av_frame_get_buffer(ef, 0) < 0) return -5;
-    const epkt = c.av_packet_alloc();
-    defer {
-        var p: ?*c.AVPacket = epkt;
-        c.av_packet_free(&p);
-    }
-    var frames: c_int = 0;
-    for (0..90) |i| {
-        _ = c.av_frame_make_writable(ef);
-        for (0..240) |y| {
-            for (0..320) |x| {
-                // moving diagonal color bars
-                ef.*.data[0][y * @as(usize, @intCast(ef.*.linesize[0])) + x] =
-                    @truncate(((x + y + i * 6) / 24) * 40);
-            }
-        }
-        for (0..120) |y| {
-            for (0..160) |x| {
-                ef.*.data[1][y * @as(usize, @intCast(ef.*.linesize[1])) + x] =
-                    @truncate(96 + ((x + i * 3) / 40) * 32);
-                ef.*.data[2][y * @as(usize, @intCast(ef.*.linesize[2])) + x] =
-                    @truncate(96 + ((y + i * 2) / 30) * 32);
-            }
-        }
-        ef.*.pts = @intCast(i);
-        if (c.avcodec_send_frame(ectx, ef) < 0) return -6;
-        while (c.avcodec_receive_packet(ectx, epkt) == 0) {
-            var size_le: [4]u8 = undefined;
-            std.mem.writeInt(u32, &size_le, @intCast(epkt.*.size), .little);
-            file.writeStreamingAll(io, &size_le) catch return -7;
-            file.writeStreamingAll(io, epkt.*.data[0..@intCast(epkt.*.size)]) catch return -7;
-            frames += 1;
-            c.av_packet_unref(epkt);
-        }
-    }
-    _ = c.avcodec_send_frame(ectx, null);
-    while (c.avcodec_receive_packet(ectx, epkt) == 0) {
-        var size_le: [4]u8 = undefined;
-        std.mem.writeInt(u32, &size_le, @intCast(epkt.*.size), .little);
-        file.writeStreamingAll(io, &size_le) catch return -7;
-        file.writeStreamingAll(io, epkt.*.data[0..@intCast(epkt.*.size)]) catch return -7;
-        frames += 1;
-        c.av_packet_unref(epkt);
-    }
-    return frames;
-}
-
-/// Round-trip selftest: encode a sine with the mp3 encoder, decode it with the
-/// same path MediaCodec uses. Returns decoded sample count (>0 = pass).
 pub export fn azk_codec_selftest() c_int {
     const enc = c.avcodec_find_encoder_by_name("libmp3lame") orelse return -1;
     const ectx = c.avcodec_alloc_context3(enc) orelse return -2;

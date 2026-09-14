@@ -25,12 +25,9 @@ int azk_codec_send_work(AzkCodecDecoder *, const uint8_t *, int size,
                         int64_t pts_us, uint64_t frame_index);
 // Audio: 0 = frame, 1 = retry, 2 = EOF; -2 = insufficient capacity (metadata
 // reports the required size without consuming the frame). meta = bytes/rate/channels.
-// Video: 3 = owned AzkHardwareFrame, 1 = retry, 2 = EOF. meta = 0/width/height/dataspace.
-// Both return -4 for an output lacking decoder-propagated work identity.
+// Returns -4 for an output lacking decoder-propagated work identity.
 int azk_codec_receive_audio_work(AzkCodecDecoder *, uint8_t *dst, int capacity,
                                  int *meta, int64_t *pts_us, uint64_t *frame_index);
-int azk_codec_receive_video_work(AzkCodecDecoder *, int *meta, int64_t *pts_us,
-                                 uintptr_t *hardware_frame, uint64_t *frame_index);
 // Allocator output mode is selected before configure. Peek: 0 = frame,
 // 1 = retry, 2 = EOF; meta = 0/width/height/dataspace. Render consumes the frame
 // only on success and borrows a buffer whose acquire fence the caller waited.

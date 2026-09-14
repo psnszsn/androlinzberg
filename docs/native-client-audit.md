@@ -44,7 +44,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 13,419 | 104 | 0 |
+| Framework | 13,420 | 104 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -57,16 +57,18 @@ of its Android implementation.
 
 Installed-DSO spot checks also found `register_localized_collators` and
 `register_android_functions` defined in `libandroid_platform.so`, and
-`azk_register_binder_jni`, `AMediaCodec_createDecoderByType` and
-`AAudio_createStreamBuilder` in `libandroid_platform.so`. This corroborates
+`AMediaCodec_createDecoderByType` and `AAudio_createStreamBuilder` in
+`libandroid_platform.so`. `azk_register_binder_jni` remains in
+`libbinder_ndk.so`. This corroborates
 the build selection; it is not a complete dynamic-symbol resolution audit.
 
 [`main.zig`](../src/main.zig) calls the Binder and graphics registrars and then
 [`host_natives.zig`](../src/platform/host_natives.zig) when booting APK ART.
-[`framework_jni.zig`](../src/binder/framework_jni.zig) has 19 delegated
+[`framework_jni.zig`](../src/binder/framework_jni.zig) has 15 delegated
 registration modules, plus its own registrations and the Binder registrar.
 That number is not a replaced-class count: it includes host-only cursor helpers
-and NDK exports, plus a dev.artzig EGL test helper. Merely registering a helper does not prove an app uses it.
+and dev.artzig EGL/NDK regression helpers. Registering a helper does not prove
+an app uses it.
 
 ## Audio and media: app-side replacements
 
@@ -112,32 +114,30 @@ capturable sink.
 
 ### MediaCodec and its NDK API
 
-Current decoding path:
+Production selection now uses the original client stack:
 
 ```text
-app: stock MediaCodec.java
-  -> media_codec_jni.zig -> HostedMediaCodecBackend.kt
-  -> HostedCodecEngine -> codec/jni.zig -> FFmpeg / VA-API
-  -> hosted video output -> stock buffer queues -> SurfaceFlinger
+app: stock MediaCodec.java -> original MediaCodec JNI -> MediaCodec/CCodec
+app NDK: original NdkMediaCodec.cpp ------------------> MediaCodec/CCodec
+  -> original Codec2 AIDL client -> hosted Binder
+azk-media-service: original AIDL ComponentStore + SimpleC2Component
+  -> host FFmpeg/VAAPI component -> original allocator-owned output buffers
+app: original Codec2/IGBA -> stock Surface/BufferQueue -> SurfaceFlinger
 ```
 
-[`HostedMediaCodecBackend`](../src/java/dev/artzig/HostedMediaCodecBackend.kt)
-owns the codec state, queues and callback coordination inside the app.
-[`media_codec_list_jni.zig`](../src/binder/media_codec_list_jni.zig) supplies a
-host decoder catalogue rather than the original native codec service catalogue.
-[`media_ndk.zig`](../src/binder/media_ndk.zig) routes NDK calls back through Java
-MediaCodec; pinned `NdkMediaCodec.cpp` calls native `MediaCodec` directly.
+The launcher no longer links the FFmpeg backend. The old codec JNI, Kotlin
+state machine, static catalogue, NDK-to-Java facade and hardware-frame bridge
+are deleted. Stock MediaCodecList discovers software audio and hardware video
+through separate declared stores and the original XML parser. Actual VAAPI
+profiles gate hardware discovery. Encoding and protected decoding remain
+unavailable host capabilities.
 
-Pinned `frameworks/base/media/jni/android_media_MediaCodec.cpp` creates
-`JMediaCodec` and native `MediaCodec`; `libstagefright/MediaCodec.cpp` selects
-the CCodec/ACodec machinery. The Codec2 client discovers component stores through
-its AIDL/HIDL interfaces. Those native clients, resource-management interactions
-and service boundaries are not restored by this implementation. Unsupported
-encoding, secure/block and additional surface operations remain limited.
-
-Closing this family requires stock JNI, native MediaCodec and NDK callers,
-with FFmpeg/VA-API behind the component/service boundary they use. The existing
-decoder and Wayland presentation backends need not be rewritten to do that.
+VAAPI performs the existing YUV-to-RGB conversion directly into the buffer
+supplied by the original Codec2 allocator, after its acquire fence. Returning
+that original block preserves GraphicsTracker identity and Surface migration;
+there is no additional GPU copy or software pixel staging. The stock clients
+retain codec state, asynchronous callbacks, format changes and buffer lifetime.
+Production activation passed the native, JVM, system and full APK regressions.
 
 MediaCrypto and MediaDrm now compile original JNI, JCrypto/JDrm, CryptoHal,
 DrmHal, metrics and AIDL/HIDL factory clients. The frozen DRM V1 NDK protocol
@@ -166,8 +166,7 @@ immediately. Hardware support is separate from native client provenance.
 NuMediaExtractor and Binder to the native `media.extractor` service published by
 the system process. Its linked-plugin factory has a host patch. MediaMetrics
 and MediaDescrambler also reuse native client/protocol code, although native
-metrics collection and CAS hardware services are not supplied. These must not
-be grouped with the in-process MediaCodec replacement.
+metrics collection and CAS hardware services are not supplied. MediaCodec now also uses a separate service through its original native client.
 
 ## Binder is a foundational native client replacement
 
@@ -333,9 +332,8 @@ in `1823bb1e`. See the JSON validation record for this limitation.
 3. Verify actual PipeWire delivery of a known PCM sequence against a
    controlled sink in addition to track position, callbacks and
    service-death tests.
-4. Restore codec/player/NDK clients and their services; put the existing FFmpeg
-   engine behind the selected component interface. Verify app/service process
-   placement as well as decoding, buffers, callbacks and failure handling.
+4. Restore MediaPlayer and retriever clients and their service. Codec2 now owns
+   FFmpeg decoding in the separate media service.
 5. Restore app graphics clients while retaining host EGL/gralloc/compositor
    implementations at their appropriate boundaries. Then close device,
    networking, loader and runtime gaps against the declared scope.
@@ -377,256 +375,61 @@ Java's SurfaceFlinger queries. The final APK run recorded 88 actions with no
 structured runtime issues. The installed libraries and their hashes are current;
 this source selection requires no archive changes.
 
-## Codec2 transport preparation
+## Codec2 native client and service
 
-The pinned Codec2 V1 and bufferpool2 V2 NDK protocols and original bufferpool
-implementation compile through `build/codec2.zig`. This is preparation for the
-native codec migration: production MediaCodec JNI and decoding still use the
-existing app-side implementation. No decoder service is advertised yet.
+The production island compiles the pinned MediaCodec JNI, MediaCodecList JNI,
+NdkMediaCodec, MediaCodec/CCodec, original Codec2 AIDL/HIDL clients and
+bufferpool2 V2. Their native GUI/foundation globals share one ELF image. The
+session supervises `azk-media-service` alongside its existing SurfaceFlinger
+and system process; media startup waits for activity/processinfo/batterystats.
+Unexpected media-process exit retires the session.
 
-`codec2-transport-test` sends original Codec2 work between two authenticated
-processes. It checks frozen interface versions/hashes, frame metadata, native
-handle and HardwareBuffer DMA-BUF storage identity, shared-buffer mutation,
-original bufferpool transfer
-ownership and service death. `codec2-bufferpool-test` runs all three original
-allocation, reuse and transfer tests. Both pass, as does `binder-cpp-test`.
-The tests exposed and fixed null cleanup in the hosted NDK's `AStatus` and
-death-recipient APIs. The bufferpool test launcher preserves test results and
-uses the same immediate process exit as AndroidRuntime; the original pool owns
-detached workers that must not race host static destruction.
+The broker's immutable AIDL declarations contain both published component
+stores: `android.hardware.media.c2.IComponentStore/software` for five software
+audio decoders and `/default` for available VAAPI video decoders. Original
+AIDL ComponentStore and SimpleC2Component retain transport, configuration,
+queue, flush, listener and work-generation semantics. The host implementation
+selects FFmpeg instead of Android codec DSOs. FFmpeg opaque references carry
+Codec2 frame indices independently of PTS through reordered/multi-output work.
 
-The optional `codec2-params-test` is **not green**: 12 of 14 unchanged AOSP tests
-pass. `ParamOpsTest` and `FlexParamOpsTest` contain four failing comparisons
-between differently typed input/output parameters. The pinned types hide the
-base equality overloads; their implicit boolean conversions compare equal in
-C++17, while the tests expect inequality. Neither the headers nor tests have
-been changed to conceal this upstream mismatch. This diagnostic does not
-exercise decoding or establish stock native MediaCodec completion.
+Real VAAPI profile/entrypoint queries gate discovery. AVC and VP9 are available
+on this GPU; MPEG-4 Simple/Advanced Simple are unavailable and not advertised.
+XML and C2 parameters provide original MediaCodecList capability discovery.
+`ARTZIG_PLATFORM_ROOT` relocates the original parser's immutable configuration
+paths at the native libc boundary. Render metrics use CCodec's standard
+configuration to consume compositor frame times. Encoders, protected decoding
+and unsupported HDR conversions remain unavailable host capabilities.
 
-The framework module suite, C++ audit, NDK ABI check and full APK integration
-suite passed after these changes. The APK run covered 28 cases and 88 recorded
-actions with zero structured runtime issues; the testkit passed 23 tests.
-The framework archive and dependency pin were refreshed together.
+Original resource manager and observer services handle resource bookkeeping,
+reclaim policy and death. Host ProcessInfo and battery services read the live
+session process/UID state. CPU BLOB gralloc serves original C2 linear allocators;
+video uses original IGBA buffers, with VAAPI importing and writing directly into
+their DMA-BUF storage. The obsolete separate VPP allocation/export path is gone.
 
-## Native codec clients and gralloc follow-up (in progress)
+`codec2-service-test` covers native catalogue flags/profiles, public NDK MP3, AAC and
+AVC decode, pixel verification, reordered work, duplicate timestamps, EOS,
+flush, Surface migration and component-service death. It supervises real
+SurfaceFlinger. `codec-video-allocator-test` checks the same output allocation's
+identity and pixels in linear/GPU layouts, retry, crop and lifetime after flush
+and decoder destruction. Original bufferpool/resource-manager tests and the
+five FFmpeg audio component tests cover the remaining native seams.
 
-The original `IGraphicBufferProducer` and `IProducerListener` headers and
-implementations are restored. Their stock hybrid discovery now uses the same
-pinned HIDL runtime as framework JNI. `build/hidl.zig` owns that shared source
-selection; the host still has no hardware Binder service manager.
+Production validation passed the native codec/allocator/transport/bufferpool
+checks, all five FFmpeg audio families, 54 resource-service tests, framework
+module/compatibility and JVM tests, system-service supervision, source identity,
+Binder JNI provenance, NDK ABI and C++/graph audits. The full APK suite passed
+28 cases (23 testkit tests), with 90 recorded actions and no structured runtime
+issues. The video fixture also passed four actions with SurfaceView/TextureView,
+resize/release, crop/color metadata, rendered callbacks and pixel checks.
 
-The host gralloc backend now supports CPU-only BLOB buffers for the original
-`C2AllocatorBlob`. BLOB dimensions and stride count bytes; these allocations
-use shared CPU storage and never enter GBM/EGL. The stock `GraphicBuffer` lock
-path requires their raw-byte plane metadata. The Codec2 transport test passes
-with a 1 MiB BLOB, shared byte mutation, storage identity, invalid height/GPU
-usage rejection and release accounting, as well as the existing DMA-BUF case.
-The `codec2-allocator-test` also runs the original `C2AllocatorBlob`, checking
-capacity, map bounds, overlapping mappings, imported storage surviving exporter
-release, and zero retained buffers/bytes.
+A public NDK AAC regression caught empty work preceding CSD: the component now
+completes it without opening FFmpeg prematurely. This ordering is also tested
+across all audio families. Normal launcher return unwinds session cleanup and
+then uses the existing AndroidRuntime immediate-exit hook, preserving original
+bufferpool threads' process lifetime without C++ destructor races.
 
-The `codec2-client` target compiles the pinned CCodec, Codec2 client/component
-wrappers, allocators and native MediaCodec/NDK closure from the refreshed
-archive. The closure includes the original media capabilities, resource records,
-player/recorder and camera Binder interfaces, render-quality tracker, software
-color conversion, libyuv, SurfaceFlinger properties and native package-manager
-protocols.
-
-`codec2-client-test` links that closure in a test-only `libandroid_platform.so`.
-GUI and foundation globals have one owner in that ELF image; linking a second
-static libgui into its executable caused duplicate global destruction. The
-test checks that the native codec factory and crypto metadata functions resolve
-to the original implementation, verifies metadata ownership and invalid-argument
-results, and exits normally. It does not create a codec or decode media.
-The shared foundation build now enables AOSP's `AMessage`/`AString` Parcel
-methods, which its host-only variant omitted.
-
-Hosted ART now exposes the application's native target-SDK query through the
-existing `VMRuntime` value. Stock `SurfaceUtils` needs it to choose buffer-drop
-behavior. The framework smoke covers old/current/unset targets on Java and
-detached native threads, checks attachment cleanup, and restores the target.
-
-The native GUI, GPU buffer and Codec2 transport tests pass.
-The C++ audit, NDK ABI check, framework module suite and all 28 APK tests pass.
-The APK run recorded 89 actions with no structured runtime issues; the testkit
-passed 23 tests. The installed production codec path still uses the hosted
-implementation; decoder service integration and replacement of the hosted JNI/NDK
-implementations remain pending.
-
-
-### Original media resource service and process information
-
-`media-resource-service` compiles the pinned resource manager (both legacy and
-new policy implementations), resource observer, metrics, reclaim policies and
-native process/activity/battery clients. Its observer V1 NDK ABI and media
-metrics are generated from the pinned inputs. `media-resource-test` runs AOSP's
-three separate test executables: 46 manager tests, seven observer tests and one
-service-log test. Both raw-source probes and the packaged build pass all 54
-and exit normally.
-
-The production `processinfo` Binder service now uses the hosted AMS process
-registry and Linux `/proc/<pid>/oom_score_adj`. It preserves AOSP's permission
-check before array validation, unknown-PID values and the newest pending
-foreground launch's priority boost. It does not install Android memory scoring
-or LMKD. The new framework smoke checks these contracts and the generated
-Binder wire decoder; the packaged framework module suite passes.
-
-The battery service implements the original resource manager's video start,
-stop and reset calls, with permission checks and stock media-codec stats events.
-Its session timers count microseconds only while on battery. Concurrent UIDs
-share the pooled duration; multiple codecs within one UID retain nesting.
-Power changes and activity/video updates use one ordered event queue. Timer
-checks cover power changes, nested starts/stops, reset, pooled rounding and
-read-only snapshots, including permission rejection. The packaged suite passes.
-The original PowerStatsUidResolver now maps isolated video UIDs to their app.
-Outstanding codec notifications retain that mapping through process death;
-SDK sandbox UIDs also map to their owner. These counters do not implement
-Android battery history or energy estimation.
-
-The production session publishes the original resource manager and observer
-from `azk-media-service`, after the system process is ready. A small bootstrap
-replaces Android init; AOSP owns service registration and resource policy.
-Shutdown stops media before its system dependencies, and media-service death
-retires the desktop session. The Codec2 component store remains to be connected
-before enabling stock MediaCodec. UID notifications now come from the live process
-registry through AOSP UidObserverController. Its server patch removes the
-diagnostic-only AMS state mirror and retains stock registration, filtering,
-coalescing, callback order, state cutpoints and observer-death handling. The
-host supplies foreground/background settling and final-process death.
-
-The C++ audit, NDK ABI check (135 reference symbols, 162 exports), codec client
-link test and NewPipe launch regression pass. All 28 APK tests pass, with
-91 actions and zero structured runtime issues; the testkit passes 23 tests.
-The installed build and archive pin are current.
-
-### Service declarations
-
-The broker owns immutable AIDL interface/instance declarations supplied by the
-session launcher. Java, the C++ facade and NDK query that same manifest through
-the original IServiceManager protocol. Declarations exist before registration
-and survive service death. The production manifest remains empty until a
-Codec2 component service is enabled. Broker and native tests cover those
-lifetimes, exact interface filtering, sorted instances, duplicate declarations,
-null queries and reentrant enumeration callbacks.
-
-The UID/declaration follow-up passes the framework module suite, Binder broker
-and C++/NDK tests, source comparison, C++ audit and NDK ABI check. All 28 APK
-tests pass with 88 recorded actions and zero structured runtime issues; the
-testkit passes 23 tests. Source comparison reports 7,086 unchanged inputs and
-63 server adaptations, with no modified/owned client sources or missing
-references. The archive and dependency pin were refreshed together.
-
-### Native media process
-
-`system-test` exercises the production native resource service from another
-process: client registration, video resource acquisition, battery accounting,
-resource dumps and idempotent client removal. Remote NDK Binder dumps now send
-the original descriptor/String16 transaction. The C++ bridge dispatches through
-`onTransact`, which reaches Java service dumps; AOSP JavaBBinder's direct native
-`dump` method is intentionally empty. Native tests cover Unicode arguments,
-status propagation, caller identity and borrowed descriptor ownership.
-
-Session tests cover media readiness, startup failures, timeouts and ordered
-cleanup. Their drain task group has a stable allocation because media startup
-starts draining before the Session value is returned to its owner.
-
-The native-process follow-up passes the system, framework module, session and
-Binder suites, C++ audit and NDK ABI check. All six service/compositor failure
-cases pass. All 28 APK tests pass with 88 actions and no structured runtime
-issues; 23 testkit tests pass. The installed tree includes `azk-media-service`.
-This stage reuses already packaged AOSP sources, so the archive pin is unchanged.
-
-### FFmpeg Codec2 audio components
-
-The native acceptance target now uses AOSP `SimpleC2Component` and
-`SimpleC2Interface` around the system FFmpeg decoder for AAC, MP3, FLAC, Opus
-and Vorbis. Android CSD is translated at that component boundary, including
-FLAC stream headers, split Vorbis headers, and legacy/unified Opus data parsed
-by AOSP. Opus initial delay and seek preroll are applied once.
-
-Codec2 frame indices travel through FFmpeg's opaque buffer references without
-replacing presentation timestamps. Input completion waits for decoder and
-queued-output ownership, handling packets with multiple or no output. Flush
-discards old work. Hardware frame tagging changes metadata only and adds no
-GPU copy. Original SimpleC2 bases share the native client DSO so C++ globals
-have one owner.
-
-`codec-work-test` passes four tests, including duplicate timestamps, full-width
-indices, capacity retry, multiple MP3 outputs, flush/reuse and legacy decode.
-`codec2-ffmpeg-test` passes all five audio formats, every input completion, EOS,
-stop/start and normal exit. AAC, FLAC, Opus and Vorbis also pass flush; Opus
-covers both CSD layouts and exact seek-preroll sample counts. The framework
-module suite passes. All 28 APK tests pass with 88 actions and no structured
-runtime issues; 23 testkit tests pass. C++ and NDK ABI audits pass.
-
-These components are still exercised by native acceptance tests. Production component
-store publication, capability negotiation and the JNI/NDK switch remain pending.
-Graphic-buffer video acceptance is recorded below. The original AOSP sources
-were already packaged, so this stage does not change the archive pin.
-
-### Codec2 component store transport
-
-The native service test now uses the original AIDL `ComponentStore` and stock
-`Codec2Client` across processes. Host component selection delegates allocator
-configuration and reflection to the original platform store. The unprivileged
-client discovers the declared service, lists available audio/video traits, queries
-interfaces, transfers BLOB input/output storage and decodes multi-output MP3
-work with duplicate timestamps. EOS and component-service death also pass.
-
-The test reuses the Codec2 process-exit wrapper after local cleanup. AOSP
-bufferpool eviction/invalidation workers remain detached for process lifetime;
-returning through glibc static destruction hangs on their condition variables.
-Immediate exit matches AndroidRuntime and the production launcher/service
-lifetime. The audio component tests, three original bufferpool tests and C++
-audit pass. Production component-store publication remains pending alongside
-capability negotiation and original MediaCodec JNI/NDK selection.
-
-### Codec2 video output
-
-AVC and VP9 now decode across the original Codec2 AIDL service/client boundary.
-The component fetches its RGBX destination from the original C2/IGBA pool,
-which waits the acquire fence. VAAPI imports that DMA-BUF and directs the
-existing YUV-to-RGB VPP conversion into it. The original graphic block and pool
-data return to the client, so stock GraphicsTracker can render and migrate it
-to another Surface. This adds no GPU copy or software pixel staging. The old
-app-side decoder path retains its existing output behavior until activation.
-
-`codec-video-allocator-test` verifies real VAAPI output pixels in the same
-linear and GPU-layout allocations, visible crop, reordered work, duplicate
-PTS, retry and output retention after flush and decoder destruction.
-`codec2-service-test` verifies AVC/VP9 output across Binder, including EOS,
-flush, dataspace, Surface migration and actual pixels. VAAPI profile and decode
-entrypoint queries gate discovery. This GPU rejects MPEG-4 Simple and Advanced
-Simple, so the new store excludes MPEG-4; its old static production catalogue
-entry remains until the native MediaCodecList switch.
-
-The five audio component tests, four work tests, framework module suite, C++
-audit and NDK ABI check pass. All 28 APK tests pass with 92 actions and zero
-structured runtime issues; all 23 testkit tests pass. Production component-store
-publication, complete capability/profile negotiation, XML discovery and the
-original MediaCodec JNI/NDK switch remain pending. This checkpoint adds no
-AOSP package files and does not change either archive or its dependency pin.
-
-### Stock codec catalogue and public NDK pipeline
-
-The native acceptance service now separates software audio (`software`) from
-VAAPI video (`default`). Original Codec2InfoBuilder therefore reports hardware
-and software flags correctly. Real VAAPI profiles gate component discovery and
-C2 profile negotiation; XML supplies supported sizes, channels and sample rates.
-The original parser reads this configuration through opt-in `ARTZIG_PLATFORM_ROOT`
-path relocation at the host libc boundary. Unavailable MPEG-4 is excluded.
-
-`codec2-service-test` verifies the original MediaCodecList catalogue and the
-public stock NDK MediaCodec API: configuration, input buffers, output format
-changes, dequeue/release, EOS and teardown. MP3 produces two PCM buffers; AVC
-produces eight cropped, reordered frames with actual Surface pixel checks.
-The harness supervises the existing SurfaceFlinger service required by original
-Surface setup, and publishes the original resource manager alongside Codec2.
-Cross-process C2 flush, Surface migration and service-death checks still pass.
-
-The codec service, audio components, direct VAAPI allocator, original bufferpool,
-C++ audit and NDK ABI checks pass. The full APK suite passes (28 tests, zero
-structured runtime issues), as do all 23 testkit tests. This is still a native
-acceptance checkpoint: production component publication and original MediaCodec
-JNI registration remain pending. The production launcher still selects its
-previous codec client. No AOSP archive or dependency pin changes in this step.
+The installed tree and framework archive are current. ELF checks confirm that
+FFmpeg/VAAPI dependencies are in the media executable, while the launcher and
+platform DSO have none. The aggregate acceptance target has not been rerun.
+The optional original `codec2-params-test` retains its two previous host-compiler
+parameter equality/implicit-bool mismatches (12/14); it is outside acceptance.

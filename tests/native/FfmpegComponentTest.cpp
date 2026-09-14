@@ -71,6 +71,10 @@ static void audioFamily(const std::shared_ptr<C2ReflectorHelper> &reflector,
     for (int generation = 0; generation < 3; ++generation) {
         std::list<std::unique_ptr<C2Work>> queued;
         uint64_t index = 0;
+        auto empty = std::make_unique<C2Work>();
+        empty->input.ordinal.frameIndex = index++;
+        empty->worklets.emplace_back(new C2Worklet);
+        queued.push_back(std::move(empty)); // Original CCodec may precede CSD with empty work.
         if (generation != 2) for (const auto &csd : encoded.csd) {
             auto work = input(pool, csd, index++, false);
             work->input.flags = C2FrameData::FLAG_CODEC_CONFIG;

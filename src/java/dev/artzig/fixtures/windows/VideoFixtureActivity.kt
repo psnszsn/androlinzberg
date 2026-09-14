@@ -30,10 +30,14 @@ class VideoFixtureActivity : Activity() {
     private var windowReadbackGeneration = -1
     private lateinit var status: TextView
     private lateinit var callbackStatus: TextView
-    // Decoder-thread-owned callback expectations. Each listener generation owns
-    // a separate set, so an old queued frame cannot be relabelled after a switch.
+    // Pinned MediaCodec.EventHandler dispatches batched render events to the
+    // current listener. Preserve each frame's origin across listener changes.
+    private data class ExpectedFrame(val requested: Long, val queued: Long,
+                                     val phase: String, val intermediate: Boolean)
     private var listenerGeneration = 0
-    private val expectedFrames = HashMap<Long, Pair<Long, Long>>()
+    private var framePhase = "Superseded"
+    private var frameIntermediate = false
+    private val expectedFrames = HashMap<Long, ExpectedFrame>()
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -138,10 +142,9 @@ class VideoFixtureActivity : Activity() {
                     checkNotNull(codec).setOutputSurface(target)
                     installRenderedListener("Texture", intermediate = true, defaultHandler = false)
                     renderFrames()
-                    // Keep the same listener: flush must invalidate already
-                    // queued callbacks, and synchronous decoding resumes without start.
+                    // Synchronous decoding resumes without start. Informational
+                    // render events already posted to Java may still arrive.
                     checkNotNull(codec).flush()
-                    expectedFrames.clear()
                     renderFrames()
                 }
             }
@@ -159,7 +162,10 @@ class VideoFixtureActivity : Activity() {
             setOnClickListener {
                 removed = true
                 decode.post {
-                    renderFrames() // Pending callbacks must be invalidated by release.
+                    renderFrames()
+                    // Original release does not remove already posted Java events.
+                    // Explicit listener withdrawal cancels their delivery.
+                    codec?.setOnFrameRenderedListener(null, decode)
                     listenerGeneration++
                     codec?.release()
                     codec = null
@@ -179,14 +185,16 @@ class VideoFixtureActivity : Activity() {
 
     private fun installRenderedListener(phase: String, intermediate: Boolean, defaultHandler: Boolean) {
         val generation = ++listenerGeneration
-        expectedFrames.clear()
+        framePhase = phase
+        frameIntermediate = intermediate
         checkNotNull(codec).setOnFrameRenderedListener({ owner, pts, rendered ->
             check(android.os.Looper.myLooper() === worker.looper) { "Rendered callback on wrong looper" }
             check(owner === codec && generation == listenerGeneration) { "Stale rendered callback" }
-            val (requested, queued) = checkNotNull(expectedFrames.remove(pts)) { "Unknown rendered PTS: $pts" }
-            if (intermediate) check(rendered == requested) { "Intermediate surface changed queue timestamp" }
-            else check(rendered >= queued && rendered <= System.nanoTime()) { "Invalid display render timestamp: $rendered" }
-            callbackStatus.post { callbackStatus.text = "$phase rendered callback verified" }
+            val expected = checkNotNull(expectedFrames.remove(pts)) { "Unknown rendered PTS: $pts" }
+            if (expected.intermediate) check(rendered == expected.requested) { "Intermediate surface changed queue timestamp" }
+            else check(rendered >= expected.queued && rendered <= System.nanoTime()) { "Invalid display render timestamp: $rendered" }
+            if (expected.phase == phase)
+                callbackStatus.post { callbackStatus.text = "$phase rendered callback verified" }
         }, if (defaultHandler) null else decode)
     }
 
@@ -217,9 +225,12 @@ class VideoFixtureActivity : Activity() {
                 }
                 if (index >= 0) {
                     val timestamp = if (frame % 2 == 0) System.nanoTime() else info.presentationTimeUs * 1000
-                    expectedFrames[info.presentationTimeUs] = timestamp to System.nanoTime()
+                    expectedFrames[info.presentationTimeUs] = ExpectedFrame(timestamp, System.nanoTime(), framePhase, frameIntermediate)
                     if (frame % 2 == 0) output.releaseOutputBuffer(index, timestamp)
                     else output.releaseOutputBuffer(index, true)
+                    // Pinned CCodec batches display timing samples after 100ms.
+                    // Keep producing across that interval so it can report them.
+                    Thread.sleep(16)
                     break
                 }
                 check(System.nanoTime() < deadline) { "Decoder did not produce the fixture frame" }
@@ -230,6 +241,7 @@ class VideoFixtureActivity : Activity() {
 
     override fun onDestroy() {
         decode.post {
+            codec?.setOnFrameRenderedListener(null, decode)
             listenerGeneration++
             codec?.release()
             codec = null

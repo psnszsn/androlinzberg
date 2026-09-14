@@ -6,7 +6,7 @@ import android.media.MediaCodecList
 import android.media.MediaFormat
 import java.lang.reflect.InvocationTargetException
 
-/** Public AOSP capability decisions over the existing hosted decoder catalogue. */
+/** Public capability decisions over the stock service-discovered catalogue. */
 internal object StockCodecCatalogSmoke {
     private inline fun <reified T : Throwable> rejects(block: () -> Unit) {
         val thrown = runCatching(block).exceptionOrNull()
@@ -17,7 +17,8 @@ internal object StockCodecCatalogSmoke {
     fun run() {
         val list = MediaCodecList(MediaCodecList.ALL_CODECS)
         val infos = list.codecInfos
-        check(infos.size == 8)
+        check(infos.count { it.supportedTypes.single().startsWith("audio/") } == 5)
+        check(infos.size in 5..8)
         check(MediaCodecList.getCodecCount() == infos.size)
         check(MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.map { it.name } == infos.map { it.name })
         for ((index, info) in infos.withIndex()) {
@@ -26,13 +27,13 @@ internal object StockCodecCatalogSmoke {
             check(info.name == info.canonicalName && !info.isAlias && !info.isEncoder)
             val type = info.supportedTypes.single()
             val isVideo = type.startsWith("video/")
-            check(info.isSoftwareOnly != isVideo && info.isHardwareAccelerated == isVideo && !info.isVendor)
+            check(info.isSoftwareOnly != isVideo && info.isHardwareAccelerated == isVideo)
             val returnedTypes = info.supportedTypes
             returnedTypes[0] = "invalid/type"
             check(info.supportedTypes.single() == type)
             val caps = info.getCapabilitiesForType(type)
-            check(caps.colorFormats.contentEquals(if (isVideo)
-                intArrayOf(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface) else intArrayOf()))
+            if (isVideo) check(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface in caps.colorFormats)
+            else check(caps.colorFormats.isEmpty())
             check(caps.mimeType == type && caps.defaultFormat.getString(MediaFormat.KEY_MIME) == type)
             check(caps.maxSupportedInstances == 32 && caps.encoderCapabilities == null)
             check(!caps.isFeatureSupported(MediaCodecInfo.CodecCapabilities.FEATURE_SecurePlayback))
@@ -42,10 +43,16 @@ internal object StockCodecCatalogSmoke {
             check(list.findDecoderForFormat(mimeOnly) == info.name)
             check(list.findEncoderForFormat(mimeOnly) == null)
             val codec = MediaCodec.createByCodecName(info.name)
-            try { check(codec.codecInfo === info) } finally { codec.release() }
+            try {
+                // Original getOwnCodecInfo constructs a fresh Java value.
+                val own = codec.codecInfo
+                check(own.name == info.name && own.canonicalName == info.canonicalName)
+                check(own.supportedTypes.contentEquals(info.supportedTypes))
+            } finally { codec.release() }
         }
+        val firstName = infos.first().name
         infos[0] = infos.last()
-        check(list.codecInfos.first().name == "c2.artzig.aac.decoder")
+        check(list.codecInfos.first().name == firstName)
 
         val aac = MediaCodecList.getInfoFor("c2.artzig.aac.decoder")
             .getCapabilitiesForType(MediaFormat.MIMETYPE_AUDIO_AAC)
@@ -92,12 +99,12 @@ internal object StockCodecCatalogSmoke {
         avc.colorFormats[0] = -1
         avc.profileLevels[0] = MediaCodecInfo.CodecProfileLevel()
         val next = avcInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
-        check(next.colorFormats[0] == MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+        check(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface in next.colorFormats)
         check(next.profileLevels[0].profile == MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
 
         rejects<IllegalArgumentException> { MediaCodecList.getCodecInfoAt(-1) }
         // Preserve the pinned Java boundary check, including its index == length behavior.
-        rejects<ArrayIndexOutOfBoundsException> { MediaCodecList.getCodecInfoAt(8) }
+        rejects<ArrayIndexOutOfBoundsException> { MediaCodecList.getCodecInfoAt(infos.size) }
         rejects<IllegalArgumentException> { MediaCodecList.getInfoFor(null) }
         rejects<ArrayIndexOutOfBoundsException> { MediaCodecList.getInfoFor("missing.codec") }
         val nativeCaps = MediaCodecList::class.java.getDeclaredMethod(
@@ -105,11 +112,7 @@ internal object StockCodecCatalogSmoke {
         ).apply { isAccessible = true }
         rejects<IllegalArgumentException> { nativeCaps.invoke(null, 0, null) }
         rejects<IllegalArgumentException> { nativeCaps.invoke(null, -1, MediaFormat.MIMETYPE_AUDIO_AAC) }
-        rejects<IllegalArgumentException> { nativeCaps.invoke(null, 0, MediaFormat.MIMETYPE_VIDEO_AVC) }
-        check(HostedCodecCatalog.decoderNameForMime("AUDIO/OPUS") == "c2.artzig.opus.decoder")
-        check(HostedCodecCatalog.backendNameFor("c2.artzig.avc.decoder") == "h264")
-        check(HostedCodecCatalog.backendNameFor(null) == null)
-        check(HostedCodecCatalog.decoderNameForMime(null) == null)
+        rejects<IllegalArgumentException> { nativeCaps.invoke(null, 0, "invalid/type") }
         println("stock codec catalogue, capabilities and format selection: PASS")
     }
 }

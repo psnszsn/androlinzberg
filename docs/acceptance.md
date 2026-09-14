@@ -70,6 +70,16 @@ The report at `zig-out/test-results/binder-jni-source.json` records source and
 library hashes. This target and `ndk-abi` also run in `acceptance-test`.
 `binder-jni-test` runs the existing Java/NDK conversion and lifetime checks alone.
 
+## Native codec service
+
+The acceptance target includes original Codec2 transport, client, allocator,
+bufferpool and resource-service tests, FFmpeg component/work tests, direct
+VAAPI allocator output and `codec2-service-test`. The last test runs original
+MediaCodecList and public NDK decoding across an AIDL component service, with
+real SurfaceFlinger and pixel checks. `stock-video-test` exercises the Java
+MediaCodec lifecycle, Surface migration and rendered callbacks through an APK.
+These complement the full APK integration suite.
+
 ## Verify a fresh worktree
 
 Create a new detached worktree at the revision being verified. Before building,

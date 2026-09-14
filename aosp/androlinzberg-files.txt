@@ -9693,6 +9693,7 @@ F aosp frameworks/av/media/module/libmediaformatshaper/VideoShaper.cpp
 F aosp frameworks/av/media/module/libmediaformatshaper/VideoShaper.h
 F aosp frameworks/av/media/module/libmediaformatshaper/include/media/formatshaper/FormatShaper.h
 F aosp frameworks/base/media/jni/android_media_MediaCodec.cpp
+F aosp frameworks/base/media/jni/android_media_MediaCodec.h
 F aosp frameworks/base/media/jni/android_media_MediaCodecLinearBlock.h
 F aosp frameworks/base/media/jni/android_media_MediaCodecList.cpp
 F aosp frameworks/native/headers/media_plugin/media/editor/II420ColorConverter.h

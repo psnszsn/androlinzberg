@@ -178,6 +178,7 @@ class NewPipeDesktopTest {
         // Exercise presentation changes without continuous video frames to poll them.
         pausePlayer()
         enterPlayerFullscreen()
+        screenshot("fullscreen.png")
     }
 }
 

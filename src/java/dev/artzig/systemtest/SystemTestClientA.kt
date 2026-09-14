@@ -1191,9 +1191,11 @@ internal object SystemTestClientA {
             android.telephony.SubscriptionManager.getDefaultSubscriptionId() == android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID,
             "no default subscription",
         )
-        // TelephonyFrameworkInitializer skips the FEATURE_TELEPHONY_SUBSCRIPTION check below
-        // vendor API 2024Q2, so the manager exists; the loader answers with the defaults.
-        val carrierConfigManager = checkNotNull(context.getSystemService(android.telephony.CarrierConfigManager::class.java))
+        // Original TelephonyFrameworkInitializer applies feature gating at vendor API 2024Q2.
+        check(context.getSystemService(android.telephony.CarrierConfigManager::class.java) == null,
+            "carrier config manager is absent without telephony subscription hardware")
+        // Exercise the published loader through the original client independently of discovery.
+        val carrierConfigManager = android.telephony.CarrierConfigManager(context)
         val carrierConfig = carrierConfigManager.config
         val carrierDefaults = android.telephony.CarrierConfigManager.getDefaultConfig()
         check(

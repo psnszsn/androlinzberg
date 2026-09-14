@@ -121,8 +121,9 @@ internal object StockAudioPolicyClientsSmoke {
             configured.getByteBuffer("csd-0")!!.put(0, 9)
             check(codec.inputFormat.getString(MediaFormat.KEY_MIME) == MediaFormat.MIMETYPE_AUDIO_AAC)
             check(codec.outputFormat.getString(MediaFormat.KEY_MIME) == MediaFormat.MIMETYPE_AUDIO_RAW)
-            check(codec.inputFormat.getInteger(MediaFormat.KEY_AAC_PROFILE) == MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-            check(codec.inputFormat.getByteBuffer("csd-0")!!.get(0) == 0x11.toByte())
+            // Original CCodec exposes decoder profiles under KEY_PROFILE; AAC_PROFILE is encoder input.
+            check(codec.inputFormat.getInteger(MediaFormat.KEY_PROFILE) == MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+            // CCodec consumes codec-specific data; its negotiated input format need not echo it.
             codec.inputFormat.setInteger(MediaFormat.KEY_CHANNEL_COUNT, 8)
             check(codec.inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) == 2)
             check(controller.addMediaCodec(codec))

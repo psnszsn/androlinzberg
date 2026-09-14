@@ -47,10 +47,15 @@ static enum AVPixelFormat choose_vaapi_format(AVCodecContext *context,
     return formats[0];
 }
 
+// Query the gralloc boundary directly; no Java video-output bridge is involved.
+static int graphics_available(void) {
+    typedef int32_t (*SupportedFn)(uint32_t, uint32_t, uint32_t, uint32_t, uint64_t);
+    SupportedFn supported = (SupportedFn)dlsym(RTLD_DEFAULT, "azk_graphics_supported");
+    return supported && supported(16, 16, 2, 1, 0x100) == 1; // RGBX, HW_TEXTURE
+}
+
 uint32_t azk_vaapi_decoder_profiles(enum AVCodecID codec) {
-    typedef int (*DmabufAvailableFn)(void);
-    DmabufAvailableFn available = (DmabufAvailableFn)dlsym(RTLD_DEFAULT, "azk_video_surface_available");
-    if (!available || !available()) return 0;
+    if (!graphics_available()) return 0;
     const char *path = getenv("ARTZIG_VAAPI_DEVICE");
     AVBufferRef *ref = NULL;
     if (av_hwdevice_ctx_create(&ref, AV_HWDEVICE_TYPE_VAAPI,
@@ -85,10 +90,7 @@ uint32_t azk_vaapi_decoder_profiles(enum AVCodecID codec) {
 }
 
 int azk_vaapi_prepare(AVCodecContext *context, AVBufferRef **device_ref) {
-    typedef int (*DmabufAvailableFn)(void);
-    DmabufAvailableFn dmabuf_available =
-        (DmabufAvailableFn)dlsym(RTLD_DEFAULT, "azk_video_surface_available");
-    if (!dmabuf_available || !dmabuf_available()) {
+    if (!graphics_available()) {
         fprintf(stderr,
                 "azk: hardware video unavailable: compositor has no compatible DMA-BUF path\n");
         return 0;
@@ -128,68 +130,12 @@ int azk_vaapi_prepare(AVCodecContext *context, AVBufferRef **device_ref) {
     // libavcodec cannot apply left/top cropping to opaque VA surfaces and may
     // discard those offsets. Retain the full crop rectangle for our GPU VPP.
     context->apply_cropping = 0;
-    fprintf(stderr, "azk: video decoder: vaapi ready, DMA-BUF export pending%s%s\n",
+    fprintf(stderr, "azk: video decoder: vaapi ready, allocator output%s%s\n",
             device ? " device=" : "", device ? device : "");
     return 1;
 }
 
-static atomic_flag export_success_logged = ATOMIC_FLAG_INIT;
-static atomic_flag export_failure_logged = ATOMIC_FLAG_INIT;
 static atomic_flag vpp_failure_logged = ATOMIC_FLAG_INIT;
-
-static void print_fourcc(uint32_t format) {
-    fprintf(stderr, "%c%c%c%c (0x%08x)",
-            (char)(format & 0xff), (char)((format >> 8) & 0xff),
-            (char)((format >> 16) & 0xff), (char)((format >> 24) & 0xff),
-            format);
-}
-
-static void log_export_descriptor_once(const char *outcome, const char *reason,
-                                       const VADRMPRIMESurfaceDescriptor *descriptor,
-                                       atomic_flag *guard) {
-    if (atomic_flag_test_and_set(guard)) return;
-    fprintf(stderr, "azk: DMA-BUF export %s: %s; format=", outcome, reason);
-    if (descriptor->num_layers > 0) {
-        print_fourcc(descriptor->layers[0].drm_format);
-    } else {
-        fprintf(stderr, "unavailable");
-    }
-    fprintf(stderr, " layers=%u planes=%u objects=%u modifiers=[",
-            descriptor->num_layers,
-            descriptor->num_layers > 0 ? descriptor->layers[0].num_planes : 0,
-            descriptor->num_objects);
-    const uint32_t object_count = descriptor->num_objects < AZK_DMABUF_MAX_PLANES
-        ? descriptor->num_objects : AZK_DMABUF_MAX_PLANES;
-    for (uint32_t index = 0; index < object_count; ++index) {
-        fprintf(stderr, "%s0x%016llx", index ? "," : "",
-                (unsigned long long)descriptor->objects[index].drm_format_modifier);
-    }
-    fprintf(stderr, "]\n");
-}
-
-static void close_descriptor(VADRMPRIMESurfaceDescriptor *descriptor) {
-    for (uint32_t index = 0; index < descriptor->num_objects; ++index) {
-        if (descriptor->objects[index].fd >= 0) close(descriptor->objects[index].fd);
-    }
-}
-
-static int compositor_supports(
-    const VADRMPRIMESurfaceDescriptor *descriptor);
-
-static const char *descriptor_rejection(
-        const VADRMPRIMESurfaceDescriptor *descriptor) {
-    if (descriptor->num_layers != 1)
-        return "expected one composed layer";
-    if (descriptor->layers[0].num_planes == 0)
-        return "exported layer has no planes";
-    if (descriptor->layers[0].num_planes > AZK_DMABUF_MAX_PLANES)
-        return "exported layer has too many planes";
-    if (descriptor->num_objects > AZK_DMABUF_MAX_PLANES)
-        return "exported surface has too many objects";
-    if (!compositor_supports(descriptor))
-        return "exported buffer is not a supported single-plane RGBX surface";
-    return NULL;
-}
 
 void azk_vaapi_vpp_free(AzkVaapiVpp **slot) {
     if (!slot || !*slot) return;
@@ -238,67 +184,6 @@ static int prepare_vpp(AzkVaapiVpp **slot, VADisplay display,
     }
     *slot = vpp;
     return 1;
-}
-
-static int compositor_supports(const VADRMPRIMESurfaceDescriptor *descriptor) {
-    // Single-plane RGBX from a separate VPP allocation. GBM import validates
-    // the real modifier; the session presenter owns compositor negotiation.
-    return descriptor->num_objects == 1 && descriptor->layers[0].num_planes == 1 &&
-            descriptor->layers[0].object_index[0] == 0 &&
-            descriptor->layers[0].drm_format == 0x34324258; // DRM_FORMAT_XBGR8888
-}
-
-static AzkHardwareFrame *take_descriptor(
-        const AVFrame *source, VADRMPRIMESurfaceDescriptor *descriptor,
-        int width, int height, VADisplay display, VASurfaceID owned_surface) {
-    AzkHardwareFrame *frame = calloc(1, sizeof(*frame));
-    if (!frame) {
-        close_descriptor(descriptor);
-        if (owned_surface != VA_INVALID_SURFACE)
-            vaDestroySurfaces(display, &owned_surface, 1);
-        return NULL;
-    }
-    for (int index = 0; index < AZK_DMABUF_MAX_PLANES; ++index) {
-        frame->fds[index] = -1;
-        frame->object_fds[index] = -1;
-    }
-    frame->width = width;
-    frame->height = height;
-    frame->format = descriptor->layers[0].drm_format;
-    frame->plane_count = descriptor->layers[0].num_planes;
-    frame->object_count = descriptor->num_objects;
-    frame->va_display = display;
-    frame->va_surface = owned_surface;
-    frame->owns_va_surface = owned_surface != VA_INVALID_SURFACE;
-    for (int index = 0; index < frame->object_count; ++index)
-        frame->object_fds[index] = descriptor->objects[index].fd;
-
-    if (frame->owns_va_surface) {
-        frame->device_ref = av_buffer_ref(source->hw_frames_ctx);
-        if (!frame->device_ref) {
-            azk_hardware_frame_release(frame);
-            return NULL;
-        }
-    } else {
-        frame->frame = av_frame_clone(source);
-        if (!frame->frame) {
-            azk_hardware_frame_release(frame);
-            return NULL;
-        }
-    }
-
-    for (int index = 0; index < frame->plane_count; ++index) {
-        const uint32_t object = descriptor->layers[0].object_index[index];
-        if (object >= descriptor->num_objects) {
-            azk_hardware_frame_release(frame);
-            return NULL;
-        }
-        frame->fds[index] = descriptor->objects[object].fd;
-        frame->offsets[index] = descriptor->layers[0].offset[index];
-        frame->strides[index] = descriptor->layers[0].pitch[index];
-        frame->modifiers[index] = descriptor->objects[object].drm_format_modifier;
-    }
-    return frame;
 }
 
 static void log_vpp_failure(const char *stage, VAStatus status) {
@@ -382,70 +267,6 @@ static int render_vpp_rgb(const AVFrame *source, VADisplay display,
     return 1;
 }
 
-static AzkHardwareFrame *export_vpp_rgb(
-        const AVFrame *source, VADisplay display, VASurfaceID input,
-        int target_width, int target_height, AzkVaapiVpp **vpp_slot) {
-    VARectangle source_region;
-    if (!source_crop(source, &source_region)) return NULL;
-    if (target_width <= 0 || target_width == source->width) target_width = source_region.width;
-    if (target_height <= 0 || target_height == source->height) target_height = source_region.height;
-    if (target_width > UINT16_MAX || target_height > UINT16_MAX) return NULL;
-    if (!prepare_vpp(vpp_slot, display, target_width, target_height))
-        return NULL;
-
-    VASurfaceID output = VA_INVALID_SURFACE;
-    VASurfaceAttrib pixel_format = {
-        .type = VASurfaceAttribPixelFormat,
-        .flags = VA_SURFACE_ATTRIB_SETTABLE,
-        .value = {
-            .type = VAGenericValueTypeInteger,
-            .value = { .i = VA_FOURCC_RGBX },
-        },
-    };
-    VAStatus status = vaCreateSurfaces(display, VA_RT_FORMAT_RGB32,
-                                       target_width, target_height,
-                                       &output, 1, &pixel_format, 1);
-    if (status != VA_STATUS_SUCCESS) {
-        log_vpp_failure("surface allocation", status);
-        return NULL;
-    }
-
-    if (!render_vpp_rgb(source, display, input, output, target_width, target_height, vpp_slot)) {
-        vaDestroySurfaces(display, &output, 1);
-        return NULL;
-    }
-
-    VADRMPRIMESurfaceDescriptor descriptor;
-    memset(&descriptor, 0, sizeof(descriptor));
-    status = vaExportSurfaceHandle(
-        display, output, VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2,
-        VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_COMPOSED_LAYERS,
-        &descriptor);
-    if (status != VA_STATUS_SUCCESS) {
-        log_vpp_failure("DMA-BUF export", status);
-        vaDestroySurfaces(display, &output, 1);
-        return NULL;
-    }
-    const char *rejection = descriptor_rejection(&descriptor);
-    if (rejection) {
-        log_export_descriptor_once("rejected", rejection, &descriptor,
-                                   &export_failure_logged);
-        close_descriptor(&descriptor);
-        vaDestroySurfaces(display, &output, 1);
-        return NULL;
-    }
-
-    log_export_descriptor_once("confirmed", "GPU VPP RGB path active",
-                               &descriptor, &export_success_logged);
-    AzkHardwareFrame *frame = take_descriptor(source, &descriptor, target_width,
-                                              target_height, display, output);
-    if (frame) {
-        int width, height;
-        azk_vaapi_frame_info(source, &width, &height, &frame->dataspace);
-    }
-    return frame;
-}
-
 int azk_vaapi_frame_info(const AVFrame *source, int *width, int *height, int *dataspace) {
     VARectangle crop;
     if (!source || source->format != AV_PIX_FMT_VAAPI ||
@@ -484,16 +305,6 @@ int azk_vaapi_frame_info(const AVFrame *source, int *width, int *height, int *da
     *height = crop.height;
     *dataspace = (standard << 16) | (transfer << 22) | (1 << 27);
     return 0;
-}
-
-AzkHardwareFrame *azk_vaapi_export(const AVFrame *source, int target_width,
-                                   int target_height, AzkVaapiVpp **vpp_slot) {
-    int width, height, dataspace;
-    if (!vpp_slot || azk_vaapi_frame_info(source, &width, &height, &dataspace)) return NULL;
-    AVHWFramesContext *frames = (AVHWFramesContext *)source->hw_frames_ctx->data;
-    AVVAAPIDeviceContext *device = (AVVAAPIDeviceContext *)frames->device_ctx->hwctx;
-    return export_vpp_rgb(source, device->display, (VASurfaceID)(uintptr_t)source->data[3],
-                           target_width, target_height, vpp_slot);
 }
 
 int azk_vaapi_render_into(const AVFrame *source, const AzkGraphicsBufferInfo *target,
@@ -543,36 +354,4 @@ int azk_vaapi_render_into(const AVFrame *source, const AzkGraphicsBufferInfo *ta
                             output, width, height, vpp_slot);
     vaDestroySurfaces(device->display, &output, 1);
     return result ? 0 : -EIO;
-}
-
-void azk_hardware_frame_release(AzkHardwareFrame *frame) {
-    if (!frame) return;
-    for (int index = 0; index < frame->object_count; ++index) {
-        if (frame->object_fds[index] >= 0) close(frame->object_fds[index]);
-    }
-    if (frame->owns_va_surface) {
-        VASurfaceID surface = frame->va_surface;
-        vaDestroySurfaces((VADisplay)frame->va_display, &surface, 1);
-    }
-    av_frame_free(&frame->frame);
-    av_buffer_unref(&frame->device_ref);
-    free(frame);
-}
-
-// Borrowed description consumed synchronously by HostedVideoOutput. Restrict
-// this to completed, separately allocated VPP storage: no decoder-pool reuse.
-int azk_hardware_frame_describe_surface(const AzkHardwareFrame *frame,
-                                       AzkGraphicsBufferInfo *out) {
-    if (!frame || !out || !frame->owns_va_surface || frame->frame ||
-        frame->plane_count != 1 || frame->object_count != 1 ||
-        frame->format != 0x34324258 || frame->dataspace == 0)
-        return -EINVAL;
-    *out = (AzkGraphicsBufferInfo) {
-        .width = frame->width, .height = frame->height,
-        .format = 2, .layers = 1, .usage = 0x100, // RGBX_8888, HW_TEXTURE
-        .drm_format = frame->format, .stride = frame->strides[0],
-        .offset = frame->offsets[0], .modifier = frame->modifiers[0],
-        .fd = frame->fds[0], .dataspace = frame->dataspace,
-    };
-    return 0;
 }

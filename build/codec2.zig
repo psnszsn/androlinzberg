@@ -284,7 +284,7 @@ pub fn resourceTests(b: *std.Build, libraries: Libraries, platform: std.Build.La
     }
 }
 
-pub fn service(b: *std.Build, libraries: Libraries, platform: std.Build.LazyPath, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile) *std.Build.Step.Compile {
+pub fn service(b: *std.Build, libraries: Libraries, platform: std.Build.LazyPath, codec: *std.Build.Module, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile) *std.Build.Step.Compile {
     const mod = b.createModule(.{
         .root_source_file = b.path("src/media_service_main.zig"),
         .target = libraries.client.root_module.resolved_target.?,
@@ -293,7 +293,10 @@ pub fn service(b: *std.Build, libraries: Libraries, platform: std.Build.LazyPath
         .link_libcpp = true,
     });
     mod.include_dirs = libraries.resources.root_module.include_dirs.clone(b.allocator) catch @panic("OOM");
-    mod.addCSourceFile(.{ .file = b.path("src/native/codec2/MediaServiceHost.cpp"), .flags = libraries.flags });
+    mod.addCSourceFiles(.{ .root = b.path("src/native/codec2"), .files = &.{ "MediaServiceHost.cpp", "FfmpegComponent.cpp", "FfmpegStore.cpp" }, .flags = libraries.flags });
+    mod.addIncludePath(b.path("src/native/codec2"));
+    mod.linkLibrary(b.addLibrary(.{ .name = "media_service_ffmpeg", .root_module = codec }));
+    inline for (.{ "libavcodec", "libavutil", "libva" }) |lib| mod.linkSystemLibrary(lib, .{ .needed = true, .use_pkg_config = .force });
     mod.addCSourceFiles(.{ .root = libraries.aosp.path(b, "frameworks/av/media/libmedia"), .files = &.{ "MediaResource.cpp", "MediaResourcePolicy.cpp" }, .flags = libraries.flags });
     mod.linkLibrary(libraries.resources);
     // GUI/foundation globals have one owner in the existing runtime DSO.
@@ -303,7 +306,7 @@ pub fn service(b: *std.Build, libraries: Libraries, platform: std.Build.LazyPath
     mod.addRPathSpecial("$ORIGIN/../lib");
     mod.addRPathSpecial("$ORIGIN/../lib/art");
     const exe = b.addExecutable(.{ .name = "azk-media-service", .root_module = mod });
-    b.step("media-service", "Build supervised original media resource services").dependOn(&exe.step);
+    b.step("media-service", "Build supervised Codec2 and original media resource services").dependOn(&exe.step);
     return exe;
 }
 

@@ -20,10 +20,6 @@ fn monotonicMs() i64 {
 }
 const art = @import("art");
 const runtime_identity = @import("runtime_identity.zig");
-// force the azk_codec C-ABI exports (ffmpeg MediaCodec backend) into the binary
-comptime {
-    _ = @import("azk_codec");
-}
 
 const usage =
     \\androlinzberg — run an Android APK on artzig (ART + Skia + Wayland)
@@ -32,7 +28,7 @@ const usage =
     \\  --join <session-dir>   add this app to a running session (see session.json)
     \\Every launch runs inside a hosted Binder session (broker + system process);
     \\`--system-server` is the launcher's own headless system-process entry.
-    \\       androlinzberg --codec-selftest | --codec-make-mp3 | --codec-make-m4v | --javatest
+    \\       androlinzberg --javatest
     \\
     \\Paths are resolved relative to the executable's install tree (zig-out/):
     \\  lib/libandroid_platform.so, framework/framework.jar, res/framework-res.apk.
@@ -180,7 +176,24 @@ fn applySessionStorage(init: std.process.Init, storage: binder_session.Storage) 
     }
 }
 
+// Let the launch/session scopes release their owned resources first. ART and
+// original bufferpool workers have process lifetime, so normal libc destruction
+// must not run after a runtime has been booted (the same rule as Java exit).
+var runtime_process_exit: ?ProcessExitFn = null;
 pub fn main(init: std.process.Init) !void {
+    run(init) catch |err| {
+        if (runtime_process_exit) |terminate| {
+            std.debug.print("error: {s}\n", .{@errorName(err)});
+            terminate(1);
+        }
+        return err;
+    };
+    if (runtime_process_exit) |terminate| terminate(0);
+}
+
+fn run(init: std.process.Init) !void {
+    if (setenv("ARTZIG_PLATFORM_ROOT", try init.arena.allocator().dupeSentinel(u8, try installTree(init), 0), 1) != 0)
+        return error.PlatformConfigurationEnvironmentFailed;
     if (init.minimal.environ.getPosix("AZK_LAUNCH_UID")) |raw_uid| {
         if (init.minimal.environ.getPosix("AZK_LAUNCH_CREDENTIAL") == null) return error.MissingLaunchCredential;
         try @import("binder/ProcessNamespace.zig").enter(init.io, try std.fmt.parseInt(u32, raw_uid, 10));
@@ -309,18 +322,6 @@ pub fn main(init: std.process.Init) !void {
             defer headless.rt.releaseProcessState();
             try runFrameworkMain(&headless.rt, "dev.artzig.system.SystemServer", &.{});
             return;
-        } else if (std.mem.eql(u8, args[i], "--codec-make-m4v")) {
-            const r = @import("azk_codec").writeTestM4V(init.io, "/tmp/azk-test.m4v");
-            std.debug.print("wrote /tmp/azk-test.m4v: {d} frames\n", .{r});
-            return;
-        } else if (std.mem.eql(u8, args[i], "--codec-make-mp3")) {
-            const r = @import("azk_codec").writeTestMP3(init.io, "/tmp/azk-test.mp3");
-            std.debug.print("wrote /tmp/azk-test.mp3: {d} bytes\n", .{r});
-            return;
-        } else if (std.mem.eql(u8, args[i], "--codec-selftest")) {
-            const n = @import("azk_codec").azk_codec_selftest();
-            std.debug.print("codec selftest: {d} samples decoded ({s})\n", .{ n, if (n > 0) "PASS" else "FAIL" });
-            return;
         } else if (std.mem.eql(u8, args[i], "--javatest")) {
             try ensureSession(init, &binder, join_dir, try taskPresentation(init.minimal.environ, false));
             const test_apk = init.minimal.environ.getPosix("AZK_TEST_APK");
@@ -434,6 +435,7 @@ fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_
         .launcher_exe = launcher_exe,
         .surfaceflinger_exe = try std.fs.path.join(arena, &.{ tree, "bin", "azk-surfaceflinger" }),
         .media_service_exe = try std.fs.path.join(arena, &.{ tree, "bin", "azk-media-service" }),
+        .declared_services = &.{ "android.hardware.media.c2.IComponentStore/software", "android.hardware.media.c2.IComponentStore/default" },
         .task_presenter_exe = if (present_tasks)
             try std.fs.path.join(arena, &.{ tree, "bin", "azk-task-presenter" })
         else
@@ -503,7 +505,9 @@ const ProcessExitFn = *const fn (c_int) callconv(.c) noreturn;
 // native boundary: std.process.exit runs libc destructors in a libc-linked Zig
 // executable, which is incompatible with ART's live worker threads.
 fn lookupProcessExit(lib: *std.DynLib) !ProcessExitFn {
-    return lib.lookup(ProcessExitFn, "azk_android_runtime_exit") orelse error.SymbolNotFound;
+    const terminate = lib.lookup(ProcessExitFn, "azk_android_runtime_exit") orelse return error.SymbolNotFound;
+    runtime_process_exit = terminate;
+    return terminate;
 }
 
 fn runFrameworkMain(runtime: *art.Runtime, class_name: []const u8, arguments: []const [:0]const u8) !void {
@@ -553,7 +557,7 @@ fn bootHeadless(init: std.process.Init, role: runtime_identity.Role) !Headless {
         // Choreographer lookup initializes DisplayManagerGlobal's sysprop fields.
         try registerBinderJni(arena, tree, @ptrCast(rt.env), &lib);
         if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
-        try host_natives.register(init.io, @ptrCast(rt.env), looper_poll);
+        host_natives.bindLooper(looper_poll);
     }
     return .{ .rt = rt, .tree = tree };
 }
@@ -611,7 +615,7 @@ fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8, role: runtime_id
         // Choreographer lookup initializes DisplayManagerGlobal's sysprop fields.
         try registerBinderJni(arena, tree, @ptrCast(rt.env), &lib);
         if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
-        try host_natives.register(init.io, @ptrCast(rt.env), looper_poll);
+        host_natives.bindLooper(looper_poll);
     }
     return .{ .rt = rt, .tree = tree };
 }

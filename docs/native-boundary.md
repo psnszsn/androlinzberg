@@ -118,15 +118,14 @@ zig build -j10 cpp-audit
   when no daemon is reachable, like AOSP's stub audio HAL. Reported latency is
   the output's 40 ms plus the track buffer; time stretching and post-creation
   sample-rate changes are logged as unimplemented and play at the original rate.
-- `src/codec/jni.zig` registers the eight existing decoder operations on
-  `dev.artzig.HostedCodecEngine`. Verbatim MediaCodec Java enters the pinned JNI
-  interface in `src/binder/media_codec_jni.zig`. `HostedMediaCodecBackend` owns
-  codec lifetime, bounded queues, synchronous/asynchronous state, format changes
-  and timestamped video release. JNI returns independent direct-buffer views;
-  original Java controls their accessibility and callback delivery. Unsupported
-  secure/block/encoder and additional surface/resource operations report explicit
-  diagnostics or pinned failure results. The FFmpeg and presentation engines are
-  unchanged.
+- MediaCodec and MediaCodecList use original JNI, native MediaCodec, CCodec and
+  Codec2 clients. The session publishes the original AIDL ComponentStore wrappers
+  in `azk-media-service`; `src/native/codec2` supplies FFmpeg components beneath
+  the original SimpleC2Component lifecycle. Software audio and VAAPI video use
+  separate `software` and `default` instances. XML and actual VAAPI profiles
+  drive stock capability discovery. VAAPI converts directly into the original
+  C2/IGBA allocator's DMA-BUF; stock buffer queues and SurfaceFlinger present it.
+  There is no extra GPU copy. The launcher no longer links the FFmpeg decoder.
 - `libaaudio.so` is the stock library, compiled whole into the native island
   (public C ABI, `AudioStreamTrack`/`AudioStreamRecord` legacy path, flow graph,
   and the MMAP client with its service protocol). The builder never selects
@@ -134,14 +133,10 @@ zig build -j10 cpp-audit
   the legacy path over the stock AudioTrack client above; capture fails the
   way an absent input device does. `src/native/audio/AAudioSmoke.cpp` is the
   test registration that drives that C ABI.
-- `src/binder/media_ndk.zig` exports 24 NDK codec entry points. Its Kotlin module
-  `HostedNdkMediaCodec` shares the stock Java MediaCodec client, preserving codec
-  lifecycle and callback ownership across native calls. The C++ helpers in
-  `AospJniBridge.cpp` only convert original AMessage/AMediaFormat objects through
-  the pinned key/value converters. The libmediandk soname maps to the platform
-  island and its Binder dependency so formats and codecs resolve together.
-  Native window/secure configuration remains explicitly unavailable; this does
-  not claim the complete NDK media ABI.
+- The libmediandk soname resolves to the platform island's original
+  NdkMediaCodec implementation. Native calls go directly to native MediaCodec;
+  codec handles and AMediaFormat share the same ELF image. The dev.artzig NDK
+  smoke binds those public symbols without interposing or replacing them.
 - MediaExtractor uses original AOSP Java/JNI, NuMediaExtractor, the native
   MediaExtractorService and its Binder protocols, data sources, metadata, and
   WAV/MP3/AAC parsers. The hosted system process publishes `media.extractor`.

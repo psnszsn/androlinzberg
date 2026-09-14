@@ -716,16 +716,13 @@ pub fn build(b: *std.Build) void {
         .host_libraries = host_toolchain.island.libraries,
         .host_link_flags = host_toolchain.island.link_flags,
         .aosp = aosp,
+        .codec2 = codec2,
     };
     const island = @import("build/island.zig").build(b, island_options);
-    const media_service = @import("build/codec2.zig").service(b, codec2, island.file, binder_cpp, binder_ndk);
     const media_service_probe = @import("build/codec2.zig").serviceProbe(b, codec2, island.file, binder_cpp, binder_ndk);
     b.step("island", "Build libandroid_platform.so").dependOn(island.step);
-    var codec2_island_options = island_options;
-    codec2_island_options.codec2 = codec2;
-    const codec2_island = @import("build/island.zig").build(b, codec2_island_options);
-    @import("build/codec2.zig").clientTest(b, codec2, codec2_island.file, binder_cpp, binder_ndk, binder_broker);
-    @import("build/codec2.zig").resourceTests(b, codec2, codec2_island.file, binder_cpp, binder_ndk, binder_broker);
+    @import("build/codec2.zig").clientTest(b, codec2, island.file, binder_cpp, binder_ndk, binder_broker);
+    @import("build/codec2.zig").resourceTests(b, codec2, island.file, binder_cpp, binder_ndk, binder_broker);
     const idmap2 = @import("build/idmap2.zig").build(b, .{
         .aosp = aosp,
         .target = target,
@@ -826,8 +823,7 @@ pub fn build(b: *std.Build) void {
 
     // --- azk_codec: MediaCodec backend over system FFmpeg. The system build
     // includes VA-API and DRM hwcontexts, which the minimal vendored build does
-    // not. Our C-ABI remains compiled into the executable and is resolved by
-    // the native island with dlsym(RTLD_DEFAULT).
+    // not. This backend is linked into the Codec2 service and native tests.
     const av_tc = b.addTranslateC(.{
         .root_source_file = b.path("src/codec/azk_ffmpeg.h"),
         .target = target,
@@ -861,17 +857,8 @@ pub fn build(b: *std.Build) void {
         .imports = &.{ .{ .name = "azk_codec", .module = codec_mod }, .{ .name = "av", .module = av_mod } },
     }) });
     b.step("codec-work-test", "Verify FFmpeg output and Codec2 work lifetimes").dependOn(&b.addRunArtifact(codec_work_tests).step);
-    @import("build/codec2.zig").ffmpegTest(b, codec2, codec2_island.file, codec_mod, binder_cpp, binder_ndk, binder_broker, sf_service);
-    exe.root_module.addImport("azk_codec", codec_mod);
-    const codec_jni_mod = b.createModule(.{
-        .root_source_file = b.path("src/codec/jni.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "art", .module = art_mod },
-            .{ .name = "azk_codec", .module = codec_mod },
-        },
-    });
+    @import("build/codec2.zig").ffmpegTest(b, codec2, island.file, codec_mod, binder_cpp, binder_ndk, binder_broker, sf_service);
+    const media_service = @import("build/codec2.zig").service(b, codec2, island.file, codec_mod, binder_cpp, binder_ndk);
     const event_fd_mod = b.createModule(.{
         .root_source_file = b.path("src/platform/event_fd.zig"),
         .target = target,
@@ -897,7 +884,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "art", .module = art_mod },
-            .{ .name = "codec_jni", .module = codec_jni_mod },
             .{ .name = "message_queue", .module = message_queue_mod },
         },
     });
@@ -929,7 +915,6 @@ pub fn build(b: *std.Build) void {
     }) });
     b.step("data-transfer-test", "Test bounded Wayland offer streams, deadlines and cancellation")
         .dependOn(&b.addRunArtifact(data_transfer_tests).step);
-    const codec_jni_check = b.addTest(.{ .root_module = codec_jni_mod });
     const apk_optimizer_check = b.addTest(.{ .root_module = apk_optimizer_mod });
     const run_apk_optimizer_tests = b.addRunArtifact(apk_optimizer_check);
     const dexopt_transaction_test = b.addSystemCommand(&.{ "bash", "tools/test-dexopt-apk.sh" });
@@ -1173,7 +1158,7 @@ pub fn build(b: *std.Build) void {
     b.step("proc-parser-test", "Verify AOSP process numeric parsing").dependOn(&proc_parser_run.step);
     native_test_step.dependOn(&proc_parser_run.step);
     native_test_step.dependOn(&run_wayland_tests.step);
-    native_test_step.dependOn(&codec_jni_check.step);
+    native_test_step.dependOn(&codec_work_tests.step);
     native_test_step.dependOn(&run_apk_optimizer_tests.step);
     native_test_step.dependOn(&dexopt_transaction_test.step);
     native_test_step.dependOn(&run_test_control.step);
@@ -1759,6 +1744,15 @@ pub fn build(b: *std.Build) void {
         "framework-module-test",
         "source-identity-test",
         "binder-jni-source-test",
+        "codec2-client-test",
+        "codec2-transport-test",
+        "codec2-allocator-test",
+        "codec2-bufferpool-test",
+        "codec2-ffmpeg-test",
+        "codec2-service-test",
+        "codec-video-allocator-test",
+        "codec-work-test",
+        "media-resource-test",
         "ndk-abi",
     }) |name| {
         const required = b.top_level_steps.get(name) orelse

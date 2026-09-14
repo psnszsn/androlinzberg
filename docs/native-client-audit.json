@@ -1,10 +1,10 @@
 {
-  "revision": "31ac159fbd38dec3103f0293c1e2781a6366311a",
+  "revision": "9ce02c7b + production codec migration",
   "reference": "Pinned checkout described by aosp/README.md; project revisions below",
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 13419,
+      "unchanged": 13420,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -112,7 +112,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "2155ed4e04799bb516bf12a8c8c5e84455b8047780b0584761c6d5d71afd8ee5"
+      "archive_sha256": "9ec423296770e7ba564b6abf2f1ae3223a8dd5e6f721e92838f4bd10b8a26b27"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -235,33 +235,28 @@
     "src/binder/media_player_jni.zig",
     "src/binder/sensor_manager_jni.zig",
     "src/binder/legacy_camera_jni.zig",
-    "src/binder/media_codec_list_jni.zig",
     "src/binder/activity_jni.zig",
     "src/binder/audio_system_jni.zig",
-    "src/binder/media_codec_jni.zig",
-    "src/binder/media_ndk.zig",
+    "src/binder/ndk_codec_test.zig",
     "src/binder/runtime_init_jni.zig"
   ],
-  "registration_scope_note": "17 delegated registration modules, not 17 replaced classes: pointer_icon_jni registers a host cursor helper; egl_interop_test registers only dev.artzig test helpers; media_ndk also exports a C ABI. Central and C++ registrars are additional.",
+  "registration_scope_note": "15 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
-      "sha256": "1a8979281c4e9391c18c20fcbcae2f26e088f2fb29fa2e17138ed6c6ee11ec74",
+      "sha256": "89e2f2f36e14507e283dd941ac35c84bbdedf9074d3aca52e624385dce958406",
       "defined_symbols": [
         "register_localized_collators",
         "register_android_functions",
-        "register_android_media_Crypto",
-        "register_android_media_Drm",
-        "register_android_opengl_jni_EGLExt",
-        "register_android_opengl_jni_EGL14",
-        "register_com_google_android_gles_jni_EGLImpl",
-        "AAudio_createStreamBuilder"
+        "AMediaCodec_createDecoderByType",
+        "AAudio_createStreamBuilder",
+        "_Z33register_android_media_MediaCodecP7_JNIEnv",
+        "_Z37register_android_media_MediaCodecListP7_JNIEnv"
       ]
     },
     "lib/art/libbinder_ndk.so": {
-      "sha256": "3c467b592672d6c10c418975795159ed22ecc25fb3db2f66ef24de6498ce92d3",
+      "sha256": "9d40253157ac461b417d4291e0ebc8e121694150b911a8a9052cbb2a20e4d370",
       "defined_symbols": [
-        "azk_register_binder_jni",
-        "AMediaCodec_createDecoderByType"
+        "azk_register_binder_jni"
       ]
     }
   },
@@ -322,7 +317,7 @@
     }
   },
   "media_graphics_jni_followup": {
-    "scope": "Original MediaCrypto, MediaDrm and EGLExt JNI; native hardware snapshots and original Bitmap JNI registration. The subsequent EGL follow-up is recorded separately. MediaCodec, MediaPlayer, metadata retrieval and the HWUI backend remain pending.",
+    "scope": "Original MediaCrypto, MediaDrm and EGLExt JNI; native hardware snapshots and original Bitmap JNI registration. Subsequent EGL and MediaCodec migrations are recorded separately.",
     "source_sha256": {
       "frameworks/base/media/jni/android_media_MediaCrypto.cpp": "10b92130e4a8535f689bc5c4254d0d842cfdbba8c6609c4f0879785365316612",
       "frameworks/base/media/jni/android_media_MediaDrm.cpp": "0cb734d461d82c6735e09bf6a3391f65fd9ba5276c4f1a63e4b91fd0ccc138ec",
@@ -409,166 +404,96 @@
       "aggregate_acceptance": "not run"
     }
   },
-  "codec2_transport_followup": {
-    "date": "2026-09-14",
-    "scope": "Pinned Codec2 V1 and bufferpool2 V2 transport/library preparation; the production codec remains hosted in-process.",
-    "source": "build/codec2.zig",
-    "protocol_versions": {
-      "android.hardware.media.c2": {
-        "version": 1,
-        "hash": "d4c3897135ef9475dee2021ac39a41ae79c7690e"
+  "service_declarations": {
+    "production": [
+      "android.hardware.media.c2.IComponentStore/software",
+      "android.hardware.media.c2.IComponentStore/default"
+    ],
+    "policy": "Immutable broker declarations are independent of publication and survive service death. Both stores are published before media-service readiness."
+  },
+  "codec2_client_service": {
+    "status": "Production migration validated",
+    "jni": [
+      "frameworks/base/media/jni/android_media_MediaCodec.cpp",
+      "frameworks/base/media/jni/android_media_MediaCodecList.cpp"
+    ],
+    "native": "Original NdkMediaCodec, MediaCodec, CCodec, Codec2 AIDL/HIDL and bufferpool2; shared GUI globals in one platform ELF",
+    "backend": "azk-media-service: original AIDL ComponentStore / SimpleC2Component over host FFmpeg and VAAPI",
+    "video_output": "Original IGBA allocator waits acquire fence; VAAPI writes directly into the same DMA-BUF, without an extra GPU copy",
+    "discovery": "Separate software/default stores, stock XML parsing, actual VAAPI profile and decode-entrypoint queries",
+    "configuration": "ARTZIG_PLATFORM_ROOT relocates stock configuration paths; standard render_metrics_enabled consumes real compositor frame times",
+    "native_validation_log": "/tmp/azk-codec2-aac17.log",
+    "known_optional_failure": "codec2-params-test remains 12/14: preexisting host-compiler parameter equality/implicit-bool mismatches",
+    "shutdown": "Launcher unwinds session cleanup, then uses the existing AndroidRuntime immediate-exit hook; original bufferpool detached threads retain process lifetime.",
+    "installed_binaries": {
+      "bin/androlinzberg": {
+        "sha256": "1245bfed32371c8bdc57793aafc57690b6090b74750fb41f55a762a63b5ab9b7",
+        "needed": [
+          "libm.so.6",
+          "libc.so.6",
+          "ld-linux-x86-64.so.2",
+          "libfontconfig.so.1",
+          "libfreetype.so.6"
+        ]
       },
-      "android.hardware.media.bufferpool2": {
-        "version": 2,
-        "hash": "c12818c51418fbfc76f1b81eba6678d75cf526c1"
+      "bin/azk-media-service": {
+        "sha256": "c420c62e3aa71cccbde8b0522d49be40b5da9328a3b9c584c25e4fa229f5debd",
+        "needed": [
+          "libavcodec.so.63",
+          "libavutil.so.61",
+          "libva.so.2",
+          "libandroid_platform.so",
+          "libbinder.so",
+          "libbinder_ndk.so",
+          "libc.so.6",
+          "ld-linux-x86-64.so.2"
+        ]
+      },
+      "lib/libandroid_platform.so": {
+        "sha256": "89e2f2f36e14507e283dd941ac35c84bbdedf9074d3aca52e624385dce958406",
+        "needed": [
+          "libbinder_ndk.so",
+          "libbinder.so",
+          "libharfbuzz.so.0",
+          "libfreetype.so.6",
+          "libicuuc.so.78",
+          "libicui18n.so.78",
+          "libpng16.so.16",
+          "libcrypto.so.3",
+          "/nix/store/fqkp26idpnpqk5l2cjfb51jdn6nj5bam-sqlite-3.53.3/lib/libsqlite3.so",
+          "libEGL.so.1",
+          "libGL.so.1",
+          "libgbm.so.1",
+          "libexpat.so.1",
+          "libjpeg.so.62",
+          "libwebp.so.7",
+          "libwebpdemux.so.2",
+          "libwebpmux.so.3",
+          "libselinux.so.1",
+          "libpipewire-0.3.so.0",
+          "libm.so.6",
+          "libc.so.6",
+          "ld-linux-x86-64.so.2"
+        ]
       }
     },
     "validation": {
-      "codec2-bufferpool-test": "3 unchanged AOSP tests passed",
-      "codec2-transport-test": "Cross-process work metadata, versions/hashes, native-handle and HardwareBuffer DMA-BUF storage identity, pooled-buffer ownership and service death passed",
-      "binder-cpp-test": "Passed, including release pressure",
-      "codec2-params-test": "12/14 unchanged tests pass; ParamOpsTest and FlexParamOpsTest fail four comparisons of differently typed input/output parameters. Those types hide the base equality overloads, so C++17 compares their implicit bool conversions. The tested headers and test source are unmodified pinned AOSP. This diagnostic is not claimed green.",
-      "framework-module-test": "passed",
-      "cpp-audit": "passed",
-      "ndk-abi": "passed",
-      "integration_test_cases": 28,
-      "testkit_tests": 23,
-      "recorded_actions": 88,
-      "runtime_issues": 0,
+      "codec2_client_transport_allocator_bufferpool": "passed",
+      "ffmpeg_components_and_work": "passed",
+      "public_ndk_mp3_aac_avc_and_service_death": "passed",
+      "direct_video_allocator_identity_pixels": "passed",
+      "resource_manager_and_observer": "54 passed",
+      "stock_video_apk": "passed: 4 actions, pixels, crop/color, Surface migration and rendered callbacks",
+      "framework_module_compat_and_jvm": "passed",
+      "system_test": "passed, including media-service supervision",
+      "cpp_graph_source_identity_binder_jni_and_ndk_abi": "passed",
+      "newpipe_launch_and_playback": "passed",
+      "apk_cases": 28,
+      "testkit_cases": 23,
+      "apk_recorded_actions": 90,
+      "apk_runtime_issues": 0,
       "aggregate_acceptance": "not run"
     },
-    "host_changes": [
-      "Nullable AStatus and death-recipient cleanup follows pinned NDK code, including empty C++ scoped wrappers.",
-      "Test executables use AndroidRuntime-style immediate process exit after preserving test results; original bufferpool eviction/invalidation workers are detached and live until process termination."
-    ],
-    "production_codec_replaced": false
-  },
-  "codec2_native_clients_followup": {
-    "date": "2026-09-14",
-    "scope": "Original hybrid libgui interfaces, shared HIDL runtime, stock native codec client compilation/link closure, CPU-only gralloc BLOB storage and the hosted ART target-SDK query. Production MediaCodec still uses the hosted app-side implementation.",
-    "source_selection": "build/codec2_sources.zig",
-    "restored_original_sources": [
-      "frameworks/native/libs/gui/IGraphicBufferProducer.cpp",
-      "frameworks/native/libs/gui/IProducerListener.cpp",
-      "frameworks/native/libs/gui/include/gui/IGraphicBufferProducer.h",
-      "frameworks/native/libs/gui/include/gui/IProducerListener.h"
-    ],
-    "validation": {
-      "gui-test": "passed, including original hybrid interfaces, GPU DMA-BUF identity and fence lifetime, buffer budgets, caller identity and absent-service checks",
-      "codec2-transport-test": "passed, including shared BLOB storage and mutation across processes, DMA-BUF identity, bufferpool transfer and service death",
-      "codec2-client": "passed: original native client closure compiled from packaged sources and linked in the test framework; production service activation remains pending",
-      "newpipe_launch": "passed with zero structured runtime issues",
-      "aggregate_acceptance": "not run",
-      "codec2-allocator-test": "passed: original C2AllocatorBlob capacity, map bounds, overlapping maps, imported storage after exporter release and zero retained buffers/bytes",
-      "codec2-bufferpool-test": "all 3 unchanged tests passed",
-      "cpp-audit": "passed",
-      "ndk-abi": "all 135 reference symbols exported",
-      "framework-module-test": "passed",
-      "integration_test_cases": 28,
-      "recorded_actions": 89,
-      "runtime_issues": 0,
-      "testkit_tests": 23,
-      "codec2-client-test": "passed with original-symbol ownership and normal process exit"
-    },
-    "production_codec_replaced": false,
-    "native_link": {
-      "target": "codec2-client-test",
-      "framework_variant": "Original codec and JNI code link in one test-only libandroid_platform.so; the installed production framework is not switched until its services are ready.",
-      "reason": "A second static libgui in the test executable duplicated LayerStatePermissions global destruction. The combined ELF owns GUI/foundation globals once. AMessage/AString now include their original Android Parcel methods.",
-      "validation": "Passed: full original NDK factory linked; dladdr verifies that factory and crypto metadata APIs resolve to the test framework rather than hosted libbinder_ndk exports; metadata copies and invalid arguments checked; ordinary process shutdown succeeds."
-    },
-    "runtime_sdk": {
-      "implementation": "android_get_application_target_sdk_version queries cached VMRuntime.getTargetSdkVersion; temporary native thread attachment is released; unset/non-application targets report platform FUTURE.",
-      "validation": "Framework smoke passed for targets 28, 35, 10000, 0 and -1 on attached Java and detached native threads; final SDK value restored."
-    }
-  },
-  "codec2_resource_service_followup": {
-    "reference": "android-16.0.0_r1",
-    "source_selection": "build/codec2_sources.zig resource_groups; original SimpleC2Component and SimpleC2Interface added to client closure",
-    "service_implementation": "Original ResourceManagerService, ResourceManagerServiceNew, ResourceObserverService, reclaim policies, resource tracking, metrics, UID observer and native process/battery/activity/scheduling clients",
-    "generated": "Frozen resourceobserver V1 NDK ABI and media_metrics stats generated from pinned sources; native ProcessStateEnum and Java IProcessInfoService generated from original AIDL",
-    "processinfo": "Hosted service reads framework state from the locked live process registry and Linux oom_score_adj; preserves score permission ordering, absent PID sentinels and pending TOP/newest launch boosts",
-    "validation": {
-      "raw_source_tests": "54 original tests passed: 46 resource manager (old/new), 7 observer, 1 service log; normal exit with authenticated hosted Binder",
-      "binder-cpp-test": "Passed counted int32 array, null/empty and oversized length contracts, and live thread-pool query",
-      "packaged_build": "Passed media-resource-test (all 54 original tests), codec2-client-test, framework-module-test, cpp-audit and ndk-abi (135 reference symbols, 162 exports)",
-      "framework-module-test": "Passed process-info validation/permissions, Linux score and generated wire contracts; video pooled/nested/reset/power/rounding/snapshot and permission contracts",
-      "integration-launch": "NewPipe launchesHomeWithoutRuntimeIssues passed",
-      "integration-test": "All 28 tests passed: 91 actions with zero structured runtime issues; testkit 23 tests passed",
-      "installed_build": "Default installed build refreshed successfully with the current archive and pin"
-    },
-    "limits": [
-      "Production MediaCodec JNI/NDK and decoding remain hosted until component-store integration is complete",
-      "Android battery history and energy estimation are not provided by the video session counters"
-    ],
-    "video_battery_accounting": "IBatteryStats video start/stop/reset feed pooled per-UID and global on-battery timers, enforce UPDATE_DEVICE_STATS, emit original codec state stats, and expose session microseconds in dumps; power transitions share the ordered event queue; original PowerStatsUidResolver maps isolated UIDs, retains late codec stops through process death, and SDK sandbox UIDs map to their owning app",
-    "uid_notifications": "AOSP UidObserverController dispatches live hosted process-registry changes; server-only patch removes diagnostic ActiveUids mirror and routes filter edits through the same Handler. Preserves UID filters, cross-user access, coalescing, callback order, cutpoints, observer death and background settling.",
-    "uid_validation": {
-      "framework-module-test": "Passed observer filtering, callback/coalescing order, process-state cutpoints, capability changes, cross-user restrictions, observer death, idle settling/cancellation, permission ordering, isolated UID lifetime and SDK sandbox attribution",
-      "source-identity-test": "7086 unchanged static inputs, 63 server adaptations; no modified client, owned client or missing reference",
-      "binder-broker-test": "Passed declaration protocol and service-death lifetimes",
-      "binder-cpp-test": "Passed NDK/C++ declaration lookup and enumeration contracts",
-      "integration-test": "28 tests passed, 88 recorded actions and zero structured runtime issues; 23 testkit tests passed",
-      "audits": "C++ audit and NDK ABI passed (135 reference symbols, 162 exports)"
-    },
-    "publication": "Production azk-media-service publishes the original resource manager and observer after hosted system readiness; the session supervises startup, death and ordered shutdown.",
-    "process_validation": {
-      "system-test": "Passed original remote resource client registration, video resource acquisition, system battery accounting, native and Java dumps, idempotent removal, and the existing multiprocess system suite",
-      "session-test": "Passed media readiness, startup ordering, timeout, spawn failure and descriptor/child cleanup; active drain group keeps a stable address across Session return",
-      "binder-cpp-test": "Passed NDK and C++ remote dumps, Unicode arguments, status propagation, caller identity and borrowed descriptor ownership",
-      "framework-module-test": "Passed",
-      "audits": "C++ boundary audit and NDK ABI passed (135 reference symbols, 162 exports)",
-      "integration-test": "All 28 APK tests passed, 88 actions with zero structured runtime issues; 23 testkit tests passed",
-      "stock-session-loss-test": "All six faults passed: media, system, SurfaceFlinger, presenter, broker and compositor; no retained descendants or session directories",
-      "installed_build": "Default installed build refreshed with azk-media-service; archive and source pin unchanged because all reused sources were already packaged"
-    }
-  },
-  "service_declarations": {
-    "implementation": "Broker owns immutable session interface/instance declarations; stock IServiceManager AIDL serves Java, native C++ facade and NDK queries. Registration and service death do not change declaration state.",
-    "production_manifest": "Empty until Codec2 component service activation; no unavailable codec advertised.",
-    "validation": "Broker protocol and C++/NDK tests pass for pre-start declaration, duplicate removal, exact interface filtering, sorted enumeration, service death, null isDeclared and reentrant enumeration callbacks."
-  },
-  "codec2_ffmpeg_followup": {
-    "status": "Native component acceptance only: production MediaCodec JNI/NDK and decode routing have not switched; no component store is published yet",
-    "components": "AAC, MP3, FLAC, Opus and Vorbis plus VAAPI AVC/VP9 and hardware-conditional MPEG-4 use original SimpleC2Component and SimpleC2Interface around system FFmpeg",
-    "configuration": "Android AAC data, FLAC stream headers, split Vorbis headers, and original Opus parser for legacy/unified headers; initial Opus delay and seek preroll apply once",
-    "work_identity": "Codec2 frameIndex travels through FFmpeg opaque buffer references independently of presentation timestamps; completion waits for decoder and output-queue ownership, including multiple or absent outputs; flush discards old work",
-    "graphics": "Allocator output mode retains the decoded VA surface until the C2 pool supplies RGBX storage. VAAPI imports that DMA-BUF and performs the existing VPP conversion directly into it; no extra GPU copy, destination allocation or software pixel staging. The original AIDL client owns allocation and Surface migration.",
-    "validation": {
-      "codec-work-test": "4 tests pass: duplicate PTS/full-width work indices, output-capacity retry, completion ownership, flush/index reuse, MP3 multi-output parity and legacy decode",
-      "codec2-ffmpeg-test": "All five audio formats decode through original C2 interfaces, complete every input, deliver EOS and survive stop/start; AAC/FLAC/Opus/Vorbis also cover flush, both Opus CSD layouts and exact preroll sample counts; normal process exit",
-      "integration-test": "28 tests pass with 92 actions and zero structured runtime issues after the video output refactor; 23 testkit tests pass",
-      "framework-module-test": "Passed after the video output refactor",
-      "audits": "C++ boundary and NDK ABI pass (135 reference symbols, 162 exports)",
-      "codec-video-allocator-test": "Pass: real VAAPI decode to the same linear/GPU DMA-BUF allocation, crop, B-frame work identity, duplicate PTS, retry, flush, and output pixel retention after decoder destruction"
-    },
-    "remaining": [
-      "Publish the Codec2 component store and finish native capability/profile negotiation and XML discovery",
-      "Select original MediaCodec JNI/NDK and delete the old hosted client implementation"
-    ],
-    "packaging": "All reused AOSP sources were already packaged; archive and dependency pin are unchanged"
-  },
-  "codec2_component_store_followup": {
-    "status": "Cross-process native acceptance; not published by production sessions yet",
-    "implementation": "Host component selection and traits delegate reflection/allocator policy to the original C2 platform store; original AIDL ComponentStore and Codec2Client handle transport",
-    "validation": "Original Codec2 AIDL discovery, available traits, reflection, MP3 work/BLOB transfer, AVC and VP9 GPU output, EOS and service death pass. Video tests verify cropped dimensions, duplicate PTS, reordered work, dataspace, flush and Surface migration with retained output pixels.",
-    "process_exit": "The existing Codec2 process wrapper exits immediately after local cleanup, matching AndroidRuntime. Original bufferpool eviction/invalidation threads are detached and have no global shutdown API; glibc static condition-variable destruction waits forever under their live workers.",
-    "regressions": "Codec2 audio component tests, all three original bufferpool tests and C++ audit pass"
-  },
-  "codec2_video_followup": {
-    "status": "Native service acceptance passed; production MediaCodec routing and component-store publication have not switched",
-    "allocator": "Original C2IgbaBlockPool waits the acquire fence; the FFmpeg component returns that same C2 graphic block and its original pool data. Original GraphicsTracker owns rendering and Surface migration.",
-    "backend": "Existing VAAPI YUV-to-RGB VPP renders into the allocator DMA-BUF through DRM_PRIME_2 import. CPU readback exists only in pixel-verification tests.",
-    "capabilities": "VAAPI profile and decode-entrypoint queries gate component discovery. This machine supports AVC and VP9; MPEG-4 Simple and Advanced Simple are rejected by the driver and the new store excludes MPEG-4. The unchanged production catalogue still has its earlier static entries until native MediaCodecList activation.",
-    "validation": {
-      "codec2-service-test": "AVC/VP9 pass across Binder: cropped RGB output, B-frame/reordered work, duplicate PTS, EOS, flush, Surface migration, pixel readback; unavailable MPEG-4 is absent from list/interface/component creation",
-      "codec-video-allocator-test": "Linear and GPU layout output pixels, same allocation identity, retry, retained output after flush/close",
-      "codec-work-test": "4 passed",
-      "codec2-ffmpeg-test": "All five audio formats and existing lifecycle/CSD cases passed",
-      "framework-module-test": "Passed",
-      "integration-test": "28 tests / 92 actions / zero structured runtime issues; 23 testkit tests",
-      "audits": "C++ boundary and NDK ABI passed"
-    },
-    "packaging": "No additional AOSP files; archive and dependency pin unchanged"
+    "regressions": "Empty work before CSD completes without opening FFmpeg; native NDK AAC decode and all five audio families cover this ordering. Normal launcher return avoids detached bufferpool destructor races."
   }
 }

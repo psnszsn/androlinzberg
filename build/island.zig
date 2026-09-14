@@ -42,7 +42,7 @@ pub const Options = struct {
     aosp: std.Build.LazyPath,
     /// Optional stock codec closure; enabled by its native acceptance executable
     /// until the component and resource-manager services are ready for apps.
-    codec2: ?@import("codec2.zig").Libraries = null,
+    codec2: @import("codec2.zig").Libraries,
 };
 
 pub const Result = struct {
@@ -104,10 +104,10 @@ const audio_host_srcs = [_][]const u8{
     "AAudioSmoke.cpp", "AudioServiceJni.cpp", "HostAudioFlinger.cpp", "HostAudioPolicyService.cpp", "HostAudioTrack.cpp", "HostSchedPolicy.cpp", "azk_pipewire.c",
 };
 const our_srcs = [_][]const u8{
-    "src/native/ArtzigGpuPipeline.cpp", "src/native/HardwareBufferRender.cpp",
-    "src/native/AospJniBridge.cpp",     "src/native/EglWindow.cpp",
-    "src/native/BinderJniBridge.cpp",   "src/native/HostLooper.cpp",
-    "src/native/HostedVideoOutput.cpp", "src/native/binder/ServiceNotifications.cpp",
+    "src/native/ArtzigGpuPipeline.cpp",           "src/native/HardwareBufferRender.cpp",
+    "src/native/AospJniBridge.cpp",               "src/native/EglWindow.cpp",
+    "src/native/BinderJniBridge.cpp",             "src/native/HostLooper.cpp",
+    "src/native/binder/ServiceNotifications.cpp",
 };
 
 pub fn build(b: *std.Build, o: Options) Result {
@@ -424,6 +424,12 @@ pub fn build(b: *std.Build, o: Options) Result {
         o.media_generated.headers,
         o.aosp.path(b, "external/protobuf/src"),
     };
+    var codec_includes: std.ArrayList(std.Build.LazyPath) = .empty;
+    codec_includes.appendSlice(b.allocator, drm_includes) catch @panic("OOM");
+    for (@import("codec2_sources.zig").includes) |path| codec_includes.append(b.allocator, o.aosp.path(b, path)) catch @panic("OOM");
+    codec_includes.append(b.allocator, o.aosp.path(b, "libnativehelper/header_only_include")) catch @panic("OOM");
+    for ([_][]const u8{ "frameworks/av/media/codec2/core/include", "frameworks/av/media/codec2/vndk/include", "frameworks/native/libs/nativewindow/include-private", "frameworks/av/media/ndk/include_platform", "frameworks/av/media/ndk/include/private", "system/libhidl/transport/memory/1.0/default" }) |path| codec_includes.append(b.allocator, o.aosp.path(b, path)) catch @panic("OOM");
+    g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{ "android_media_MediaCodec.cpp", "android_media_MediaCodecList.cpp" }, codec_includes.items, &.{ "-D__ANDROID__", "-D__ANDROID_API__=36", "-Dbetoh64=be64toh", "-D__unused=__attribute__((unused))", "-Wno-invalid-specialization" });
     g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{ "android_media_MediaCrypto.cpp", "android_media_MediaDrm.cpp" }, drm_includes, &.{"-Dbetoh64=be64toh"});
     g.add(o.aosp.path(b, "frameworks/av/drm/libmediadrm"), &.{
         "CryptoHal.cpp",        "CryptoHalAidl.cpp", "CryptoHalHidl.cpp",      "DrmUtils.cpp",               "DrmStatus.cpp",
@@ -698,7 +704,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/av/media/libaaudio/src"), &gen.libaaudio_srcs, aaudio_includes.items, &(audio_flags ++ [_][]const u8{"-DAAUDIO_API=__attribute__((visibility(\"default\")))"}));
     g.add(b.path("src/native/audio"), &audio_host_srcs, audio_includes.items, &audio_flags);
     g.add(b.path(""), &our_srcs, bridge_includes.items, &.{});
-    if (o.codec2 != null) g.add(b.path("src/native"), &.{"PlatformFiles.cpp"}, &.{}, &.{});
+    g.add(b.path("src/native"), &.{"PlatformFiles.cpp"}, &.{}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"core_jni_helpers.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.input_handle_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_region.cpp"}, &.{ apex_inc, hw_jni_inc }, &.{});
@@ -772,7 +778,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     link.addFileArg(o.protobuf.getEmittedBin());
     link.addFileArg(o.input.native.getEmittedBin());
     link.addFileArg(o.input.verifier);
-    if (o.codec2) |codec2| {
+    {
+        const codec2 = o.codec2;
         link.addArg("-Wl,--wrap=fopen,--wrap=stat");
         // Share libgui/foundation globals with JNI in one ELF image. Linking
         // another static libgui into a client executable duplicates global

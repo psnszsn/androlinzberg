@@ -18,37 +18,6 @@ extern "C" int azk_aaudio_validate(const int* config) {
     params.setDeviceIds({config[9]});
     return params.validate();
 }
-#include "android_media_Streams.h"
-#include <media/NdkMediaFormatPriv.h>
-// NdkMediaCodec.cpp owns an AMessage snapshot across each NDK/codec call.
-// Only this C++ ABI conversion touches AMessage; codec behavior lives in Zig/Kotlin.
-extern "C" jobject azk_media_format_to_map(JNIEnv* env, const AMediaFormat* format) {
-    if (format == nullptr) return nullptr;
-    android::sp<android::AMessage> message;
-    android::AMediaFormat_getFormat(format, &message);
-    jobject result = nullptr;
-    if (android::ConvertMessageToMap(env, message->dup(), &result) != 0) return nullptr;
-    return result;
-}
-extern "C" AMediaFormat* azk_media_format_from_map(JNIEnv* env, jobject map) {
-    if (map == nullptr) return nullptr;
-    jclass mapClass = env->FindClass("java/util/Map");
-    jclass collectionClass = env->FindClass("java/util/Collection");
-    if (mapClass == nullptr || collectionClass == nullptr) return nullptr;
-    jmethodID keySet = env->GetMethodID(mapClass, "keySet", "()Ljava/util/Set;");
-    jmethodID values = env->GetMethodID(mapClass, "values", "()Ljava/util/Collection;");
-    jmethodID toArray = env->GetMethodID(collectionClass, "toArray", "()[Ljava/lang/Object;");
-    if (keySet == nullptr || values == nullptr || toArray == nullptr) return nullptr;
-    jobject keys = env->CallObjectMethod(map, keySet);
-    jobject entries = env->CallObjectMethod(map, values);
-    if (env->ExceptionCheck()) return nullptr;
-    auto keyArray = static_cast<jobjectArray>(env->CallObjectMethod(keys, toArray));
-    auto valueArray = static_cast<jobjectArray>(env->CallObjectMethod(entries, toArray));
-    if (env->ExceptionCheck()) return nullptr;
-    android::sp<android::AMessage> message;
-    if (android::ConvertKeyValueArraysToMessage(env, keyArray, valueArray, &message) != 0) return nullptr;
-    return android::AMediaFormat_fromMsg(&message);
-}
 #include "android_media_MediaMetricsJNI.h"
 #include "MediaExtractorService.h"
 #include <binder/PermissionCache.h>
@@ -348,7 +317,8 @@ extern int register_android_graphics_ImageDecoder(JNIEnv*);
 extern "C" int azk_register_graphics_environment_backend(JNIEnv*);
 extern int register_dev_artzig_StockFenceSmoke(JNIEnv*);
 extern int register_dev_artzig_StockReadbackSmoke(JNIEnv*);
-extern int register_dev_artzig_HostedVideoOutput(JNIEnv*);
+extern int register_android_media_MediaCodec(JNIEnv*);
+extern int register_android_media_MediaCodecList(JNIEnv*);
 namespace android { int register_android_os_GraphicsEnvironment(JNIEnv*); }
 namespace android { int register_com_android_server_wm_TaskFpsCallbackController(JNIEnv*); }
 namespace android { int register_android_view_TunnelModeEnabledListener(JNIEnv*); }
@@ -788,7 +758,8 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(azk_register_graphics_environment_backend),
             E(register_dev_artzig_StockFenceSmoke),
             E(register_dev_artzig_StockReadbackSmoke),
-            E(register_dev_artzig_HostedVideoOutput),
+            E(register_android_media_MediaCodec),
+            E(register_android_media_MediaCodecList),
             E(android::register_android_os_GraphicsEnvironment),
             E(android::register_com_android_server_wm_TaskFpsCallbackController),
             E(android::register_android_view_TunnelModeEnabledListener),

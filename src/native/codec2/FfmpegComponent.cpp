@@ -4,12 +4,15 @@
 // SimpleC2Component retains queue, listener, state and flush-generation handling.
 // Video follows C2SoftAvcDec's graphic output contract, with system VAAPI
 // converting directly into the supplied pool's RGBX buffer.
+#define LOG_TAG "AzkCodec2"
+#include <log/log.h>
 #include "FfmpegComponent.h"
 #include "../../codec/azk_codec.h"
 #include <SimpleC2Component.h>
 #include <SimpleC2Interface.h>
 #include <C2AllocatorGralloc.h>
 #include <android-C2Buffer.h>
+#include <Codec2Mapper.h>
 #include <azk/graphics_buffer.h>
 #include <media/stagefright/foundation/OpusHeader.h>
 #include <algorithm>
@@ -108,6 +111,16 @@ public:
                 .withDefault(new C2StreamDataSpaceInfo::output(0u, 0))
                 .withFields({C2F(dataspace, value).any()})
                 .withSetter(Setter<decltype(*dataspace)>::StrictValueWithNoDeps).build());
+            addParameter(DefineParam(crop, C2_PARAMKEY_CROP_RECT)
+                .withDefault(new C2StreamCropRectInfo::output(0u, C2Rect(320, 240)))
+                .withFields({C2F(crop, left).equalTo(0), C2F(crop, top).equalTo(0),
+                             C2F(crop, width).inRange(2, 4096), C2F(crop, height).inRange(2, 4096)})
+                .withSetter(CropSetter, size).build());
+            addParameter(DefineParam(color, C2_PARAMKEY_COLOR_ASPECTS)
+                .withDefault(new C2StreamColorAspectsInfo::output(0u))
+                .withFields({C2F(color, range).any(), C2F(color, primaries).any(),
+                             C2F(color, transfer).any(), C2F(color, matrix).any()})
+                .withSetter(ColorSetter, dataspace).build());
             return;
         }
         addParameter(DefineParam(rate, C2_PARAMKEY_SAMPLE_RATE)
@@ -146,6 +159,21 @@ private:
         }
         return result;
     }
+    static C2R CropSetter(bool, C2P<C2StreamCropRectInfo::output> &next,
+                          const C2P<C2StreamPictureSizeInfo::output> &size) {
+        next.set().left = next.set().top = 0;
+        next.set().width = size.v.width; next.set().height = size.v.height;
+        return C2R::Ok();
+    }
+    static C2R ColorSetter(bool, C2P<C2StreamColorAspectsInfo::output> &next,
+                           const C2P<C2StreamDataSpaceInfo::output> &dataspace) {
+        // The VAAPI seam emits SDR RGB with BT709/BT601 standards. Those
+        // dataspace fields share the SDK values consumed by the pinned mapper.
+        C2Mapper::map(int32_t((dataspace.v.value >> 27) & 7), &next.set().range);
+        C2Mapper::map(int32_t((dataspace.v.value >> 16) & 63), &next.set().primaries, &next.set().matrix);
+        C2Mapper::map(int32_t((dataspace.v.value >> 22) & 31), &next.set().transfer);
+        return C2R::Ok();
+    }
     // Pinned C2SoftAvcDec::IntfImpl::SizeSetter: reject invalid fields and
     // preserve each previous value independently.
     static C2R SizeSetter(bool, const C2P<C2StreamPictureSizeInfo::output> &old,
@@ -164,6 +192,8 @@ private:
     std::shared_ptr<C2StreamPictureSizeInfo::output> size;
     std::shared_ptr<C2StreamPixelFormatInfo::output> pixelFormat;
     std::shared_ptr<C2StreamDataSpaceInfo::output> dataspace;
+    std::shared_ptr<C2StreamCropRectInfo::output> crop;
+    std::shared_ptr<C2StreamColorAspectsInfo::output> color;
     std::shared_ptr<C2StreamProfileLevelInfo::input> profileLevel;
     std::shared_ptr<C2StreamPcmEncodingInfo::output> pcm;
     std::shared_ptr<C2StreamMaxBufferSizeInfo::input> maxInput;
@@ -216,7 +246,10 @@ private:
     }
 
     c2_status_t configData(const std::vector<uint8_t> &input) {
-        if (mConfigured) return C2_BAD_VALUE;
+        if (mConfigured) {
+            ALOGE("%s received codec configuration after decoder initialization", mFormat.name);
+            return C2_BAD_VALUE;
+        }
         if (opus()) {
             if (mOpusHeaders == 0) {
                 void *header, *delay, *preRoll;
@@ -275,6 +308,10 @@ private:
     }
 
     static void complete(const std::unique_ptr<C2Work> &work, c2_status_t status) {
+        if (status != C2_OK)
+            ALOGE("work %llu failed: status=%d flags=%x buffers=%zu",
+                  (unsigned long long)work->input.ordinal.frameIndex.peeku(),
+                  int(status), unsigned(work->input.flags), work->input.buffers.size());
         work->result = status;
         work->workletsProcessed = 1;
         auto &output = work->worklets.front()->output;
@@ -320,6 +357,11 @@ private:
                 if (status != C2_OK || !failures.empty()) return C2_CORRUPTED;
                 updates.emplace_back(C2Param::Copy(size));
                 updates.emplace_back(C2Param::Copy(dataspace));
+                // Include dependent metadata in the same output work. CCodec's
+                // original mapper exposes the converted RGB color and crop.
+                if (intf()->query_vb({}, {C2StreamCropRectInfo::output::PARAM_TYPE,
+                                        C2StreamColorAspectsInfo::output::PARAM_TYPE},
+                                     C2_MAY_BLOCK, &updates) != C2_OK) return C2_CORRUPTED;
             }
             std::shared_ptr<C2GraphicBlock> block;
             // The original IGBA pool waits both allocation availability and the
@@ -411,6 +453,13 @@ private:
                 if (view.capacity() > 4 * 1024 * 1024 - input.size()) { complete(work, C2_BAD_VALUE); return; }
                 input.insert(input.end(), view.data(), view.data() + view.capacity());
             }
+        }
+        // Pinned CCodec can queue empty work before its codec-specific data.
+        // As in C2SoftAacDec::process, no compressed bytes means no decoder
+        // initialization; otherwise that initial work would reject later CSD.
+        if (input.empty() && !(work->input.flags & C2FrameData::FLAG_END_OF_STREAM)) {
+            complete(work, C2_OK);
+            return;
         }
         if (work->input.flags & C2FrameData::FLAG_CODEC_CONFIG) {
             mError = configData(input);

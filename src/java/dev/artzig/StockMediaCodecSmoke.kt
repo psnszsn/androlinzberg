@@ -23,7 +23,7 @@ internal object StockMediaCodecSmoke {
             codec.configure(MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_MPEG, 44100, 2), null, null, 0)
             codec.start()
             val cached = codec.inputBuffers
-            val index = codec.dequeueInputBuffer(0)
+            val index = codec.dequeueInputBuffer(1_000_000)
             check(index >= 0)
             val first = checkNotNull(codec.getInputBuffer(index))
             check(runCatching { cached[index].get(0) }.exceptionOrNull() is IllegalStateException)
@@ -53,7 +53,7 @@ internal object StockMediaCodecSmoke {
             codec.releaseOutputBuffer(output, false)
             check(runCatching { bytes.get(0) }.exceptionOrNull() is IllegalStateException)
             codec.flush()
-            check(codec.dequeueInputBuffer(0) >= 0)
+            check(codec.dequeueInputBuffer(1_000_000) >= 0)
             codec.stop()
             check(runCatching { codec.inputFormat }.exceptionOrNull() is IllegalStateException)
             codec.setCallback(callback)
@@ -62,7 +62,7 @@ internal object StockMediaCodecSmoke {
             codec.stop()
             codec.configure(MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_MPEG, 44100, 2), null, null, 0)
             codec.start()
-            check(codec.dequeueInputBuffer(0) >= 0)
+            check(codec.dequeueInputBuffer(1_000_000) >= 0)
             codec.stop()
         } finally { codec.release() }
         codec.release()

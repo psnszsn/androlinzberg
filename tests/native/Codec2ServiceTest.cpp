@@ -147,7 +147,7 @@ static void video(const std::shared_ptr<Codec2Client> &client, const char *name,
                  "work reordering, flush, dataspace and Surface migration pixels" << std::endl;
 }
 
-static void nativeMediaCodec(bool video) {
+static void nativeMediaCodec(bool video, bool aac = false) {
     using namespace android;
     std::unique_ptr<GpuBufferRenderer> renderer;
     sp<BufferItemConsumer> consumer;
@@ -156,7 +156,8 @@ static void nativeMediaCodec(bool video) {
         renderer = std::make_unique<GpuBufferRenderer>();
         std::tie(consumer, surface) = BufferItemConsumer::create(GRALLOC_USAGE_HW_TEXTURE, 2);
     }
-    const char *mime = video ? "video/avc" : "audio/mpeg";
+    const auto aacData = aac ? encodeAudio("aac", AV_SAMPLE_FMT_FLTP, 44100) : Encoded{};
+    const char *mime = video ? "video/avc" : aac ? "audio/mp4a-latm" : "audio/mpeg";
     AMediaCodec *codec = AMediaCodec_createDecoderByType(mime);
     assert(codec);
     AMediaFormat *format = AMediaFormat_new();
@@ -168,10 +169,16 @@ static void nativeMediaCodec(bool video) {
         AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_SAMPLE_RATE, 44100);
         AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_CHANNEL_COUNT, 2);
     }
+    if (aac) {
+        assert(aacData.csd.size() == 1);
+        AMediaFormat_setBuffer(format, "csd-0", aacData.csd[0].data(), aacData.csd[0].size());
+    }
     assert(AMediaCodec_configure(codec, format, surface.get(), nullptr, 0) == AMEDIA_OK);
     AMediaFormat_delete(format);
     assert(AMediaCodec_start(codec) == AMEDIA_OK);
-    const auto packets = video ? videoPackets() : std::vector<std::vector<uint8_t>>{twoMp3Frames()};
+    const auto packets = video ? videoPackets() : aac ?
+        std::vector<std::vector<uint8_t>>(aacData.packets.begin(), aacData.packets.begin() + 2) :
+        std::vector<std::vector<uint8_t>>{twoMp3Frames()};
     ssize_t index;
     size_t capacity = 0;
     for (const auto &encoded : packets) {
@@ -224,7 +231,7 @@ static void nativeMediaCodec(bool video) {
     }
     assert(eos && changed);
     if (video) assert(frames == packets.size());
-    else assert(bytes == 2 * 1152 * 2 * sizeof(int16_t));
+    else assert(bytes == 2 * (aac ? 1024 : 1152) * 2 * sizeof(int16_t));
     assert(AMediaCodec_stop(codec) == AMEDIA_OK);
     assert(AMediaCodec_delete(codec) == AMEDIA_OK);
     if (consumer) consumer->abandon();
@@ -292,6 +299,7 @@ int codec2ProcessTestMain(int argc, char **argv) {
     }
     std::cout << "PASS original MediaCodecList XML, profiles and hardware/software attributes" << std::endl;
     nativeMediaCodec(false);
+    nativeMediaCodec(false, true);
     nativeMediaCodec(true);
     std::shared_ptr<Codec2Client::Interface> interface;
     assert(client->createInterface("c2.artzig.avc.decoder", &interface) == C2_NOT_FOUND && !interface);
