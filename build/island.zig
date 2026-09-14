@@ -16,6 +16,7 @@ pub const Options = struct {
     /// libbinder_ndk.so — the hwui parcel JNI (android 16) calls its AParcel ABI.
     binder_ndk: *std.Build.Step.Compile,
     binder_cpp: *std.Build.Step.Compile,
+    hidl: *std.Build.Step.Compile,
     ui: *std.Build.Step.Compile,
     gui: *std.Build.Step.Compile,
     input: @import("input.zig").Library,
@@ -31,7 +32,6 @@ pub const Options = struct {
     aidl_header_roots: []const std.Build.LazyPath,
     aidl_source_roots: []const std.Build.LazyPath,
     hidl_header_roots: []const std.Build.LazyPath,
-    hidl_sources: []const std.Build.LazyPath,
     aconfig_header_roots: []const std.Build.LazyPath,
     incremental_sysprop_headers: std.Build.LazyPath,
     incremental_sysprop_source: std.Build.LazyPath,
@@ -98,7 +98,7 @@ const audio_host_interfaces = [_][]const u8{
     "android/media/IAudioTrack.aidl",
 };
 const audio_host_srcs = [_][]const u8{
-    "AAudioSmoke.cpp",     "AudioServiceJni.cpp", "HostAudioFlinger.cpp", "HostAudioPolicyService.cpp", "HostAudioTrack.cpp", "HostSchedPolicy.cpp", "azk_pipewire.c",
+    "AAudioSmoke.cpp", "AudioServiceJni.cpp", "HostAudioFlinger.cpp", "HostAudioPolicyService.cpp", "HostAudioTrack.cpp", "HostSchedPolicy.cpp", "azk_pipewire.c",
 };
 const our_srcs = [_][]const u8{
     "src/native/ArtzigGpuPipeline.cpp", "src/native/HardwareBufferRender.cpp",
@@ -199,11 +199,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     common_includes.appendSlice(b.allocator, o.aidl_header_roots) catch @panic("oom");
     common_includes.appendSlice(b.allocator, o.aconfig_header_roots) catch @panic("oom");
     common_includes.appendSlice(b.allocator, o.hidl_header_roots) catch @panic("oom");
-    common_includes.appendSlice(b.allocator, &.{
-        o.aosp.path(b, "system/libhwbinder/include"),
-        o.aosp.path(b, "system/libhidl/transport/include"),
-        o.aosp.path(b, "system/libfmq/base"),
-    }) catch @panic("oom");
+    for (@import("hidl.zig").includes) |path|
+        common_includes.append(b.allocator, o.aosp.path(b, path)) catch @panic("oom");
     common_includes.appendSlice(b.allocator, &.{
         o.aosp.path(b, "frameworks/av/camera/include"),
         o.aosp.path(b, "system/media/camera/include"),
@@ -341,26 +338,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         "-ffunction-sections",
         "-fdata-sections",
     });
-    // Stock libhidlbase host build, including its original no-hwservicemanager path.
-    g.add(o.aosp.path(b, "system/libhidl/base"), &.{ "HidlSupport.cpp", "HidlInternal.cpp", "Status.cpp", "TaskRunner.cpp" }, &.{}, &.{});
-    g.add(o.aosp.path(b, "system/libhidl/transport"), &.{
-        "HidlBinderSupport.cpp",    "HidlLazyUtils.cpp",      "HidlPassthroughSupport.cpp",
-        "HidlTransportSupport.cpp", "HidlTransportUtils.cpp", "LegacySupport.cpp",
-        "ServiceManagement.cpp",    "Static.cpp",
-    }, &.{}, &.{});
-    g.add(o.aosp.path(b, "system/libhwbinder"), &.{
-        "Binder.cpp",     "BpHwBinder.cpp",     "BufferedTextOutput.cpp", "Debug.cpp",
-        "IInterface.cpp", "IPCThreadState.cpp", "Parcel.cpp",             "ProcessState.cpp",
-        "Static.cpp",     "TextOutput.cpp",     "Utils.cpp",
-    }, &.{}, &.{});
-    var hidl_source_index: usize = 0;
-    for (@import("generator_sources.zig").hidl_cpp) |entry| {
-        for (entry.sources) |name| {
-            const source = o.hidl_sources[hidl_source_index];
-            g.add(source.dirname(), &.{std.fs.path.basename(name)}, &.{}, &.{});
-            hidl_source_index += 1;
-        }
-    }
+    // HIDL runtime and generated protocols are shared with original libgui.
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{
         "android_os_HidlSupport.cpp", "android_os_HwBinder.cpp", "android_os_HwRemoteBinder.cpp",
         "android_os_HwBlob.cpp",      "android_os_HwParcel.cpp",
@@ -435,8 +413,6 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/av/media/module/foundation"), &.{ "MetaData.cpp", "MetaDataBase.cpp" }, extractor_includes, &.{"-D__ANDROID__"});
     g.add(o.aosp.path(b, "frameworks/av/media/module/foundation"), &.{ "MediaBuffer.cpp", "MediaBufferBase.cpp", "MediaBufferGroup.cpp", "MediaDefs.cpp", "AudioPresentationInfo.cpp", "FoundationUtils.cpp", "avc_utils.cpp", "OpusHeader.cpp", "base64.cpp", "ByteUtils.cpp", "ABitReader.cpp", "ColorUtils.cpp", "ColorUtils_fill.cpp" }, extractor_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/av/media/module/metadatautils"), &.{"MetaDataUtils.cpp"}, extractor_includes, &.{});
-    g.add(o.aosp.path(b, "system/libhidl/transport/token/1.0/utils"), &.{"HybridInterface.cpp"}, extractor_includes, &.{});
-    g.add(o.aosp.path(b, "system/libhidl/transport/allocator/1.0/utils"), &.{"FrameworkUtils.cpp"}, extractor_includes, &.{});
     const drm_includes = extractor_includes ++ &[_]std.Build.LazyPath{
         o.aosp.path(b, "frameworks/av/drm/libmediadrm/include"),
         o.aosp.path(b, "frameworks/av/drm/libmediadrm/interface"),
@@ -573,7 +549,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.incremental_sysprop_source.dirname(), &.{"IncrementalProperties.sysprop.cpp"}, &.{}, &.{});
     for (o.aidl_source_roots, @import("generator_sources.zig").cpp_aidl) |root, entry| {
         // Codec2's native library owns its work and bufferpool protocols.
-        if (@import("codec2.zig").isProtocol(entry)) continue;
+        if (@import("codec2.zig").isProtocol(entry) or @import("codec2.zig").isClientProtocol(entry)) continue;
         if (entry.output) |output| g.add(root, &.{output}, extractor_includes, &.{});
     }
     g.add(o.aosp.path(b, "frameworks/native/libs/input"), &gen.input_srcs, &.{ fn_inc, o.aosp.path(b, "frameworks/native/libs/input"), input_compat_inc, binder_inc }, &.{aidl_inc});
@@ -676,10 +652,10 @@ pub fn build(b: *std.Build, o: Options) Result {
     }) catch @panic("OOM");
     const audio_flags = [_][]const u8{ "-D__unused=__attribute__((__unused__))", "-DARTZIG_HOST_THREAD_PRIORITY", "-D__BIONIC_AVAILABILITY_GUARD(x)=1", "-D__INTRODUCED_IN(x)=", "-DARTZIG_SHARED_PROPERTIES" };
     g.add(o.aosp.path(b, "frameworks/av/media/libaudioclient"), &.{
-        "ToneGenerator.cpp",       "AudioTrack.cpp",          "AudioSystem.cpp",          "AudioTrackShared.cpp",   "IAudioFlinger.cpp",
-        "AidlConversion.cpp",      "PlayerBase.cpp",           "TrackPlayerBase.cpp",    "AudioPolicy.cpp",
-        "AudioProductStrategy.cpp", "AudioVolumeGroup.cpp",    "PolicyAidlConversion.cpp", "VolumeGroupAttributes.cpp",
-        "AudioRecord.cpp",         "AudioEffect.cpp",          "RecordingActivityTracker.cpp",
+        "ToneGenerator.cpp",            "AudioTrack.cpp",           "AudioSystem.cpp",           "AudioTrackShared.cpp", "IAudioFlinger.cpp",
+        "AidlConversion.cpp",           "PlayerBase.cpp",           "TrackPlayerBase.cpp",       "AudioPolicy.cpp",      "AudioProductStrategy.cpp",
+        "AudioVolumeGroup.cpp",         "PolicyAidlConversion.cpp", "VolumeGroupAttributes.cpp", "AudioRecord.cpp",      "AudioEffect.cpp",
+        "RecordingActivityTracker.cpp",
     }, audio_includes.items, &audio_flags);
     g.add(o.aosp.path(b, "frameworks/av/media/audioaidlconversion"), &.{"AidlConversionCppNdk.cpp"}, audio_includes.items, &audio_flags);
     g.add(o.aosp.path(b, "frameworks/av/media/libaudiofoundation"), &.{ "AudioDeviceTypeAddr.cpp", "AudioGain.cpp", "AudioPort.cpp", "AudioProfile.cpp", "DeviceDescriptorBase.cpp" }, audio_includes.items, &audio_flags);
@@ -689,10 +665,10 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/native/services/audiomanager"), &.{"IAudioManager.cpp"}, audio_includes.items, &audio_flags);
     g.add(o.aosp.path(b, "system/media/audio_utils"), &.{ "mutex.cpp", "threads.cpp", "format.c", "StringUtils.cpp", "roundup.c", "minifloat.c", "Balance.cpp" }, audio_includes.items, &audio_flags);
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{
-        "android_media_AudioSystem.cpp",           "android_media_AudioTrack.cpp",        "android_media_AudioRecord.cpp",
-        "android_media_AudioAttributes.cpp",       "android_media_AudioDeviceAttributes.cpp", "android_media_AudioEffectDescriptor.cpp",
-        "android_media_AudioProductStrategies.cpp", "android_media_AudioVolumeGroups.cpp", "android_media_MicrophoneInfo.cpp",
-        "android_media_AudioTrackCallback.cpp",    "android_media_DeviceCallback.cpp",    "android_media_audio_common_AidlConversion.cpp",
+        "android_media_AudioSystem.cpp",            "android_media_AudioTrack.cpp",            "android_media_AudioRecord.cpp",
+        "android_media_AudioAttributes.cpp",        "android_media_AudioDeviceAttributes.cpp", "android_media_AudioEffectDescriptor.cpp",
+        "android_media_AudioProductStrategies.cpp", "android_media_AudioVolumeGroups.cpp",     "android_media_MicrophoneInfo.cpp",
+        "android_media_AudioTrackCallback.cpp",     "android_media_DeviceCallback.cpp",        "android_media_audio_common_AidlConversion.cpp",
         "android_media_ToneGenerator.cpp",
     }, audio_includes.items, &audio_flags);
     // Unsupported-by-default Bn bases mirror the generated service interfaces.
@@ -791,6 +767,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     link.addFileArg(o.input.native.getEmittedBin());
     link.addFileArg(o.input.verifier);
     link.addFileArg(o.gui.getEmittedBin());
+    link.addFileArg(o.hidl.getEmittedBin());
     link.addFileArg(o.ui.getEmittedBin());
     for (o.host_library_roots) |root| {
         link.addPrefixedDirectoryArg("-L", root);

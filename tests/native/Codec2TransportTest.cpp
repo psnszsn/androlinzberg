@@ -1,6 +1,7 @@
 // Exercise the pinned Codec2 work protocol and bufferpool across two authenticated
 // processes. This input sink is a transport fixture, not a decoder component.
 #include <azk/binder.h>
+#include <azk/graphics_buffer.h>
 #include <cassert>
 #include <aidl/android/hardware/media/c2/BnInputSink.h>
 #include <aidl/android/hardware/media/bufferpool2/IClientManager.h>
@@ -73,11 +74,18 @@ struct Sink final : c2::BnInputSink {
             assert(fstat(handle->data[0], &st) == 0 && st.st_ino == inode);
             AHardwareBuffer_Desc desc{};
             AHardwareBuffer_describe(buffer, &desc);
-            assert(desc.width == 48 && desc.height == 32);
+            const bool blob = desc.format == AHARDWAREBUFFER_FORMAT_BLOB;
+            assert(blob ? (desc.width == 1048579 && desc.height == 1 && desc.stride == desc.width)
+                        : (desc.width == 48 && desc.height == 32));
             void* pixels = nullptr;
             assert(AHardwareBuffer_lock(buffer, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN |
                     AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN, -1, nullptr, &pixels) == 0);
-            for (uint32_t y = 0; y < desc.height; ++y)
+            if (blob) {
+                for (uint32_t x = 0; x < desc.width; ++x) {
+                    assert(static_cast<uint8_t*>(pixels)[x] == 0xa5);
+                    static_cast<uint8_t*>(pixels)[x] = uint8_t(x);
+                }
+            } else for (uint32_t y = 0; y < desc.height; ++y)
                 for (uint32_t x = 0; x < desc.width; ++x) {
                     auto& pixel = static_cast<uint32_t*>(pixels)[y * desc.stride + x];
                     assert(pixel == 0xff123456);
@@ -164,21 +172,36 @@ int main(int argc, char** argv) {
         assert(munmap(address, 4096) == 0);
     }
 
-    {
+    for (bool blob : {false, true}) {
+        const auto baselineBuffers = azk_graphics_live_buffers();
+        const auto baselineBytes = azk_graphics_live_bytes();
         AHardwareBuffer_Desc desc{};
-        desc.width = 48;
-        desc.height = 32;
+        desc.width = blob ? 1048579 : 48;
+        desc.height = blob ? 1 : 32;
         desc.layers = 1;
-        desc.format = AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
+        desc.format = blob ? AHARDWAREBUFFER_FORMAT_BLOB : AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
         desc.usage = AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN |
-                AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN | AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
+                AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN | (blob ? 0 : AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE);
+        assert(AHardwareBuffer_isSupported(&desc));
+        if (blob) {
+            auto invalid = desc;
+            invalid.height = 2;
+            assert(!AHardwareBuffer_isSupported(&invalid));
+            invalid = desc;
+            invalid.usage |= AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
+            assert(!AHardwareBuffer_isSupported(&invalid));
+        }
         AHardwareBuffer* buffer = nullptr;
         assert(AHardwareBuffer_allocate(&desc, &buffer) == 0 && buffer);
         AHardwareBuffer_describe(buffer, &desc);
         void* pixels = nullptr;
-        assert(AHardwareBuffer_lock(buffer, AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN,
-                -1, nullptr, &pixels) == 0);
-        for (uint32_t y = 0; y < desc.height; ++y)
+        const int lockStatus = AHardwareBuffer_lock(buffer, AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN,
+                -1, nullptr, &pixels);
+        if (lockStatus) std::cerr << "HardwareBuffer lock: format=" << desc.format
+                << " width=" << desc.width << " status=" << lockStatus << std::endl;
+        assert(lockStatus == 0);
+        if (blob) memset(pixels, 0xa5, desc.width);
+        else for (uint32_t y = 0; y < desc.height; ++y)
             for (uint32_t x = 0; x < desc.width; ++x)
                 static_cast<uint32_t*>(pixels)[y * desc.stride + x] = 0xff123456;
         assert(AHardwareBuffer_unlock(buffer, nullptr) == 0);
@@ -197,11 +220,16 @@ int main(int argc, char** argv) {
         bundle.baseBlocks.clear();
         assert(AHardwareBuffer_lock(buffer, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN,
                 -1, nullptr, &pixels) == 0);
-        for (uint32_t y = 0; y < desc.height; ++y)
+        if (blob) {
+            for (uint32_t x = 0; x < desc.width; ++x)
+                assert(static_cast<uint8_t*>(pixels)[x] == uint8_t(x));
+        } else for (uint32_t y = 0; y < desc.height; ++y)
             for (uint32_t x = 0; x < desc.width; ++x)
                 assert(static_cast<uint32_t*>(pixels)[y * desc.stride + x] == 0xff654321);
         assert(AHardwareBuffer_unlock(buffer, nullptr) == 0);
         AHardwareBuffer_release(buffer);
+        assert(azk_graphics_live_buffers() == baselineBuffers);
+        assert(azk_graphics_live_bytes() == baselineBytes);
     }
 
     {
@@ -240,7 +268,7 @@ int main(int argc, char** argv) {
         static_cast<std::atomic<bool>*>(context)->store(true);
     });
     assert(AIBinder_linkToDeath(binder.get(), death, &died) == STATUS_OK);
-    std::cout << "PASS Codec2 metadata, versions, native FD, HardwareBuffer DMA-BUF identity and pooled ownership" << std::endl;
+    std::cout << "PASS Codec2 metadata, versions, native FD, HardwareBuffer DMA-BUF identity, shared BLOB bytes and pooled ownership" << std::endl;
     std::cout << "READY_DEATH" << std::endl;
     for (int i = 0; i < 500 && !died; ++i) std::this_thread::sleep_for(10ms);
     assert(died);

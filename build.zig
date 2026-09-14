@@ -343,15 +343,23 @@ pub fn build(b: *std.Build) void {
 
     const binder_cpp = @import("build/binder_cpp.zig").build(b, target, optimize, aosp, binder_ndk);
     b.step("binder-cpp", "Build the hosted C++ libbinder facade").dependOn(&binder_cpp.step);
-    const graphics = @import("build/graphics.zig").build(b, target, optimize, aosp, generated.native.gui);
+    const hidl = @import("build/hidl.zig").build(b, target, aosp, generated.native.hidl_header_roots, generated.native.hidl_sources, binder_cpp);
+    const graphics = @import("build/graphics.zig").build(b, target, optimize, aosp, generated.native.gui, hidl);
     const gui_host = graphics.gui;
     _ = @import("build/codec2.zig").build(b, .{
         .target = target,
         .aosp = aosp,
+        .renderengine_headers = generated.native.renderengine.headers,
+        .package_native_headers = generated.native.input_dispatcher.headers,
         .generated = .{ .headers = generated.native.surfaceflinger.headers, .sources = generated.native.surfaceflinger.sources },
         .gui_generated = generated.native.gui,
         .headers = generated.native.aidl_header_roots,
         .sources = generated.native.aidl_source_roots,
+        .hidl_headers = generated.native.hidl_header_roots,
+        .flag_headers = generated.native.aconfig_header_roots,
+        .flag_sources = generated.native.aconfig_sources,
+        .sysprop_headers = generated.native.codec2_sysprop.headers,
+        .sysprop_source = generated.native.codec2_sysprop.source,
         .binder = binder_cpp,
         .ndk = binder_ndk,
         .broker = binder_broker,
@@ -694,7 +702,7 @@ pub fn build(b: *std.Build) void {
         .aidl_header_roots = generated.native.aidl_header_roots,
         .aidl_source_roots = generated.native.aidl_source_roots,
         .hidl_header_roots = generated.native.hidl_header_roots,
-        .hidl_sources = generated.native.hidl_sources,
+        .hidl = hidl,
         .aconfig_header_roots = generated.native.aconfig_header_roots,
         .incremental_sysprop_headers = generated.native.incremental_sysprop_headers,
         .incremental_sysprop_source = generated.native.incremental_sysprop_source,

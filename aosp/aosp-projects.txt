@@ -68,6 +68,7 @@ platform/external/libffi
 platform/external/libphonenumber
 platform/external/libpng
 platform/external/libxml2
+platform/external/libyuv
 platform/external/lz4
 platform/external/lzma
 platform/external/mime-support
@@ -170,6 +171,8 @@ platform/system/libsysprop
 platform/system/libvintf
 platform/system/libziparchive
 platform/system/logging
+platform/system/memory/libdmabufheap
+platform/system/memory/libion
 platform/system/memory/libmeminfo
 platform/system/netd
 platform/system/security

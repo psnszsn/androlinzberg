@@ -44,7 +44,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 12,763 | 108 | 0 |
+| Framework | 13,275 | 104 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -406,3 +406,29 @@ The framework module suite, C++ audit, NDK ABI check and full APK integration
 suite passed after these changes. The APK run covered 28 cases and 88 recorded
 actions with zero structured runtime issues; the testkit passed 23 tests.
 The framework archive and dependency pin were refreshed together.
+
+## Native codec clients and gralloc follow-up (in progress)
+
+The original `IGraphicBufferProducer` and `IProducerListener` headers and
+implementations are restored. Their stock hybrid discovery now uses the same
+pinned HIDL runtime as framework JNI. `build/hidl.zig` owns that shared source
+selection; the host still has no hardware Binder service manager.
+
+The host gralloc backend now supports CPU-only BLOB buffers for the original
+`C2AllocatorBlob`. BLOB dimensions and stride count bytes; these allocations
+use shared CPU storage and never enter GBM/EGL. The stock `GraphicBuffer` lock
+path requires their raw-byte plane metadata. The Codec2 transport test passes
+with a 1 MiB BLOB, shared byte mutation, storage identity, invalid height/GPU
+usage rejection and release accounting, as well as the existing DMA-BUF case.
+The `codec2-allocator-test` also runs the original `C2AllocatorBlob`, checking
+capacity, map bounds, overlapping mappings, imported storage surviving exporter
+release, and zero retained buffers/bytes.
+
+The `codec2-client` target compiles the pinned CCodec, Codec2 client/component
+wrappers, allocators and native MediaCodec/NDK closure from the refreshed
+archive. The native GUI, GPU buffer and Codec2 transport tests pass.
+The C++ audit, NDK ABI check, framework module suite and all 28 APK tests pass.
+The APK run recorded 90 actions with no structured runtime issues; the testkit
+passed 23 tests. This static library is not yet linked into the production codec
+path; decoder service integration and replacement of the hosted JNI/NDK
+implementations remain pending.

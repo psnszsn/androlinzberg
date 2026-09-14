@@ -190,6 +190,11 @@ pub const cronet = .{
     },
 };
 
+pub const codec2_sysprop = .{
+    .input = SourcePath{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/MediaProperties.sysprop" },
+    .header = "android/sysprop/MediaProperties.sysprop.h",
+    .source = "MediaProperties.sysprop.cpp",
+};
 pub const incremental_sysprop = .{
     .input = SourcePath{ .source = .aosp, .path = "system/incremental_delivery/sysprop/IncrementalProperties.sysprop" },
     .header = "IncrementalProperties.sysprop.h",
@@ -199,7 +204,7 @@ pub const Logtags = struct { input: SourcePath, output: []const u8 };
 // Pinned bp2a inherits bp1a RELEASE_ACONFIG_FLAG_DEFAULT_PERMISSION=READ_ONLY.
 // Explicit release values can still grant READ_WRITE; do not invent runtime DeviceConfig
 // dependencies for flags the platform generates as read-only before Application creation.
-pub const Aconfig = struct { package: []const u8, container: []const u8, source: Source, declarations: []const []const u8, values: []const []const u8 = &.{}, cpp_header: bool = false, fixed_disabled_flags: []const []const u8 = &.{}, fixed_enabled_flags: []const []const u8 = &.{}, default_permission: enum { read_write, read_only } = .read_only, mode: enum { production, force_read_only } = .production };
+pub const Aconfig = struct { package: []const u8, container: []const u8, source: Source, declarations: []const []const u8, values: []const []const u8 = &.{}, cpp_header: bool = false, cpp_source: bool = false, fixed_disabled_flags: []const []const u8 = &.{}, fixed_enabled_flags: []const []const u8 = &.{}, default_permission: enum { read_write, read_only } = .read_only, mode: enum { production, force_read_only } = .production };
 pub const Sysprop = struct { scope: []const u8, input: SourcePath };
 pub const HidlLanguage = enum { java, java_constants };
 pub const Hidl = struct {
@@ -322,6 +327,18 @@ pub const CppAidl = struct {
 };
 
 pub const cpp_aidl = [_]CppAidl{
+    .{ .root = "frameworks/base/media/java/android/media/quality/aidl", .input = "android/media/quality/SoundProfileHandle.aidl", .output = "android/media/quality/SoundProfileHandle.cpp" },
+    .{ .root = "frameworks/base/media/java/android/media/quality/aidl", .input = "android/media/quality/ISoundProfileCallback.aidl", .output = "android/media/quality/ISoundProfileCallback.cpp" },
+    .{ .root = "frameworks/base/media/java/android/media/quality/aidl", .input = "android/media/quality/IPictureProfileCallback.aidl", .output = "android/media/quality/IPictureProfileCallback.cpp" },
+    .{ .root = "frameworks/base/media/java/android/media/quality/aidl", .input = "android/media/quality/IMediaQualityManager.aidl", .output = "android/media/quality/IMediaQualityManager.cpp" },
+    .{ .root = "frameworks/base/media/java/android/media/quality/aidl", .input = "android/media/quality/IAmbientBacklightCallback.aidl", .output = "android/media/quality/IAmbientBacklightCallback.cpp" },
+    .{ .root = "frameworks/base/media/java/android/media/quality/aidl", .input = "android/media/quality/IActiveProcessingPictureListener.aidl", .output = "android/media/quality/IActiveProcessingPictureListener.cpp" },
+    .{ .backend = .ndk, .root = "frameworks/av/media/module/aidlpersistentsurface/aidl", .input = "android/media/AidlColorAspects.aidl", .output = "android/media/AidlColorAspects.cpp" },
+    .{ .backend = .ndk, .root = "frameworks/av/media/module/aidlpersistentsurface/aidl", .input = "android/media/IAidlBufferSource.aidl", .output = "android/media/IAidlBufferSource.cpp" },
+    .{ .backend = .ndk, .root = "frameworks/av/media/module/aidlpersistentsurface/aidl", .input = "android/media/IAidlGraphicBufferSource.aidl", .output = "android/media/IAidlGraphicBufferSource.cpp" },
+    .{ .backend = .ndk, .root = "frameworks/av/media/module/aidlpersistentsurface/aidl", .input = "android/media/IAidlNode.aidl", .output = "android/media/IAidlNode.cpp" },
+    .{ .backend = .cpp, .root = "frameworks/av/media/libmedia/aidl", .input = "android/IGraphicBufferSource.aidl", .output = "android/IGraphicBufferSource.cpp" },
+    .{ .backend = .cpp, .root = "frameworks/av/media/libmedia/aidl", .input = "android/IOMXBufferSource.aidl", .output = "android/IOMXBufferSource.cpp" },
     // Pinned Codec2 V1 and bufferpool2 V2 service protocols.
     .{ .backend = .ndk, .vintf_stable = true, .version = 1, .hash = "d4c3897135ef9475dee2021ac39a41ae79c7690e", .root = "hardware/interfaces/media/c2/aidl/aidl_api/android.hardware.media.c2/1", .input = "android/hardware/media/c2/BaseBlock.aidl", .output = "android/hardware/media/c2/BaseBlock.cpp" },
     .{ .backend = .ndk, .vintf_stable = true, .version = 1, .hash = "d4c3897135ef9475dee2021ac39a41ae79c7690e", .root = "hardware/interfaces/media/c2/aidl/aidl_api/android.hardware.media.c2/1", .input = "android/hardware/media/c2/Block.aidl", .output = "android/hardware/media/c2/Block.cpp" },
@@ -764,6 +781,86 @@ pub const HidlCpp = struct {
 
 /// Soong libhidlbase's generated C++ protocol sources and headers.
 pub const hidl_cpp = [_]HidlCpp{
+    .{ .fqname = "android.hidl.memory.token@1.0", .sources = &.{"android/hidl/memory/token/1.0/MemoryTokenAll.cpp"} },
+    .{ .fqname = "android.hardware.graphics.bufferqueue@1.0", .sources = &.{
+        "android/hardware/graphics/bufferqueue/1.0/GraphicBufferProducerAll.cpp",
+        "android/hardware/graphics/bufferqueue/1.0/ProducerListenerAll.cpp",
+    } },
+    .{ .fqname = "android.hardware.graphics.bufferqueue@2.0", .sources = &.{
+        "android/hardware/graphics/bufferqueue/2.0/GraphicBufferProducerAll.cpp",
+        "android/hardware/graphics/bufferqueue/2.0/ProducerListenerAll.cpp",
+        "android/hardware/graphics/bufferqueue/2.0/types.cpp",
+    } },
+    .{ .fqname = "android.hardware.graphics.common@1.0", .sources = &.{
+        "android/hardware/graphics/common/1.0/types.cpp",
+    } },
+    .{ .fqname = "android.hardware.graphics.common@1.1", .sources = &.{
+        "android/hardware/graphics/common/1.1/types.cpp",
+    } },
+    .{ .fqname = "android.hardware.graphics.common@1.2", .sources = &.{
+        "android/hardware/graphics/common/1.2/types.cpp",
+    } },
+    .{ .fqname = "android.hardware.graphics.mapper@2.0", .sources = &.{
+        "android/hardware/graphics/mapper/2.0/MapperAll.cpp",
+        "android/hardware/graphics/mapper/2.0/types.cpp",
+    } },
+    .{ .fqname = "android.hardware.graphics.mapper@3.0", .sources = &.{
+        "android/hardware/graphics/mapper/3.0/MapperAll.cpp",
+        "android/hardware/graphics/mapper/3.0/types.cpp",
+    } },
+    .{ .fqname = "android.hardware.graphics.mapper@4.0", .sources = &.{
+        "android/hardware/graphics/mapper/4.0/MapperAll.cpp",
+        "android/hardware/graphics/mapper/4.0/types.cpp",
+    } },
+    .{ .fqname = "android.hardware.media.bufferpool@2.0", .sources = &.{
+        "android/hardware/media/bufferpool/2.0/AccessorAll.cpp",
+        "android/hardware/media/bufferpool/2.0/ClientManagerAll.cpp",
+        "android/hardware/media/bufferpool/2.0/ConnectionAll.cpp",
+        "android/hardware/media/bufferpool/2.0/ObserverAll.cpp",
+        "android/hardware/media/bufferpool/2.0/types.cpp",
+    } },
+    .{ .fqname = "android.hardware.media.c2@1.0", .sources = &.{
+        "android/hardware/media/c2/1.0/ComponentAll.cpp",
+        "android/hardware/media/c2/1.0/ComponentInterfaceAll.cpp",
+        "android/hardware/media/c2/1.0/ComponentListenerAll.cpp",
+        "android/hardware/media/c2/1.0/ComponentStoreAll.cpp",
+        "android/hardware/media/c2/1.0/ConfigurableAll.cpp",
+        "android/hardware/media/c2/1.0/InputSinkAll.cpp",
+        "android/hardware/media/c2/1.0/InputSurfaceAll.cpp",
+        "android/hardware/media/c2/1.0/InputSurfaceConnectionAll.cpp",
+        "android/hardware/media/c2/1.0/types.cpp",
+    } },
+    .{ .fqname = "android.hardware.media.c2@1.1", .sources = &.{
+        "android/hardware/media/c2/1.1/ComponentAll.cpp",
+        "android/hardware/media/c2/1.1/ComponentStoreAll.cpp",
+    } },
+    .{ .fqname = "android.hardware.media.c2@1.2", .sources = &.{
+        "android/hardware/media/c2/1.2/ComponentAll.cpp",
+        "android/hardware/media/c2/1.2/ComponentStoreAll.cpp",
+        "android/hardware/media/c2/1.2/types.cpp",
+    } },
+    .{ .fqname = "android.hardware.media.omx@1.0", .sources = &.{
+        "android/hardware/media/omx/1.0/GraphicBufferSourceAll.cpp",
+        "android/hardware/media/omx/1.0/OmxAll.cpp",
+        "android/hardware/media/omx/1.0/OmxBufferSourceAll.cpp",
+        "android/hardware/media/omx/1.0/OmxNodeAll.cpp",
+        "android/hardware/media/omx/1.0/OmxObserverAll.cpp",
+        "android/hardware/media/omx/1.0/OmxStoreAll.cpp",
+        "android/hardware/media/omx/1.0/types.cpp",
+    } },
+    .{ .fqname = "android.hardware.media@1.0", .sources = &.{
+        "android/hardware/media/1.0/types.cpp",
+    } },
+    .{ .fqname = "android.hidl.allocator@1.0", .sources = &.{
+        "android/hidl/allocator/1.0/AllocatorAll.cpp",
+    } },
+    .{ .fqname = "android.hidl.memory@1.0", .sources = &.{
+        "android/hidl/memory/1.0/MapperAll.cpp",
+        "android/hidl/memory/1.0/MemoryAll.cpp",
+    } },
+    .{ .fqname = "android.hidl.safe_union@1.0", .sources = &.{
+        "android/hidl/safe_union/1.0/types.cpp",
+    } },
     .{ .fqname = "android.hardware.drm@1.0", .sources = &.{
         "android/hardware/drm/1.0/CryptoFactoryAll.cpp",
         "android/hardware/drm/1.0/CryptoPluginAll.cpp",
@@ -2547,7 +2644,7 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "com.android.settingslib.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/packages/SettingsLib/aconfig/settingslib.aconfig"}, .values = &.{"build/release/aconfig/bp2a/com.android.settingslib.flags/write_system_preference_permission_enabled_flag_values.textproto"} },
     .{ .package = "com.android.internal.compat.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/com/android/internal/compat/compat_logging_flags.aconfig"} },
     .{ .package = "com.android.server.compat", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/services/core/java/com/android/server/compat/platform_compat_flags.aconfig"} },
-    .{ .package = "com.android.media.codec.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/av/media/aconfig/mediacodec_flags.aconfig"} },
+    .{ .package = "com.android.media.codec.flags", .cpp_source = true, .container = "system", .source = .aosp, .declarations = &.{"frameworks/av/media/aconfig/mediacodec_flags.aconfig"} },
     .{ .package = "com.android.internal.jank", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/com/android/internal/jank/flags.aconfig"} },
     .{ .package = "com.android.wifi.flags", .container = "com.android.wifi", .source = .aosp, .declarations = &.{"packages/modules/Wifi/flags/wifi_flags.aconfig"} },
     .{ .package = "com.android.healthfitness.flags", .container = "com.android.healthfitness", .source = .aosp, .declarations = &.{"packages/modules/HealthFitness/flags/healthfitness-flags.aconfig"} },
@@ -2623,11 +2720,11 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.view.contentcapture.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/view/contentcapture/flags/content_capture_flags.aconfig"} },
     .{ .package = "com.android.server.clipboard", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/services/core/java/com/android/server/clipboard/flags.aconfig"} },
     .{ .package = "android.media.audio", .container = "system", .source = .aosp, .declarations = &.{"frameworks/av/media/audio/aconfig/audio_framework.aconfig"} },
-    .{ .package = "android.media.codec", .container = "system", .source = .aosp, .declarations = &.{"frameworks/av/media/aconfig/codec_fwk.aconfig"} },
+    .{ .package = "android.media.codec", .cpp_source = true, .container = "system", .source = .aosp, .declarations = &.{"frameworks/av/media/aconfig/codec_fwk.aconfig"} },
     .{ .package = "com.android.internal.camera.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/av/camera/camera_platform.aconfig"} },
     .{ .package = "com.android.internal.telephony.flags", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/opt/telephony/flags/calling.aconfig", "frameworks/opt/telephony/flags/carrier.aconfig", "frameworks/opt/telephony/flags/data.aconfig", "frameworks/opt/telephony/flags/domainselection.aconfig", "frameworks/opt/telephony/flags/ims.aconfig", "frameworks/opt/telephony/flags/iwlan.aconfig", "frameworks/opt/telephony/flags/messaging.aconfig", "frameworks/opt/telephony/flags/misc.aconfig", "frameworks/opt/telephony/flags/network.aconfig", "frameworks/opt/telephony/flags/satellite.aconfig", "frameworks/opt/telephony/flags/subscription.aconfig", "frameworks/opt/telephony/flags/uicc.aconfig" } },
     .{ .package = "com.android.ranging.flags", .container = "com.android.uwb", .source = .aosp, .declarations = &.{"packages/modules/Uwb/ranging/flags/ranging_flags.aconfig"} },
-    .{ .package = "android.media.tv.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/media/java/android/media/tv/flags/media_tv.aconfig"} },
+    .{ .package = "android.media.tv.flags", .cpp_source = true, .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/media/java/android/media/tv/flags/media_tv.aconfig"} },
     .{ .package = "android.app.supervision.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/supervision/flags.aconfig"} },
     .{ .package = "android.hardware.usb.flags", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/core/java/android/hardware/usb/flags/system_sw_usb_flags.aconfig", "frameworks/base/core/java/android/hardware/usb/flags/usb_framework_flags.aconfig" } },
     .{ .package = "android.net.platform.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/net/flags.aconfig"} },

@@ -558,6 +558,15 @@ int main(int argc, char **argv) {
          "fallback");
   assert(!android::checkPermission(String16("android.permission.DUMP"),
                                    getpid(), 10000, false));
+  int32_t callingPid = -1, callingUid = -1;
+  assert(!android::checkCallingPermission(String16("android.permission.DUMP"),
+                                         &callingPid, &callingUid));
+  // The broker assigns ordinary clients Android application UIDs, independently of
+  // the desktop UID that owns the socket.
+  assert(callingPid == getpid() && callingUid >= 10000);
+  assert(!android::checkCallingPermission(String16("android.permission.DUMP")));
+  assert(!android::waitForDeclaredService<IGraphicBufferProducer>(
+      String16("dev.artzig.undeclared.regression")));
   std::cout << "PASS native properties share the session area; unavailable "
                "permission service denies access"
             << std::endl;

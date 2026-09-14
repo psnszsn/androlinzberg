@@ -1,6 +1,7 @@
 #pragma once
 #include <android/binder_manager.h>
 #include <binder/IBinder.h>
+#include <binder/IPCThreadState.h>
 #include <binder/IPermissionController.h>
 #include <utils/String8.h>
 #include <utils/Vector.h>
@@ -25,6 +26,9 @@ public:
   sp<IBinder> waitForService(const String16 &name) {
     return IBinder::fromNative(
         AServiceManager_waitForService(String8(name).c_str()));
+  }
+  bool isDeclared(const String16 &name) {
+    return AServiceManager_isDeclared(String8(name).c_str());
   }
   status_t addService(const String16 &name, const sp<IBinder> &service,
                       bool allowIsolated = false, int dumpsysFlags = 0) {
@@ -59,6 +63,14 @@ sp<INTERFACE> waitForService(const String16 &name) {
   return interface_cast<INTERFACE>(
       defaultServiceManager()->waitForService(name));
 }
+// AOSP IServiceManager.h::waitForDeclaredService, using the hosted service
+// manager's declaration query rather than Android's VINTF service manager.
+template <typename INTERFACE>
+sp<INTERFACE> waitForDeclaredService(const String16 &name) {
+  const sp<IServiceManager> manager = defaultServiceManager();
+  if (!manager->isDeclared(name)) return nullptr;
+  return interface_cast<INTERFACE>(manager->waitForService(name));
+}
 // Follows AOSP IServiceManager.cpp::checkPermission via IPermissionController.
 // A hosted process may intentionally omit system services: fail closed when
 // unavailable instead of waiting forever for Android system_server to restart.
@@ -72,5 +84,19 @@ inline bool checkPermission(const String16 &permission, pid_t pid, uid_t uid,
     ALOGW("Permission denied: %s uid=%u pid=%d%s", String8(permission).c_str(),
           uid, pid, controller ? "" : " (permission service unavailable)");
   return granted;
+}
+// AOSP IServiceManager.cpp::checkCallingPermission. The transport supplies
+// authenticated Binder caller identity to the existing permission client.
+inline bool checkCallingPermission(const String16 &permission, int32_t *outPid,
+                                   int32_t *outUid) {
+  auto *state = IPCThreadState::self();
+  const pid_t pid = state->getCallingPid();
+  const uid_t uid = state->getCallingUid();
+  if (outPid) *outPid = pid;
+  if (outUid) *outUid = uid;
+  return checkPermission(permission, pid, uid);
+}
+inline bool checkCallingPermission(const String16 &permission) {
+  return checkCallingPermission(permission, nullptr, nullptr);
 }
 } // namespace android

@@ -39,6 +39,7 @@ pub const GeneratedJvm = struct {
 pub const GeneratedNative = struct {
     media: @import("graphics.zig").Generated,
     hwui_stats: @import("graphics.zig").Generated,
+    codec2_sysprop: struct { headers: LazyPath, source: LazyPath },
     incremental_sysprop_headers: LazyPath,
     incremental_sysprop_source: LazyPath,
     aidl_header_roots: []const LazyPath,
@@ -46,6 +47,7 @@ pub const GeneratedNative = struct {
     hidl_header_roots: []const LazyPath,
     hidl_sources: []const LazyPath,
     aconfig_header_roots: []const LazyPath,
+    aconfig_sources: []const LazyPath,
     binder_graphics_headers: LazyPath,
     binder_graphics_sources: LazyPath,
     gui: @import("graphics.zig").Generated,
@@ -502,6 +504,7 @@ fn aidlCpp(
         if (entry.hash) |hash| run.addArg(b.fmt("--hash={s}", .{hash}));
         run.addPrefixedDirectoryArg("-I", aosp.path("hardware/interfaces/common/aidl"));
         run.addPrefixedDirectoryArg("-I", aosp.path("hardware/interfaces/common/fmq/aidl"));
+        run.addPrefixedDirectoryArg("-I", aosp.path("hardware/interfaces/graphics/common/aidl"));
         run.addPrefixedDirectoryArg("-I", aosp.path("frameworks/native/aidl/gui"));
         if (entry.vintf_stable) run.addArgs(&.{ "--structured", "--stability=vintf" });
         run.addArg("-h");
@@ -538,10 +541,11 @@ fn aconfigJava(
     b: *std.Build,
     aosp: *std.Build.Dependency,
     runner: *std.Build.Step.Compile,
-) struct { java: []const LazyPath, java_roots: []const LazyPath, cpp_headers: []const LazyPath } {
+) struct { java: []const LazyPath, java_roots: []const LazyPath, cpp_headers: []const LazyPath, cpp_sources: []const LazyPath } {
     var files: std.ArrayList(LazyPath) = .empty;
     var roots: std.ArrayList(LazyPath) = .empty;
     var headers: std.ArrayList(LazyPath) = .empty;
+    var cpp_sources: std.ArrayList(LazyPath) = .empty;
     var index: usize = 0;
     for (declarations.aconfig) |entry| {
         const mode = switch (entry.mode) {
@@ -576,7 +580,7 @@ fn aconfigJava(
         const cache_file = cache.addOutputFileArg(b.fmt("aconfig-{d}.pb", .{index}));
         cache.setName(b.fmt("create aconfig cache {s}", .{entry.package}));
 
-        if (entry.cpp_header) {
+        if (entry.cpp_header or entry.cpp_source) {
             const cpp = b.addRunArtifact(runner);
             cpp.addFileArg(aosp.path("prebuilts/build-tools/linux-x86/bin/aconfig"));
             cpp.addArgs(&.{ "create-cpp-lib", "--cache" });
@@ -586,6 +590,10 @@ fn aconfigJava(
             cpp.addArgs(&.{ "--mode", mode });
             cpp.setName(b.fmt("generate aconfig C++ header {s}", .{entry.package}));
             headers.append(b.allocator, output.path(b, "include")) catch @panic("OOM");
+            if (entry.cpp_source) {
+                const stem = std.mem.replaceOwned(u8, b.allocator, entry.package, ".", "_") catch @panic("OOM");
+                cpp_sources.append(b.allocator, output.path(b, b.fmt("{s}.cc", .{stem}))) catch @panic("OOM");
+            }
         }
         const java = b.addRunArtifact(runner);
         java.addFileArg(aosp.path("prebuilts/build-tools/linux-x86/bin/aconfig"));
@@ -605,7 +613,7 @@ fn aconfigJava(
     const result = files.toOwnedSlice(b.allocator) catch @panic("OOM");
     _ = exposePaths(b, "gen-aconfig", "Generate aconfig Java sources", result);
     _ = exposePaths(b, "gen-aconfig-cpp", "Generate fixed read-only aconfig C++ headers", headers.items);
-    return .{ .java = result, .java_roots = roots.toOwnedSlice(b.allocator) catch @panic("OOM"), .cpp_headers = headers.toOwnedSlice(b.allocator) catch @panic("OOM") };
+    return .{ .java = result, .java_roots = roots.toOwnedSlice(b.allocator) catch @panic("OOM"), .cpp_headers = headers.toOwnedSlice(b.allocator) catch @panic("OOM"), .cpp_sources = cpp_sources.toOwnedSlice(b.allocator) catch @panic("OOM") };
 }
 
 fn syspropJava(b: *std.Build, aosp: *std.Build.Dependency, tool: *std.Build.Step.Compile) []const LazyPath {
@@ -625,19 +633,21 @@ fn syspropJava(b: *std.Build, aosp: *std.Build.Dependency, tool: *std.Build.Step
     return result;
 }
 
-fn incrementalSyspropCpp(b: *std.Build, aosp: *std.Build.Dependency, tool: *std.Build.Step.Compile) struct { headers: LazyPath, source: LazyPath } {
-    const declaration = declarations.incremental_sysprop;
+fn syspropCpp(b: *std.Build, aosp: *std.Build.Dependency, tool: *std.Build.Step.Compile, declaration: anytype) struct { headers: LazyPath, source: LazyPath } {
     const run = b.addRunArtifact(tool);
     run.addArg("--header-dir");
-    const headers = run.addOutputDirectoryArg("incremental-sysprop-headers");
+    const headers = run.addOutputDirectoryArg("sysprop-headers");
     run.addArg("--public-header-dir");
-    _ = run.addOutputDirectoryArg("incremental-sysprop-public-headers");
+    _ = run.addOutputDirectoryArg("sysprop-public-headers");
     run.addArg("--source-dir");
-    const sources = run.addOutputDirectoryArg("incremental-sysprop-sources");
+    const sources = run.addOutputDirectoryArg("sysprop-sources");
     run.addArgs(&.{ "--include-name", declaration.header });
     run.addFileArg(sourcePath(b, aosp, declaration.input));
-    run.setName("generate IncFs sysprop C++");
-    return .{ .headers = headers, .source = sources.path(b, declaration.source) };
+    run.setName(b.fmt("generate sysprop C++ {s}", .{declaration.header}));
+    // sysprop_cpp emits the input basename; Soong exports it under include-name.
+    const exported = b.addWriteFiles();
+    _ = exported.addCopyFile(headers.path(b, std.fs.path.basename(declaration.header)), declaration.header);
+    return .{ .headers = exported.getDirectory(), .source = sources.path(b, declaration.source) };
 }
 
 fn javaTemplates(b: *std.Build, aosp: *std.Build.Dependency) []const LazyPath {
@@ -1214,7 +1224,7 @@ fn cronetJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Ste
 
 pub fn build(b: *std.Build, o: Options) Result {
     const runner = hostTool(b, "aosp-tool-runner", "artzig/tools/aosp-tool-runner.zig");
-    const gui = @import("graphics.zig").generate(b, o.aosp.path(""), runner, o.sysprop_cpp_tool);
+    var gui = @import("graphics.zig").generate(b, o.aosp.path(""), runner, o.sysprop_cpp_tool);
     const renderengine = @import("renderengine.zig").generate(b, o.aosp.path(""), runner, o.sysprop_cpp_tool);
     const perfetto = @import("perfetto.zig").generate(b, o.aosp.path(""), o.protobuf, o.protoc, o.perfetto_headers);
     const filter = hostTool(b, "filter-flagged-api", "tools/filter-flagged-api.zig");
@@ -1246,6 +1256,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     const aidl_java = aidlJava(b, o.aosp, runner);
     const hidl_java = hidlJava(b, o.aosp, runner);
     const hidl_cpp = hidlCpp(b, o.aosp, runner);
+    gui.hidl_headers = hidl_cpp.headers;
     const aidl_cpp = aidlCpp(b, o.aosp, runner);
     const input = @import("input.zig").generate(b, o.aosp.path(""), runner, gui, aidl_cpp.headers);
     const input_dispatcher = @import("input_dispatcher.zig").generate(b, o.aosp.path(""), runner, o.protoc, stats_tool);
@@ -1263,7 +1274,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     const logtags_java = logtagsJava(b, o.aosp);
     const aconfig_java = aconfigJava(b, o.aosp, runner);
     const sysprop_java = syspropJava(b, o.aosp, o.sysprop_tool);
-    const incremental_sysprop = incrementalSyspropCpp(b, o.aosp, o.sysprop_cpp_tool);
+    const incremental_sysprop = syspropCpp(b, o.aosp, o.sysprop_cpp_tool, declarations.incremental_sysprop);
+    const codec2_sysprop = syspropCpp(b, o.aosp, o.sysprop_cpp_tool, declarations.codec2_sysprop);
     const nano_java = nanoJava(b, o.aosp, o.protoc, o.javanano_tool, package_rewriter);
     const proto_java = protoJava(b, o.aosp, o.protoc, o.javastream_tool, package_rewriter);
     const stats_java = statsJava(b, o.aosp, stats_tool);
@@ -1289,6 +1301,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     for (hidl_cpp.headers) |path| path.addStepDependencies(aggregate);
     for (hidl_cpp.sources) |path| path.addStepDependencies(aggregate);
     for (aconfig_java.cpp_headers) |path| path.addStepDependencies(aggregate);
+    for (aconfig_java.cpp_sources) |path| path.addStepDependencies(aggregate);
     inline for (.{ gui, renderengine, perfetto, surfaceflinger, input, input_dispatcher, media }) |native| {
         native.headers.addStepDependencies(aggregate);
         native.sources.addStepDependencies(aggregate);
@@ -1298,6 +1311,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     res.apk.addStepDependencies(aggregate);
     mime_resources.addStepDependencies(aggregate);
     incremental_sysprop.source.addStepDependencies(aggregate);
+    codec2_sysprop.source.addStepDependencies(aggregate);
     for (fixtures.all()) |path| path.addStepDependencies(aggregate);
 
     return .{
@@ -1318,8 +1332,10 @@ pub fn build(b: *std.Build, o: Options) Result {
             .hidl_header_roots = hidl_cpp.headers,
             .hidl_sources = hidl_cpp.sources,
             .aconfig_header_roots = aconfig_java.cpp_headers,
+            .aconfig_sources = aconfig_java.cpp_sources,
             .binder_graphics_headers = graphics_headers,
             .binder_graphics_sources = graphics_sources,
+            .codec2_sysprop = .{ .headers = codec2_sysprop.headers, .source = codec2_sysprop.source },
             .incremental_sysprop_headers = incremental_sysprop.headers,
             .incremental_sysprop_source = incremental_sysprop.source,
             .gui = gui,

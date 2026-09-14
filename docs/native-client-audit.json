@@ -4,7 +4,7 @@
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 12763,
+      "unchanged": 13275,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -74,12 +74,8 @@
         "frameworks/native/libs/gui/BufferQueueCore.cpp",
         "frameworks/native/libs/gui/BufferQueueThreadState.cpp",
         "frameworks/native/libs/gui/GLConsumer.cpp",
-        "frameworks/native/libs/gui/IGraphicBufferProducer.cpp",
-        "frameworks/native/libs/gui/IProducerListener.cpp",
         "frameworks/native/libs/gui/SurfaceComposerClient.cpp",
         "frameworks/native/libs/gui/SyncFeatures.cpp",
-        "frameworks/native/libs/gui/include/gui/IGraphicBufferProducer.h",
-        "frameworks/native/libs/gui/include/gui/IProducerListener.h",
         "frameworks/native/libs/nativedisplay/surfacetexture/EGLConsumer.cpp",
         "frameworks/native/libs/nativewindow/ANativeWindow.cpp",
         "frameworks/native/libs/renderengine/RenderEngine.cpp",
@@ -116,7 +112,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "2c30028d0ebeceede55b6fe6193fc0b2dfdc8ebfda2e51a527410791d9caa114"
+      "archive_sha256": "235f7464c42cb981b136501a84127622378808caab28072e0cfd682e2c604f13"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -199,6 +195,18 @@
     },
     "external/sqlite": {
       "revision": "f696549905d99b79c505532e2bf7fc17a64a9671",
+      "tracked_clean": true
+    },
+    "system/memory/libion": {
+      "revision": "4e99dc359376c9d7cc0f96831b1822526fb6dd82",
+      "tracked_clean": true
+    },
+    "system/memory/libdmabufheap": {
+      "revision": "7b8541c73bf3d507d1ad551b224080109fdbc44c",
+      "tracked_clean": true
+    },
+    "external/libyuv": {
+      "revision": "741c38751c436f60c583110f617340b7f3322d94",
       "tracked_clean": true
     }
   },
@@ -433,6 +441,34 @@
       "Nullable AStatus and death-recipient cleanup follows pinned NDK code, including empty C++ scoped wrappers.",
       "Test executables use AndroidRuntime-style immediate process exit after preserving test results; original bufferpool eviction/invalidation workers are detached and live until process termination."
     ],
+    "production_codec_replaced": false
+  },
+  "codec2_native_clients_followup": {
+    "date": "2026-09-14",
+    "scope": "Original hybrid libgui producer interfaces, shared pinned HIDL runtime, stock native codec client build closure, and CPU-only gralloc BLOB storage. Production MediaCodec still uses the hosted app-side implementation.",
+    "source_selection": "build/codec2_sources.zig",
+    "restored_original_sources": [
+      "frameworks/native/libs/gui/IGraphicBufferProducer.cpp",
+      "frameworks/native/libs/gui/IProducerListener.cpp",
+      "frameworks/native/libs/gui/include/gui/IGraphicBufferProducer.h",
+      "frameworks/native/libs/gui/include/gui/IProducerListener.h"
+    ],
+    "validation": {
+      "gui-test": "passed, including original hybrid interfaces, GPU DMA-BUF identity and fence lifetime, buffer budgets, caller identity and absent-service checks",
+      "codec2-transport-test": "passed, including shared BLOB storage and mutation across processes, DMA-BUF identity, bufferpool transfer and service death",
+      "codec2-client": "passed: archive-based static compilation of original MediaCodec, CCodec, Codec2 and NDK codec/format clients; production linking and service activation remain pending",
+      "newpipe_launch": "passed with zero structured runtime issues",
+      "aggregate_acceptance": "not run",
+      "codec2-allocator-test": "passed: original C2AllocatorBlob capacity, map bounds, overlapping maps, imported storage after exporter release and zero retained buffers/bytes",
+      "codec2-bufferpool-test": "all 3 unchanged tests passed",
+      "cpp-audit": "passed",
+      "ndk-abi": "all 135 reference symbols exported",
+      "framework-module-test": "passed",
+      "integration_test_cases": 28,
+      "recorded_actions": 90,
+      "runtime_issues": 0,
+      "testkit_tests": 23
+    },
     "production_codec_replaced": false
   }
 }

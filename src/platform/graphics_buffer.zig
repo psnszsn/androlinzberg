@@ -1,5 +1,5 @@
 //! Linux graphics buffer backend for AOSP GrallocMapper/Allocator adapters.
-//! The wire handle contains only owned DMA-BUF descriptors and validated metadata.
+//! Wire handles contain owned DMA-BUF or linear BLOB storage and validated metadata.
 //! No process-local GBM pointer is transported. OS resource ownership uses std.Io.
 const std = @import("std");
 const Io = std.Io;
@@ -37,11 +37,12 @@ pub const Handle = extern struct {
     }
 };
 pub const Info = @import("graphics_types.zig").Info;
-const Buffer = struct { handle: *Handle, bo: *Bo, file: Io.File, info: Info, charged_bytes: u64, map_token: ?*anyopaque = null, mapped: bool = false, mapped_address: ?[*]u8 = null, mapped_stride: u32 = 0, cpu_view: ?[]u8 = null, cpu_write: bool = false };
+const Buffer = struct { handle: *Handle, bo: ?*Bo, mapping: ?Io.File.MemoryMap = null, file: Io.File, info: Info, charged_bytes: u64, map_token: ?*anyopaque = null, mapped: bool = false, mapped_address: ?[*]u8 = null, mapped_stride: u32 = 0, cpu_view: ?[]u8 = null, cpu_write: bool = false };
 const Imported = extern struct { width: u32, height: u32, format: u32, num_fds: u32, fds: [4]c_int, strides: [4]c_int, offsets: [4]c_int, modifier: u64 };
 const Format = struct { drm: u32, bpp: u32 };
 fn formatInfo(format: u32) ?Format {
     return switch (format) {
+        0x21 => .{ .drm = 0, .bpp = 1 }, // Android BLOB: byte storage, not an EGL image
         1 => .{ .drm = 0x34324241, .bpp = 4 }, // ABGR8888
         2 => .{ .drm = 0x34324258, .bpp = 4 }, // XBGR8888
         4 => .{ .drm = 0x36314752, .bpp = 2 }, // RGB565
@@ -52,13 +53,15 @@ fn formatInfo(format: u32) ?Format {
     };
 }
 fn valid(width: u32, height: u32, format: u32, layers: u32, usage: u64) bool {
-    // First production contract: single-plane RGB UI buffers. Reject protected,
+    // Single-plane RGB UI buffers and CPU-only BLOB codec allocations. Reject protected,
     // sensor/direct-data and vendor-specific usage instead of guessing a layout.
     const supported_usage: u64 = 0xff | (1 << 8) | (1 << 9) | (1 << 11) | (1 << 12) | (1 << 16) | (1 << 17);
     const cpu_read = usage & 0xf;
     const cpu_write = (usage >> 4) & 0xf;
     if ((cpu_read != 0 and cpu_read != 2 and cpu_read != 3) or
         (cpu_write != 0 and cpu_write != 2 and cpu_write != 3)) return false;
+    if (format == 0x21) return width > 0 and width <= Budget.max_buffer_bytes and height == 1 and
+        layers == 1 and usage & ~@as(u64, 0xff) == 0;
     return width > 0 and height > 0 and width <= 16384 and height <= 16384 and
         layers == 1 and formatInfo(format) != null and usage & ~supported_usage == 0;
 }
@@ -158,6 +161,8 @@ fn swappedChannels(info: Info) bool {
 fn validDescription(info: Info) bool {
     if (!valid(info.width, info.height, info.format, info.layers, info.usage) or info.fd < 0 or info.reserved != 0) return false;
     const format = formatInfo(info.format).?;
+    if (info.format == 0x21) return info.drm_format == 0 and info.modifier == 0 and
+        info.offset == 0 and info.stride == info.width;
     return (info.drm_format == format.drm or swappedChannels(info)) and info.stride % format.bpp == 0 and
         info.stride >= info.width * format.bpp and info.stride <= std.math.maxInt(i32) and info.offset <= std.math.maxInt(i32);
 }
@@ -188,23 +193,30 @@ fn register(bo: *Bo, info_in: Info, output: *?*Handle) i32 {
     info.stride = gbm_bo_get_stride(bo);
     info.offset = gbm_bo_get_offset(bo, 0);
     info.modifier = gbm_bo_get_modifier(bo);
+    return registerStorage(bo, file, info, output);
+}
+
+// Takes ownership of both resources, including on failure. A BLOB has no GBM object.
+fn registerStorage(bo: ?*Bo, file: Io.File, info_in: Info, output: *?*Handle) i32 {
+    var info = info_in;
+    info.fd = file.handle;
     // DMA-BUF stat size includes driver padding when reported. Otherwise retain
     // the full pitch/height extent, as the pinned allocator's size estimate does.
     const storage = file.length(io) catch {
         file.close(io);
-        gbm_bo_destroy(bo);
+        if (bo) |object| gbm_bo_destroy(object);
         return -22;
     };
     const cost = @max(storage, layoutBytes(info));
     if (!budget.retain(cost)) {
         file.close(io);
-        gbm_bo_destroy(bo);
+        if (bo) |object| gbm_bo_destroy(object);
         return -12;
     }
     const handle = native_handle_create(1, integer_count) orelse {
         budget.release(cost);
         file.close(io);
-        gbm_bo_destroy(bo);
+        if (bo) |object| gbm_bo_destroy(object);
         return -12;
     };
     encode(handle, info);
@@ -212,7 +224,7 @@ fn register(bo: *Bo, info_in: Info, output: *?*Handle) i32 {
         budget.release(cost);
         _ = native_handle_delete(handle);
         file.close(io);
-        gbm_bo_destroy(bo);
+        if (bo) |object| gbm_bo_destroy(object);
         return -12;
     };
     output.* = handle;
@@ -225,6 +237,20 @@ pub export fn azk_graphics_allocate(width: u32, height: u32, format: u32, layers
     defer unlock();
     const f = formatInfo(format).?;
     if (!budget.fits(@as(u64, width) * height * f.bpp)) return -12;
+    if (format == 0x21) {
+        // C2AllocatorBlob uses gralloc for compressed/PCM bytes. Keep those bytes
+        // in shared CPU storage; they never enter GBM, EGL or a rendering copy.
+        const raw = std.os.linux.memfd_create("azk-codec-blob", std.os.linux.MFD.CLOEXEC);
+        if (std.os.linux.errno(raw) != .SUCCESS) return -12;
+        const file: Io.File = .{ .handle = @intCast(raw), .flags = .{ .nonblocking = false } };
+        file.setLength(io, width) catch {
+            file.close(io);
+            return -12;
+        };
+        var id: u64 = undefined;
+        io.random(std.mem.asBytes(&id));
+        return registerStorage(null, file, .{ .width = width, .height = 1, .format = format, .layers = 1, .usage = usage, .drm_format = 0, .stride = width, .offset = 0, .modifier = 0, .id = id, .fd = file.handle }, output);
+    }
     const d = getDevice() orelse return -19;
     // Legacy GBM allocation can report INVALID (implicit layout) even with
     // USE_LINEAR. Request the explicit linear modifier for CPU-visible buffers
@@ -249,7 +275,7 @@ pub export fn azk_graphics_import(raw: *const Handle, output: *?*Handle) callcon
 /// Input FDs remain borrowed; registration owns a new descriptor and buffer ID.
 pub export fn azk_graphics_import_external(raw: *const Info, output: *?*Handle) callconv(.c) i32 {
     output.* = null;
-    if (!validDescription(raw.*)) return -22;
+    if (raw.format == 0x21 or !validDescription(raw.*)) return -22;
     lock();
     defer unlock();
     var info = raw.*;
@@ -257,7 +283,6 @@ pub export fn azk_graphics_import_external(raw: *const Info, output: *?*Handle) 
     return importBuffer(info, output);
 }
 fn importBuffer(info: Info, output: *?*Handle) i32 {
-    const d = getDevice() orelse return -19;
     // DMA-BUF stat sizes may be unavailable. For a linear layout validate the
     // minimum last-row extent when the exporter supplies a nonzero size.
     const borrowed: Io.File = .{ .handle = info.fd, .flags = .{ .nonblocking = false } };
@@ -267,6 +292,14 @@ fn importBuffer(info: Info, output: *?*Handle) i32 {
         const extent = @as(u64, info.offset) + @as(u64, info.stride) * (info.height - 1) + @as(u64, info.width) * formatInfo(info.format).?.bpp;
         if (extent > stat.size) return -22;
     }
+    if (info.format == 0x21) {
+        if (stat.kind != .file or stat.size != info.width) return -22;
+        var path_buffer: [64]u8 = undefined;
+        const path = std.fmt.bufPrint(&path_buffer, "/proc/self/fd/{d}", .{info.fd}) catch return -22;
+        const file = Io.Dir.cwd().openFile(io, path, .{ .mode = .read_write }) catch return -22;
+        return registerStorage(null, file, info, output);
+    }
+    const d = getDevice() orelse return -19;
     var desc: Imported = .{ .width = info.width, .height = info.height, .format = info.drm_format, .num_fds = 1, .fds = .{ info.fd, -1, -1, -1 }, .strides = .{ @intCast(info.stride), 0, 0, 0 }, .offsets = .{ @intCast(info.offset), 0, 0, 0 }, .modifier = info.modifier };
     const bo = gbm_bo_import(d, 0x5504, &desc, gbmUsage(info.usage)) orelse return -22;
     return register(bo, info, output);
@@ -276,11 +309,14 @@ pub export fn azk_graphics_free(handle: *const Handle) callconv(.c) i32 {
     defer unlock();
     for (buffers.items, 0..) |buffer, i| {
         if (buffer.handle != handle) continue;
-        if (buffer.mapped) gbm_bo_unmap(buffer.bo, buffer.map_token);
+        if (buffer.mapping) |mapping| {
+            var owned = mapping;
+            owned.destroy(io);
+        } else if (buffer.mapped) gbm_bo_unmap(buffer.bo.?, buffer.map_token);
         if (buffer.cpu_view) |view| alloc.free(view);
         _ = buffers.swapRemove(i);
         buffer.file.close(io);
-        gbm_bo_destroy(buffer.bo);
+        if (buffer.bo) |bo| gbm_bo_destroy(bo);
         _ = native_handle_delete(buffer.handle);
         budget.release(buffer.charged_bytes);
         return 0;
@@ -297,6 +333,7 @@ pub export fn azk_graphics_supported(w: u32, h: u32, f: u32, layers: u32, usage:
     if (!valid(w, h, f, layers, usage)) return 0;
     lock();
     defer unlock();
+    if (f == 0x21) return 1;
     const d = getDevice() orelse return -19;
     return @intFromBool(gbm_device_is_format_supported(d, formatInfo(f).?.drm, gbmUsage(usage)) != 0);
 }
@@ -313,18 +350,32 @@ pub export fn azk_graphics_lock(handle: *const Handle, usage: u64, left: i32, to
         (!entire_buffer and (right <= left or bottom <= top)) or
         right > b.info.width or bottom > b.info.height or (usage & 0xf != 0 and b.info.usage & 0xf == 0) or
         (usage & 0xf0 != 0 and b.info.usage & 0xf0 == 0)) return -22;
+    if (b.info.format == 0x21) {
+        var mapping = b.file.createMemoryMap(io, .{ .len = b.info.width, .protection = .{ .read = usage & 0xf != 0, .write = usage & 0xf0 != 0 } }) catch return -12;
+        mapping.read(io) catch {
+            mapping.destroy(io);
+            return -5;
+        };
+        address.* = mapping.memory.ptr;
+        b.mapping = mapping;
+        b.mapped = true;
+        b.cpu_write = usage & 0xf0 != 0;
+        pixel_stride.* = 1;
+        row_stride.* = @intCast(b.info.width);
+        return 0;
+    }
     var stride: u32 = 0;
     const flags: u32 = (if (usage & 0xf != 0 or swappedChannels(b.info)) @as(u32, 1) else 0) | (if (usage & 0xf0 != 0) @as(u32, 2) else 0);
-    const mapped = gbm_bo_map(b.bo, 0, 0, b.info.width, b.info.height, flags, &stride, &b.map_token) orelse return -5;
+    const mapped = gbm_bo_map(b.bo.?, 0, 0, b.info.width, b.info.height, flags, &stride, &b.map_token) orelse return -5;
     if (swappedChannels(b.info) or stride != b.info.stride) {
         const cost = @as(usize, b.info.stride) * b.info.height;
         if (!budget.fits(cost)) {
-            gbm_bo_unmap(b.bo, b.map_token);
+            gbm_bo_unmap(b.bo.?, b.map_token);
             b.map_token = null;
             return -12;
         }
         const view = alloc.alloc(u8, cost) catch {
-            gbm_bo_unmap(b.bo, b.map_token);
+            gbm_bo_unmap(b.bo.?, b.map_token);
             b.map_token = null;
             return -12;
         };
@@ -363,6 +414,16 @@ pub export fn azk_graphics_unlock(handle: *const Handle) callconv(.c) i32 {
     defer unlock();
     const b = lookup(handle) orelse return -22;
     if (!b.mapped) return -22;
+    if (b.mapping) |*mapping| {
+        var status: i32 = 0;
+        if (b.cpu_write) mapping.write(io) catch {
+            status = -5;
+        };
+        mapping.destroy(io);
+        b.mapping = null;
+        b.mapped = false;
+        return status;
+    }
     if (b.cpu_view) |view| {
         if (b.cpu_write) convertChannels(b.info, b.mapped_address.?[0 .. @as(usize, b.mapped_stride) * b.info.height], b.mapped_stride, view, b.info.stride);
         budget.bytes -= view.len;
@@ -371,7 +432,7 @@ pub export fn azk_graphics_unlock(handle: *const Handle) callconv(.c) i32 {
         b.cpu_view = null;
         b.mapped_address = null;
     }
-    gbm_bo_unmap(b.bo, b.map_token);
+    gbm_bo_unmap(b.bo.?, b.map_token);
     b.mapped = false;
     b.map_token = null;
     return 0;

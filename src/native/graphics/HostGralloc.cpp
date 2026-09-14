@@ -13,6 +13,10 @@
 
 namespace android::azk {
 namespace {
+// Android BLOB dimensions and stride are byte counts (C2AllocatorBlob).
+uint32_t storageBytesPerPixel(PixelFormat format) {
+  return format == HAL_PIXEL_FORMAT_BLOB ? 1 : bytesPerPixel(format);
+}
 class Mapper final : public GrallocMapper {
 public:
   bool isLoaded() const override { return true; }
@@ -38,7 +42,7 @@ public:
     return info.width == w && info.height == h &&
                    info.format == uint32_t(format) && info.layers == layers &&
                    info.usage == usage &&
-                   info.stride == stride * uint64_t(bytesPerPixel(format))
+                   info.stride == stride * uint64_t(storageBytesPerPixel(format))
                ? OK
                : BAD_VALUE;
   }
@@ -130,12 +134,12 @@ public:
     const auto status = azk_graphics_describe(handle, &info);
     if (status)
       return status;
-    // CPU layout metadata is defined here only for linear RGB buffers.
+    // CPU layout metadata describes linear RGB and uninterpreted BLOB bytes.
     if (info.modifier != 0)
       return INVALID_OPERATION;
     ui::PlaneLayout plane;
     plane.offsetInBytes = info.offset;
-    plane.sampleIncrementInBits = bytesPerPixel(info.format) * 8;
+    plane.sampleIncrementInBits = storageBytesPerPixel(info.format) * 8;
     plane.strideInBytes = info.stride;
     plane.widthInSamples = info.width;
     plane.heightInSamples = info.height;
@@ -153,6 +157,9 @@ public:
       plane.components.push_back(std::move(value));
     };
     switch (info.format) {
+    case HAL_PIXEL_FORMAT_BLOB:
+      component(Component::RAW, 0, 8);
+      break;
     case PIXEL_FORMAT_RGBA_8888:
     case PIXEL_FORMAT_RGBX_8888:
       component(Component::R, 0, 8);
@@ -214,7 +221,7 @@ public:
       azk_graphics_free(handle);
       return status;
     }
-    *stride = info.stride / bytesPerPixel(f);
+    *stride = info.stride / storageBytesPerPixel(f);
     if (import) {
       *output = handle;
       return OK;

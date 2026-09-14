@@ -1,4 +1,4 @@
-//! Pinned Codec2 transport and bufferpool2. Decoder integration uses these
+//! Pinned Codec2 clients, transport and bufferpool2. Decoder integration uses these
 //! original work/handle protocols rather than a second hosted codec protocol.
 const std = @import("std");
 const declarations = @import("generator_sources.zig");
@@ -15,13 +15,28 @@ pub fn isProtocol(entry: declarations.CppAidl) bool {
         std.mem.startsWith(u8, entry.root, "hardware/interfaces/media/bufferpool/aidl/");
 }
 
+pub fn isClientProtocol(entry: declarations.CppAidl) bool {
+    return std.mem.eql(u8, entry.root, "frameworks/av/media/module/aidlpersistentsurface/aidl") or
+        std.mem.eql(u8, entry.root, "frameworks/base/media/java/android/media/quality/aidl") or
+        (std.mem.eql(u8, entry.root, "frameworks/av/media/libmedia/aidl") and
+            (std.mem.eql(u8, entry.input, "android/IGraphicBufferSource.aidl") or
+                std.mem.eql(u8, entry.input, "android/IOMXBufferSource.aidl")));
+}
+
 pub const Options = struct {
     target: std.Build.ResolvedTarget,
     aosp: std.Build.LazyPath,
+    renderengine_headers: std.Build.LazyPath,
+    package_native_headers: std.Build.LazyPath,
     generated: graphics.Generated,
     gui_generated: graphics.Generated,
     headers: []const std.Build.LazyPath,
     sources: []const std.Build.LazyPath,
+    hidl_headers: []const std.Build.LazyPath,
+    flag_headers: []const std.Build.LazyPath,
+    flag_sources: []const std.Build.LazyPath,
+    sysprop_headers: std.Build.LazyPath,
+    sysprop_source: std.Build.LazyPath,
     binder: *std.Build.Step.Compile,
     ndk: *std.Build.Step.Compile,
     broker: *std.Build.Step.Compile,
@@ -58,6 +73,7 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
     mod.linkLibrary(o.gui);
     const library = b.addLibrary(.{ .name = "codec2_transport", .root_module = mod });
     b.step("codec2-transport", "Compile pinned Codec2 protocols and bufferpool2").dependOn(&library.step);
+    buildClients(b, o, flags, library);
 
     const pool_test = b.createModule(.{ .target = o.target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
     configure(b, pool_test, o);
@@ -94,4 +110,48 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
     const run = b.addRunArtifact(exe);
     b.step("codec2-params-test", "Run original Codec2 parameter and scalar contract tests").dependOn(&run.step);
     return library;
+}
+
+fn buildClients(b: *std.Build, o: Options, flags: []const []const u8, transport: *std.Build.Step.Compile) void {
+    const selected = @import("codec2_sources.zig");
+    const mod = b.createModule(.{ .target = o.target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true, .pic = true });
+    configure(b, mod, o);
+    const libc_headers = b.addWriteFiles();
+    _ = libc_headers.addCopyFile(o.aosp.path(b, "bionic/libc/include/bits/get_device_api_level_inlines.h"), "bits/get_device_api_level_inlines.h");
+    for ([_][]const u8{ "api-level.h", "versioning.h", "fdsan.h", "dlext.h" }) |name|
+        _ = libc_headers.addCopyFile(o.aosp.path(b, b.fmt("bionic/libc/include/android/{s}", .{name})), b.fmt("android/{s}", .{name}));
+    mod.addIncludePath(o.renderengine_headers);
+    mod.addIncludePath(o.package_native_headers);
+    mod.addIncludePath(libc_headers.getDirectory());
+    mod.addIncludePath(o.sysprop_headers);
+    for (o.hidl_headers) |header| mod.addIncludePath(header);
+    for (o.flag_headers) |header| mod.addIncludePath(header);
+    for (selected.includes) |path| mod.addIncludePath(o.aosp.path(b, path));
+    // Pinned C2EasyEnum specializes traits which newer host libc++ diagnoses.
+    // Keep AOSP's enum representation. Compat.h also includes Binder logging
+    // before each source supplies its own LOG_TAG.
+    const client_flags = std.mem.concat(b.allocator, []const u8, &.{ flags, &.{ "-Wno-invalid-specialization", "-Wno-macro-redefined", "-Wno-deprecated-declarations", "-Wno-deprecated-enum-enum-conversion", "-Wno-reorder-init-list", "-Wno-inconsistent-missing-override", "-Wno-nontrivial-memcall", "-D__ANDROID__", "-D__ANDROID_API__=36", "-D__ANDROID_MIN_SDK_VERSION__=36", "-include", b.pathResolve(&.{"src/native/codec2/Compat.h"}) } }) catch @panic("OOM");
+    mod.addCSourceFile(.{ .file = o.aosp.path(b, "system/memory/libion/ion.c"), .flags = &.{ "-std=gnu11", "-include", b.pathResolve(&.{"src/native/codec2/CompatC.h"}) } });
+    mod.addCSourceFile(.{ .file = o.aosp.path(b, "bionic/libc/bionic/get_device_api_level.cpp"), .language = .c, .flags = &.{ "-std=c11", "-D_Nonnull=" } });
+    mod.addCSourceFile(.{ .file = o.aosp.path(b, "system/core/libcutils/properties.cpp"), .flags = std.mem.concat(b.allocator, []const u8, &.{ client_flags, &.{ "-include", b.pathResolve(&.{"src/native/graphics/include/azk/graphics_compat.h"}) } }) catch @panic("OOM") });
+    for (selected.groups) |group| {
+        const group_flags = std.mem.concat(b.allocator, []const u8, &.{ client_flags, group.flags }) catch @panic("OOM");
+        mod.addCSourceFiles(.{ .root = o.aosp.path(b, group.root), .files = group.files, .flags = group_flags });
+    }
+    mod.addCSourceFile(.{ .file = o.sysprop_source, .flags = client_flags });
+    for (o.flag_sources) |source| mod.addCSourceFile(.{ .file = source, .flags = client_flags });
+    for (declarations.cpp_aidl, o.sources) |entry, root| {
+        if (isClientProtocol(entry)) if (entry.output) |source|
+            mod.addCSourceFile(.{ .file = root.path(b, source), .flags = client_flags });
+    }
+    const library = b.addLibrary(.{ .name = "codec2_client", .root_module = mod });
+    b.step("codec2-client", "Compile pinned MediaCodec, CCodec, Codec2 and NDK clients").dependOn(&library.step);
+    const allocator_test = b.createModule(.{ .target = o.target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
+    allocator_test.include_dirs = mod.include_dirs;
+    allocator_test.addCSourceFile(.{ .file = b.path("tests/native/Codec2AllocatorTest.cpp"), .flags = std.mem.concat(b.allocator, []const u8, &.{ client_flags, &.{"-UNDEBUG"} }) catch @panic("OOM") });
+    allocator_test.linkLibrary(library);
+    allocator_test.linkLibrary(transport);
+    allocator_test.linkLibrary(o.binder);
+    allocator_test.linkLibrary(o.ndk);
+    @import("surfaceflinger.zig").runTest(b, allocator_test, o.binder, o.ndk, o.broker, "codec2-allocator", "Verify original Codec2 linear allocation and imported storage", .standalone, null);
 }

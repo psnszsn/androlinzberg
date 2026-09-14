@@ -2,7 +2,7 @@
 const std = @import("std");
 const declarations = @import("generator_sources.zig");
 const binder = @import("binder_cpp.zig");
-pub const Generated = struct { headers: std.Build.LazyPath, sources: std.Build.LazyPath };
+pub const Generated = struct { headers: std.Build.LazyPath, sources: std.Build.LazyPath, hidl_headers: []const std.Build.LazyPath = &.{} };
 
 pub fn generate(b: *std.Build, aosp: std.Build.LazyPath, runner: *std.Build.Step.Compile, sysprop: *std.Build.Step.Compile) Generated {
     const headers = b.addWriteFiles();
@@ -123,10 +123,11 @@ pub fn configure(b: *std.Build, mod: *std.Build.Module, aosp: std.Build.LazyPath
     mod.addIncludePath(b.path("src/native/binder/include"));
     mod.addIncludePath(b.path("src/native/graphics/include"));
     mod.addIncludePath(generated.headers);
+    @import("hidl.zig").configure(b, mod, aosp, generated.hidl_headers);
     for (binder.includes ++ includes) |path| mod.addIncludePath(aosp.path(b, path));
 }
 pub const Libraries = struct { ui: *std.Build.Step.Compile, gui: *std.Build.Step.Compile };
-pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, aosp: std.Build.LazyPath, generated: Generated) Libraries {
+pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, aosp: std.Build.LazyPath, generated: Generated, hidl: *std.Build.Step.Compile) Libraries {
     const mod = b.createModule(.{ .root_source_file = b.path("src/platform/graphics_buffer.zig"), .target = target, .optimize = optimize, .link_libc = true, .link_libcpp = true, .pic = true });
     const ui = b.addLibrary(.{ .name = "ui_host", .root_module = mod });
     configure(b, mod, aosp, generated);
@@ -140,7 +141,9 @@ pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     mod.linkSystemLibrary("EGL", .{});
     const gui_mod = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true, .link_libcpp = true, .pic = true });
     configure(b, gui_mod, aosp, generated);
+    gui_mod.linkLibrary(hidl);
     gui_mod.addCSourceFiles(.{ .root = aosp.path(b, "frameworks/native/libs/gui"), .files = &gui_sources, .flags = flags });
+    gui_mod.addCSourceFiles(.{ .root = aosp.path(b, "frameworks/native/libs/gui/bufferqueue"), .files = &.{ "1.0/B2HProducerListener.cpp", "1.0/WProducerListener.cpp", "1.0/H2BGraphicBufferProducer.cpp", "1.0/H2BProducerListener.cpp", "1.0/Conversion.cpp", "2.0/B2HGraphicBufferProducer.cpp", "2.0/B2HProducerListener.cpp", "2.0/H2BGraphicBufferProducer.cpp", "2.0/H2BProducerListener.cpp", "2.0/types.cpp" }, .flags = flags });
     gui_mod.addCSourceFile(.{ .file = aosp.path(b, "frameworks/native/libs/nativewindow/ANativeWindow.cpp"), .flags = flags });
     gui_mod.addCSourceFile(.{ .file = b.path("src/native/graphics/SurfaceQueue.cpp"), .flags = flags });
     gui_mod.addCSourceFile(.{ .file = b.path("src/native/graphics/VideoSurface.cpp"), .flags = flags });
