@@ -563,3 +563,20 @@ These components are still exercised by native acceptance tests. Component
 store publication, capability negotiation, graphic-buffer video components
 and the production JNI/NDK switch remain pending. The original AOSP sources
 were already packaged, so this stage does not change the archive pin.
+
+### Codec2 component store transport
+
+The native service test now uses the original AIDL `ComponentStore` and stock
+`Codec2Client` across processes. Host component selection delegates allocator
+configuration and reflection to the original platform store. The unprivileged
+client discovers the declared service, lists five audio traits, queries
+interfaces, transfers BLOB input/output storage and decodes multi-output MP3
+work with duplicate timestamps. EOS and component-service death also pass.
+
+The test reuses the Codec2 process-exit wrapper after local cleanup. AOSP
+bufferpool eviction/invalidation workers remain detached for process lifetime;
+returning through glibc static destruction hangs on their condition variables.
+Immediate exit matches AndroidRuntime and the production launcher/service
+lifetime. The audio component tests, three original bufferpool tests and C++
+audit pass. Production component-store publication remains pending alongside
+video integration and original MediaCodec JNI/NDK selection.

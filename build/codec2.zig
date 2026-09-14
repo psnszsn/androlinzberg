@@ -97,8 +97,8 @@ pub fn build(b: *std.Build, o: Options) Libraries {
     pool_test.addIncludePath(o.aosp.path(b, "external/googletest/googletest"));
     pool_test.addIncludePath(o.aosp.path(b, "external/googletest/googletest/include"));
     pool_test.addCSourceFile(.{ .file = o.aosp.path(b, pool_root ++ "/tests/allocator.cpp"), .flags = flags });
-    pool_test.addCSourceFile(.{ .file = o.aosp.path(b, pool_root ++ "/tests/single.cpp"), .flags = flags ++ &[_][]const u8{"-Dmain=codec2BufferpoolTestMain"} });
-    pool_test.addCSourceFile(.{ .file = b.path("tests/native/Codec2BufferpoolMain.cpp"), .flags = flags });
+    pool_test.addCSourceFile(.{ .file = o.aosp.path(b, pool_root ++ "/tests/single.cpp"), .flags = flags ++ &[_][]const u8{"-Dmain=codec2ProcessTestMain"} });
+    pool_test.addCSourceFile(.{ .file = b.path("tests/native/Codec2ProcessMain.cpp"), .flags = flags });
     pool_test.addCSourceFile(.{ .file = o.aosp.path(b, "external/googletest/googletest/src/gtest-all.cc"), .flags = flags });
     pool_test.linkLibrary(library);
     pool_test.linkLibrary(o.binder);
@@ -194,7 +194,7 @@ pub fn clientTest(b: *std.Build, libraries: Libraries, platform: std.Build.LazyP
     mod.linkLibrary(binder);
     mod.linkLibrary(ndk);
     const exe = b.addExecutable(.{ .name = "codec2-client-test", .root_module = mod });
-    @import("surfaceflinger.zig").runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, "codec2-client", "Link the complete stock codec client and verify NDK crypto metadata ownership", .standalone, null, &.{platform});
+    @import("surfaceflinger.zig").runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, "codec2-client", "Link the complete stock codec client and verify NDK crypto metadata ownership", .standalone, null, &.{platform}, &.{});
 }
 
 pub fn ffmpegTest(b: *std.Build, libraries: Libraries, platform: std.Build.LazyPath, codec: *std.Build.Module, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile, broker: *std.Build.Step.Compile) void {
@@ -212,7 +212,21 @@ pub fn ffmpegTest(b: *std.Build, libraries: Libraries, platform: std.Build.LazyP
     mod.linkLibrary(binder);
     mod.linkLibrary(ndk);
     const exe = b.addExecutable(.{ .name = "codec2-ffmpeg-test", .root_module = mod });
-    @import("surfaceflinger.zig").runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, "codec2-ffmpeg", "Verify FFmpeg components through original Codec2 work and lifecycle", .standalone, null, &.{platform});
+    @import("surfaceflinger.zig").runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, "codec2-ffmpeg", "Verify FFmpeg components through original Codec2 work and lifecycle", .standalone, null, &.{platform}, &.{});
+
+    const service_mod = b.createModule(.{ .target = mod.resolved_target.?, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
+    service_mod.include_dirs = mod.include_dirs.clone(b.allocator) catch @panic("OOM");
+    service_mod.addCSourceFiles(.{ .root = b.path("src/native/codec2"), .files = &.{ "FfmpegComponent.cpp", "FfmpegStore.cpp" }, .flags = flags });
+    service_mod.addCSourceFile(.{ .file = b.path("tests/native/Codec2ServiceTest.cpp"), .flags = flags });
+    service_mod.addCSourceFile(.{ .file = b.path("tests/native/Codec2ProcessMain.cpp"), .flags = flags });
+    service_mod.linkLibrary(backend);
+    service_mod.linkSystemLibrary("libavcodec", .{ .needed = true, .use_pkg_config = .force });
+    service_mod.linkSystemLibrary("libavutil", .{ .needed = true, .use_pkg_config = .force });
+    service_mod.addObjectFile(platform);
+    service_mod.linkLibrary(binder);
+    service_mod.linkLibrary(ndk);
+    const service_exe = b.addExecutable(.{ .name = "codec2-service-test", .root_module = service_mod });
+    @import("surfaceflinger.zig").runBinaryTest(b, service_exe.getEmittedBin(), binder, ndk, broker, "codec2-service", "Decode through the stock Codec2 AIDL client and component service", .application, null, &.{platform}, &.{"android.hardware.media.c2.IComponentStore/software"});
 }
 
 fn buildResources(b: *std.Build, o: Options, client: *std.Build.Step.Compile, flags: []const []const u8) *std.Build.Step.Compile {
@@ -246,7 +260,7 @@ pub fn resourceTests(b: *std.Build, libraries: Libraries, platform: std.Build.La
         mod.linkLibrary(binder);
         mod.linkLibrary(ndk);
         const exe = b.addExecutable(.{ .name = name ++ "-test", .root_module = mod });
-        @import("surfaceflinger.zig").runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, name, "Run original " ++ source ++ " tests", .standalone, null, &.{platform});
+        @import("surfaceflinger.zig").runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, name, "Run original " ++ source ++ " tests", .standalone, null, &.{platform}, &.{});
         all.dependOn(&b.top_level_steps.get(name ++ "-test").?.step);
     }
 }

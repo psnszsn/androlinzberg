@@ -547,5 +547,12 @@
       "Select original MediaCodec JNI/NDK and delete the old hosted client implementation"
     ],
     "packaging": "All reused AOSP sources were already packaged; archive and dependency pin are unchanged"
+  },
+  "codec2_component_store_followup": {
+    "status": "Cross-process native acceptance; not published by production sessions yet",
+    "implementation": "Host component selection and traits delegate reflection/allocator policy to the original C2 platform store; original AIDL ComponentStore and Codec2Client handle transport",
+    "validation": "Codec2 service discovery from the broker declaration, five audio traits, missing/present interfaces, parameter reflection, BLOB input/output storage, multi-output MP3 decode with duplicate timestamps, EOS and component-service death pass across an unprivileged native client and separate service",
+    "process_exit": "The existing Codec2 process wrapper exits immediately after local cleanup, matching AndroidRuntime. Original bufferpool eviction/invalidation threads are detached and have no global shutdown API; glibc static condition-variable destruction waits forever under their live workers.",
+    "regressions": "Codec2 audio component tests, all three original bufferpool tests and C++ audit pass"
   }
 }

@@ -143,13 +143,17 @@ pub const ClientMode = enum { standalone, application, system };
 
 pub fn runTest(b: *std.Build, mod: *std.Build.Module, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile, broker: *std.Build.Step.Compile, name: []const u8, description: []const u8, mode: ClientMode, service: ?*std.Build.Step.Compile) void {
     const exe = b.addExecutable(.{ .name = b.fmt("{s}-test", .{name}), .root_module = mod });
-    runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, name, description, mode, service, &.{});
+    runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, name, description, mode, service, &.{}, &.{});
 }
 
-pub fn runBinaryTest(b: *std.Build, exe: std.Build.LazyPath, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile, broker: *std.Build.Step.Compile, name: []const u8, description: []const u8, mode: ClientMode, service: ?*std.Build.Step.Compile, extra_libraries: []const std.Build.LazyPath) void {
+pub fn runBinaryTest(b: *std.Build, exe: std.Build.LazyPath, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile, broker: *std.Build.Step.Compile, name: []const u8, description: []const u8, mode: ClientMode, service: ?*std.Build.Step.Compile, extra_libraries: []const std.Build.LazyPath, service_declarations: []const []const u8) void {
     const run = @import("command.zig").create(b);
     run.addArg("python3");
     run.addFileArg(b.path("tools/binder-facade-test.py"));
+    for (service_declarations) |declaration| {
+        run.addArg("--declare-service");
+        run.addArg(declaration);
+    }
     switch (mode) {
         .standalone => run.addArg("--standalone"),
         .system => run.addArg("--system-client"),

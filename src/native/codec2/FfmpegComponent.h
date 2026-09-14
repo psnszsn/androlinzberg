@@ -8,4 +8,8 @@ namespace azk::codec2 {
 c2_status_t createAudioComponent(const C2String &name, c2_node_id_t id,
         const std::shared_ptr<C2ReflectorHelper> &reflector,
         std::shared_ptr<C2Component> *component);
+c2_status_t createAudioInterface(const C2String &name, c2_node_id_t id,
+        const std::shared_ptr<C2ReflectorHelper> &reflector,
+        std::shared_ptr<C2ComponentInterface> *interface);
+std::vector<std::shared_ptr<const C2Component::Traits>> audioTraits();
 }

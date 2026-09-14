@@ -313,4 +313,31 @@ c2_status_t createAudioComponent(const C2String &name, c2_node_id_t id,
     }
     return C2_NOT_FOUND;
 }
+
+c2_status_t createAudioInterface(const C2String &name, c2_node_id_t id,
+        const std::shared_ptr<C2ReflectorHelper> &reflector,
+        std::shared_ptr<C2ComponentInterface> *interface) {
+    if (!interface || !reflector) return C2_BAD_VALUE;
+    interface->reset();
+    for (const auto &format : formats) if (name == format.name) {
+        *interface = std::make_shared<SimpleInterface<Interface>>(format.name, id,
+                std::make_shared<Interface>(format, reflector));
+        return C2_OK;
+    }
+    return C2_NOT_FOUND;
+}
+
+std::vector<std::shared_ptr<const C2Component::Traits>> audioTraits() {
+    std::vector<std::shared_ptr<const C2Component::Traits>> result;
+    for (const auto &format : formats) {
+        auto traits = std::make_shared<C2Component::Traits>();
+        traits->name = format.name;
+        traits->kind = C2Component::KIND_DECODER;
+        traits->domain = C2Component::DOMAIN_AUDIO;
+        traits->mediaType = format.mime;
+        traits->rank = 8;
+        result.push_back(std::move(traits));
+    }
+    return result;
+}
 } // namespace azk::codec2

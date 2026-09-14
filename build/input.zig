@@ -163,7 +163,7 @@ pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, aosp: std.Build.La
         .linker = linker,
         .native = &.{ library.getEmittedBin(), binder.getEmittedBin(), ndk.getEmittedBin() },
     });
-    @import("surfaceflinger.zig").runBinaryTest(b, rust_tests.file, binder, ndk, broker, "input-verifier", "Run pinned Rust gesture verification and keyboard classification regressions", .standalone, null, &.{});
+    @import("surfaceflinger.zig").runBinaryTest(b, rust_tests.file, binder, ndk, broker, "input-verifier", "Run pinned Rust gesture verification and keyboard classification regressions", .standalone, null, &.{}, &.{});
     const test_mod = b.createModule(.{ .target = target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
     configure(b, test_mod, aosp, gui, input, aidl);
     var test_flags: std.ArrayList([]const u8) = .empty;
