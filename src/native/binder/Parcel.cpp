@@ -348,7 +348,7 @@ status_t Parcel::readUtf8FromUtf16(std::string *str) const {
 }
 namespace {
 template <class T, class Read>
-status_t readNullableUtf8(const Parcel &parcel, std::optional<T> *out,
+status_t readNullableValue(const Parcel &parcel, std::optional<T> *out,
                           Read read) {
   const size_t position = parcel.dataPosition();
   int32_t peek;
@@ -364,7 +364,7 @@ status_t readNullableUtf8(const Parcel &parcel, std::optional<T> *out,
   return read(&**out);
 }
 template <class T, class Read>
-status_t readNullableUtf8(const Parcel &parcel, std::unique_ptr<T> *out,
+status_t readNullableValue(const Parcel &parcel, std::unique_ptr<T> *out,
                           Read read) {
   const size_t position = parcel.dataPosition();
   int32_t peek;
@@ -423,11 +423,11 @@ status_t Parcel::writeUtf8AsUtf16(const std::unique_ptr<std::string> &str) {
   return str ? writeUtf8AsUtf16(*str) : writeInt32(-1);
 }
 status_t Parcel::readUtf8FromUtf16(std::optional<std::string> *str) const {
-  return readNullableUtf8(
+  return readNullableValue(
       *this, str, [this](auto *value) { return readUtf8FromUtf16(value); });
 }
 status_t Parcel::readUtf8FromUtf16(std::unique_ptr<std::string> *str) const {
-  return readNullableUtf8(
+  return readNullableValue(
       *this, str, [this](auto *value) { return readUtf8FromUtf16(value); });
 }
 status_t
@@ -448,13 +448,19 @@ Parcel::readUtf8VectorFromUtf16Vector(std::vector<std::string> *v) const {
 }
 status_t Parcel::readUtf8VectorFromUtf16Vector(
     std::optional<std::vector<std::optional<std::string>>> *v) const {
-  return readNullableUtf8(
+  return readNullableValue(
       *this, v, [this](auto *values) { return readUtf8Vector(*this, values); });
 }
 status_t Parcel::readUtf8VectorFromUtf16Vector(
     std::unique_ptr<std::vector<std::unique_ptr<std::string>>> *v) const {
-  return readNullableUtf8(
+  return readNullableValue(
       *this, v, [this](auto *values) { return readUtf8Vector(*this, values); });
+}
+status_t Parcel::readString16Vector(
+    std::optional<std::vector<std::optional<String16>>> *v) const {
+  // WorkSource uses AOSP's nullable vector and nullable String16 wire format.
+  return readNullableValue(
+      *this, v, [this](auto *values) { return readVector(values); });
 }
 const char *Parcel::readCString() const {
   if (!dataAvail())

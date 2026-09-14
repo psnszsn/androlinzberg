@@ -242,6 +242,9 @@ public:
   status_t writeString16(const String16 &s) {
     return writeString16(s.c_str(), s.size());
   }
+  status_t writeString16(const std::optional<String16> &s) {
+    return s ? writeString16(*s) : writeInt32(-1);
+  }
   status_t writeString16(const char16_t *, size_t);
   String16 readString16() const {
     String16 s;
@@ -625,6 +628,12 @@ public:
   status_t readString16Vector(std::vector<String16> *v) const {
     return readVector(v);
   }
+  status_t writeString16Vector(
+      const std::optional<std::vector<std::optional<String16>>> &v) {
+    return v ? writeVector(*v) : writeInt32(-1);
+  }
+  status_t readString16Vector(
+      std::optional<std::vector<std::optional<String16>>> *v) const;
   // AOSP Parcel::write/readData(vector<enum>): the backing integers are
   // contiguous, including byte-backed enums (which are not padded per item).
   template <class T> status_t writeEnumVector(const std::vector<T> &v) {
@@ -731,6 +740,12 @@ public:
       return writeUtf8AsUtf16(v);
     else
       return writeParcelable(v);
+  }
+  status_t writeData(const std::optional<String16> &v) {
+    return writeString16(v);
+  }
+  status_t readData(std::optional<String16> *v) const {
+    return readString16(v);
   }
   template <class T> status_t writeData(const sp<T> &v) {
     return writeStrongBinder(v);

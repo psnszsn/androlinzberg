@@ -652,6 +652,28 @@ int main(int argc, char **argv) {
   }
   parcelTests();
   {
+    using Names = std::optional<std::vector<std::optional<String16>>>;
+    const Names names = std::vector<std::optional<String16>>{String16("worker"), std::nullopt, String16("")};
+    Parcel p;
+    assert(p.writeString16Vector(names) == OK);
+    assert(p.writeString16Vector(Names{}) == OK);
+    p.setDataPosition(0);
+    // Inspect the stock wire representation independently of the vector reader.
+    assert(p.readInt32() == 3 && p.readString16() == String16("worker"));
+    assert(p.readInt32() == -1 && p.readString16() == String16(""));
+    assert(p.readInt32() == -1 && p.dataAvail() == 0);
+    p.setDataPosition(0);
+    Names result;
+    assert(p.readString16Vector(&result) == OK && result == names);
+    assert(p.readString16Vector(&result) == OK && !result);
+    p.setDataSize(0);
+    p.setDataPosition(0);
+    assert(p.writeInt32(-2) == OK);
+    p.setDataPosition(0);
+    assert(p.readString16Vector(&result) == UNEXPECTED_NULL);
+    pass("nullable WorkSource names preserve null containers, null elements and stock invalid-size behavior");
+  }
+  {
     Parcel parcel;
     auto object = sp<Listener>::make();
     wp<Listener> weak = object;
