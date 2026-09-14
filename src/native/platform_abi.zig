@@ -147,3 +147,8 @@ pub export fn azk_egl_bindTexImage(display: Handle, surface: Handle, buffer: i32
 pub export fn azk_egl_releaseTexImage(display: Handle, surface: Handle, buffer: i32) callconv(.c) u32 {
     return egl_backend.bindTexImage(g_io, display, surface, buffer, false);
 }
+
+// dev.artzig EGL regression observation; no Android framework test hooks.
+pub export fn azk_egl_last_buffer_inode(surface: Handle) callconv(.c) u64 {
+    return egl_backend.lastBufferInode(g_io, surface);
+}

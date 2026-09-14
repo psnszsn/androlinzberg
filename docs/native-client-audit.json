@@ -357,9 +357,10 @@
     "native_adaptations": [
       "src/native/egl_backend.zig",
       "src/native/EglWindow.cpp",
-      "src/platform/egl_support.zig"
+      "src/platform/egl_support.zig",
+      "src/native/egl_window.zig"
     ],
-    "test_helper": "src/binder/egl_interop_test.zig registers only dev.artzig.StockEgl15Smoke",
+    "test_helper": "src/binder/egl_interop_test.zig registers only dev.artzig.StockEgl15Smoke and StockEglWindowSmoke",
     "validation": {
       "native_build_cpp_audit": "passed",
       "egl_test": "passed",
@@ -370,8 +371,13 @@
       "testkit_tests": 23,
       "recorded_actions": 88,
       "runtime_issues": 0,
-      "aggregate_acceptance": "not run"
-    }
+      "aggregate_acceptance": "not run",
+      "direct_dma_buf_identity": "passed",
+      "held_images_delayed_consumers_and_drawable_retirement": "passed",
+      "graphics_buffer_and_budget_tests": "passed",
+      "direct_handoff_verified_on": "2026-09-14"
+    },
+    "buffer_handoff": "System Mesa GBM DMA-BUFs attach directly to stock Surface; Zig retains leases until Android release fences signal. No presentation GPU copy. Gralloc v2 preserves DRM storage format independently of Android CPU mapping format and stride."
   },
   "native_display_followup": {
     "scope": "Original ADisplay client to SurfaceFlinger; excludes fixed hostgraphics display metadata. Hosted compositor/display policy remains.",

@@ -12,10 +12,18 @@ import javax.microedition.khronos.egl.EGLContext as LegacyContext
 
 /** Exercises the original EGL JNI against real Android buffer-queue consumers. */
 internal object StockEglWindowSmoke {
+    private external fun nativeSameBuffer(library: String, surface: Long,
+        buffer: android.hardware.HardwareBuffer): Boolean
+    private fun verifyStorage(image: android.media.Image, surface: Long) {
+        val path = checkNotNull(System.getenv("ARTZIG_INSTALL_ROOT")) + "/lib/libandroid_platform.so"
+        checkNotNull(image.hardwareBuffer).use { check(nativeSameBuffer(path, surface, it)) {
+            "EGL copied the frame: consumer storage differs from Mesa's rendered DMA-BUF"
+        } }
+    }
     fun run() {
         modern()
         legacy()
-        println("stock-egl-window: EGL14/EGL10 pixels, timestamps, GL state, resize and ownership passed")
+        println("stock-egl-window: EGL14/EGL10 DMA-BUF identity, pixels, timestamps, GL state, resize and held-buffer ownership passed")
     }
 
     private fun modern() {
@@ -36,7 +44,7 @@ internal object StockEglWindowSmoke {
             window = EGL14.eglCreateWindowSurface(display, configs[0], reader.surface, intArrayOf(EGL14.EGL_NONE), 0)
             check(window != EGL14.EGL_NO_SURFACE) { "create window: ${EGL14.eglGetError().toString(16)}" }
             check(EGL14.eglMakeCurrent(display, window, window, context))
-            repeat(3) { frame ->
+            repeat(20) { frame ->
                 paint(16, 8)
                 val timestamp = 123_456_789L + frame
                 check(EGLExt.eglPresentationTimeANDROID(display, window, timestamp))
@@ -45,7 +53,61 @@ internal object StockEglWindowSmoke {
                 check(EGL14.eglGetCurrentSurface(EGL14.EGL_DRAW) == window)
                 check(GLES20.glIsEnabled(GLES20.GL_SCISSOR_TEST))
                 check(GLES20.glGetError() == GLES20.GL_NO_ERROR)
-                verifyImage(reader, timestamp)
+                verifyImage(reader, timestamp, window.nativeHandle)
+            }
+            paint(16, 8)
+            check(EGL14.eglSwapBuffers(display, window))
+            checkNotNull(reader.acquireNextImage()).use { held ->
+                verifyStorage(held, window.nativeHandle)
+                repeat(12) {
+                    GLES20.glDisable(GLES20.GL_SCISSOR_TEST)
+                    GLES20.glClearColor(0f, 1f, 0f, 1f)
+                    GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+                    check(EGL14.eglSwapBuffers(display, window))
+                    checkNotNull(reader.acquireNextImage()).use { next ->
+                        verifyStorage(next, window.nativeHandle)
+                        val p = next.planes[0]
+                        check((p.buffer.get(1).toInt() and 255) == 255)
+                    }
+                }
+                // Map only after repeated reuse of the other buffers: a CPU
+                // snapshot taken earlier could hide premature producer reuse.
+                val p = held.planes[0]
+                val offset = p.rowStride + p.pixelStride
+                check((0..3).map { p.buffer.get(offset + it).toInt() and 255 } == listOf(0, 0, 255, 255))
+            }
+            // Let another thread release two acquired images after the
+            // producer has filled the remaining queue. Exercise backpressure
+            // without requiring the consumer to enter EGL on this thread.
+            fun solid(r: Float, g: Float, b: Float) {
+                GLES20.glDisable(GLES20.GL_SCISSOR_TEST)
+                GLES20.glClearColor(r, g, b, 1f)
+                GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+                check(EGL14.eglSwapBuffers(display, window))
+            }
+            solid(0f, 0f, 1f)
+            checkNotNull(reader.acquireNextImage()).use { first ->
+                solid(0f, 1f, 0f)
+                checkNotNull(reader.acquireNextImage()).use { second ->
+                    solid(1f, 0f, 0f)
+                    val releaseError = java.util.concurrent.atomic.AtomicReference<Throwable>()
+                    val releaser = Thread {
+                        try {
+                            Thread.sleep(100)
+                            check((first.planes[0].buffer.get(2).toInt() and 255) == 255)
+                            check((second.planes[0].buffer.get(1).toInt() and 255) == 255)
+                        } catch (failure: Throwable) { releaseError.set(failure) }
+                        finally { first.close(); second.close() }
+                    }
+                    releaser.start()
+                    try { solid(1f, 1f, 1f) } finally { releaser.join(5000) }
+                    check(!releaser.isAlive)
+                    releaseError.get()?.let { throw it }
+                }
+            }
+            checkNotNull(reader.acquireLatestImage()).use { latest ->
+                verifyStorage(latest, window.nativeHandle)
+                check((0..3).all { (latest.planes[0].buffer.get(it).toInt() and 255) == 255 })
             }
             reader.close()
             check(!EGL14.eglSwapBuffers(display, window))
@@ -55,6 +117,28 @@ internal object StockEglWindowSmoke {
             check(EGL14.eglGetCurrentSurface(EGL14.EGL_DRAW) == window)
             check(EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT))
             window = EGL14.EGL_NO_SURFACE
+
+            val retainedReader = ImageReader.newInstance(16, 8, PixelFormat.RGBA_8888, 2)
+            try {
+                window = EGL14.eglCreateWindowSurface(display, configs[0], retainedReader.surface, intArrayOf(EGL14.EGL_NONE), 0)
+                check(window != EGL14.EGL_NO_SURFACE)
+                check(EGL14.eglMakeCurrent(display, window, window, context))
+                paint(16, 8)
+                check(EGL14.eglSwapBuffers(display, window))
+                checkNotNull(retainedReader.acquireNextImage()).use { retained ->
+                    verifyStorage(retained, window.nativeHandle)
+                    check(EGL14.eglDestroySurface(display, window))
+                    check(!EGL14.eglMakeCurrent(display, window, window, context))
+                    check(EGL14.eglGetError() == EGL14.EGL_BAD_SURFACE)
+                    check(EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT))
+                    window = EGL14.EGL_NO_SURFACE
+                    // Importing retains storage independently of both Mesa's
+                    // drawable and our native-window adapter.
+                    val p = retained.planes[0]
+                    val offset = p.rowStride + p.pixelStride
+                    check((0..3).map { p.buffer.get(offset + it).toInt() and 255 } == listOf(0, 0, 255, 255))
+                }
+            } finally { retainedReader.close() }
 
             val consumer = SurfaceTexture(false)
             consumer.setDefaultBufferSize(16, 8)
@@ -68,7 +152,7 @@ internal object StockEglWindowSmoke {
                 val texture = IntArray(1)
                 GLES20.glGenTextures(1, texture, 0)
                 consumer.attachToGLContext(texture[0])
-                for ((width, height) in listOf(16 to 8, 32 to 12, 7 to 5)) {
+                for ((width, height) in (listOf(16 to 8, 32 to 12, 7 to 5) + List(20) { 7 to 5 })) {
                     consumer.setDefaultBufferSize(width, height)
                     paint(width, height)
                     check(EGL14.eglSwapBuffers(display, window)) { "resize swap: ${EGL14.eglGetError().toString(16)}" }
@@ -134,10 +218,11 @@ internal object StockEglWindowSmoke {
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
     }
 
-    private fun verifyImage(reader: ImageReader, timestamp: Long?) {
+    private fun verifyImage(reader: ImageReader, timestamp: Long?, surface: Long? = null) {
         val image = checkNotNull(reader.acquireNextImage()) { "EGL did not deliver an Android image" }
         try {
             if (timestamp != null) check(image.timestamp == timestamp)
+            if (surface != null) verifyStorage(image, surface)
             val plane = image.planes[0]
             val bytes = plane.buffer
             fun pixel(x: Int, y: Int, r: Int, g: Int, b: Int) {

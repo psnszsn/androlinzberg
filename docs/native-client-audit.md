@@ -231,9 +231,12 @@ commands and generated reports.
   and an existing SurfaceFlinger do not remove these modifications.
 - EGL10, EGL14, EGL15 and EGLExt compile their original JNI. The host EGL
   driver adapter translates Android windows to Mesa GBM drawables and delivers
-  GPU-rendered frames through the original ANativeWindow/BufferQueue producer.
-  It owns DMA-BUF imports, acquire/release fences, drawable resizing and deferred
-  destruction. Presentation remains in the existing compositor backend.
+  the rendered DMA-BUF itself through the original Surface/BufferQueue producer.
+  It uses system Mesa and has no presentation blit or private copy context.
+  Zig owns GBM leases, release-fence waits, resizing and deferred destruction.
+  Explicit CPU mappings adapt channel order and row stride when Android's
+  requested format differs from Mesa's storage. GPU presentation remains in
+  the existing compositor backend.
   Generated GLES bindings remain reused with native fixes for JNI array
   bases/bounds and host pixel ordering.
 - HardwareRenderer snapshots use AOSP's AImageReader / RenderProxy algorithm.
@@ -356,13 +359,15 @@ The refreshed framework archive and its dependency pin are current, and the
 build is installed in `zig-out`. Source hashes and validation counts are in
 `native-client-audit.json`.
 
-The EGL follow-up also passed the native EGL lifetime test, C++ audit,
-framework module and compatibility suites, NewPipe launch, and all 28 APK
-integration cases (23 testkit tests). The final APK run followed the display
-validation and disconnect fixes. Window tests check EGL10/EGL14 pixels,
-timestamps, GL state, SurfaceTexture resize and independent native ownership.
-The two original JNI files match the pinned reference byte for byte; the
-archive contents and dependency pin are unchanged by this follow-up.
+The EGL direct-buffer follow-up passed the native EGL lifetime test, C++ audit,
+framework module and compatibility suites, graphics buffer and budget tests,
+NewPipe launch, and all 28 APK integration cases (23 testkit tests). The 88
+recorded actions had zero structured runtime issues. Window regressions verify
+that consumers receive Mesa's rendered DMA-BUF, along with colors, timestamps,
+GL state, delayed releases, SurfaceTexture resize and retained images surviving
+drawable destruction. Explicit CPU readback also covers format and stride
+translation. The original JNI sources and framework archive are unchanged by
+this follow-up; `zig-out` contains the refreshed build.
 
 The ADisplay follow-up passed framework module/compatibility tests, the
 GraphicBuffer/HardwareBuffer/SyncFence, Surface queue and SurfaceControl/vsync

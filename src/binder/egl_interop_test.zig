@@ -135,6 +135,25 @@ fn nativeDisplaySnapshot(env: Env, _: jni.jobject, path: jni.jstring) callconv(.
     return result;
 }
 
+fn nativeSameBuffer(env: Env, _: jni.jobject, path: jni.jstring, raw_surface: jni.jlong, buffer: jni.jobject) callconv(.c) jni.jboolean {
+    const name = env.*.*.GetStringUTFChars.?(env, path, null) orelse return jni.JNI_FALSE;
+    defer env.*.*.ReleaseStringUTFChars.?(env, path, name);
+    var library = std.DynLib.open(std.mem.span(name)) catch return jni.JNI_FALSE;
+    defer library.close();
+    const from_java = library.lookup(*const fn (Env, jni.jobject) callconv(.c) Handle, "AHardwareBuffer_fromHardwareBuffer") orelse return jni.JNI_FALSE;
+    const get_handle = library.lookup(*const fn (Handle) callconv(.c) Handle, "AHardwareBuffer_getNativeHandle") orelse return jni.JNI_FALSE;
+    const inode = library.lookup(*const fn (Handle) callconv(.c) u64, "azk_egl_last_buffer_inode") orelse return jni.JNI_FALSE;
+    const ahb = from_java(env, buffer) orelse return jni.JNI_FALSE;
+    const handle = get_handle(ahb) orelse return jni.JNI_FALSE;
+    // native_handle_t stores descriptors directly after its three-int header.
+    const words: [*]const i32 = @ptrCast(@alignCast(handle));
+    if (words[1] != 1 or words[3] < 0) return jni.JNI_FALSE;
+    const borrowed: std.Io.File = .{ .handle = words[3], .flags = .{ .nonblocking = false } };
+    const stat = borrowed.stat(@import("ndk.zig").frameworkIo()) catch return jni.JNI_FALSE;
+    const expected = inode(pointer(raw_surface));
+    return boolean(@intFromBool(expected != 0 and stat.inode == expected));
+}
+
 fn nativeMethod(name: [*:0]const u8, signature: [*:0]const u8, function: anytype) jni.JNINativeMethod {
     return .{ .name = @constCast(name), .signature = @constCast(signature), .fnPtr = @ptrCast(@constCast(function)) };
 }
@@ -146,4 +165,10 @@ pub fn register(env: Env) !void {
         nativeMethod("nativePbufferInterop", "(Ljava/lang/String;JJ)Z", &nativePbufferInterop),
     };
     if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
+    const window_cls = env.*.*.FindClass.?(env, "dev/artzig/StockEglWindowSmoke") orelse return error.NoClass;
+    defer env.*.*.DeleteLocalRef.?(env, window_cls);
+    const window_methods = [_]jni.JNINativeMethod{
+        nativeMethod("nativeSameBuffer", "(Ljava/lang/String;JLandroid/hardware/HardwareBuffer;)Z", &nativeSameBuffer),
+    };
+    if (env.*.*.RegisterNatives.?(env, window_cls, &window_methods, window_methods.len) != 0) return error.RegisterFailed;
 }

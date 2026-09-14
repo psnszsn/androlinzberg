@@ -250,15 +250,20 @@ zig build -j10 cpp-audit
   hostgraphics' fixed display implementation. A native API regression compares
   dimensions, refresh rates, type and app-vsync offsets with Java's compositor
   queries and repeats acquisition/release.
-- EGLImpl (EGL10), EGL14, EGL15 and EGLExt compile original AOSP JNI. Display
-  reference counts, offscreen GBM drawables and Android native-window ownership
-  live in `src/native/egl_backend.zig`. `EglWindow.cpp` bridges Mesa's GBM driver
-  to stock ANativeWindow producers, using DMA-BUF GPU copies and Android fences.
-  A private ES3 copy context preserves the application's ES1/ES2/ES3 state.
-  Window handles remain stable across drawable resize; destroyed current
-  surfaces retain their native windows until unbound. Buffer dequeue runs
-  without holding the global EGL map lock. The copy completes before returning
-  GBM's source buffer because GBM release has no fence argument.
+- EGLImpl (EGL10), EGL14, EGL15 and EGLExt compile original AOSP JNI. The
+  shared display and drawable handles live in `src/native/egl_backend.zig`.
+  `egl_window.zig` exports system Mesa's rendered GBM buffers as DMA-BUFs;
+  `EglWindow.cpp` attaches those buffers through stock Surface operations.
+  There is no intermediate rendering buffer, copy context or presentation blit.
+  BufferQueue release fences must signal before GBM can reuse a buffer. Bounded
+  backpressure waits run outside the global EGL map lock. Resize and destruction
+  retire old pools without invalidating Android's independent storage references.
+  The gralloc v2 transport records the actual DRM FourCC separately from Android's
+  requested format, while retaining v1 import support. Explicit CPU locks adapt
+  BGRA/RGBA channel order and mapping stride when required; ordinary GPU
+  presentation performs neither conversion nor readback. Window regressions
+  compare consumer DMA-BUF identity to Mesa's rendered storage, check pixels and
+  timestamps, and retain images across repeated buffer reuse.
 - SharedMemory, MemoryFile, ApplicationSharedMemory and MemoryIntArray compile
   their original JNI over libcutils' sealed-memfd implementation, also used by
   NDK shared memory. The existing Linux adaptation selects memfd without

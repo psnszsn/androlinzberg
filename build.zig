@@ -1105,6 +1105,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     }) });
+    egl_backend_tests.root_module.addImport("graphics_types", b.createModule(.{ .root_source_file = b.path("src/platform/graphics_types.zig") }));
     for ([_][]const u8{ "egl", "gbm", "glesv2" }) |lib| egl_backend_tests.root_module.linkSystemLibrary(lib, .{ .needed = true });
     egl_backend_tests.root_module.addObjectFile(island.file);
     const run_egl_backend_tests = @import("build/command.zig").create(b);

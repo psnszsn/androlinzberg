@@ -4,7 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-// Host native-handle schema v1. Borrowed FDs in descriptions are valid while
+// Host native-handle schema v2 (v1 imports remain supported). Borrowed FDs in descriptions are valid while
 // the registered handle remains alive. All import/export operations own copies.
 
 int32_t azk_graphics_allocate(uint32_t width, uint32_t height, uint32_t format,

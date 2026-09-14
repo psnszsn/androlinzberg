@@ -118,7 +118,7 @@ pub fn build(b: *std.Build, o: Options) Result {
             .optimize = o.optimize,
             .link_libc = true,
             .pic = true,
-            .imports = &.{.{ .name = "art", .module = o.art }},
+            .imports = &.{ .{ .name = "art", .module = o.art }, .{ .name = "graphics_types", .module = b.createModule(.{ .root_source_file = b.path("src/platform/graphics_types.zig") }) } },
         }),
     });
 

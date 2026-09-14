@@ -37,7 +37,7 @@ pub const Handle = extern struct {
     }
 };
 pub const Info = @import("graphics_types.zig").Info;
-const Buffer = struct { handle: *Handle, bo: *Bo, file: Io.File, info: Info, charged_bytes: u64, map_token: ?*anyopaque = null, mapped: bool = false };
+const Buffer = struct { handle: *Handle, bo: *Bo, file: Io.File, info: Info, charged_bytes: u64, map_token: ?*anyopaque = null, mapped: bool = false, mapped_address: ?[*]u8 = null, mapped_stride: u32 = 0, cpu_view: ?[]u8 = null, cpu_write: bool = false };
 const Imported = extern struct { width: u32, height: u32, format: u32, num_fds: u32, fds: [4]c_int, strides: [4]c_int, offsets: [4]c_int, modifier: u64 };
 const Format = struct { drm: u32, bpp: u32 };
 fn formatInfo(format: u32) ?Format {
@@ -145,22 +145,30 @@ fn lookup(handle: *const Handle) ?*Buffer {
     return null;
 }
 fn encode(handle: *Handle, info: Info) void {
-    handle.writable().* = .{ @bitCast(info.fd), magic, 1, info.width, info.height, info.format, info.layers, @truncate(info.usage), @truncate(info.usage >> 32), info.stride, info.offset, @truncate(info.modifier), @truncate(info.modifier >> 32), @truncate(info.id), @truncate(info.id >> 32), @bitCast(info.dataspace), 0 };
+    handle.writable().* = .{ @bitCast(info.fd), magic, 2, info.width, info.height, info.format, info.layers, @truncate(info.usage), @truncate(info.usage >> 32), info.stride, info.offset, @truncate(info.modifier), @truncate(info.modifier >> 32), @truncate(info.id), @truncate(info.id >> 32), @bitCast(info.dataspace), info.drm_format };
+}
+// Requested Android channel order may differ from the system EGL drawable's
+// DRM storage order. GraphicBufferMapper exposes the actual FourCC for GPU
+// imports; CPU locks expose the requested Android format (like tiled mappings).
+fn swappedChannels(info: Info) bool {
+    return (info.format == 1 and info.drm_format == 0x34325241) or
+        (info.format == 2 and info.drm_format == 0x34325258) or
+        (info.format == 0x2b and info.drm_format == 0x30335241);
 }
 fn validDescription(info: Info) bool {
     if (!valid(info.width, info.height, info.format, info.layers, info.usage) or info.fd < 0 or info.reserved != 0) return false;
     const format = formatInfo(info.format).?;
-    return info.drm_format == format.drm and info.stride % format.bpp == 0 and
+    return (info.drm_format == format.drm or swappedChannels(info)) and info.stride % format.bpp == 0 and
         info.stride >= info.width * format.bpp and info.stride <= std.math.maxInt(i32) and info.offset <= std.math.maxInt(i32);
 }
 fn decode(handle: *const Handle) ?Info {
     if (handle.version != @sizeOf(Handle) or handle.num_fds != 1 or handle.num_ints != integer_count) return null;
     const w = handle.words();
-    if (w[1] != magic or w[2] != 1 or w[16] != 0 or @as(i32, @bitCast(w[0])) < 0) return null;
+    if (w[1] != magic or (w[2] != 1 and w[2] != 2) or (w[2] == 1 and w[16] != 0) or @as(i32, @bitCast(w[0])) < 0) return null;
     const usage = @as(u64, w[7]) | (@as(u64, w[8]) << 32);
     if (!valid(w[3], w[4], w[5], w[6], usage)) return null;
     const format = formatInfo(w[5]).?;
-    const info: Info = .{ .width = w[3], .height = w[4], .format = w[5], .layers = w[6], .usage = usage, .drm_format = format.drm, .stride = w[9], .offset = w[10], .modifier = @as(u64, w[11]) | (@as(u64, w[12]) << 32), .id = @as(u64, w[13]) | (@as(u64, w[14]) << 32), .fd = @bitCast(w[0]), .dataspace = @bitCast(w[15]) };
+    const info: Info = .{ .width = w[3], .height = w[4], .format = w[5], .layers = w[6], .usage = usage, .drm_format = if (w[2] == 1) format.drm else w[16], .stride = w[9], .offset = w[10], .modifier = @as(u64, w[11]) | (@as(u64, w[12]) << 32), .id = @as(u64, w[13]) | (@as(u64, w[14]) << 32), .fd = @bitCast(w[0]), .dataspace = @bitCast(w[15]) };
     return if (validDescription(info)) info else null;
 }
 // Takes ownership of bo on success and failure; serialized by mutex.
@@ -269,6 +277,7 @@ pub export fn azk_graphics_free(handle: *const Handle) callconv(.c) i32 {
     for (buffers.items, 0..) |buffer, i| {
         if (buffer.handle != handle) continue;
         if (buffer.mapped) gbm_bo_unmap(buffer.bo, buffer.map_token);
+        if (buffer.cpu_view) |view| alloc.free(view);
         _ = buffers.swapRemove(i);
         buffer.file.close(io);
         gbm_bo_destroy(buffer.bo);
@@ -305,19 +314,63 @@ pub export fn azk_graphics_lock(handle: *const Handle, usage: u64, left: i32, to
         right > b.info.width or bottom > b.info.height or (usage & 0xf != 0 and b.info.usage & 0xf == 0) or
         (usage & 0xf0 != 0 and b.info.usage & 0xf0 == 0)) return -22;
     var stride: u32 = 0;
-    const flags: u32 = (if (usage & 0xf != 0) @as(u32, 1) else 0) | (if (usage & 0xf0 != 0) @as(u32, 2) else 0);
+    const flags: u32 = (if (usage & 0xf != 0 or swappedChannels(b.info)) @as(u32, 1) else 0) | (if (usage & 0xf0 != 0) @as(u32, 2) else 0);
     const mapped = gbm_bo_map(b.bo, 0, 0, b.info.width, b.info.height, flags, &stride, &b.map_token) orelse return -5;
+    if (swappedChannels(b.info) or stride != b.info.stride) {
+        const cost = @as(usize, b.info.stride) * b.info.height;
+        if (!budget.fits(cost)) {
+            gbm_bo_unmap(b.bo, b.map_token);
+            b.map_token = null;
+            return -12;
+        }
+        const view = alloc.alloc(u8, cost) catch {
+            gbm_bo_unmap(b.bo, b.map_token);
+            b.map_token = null;
+            return -12;
+        };
+        @memset(view, 0);
+        budget.bytes += cost;
+        b.charged_bytes += cost;
+        b.cpu_view = view;
+        b.mapped_address = @ptrCast(mapped);
+        b.mapped_stride = stride;
+        b.cpu_write = usage & 0xf0 != 0;
+        convertChannels(b.info, view, b.info.stride, b.mapped_address.?[0 .. @as(usize, stride) * b.info.height], stride);
+        address.* = view.ptr;
+    } else address.* = mapped;
     b.mapped = true;
-    address.* = mapped;
     pixel_stride.* = @intCast(formatInfo(b.info.format).?.bpp);
-    row_stride.* = @intCast(stride);
+    row_stride.* = @intCast(if (b.cpu_view != null) b.info.stride else stride);
     return 0;
+}
+fn convertChannels(info: Info, dest: []u8, dest_stride: u32, source: []const u8, stride: u32) void {
+    if (!swappedChannels(info)) {
+        const bytes = info.width * formatInfo(info.format).?.bpp;
+        for (0..info.height) |y| @memcpy(dest[y * dest_stride ..][0..bytes], source[y * stride ..][0..bytes]);
+        return;
+    }
+    for (0..info.height) |y| for (0..info.width) |x| {
+        const offset = y * stride + x * 4;
+        const pixel = std.mem.readInt(u32, source[offset..][0..4], .little);
+        const mask: u32 = if (info.format == 0x2b) 0x3ff else 0xff;
+        const shift: u5 = if (info.format == 0x2b) 20 else 16;
+        const converted = (pixel & ~(mask | (mask << shift))) | ((pixel & mask) << shift) | ((pixel >> shift) & mask);
+        std.mem.writeInt(u32, dest[y * dest_stride + x * 4 ..][0..4], converted, .little);
+    };
 }
 pub export fn azk_graphics_unlock(handle: *const Handle) callconv(.c) i32 {
     lock();
     defer unlock();
     const b = lookup(handle) orelse return -22;
     if (!b.mapped) return -22;
+    if (b.cpu_view) |view| {
+        if (b.cpu_write) convertChannels(b.info, b.mapped_address.?[0 .. @as(usize, b.mapped_stride) * b.info.height], b.mapped_stride, view, b.info.stride);
+        budget.bytes -= view.len;
+        b.charged_bytes -= view.len;
+        alloc.free(view);
+        b.cpu_view = null;
+        b.mapped_address = null;
+    }
     gbm_bo_unmap(b.bo, b.map_token);
     b.mapped = false;
     b.map_token = null;
@@ -434,4 +487,26 @@ comptime {
 pub fn activeIo() Io {
     ensureIo();
     return io;
+}
+
+test "CPU locks translate DRM channel order and independent row strides bidirectionally" {
+    const info: Info = .{ .width = 1, .height = 2, .format = 1, .layers = 1, .usage = 0x33, .drm_format = 0x34325241, .stride = 8, .offset = 0, .modifier = 0, .id = 1, .fd = 3 };
+    const storage = [_]u8{ 0x10, 0x20, 0x30, 0xff, 0x40, 0x50, 0x60, 0x80 };
+    var android_view: [16]u8 = @splat(0xee);
+    convertChannels(info, &android_view, 8, &storage, 4);
+    try std.testing.expectEqualSlices(u8, &.{ 0x30, 0x20, 0x10, 0xff }, android_view[0..4]);
+    try std.testing.expectEqualSlices(u8, &.{ 0x60, 0x50, 0x40, 0x80 }, android_view[8..12]);
+    try std.testing.expectEqual(@as(u8, 0xee), android_view[4]);
+    var roundtrip: [8]u8 = undefined;
+    convertChannels(info, &roundtrip, 4, &android_view, 8);
+    try std.testing.expectEqualSlices(u8, &storage, &roundtrip);
+    var hdr = info;
+    hdr.format = 0x2b;
+    hdr.drm_format = 0x30335241;
+    hdr.height = 1;
+    var hdr_pixel: [4]u8 = undefined;
+    std.mem.writeInt(u32, &hdr_pixel, (3 << 30) | (123 << 20) | (456 << 10) | 789, .little);
+    var converted: [4]u8 = undefined;
+    convertChannels(hdr, &converted, 4, &hdr_pixel, 4);
+    try std.testing.expectEqual(@as(u32, (3 << 30) | (789 << 20) | (456 << 10) | 123), std.mem.readInt(u32, &converted, .little));
 }
