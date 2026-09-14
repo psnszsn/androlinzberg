@@ -2,39 +2,77 @@
 // C2SoftOpusDec, C2SoftFlacDec and C2SoftVorbisDec configuration handling. Their
 // decoder libraries are replaced at the component boundary by system FFmpeg;
 // SimpleC2Component retains queue, listener, state and flush-generation handling.
+// Video follows C2SoftAvcDec's graphic output contract, with system VAAPI
+// converting directly into the supplied pool's RGBX buffer.
 #include "FfmpegComponent.h"
 #include "../../codec/azk_codec.h"
 #include <SimpleC2Component.h>
 #include <SimpleC2Interface.h>
+#include <C2AllocatorGralloc.h>
+#include <android-C2Buffer.h>
+#include <azk/graphics_buffer.h>
 #include <media/stagefright/foundation/OpusHeader.h>
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <tuple>
 
 namespace azk::codec2 {
 using namespace android;
 namespace {
-struct Format { const char *name, *decoder, *mime; uint32_t rate; };
+struct Format {
+    const char *name, *decoder, *mime; uint32_t rate;
+    bool video() const { return rate == 0; }
+};
 constexpr Format formats[] = {
     {"c2.artzig.aac.decoder", "aac", "audio/mp4a-latm", 44100},
     {"c2.artzig.opus.decoder", "opus", "audio/opus", 48000},
     {"c2.artzig.mp3.decoder", "mp3", "audio/mpeg", 44100},
     {"c2.artzig.flac.decoder", "flac", "audio/flac", 44100},
     {"c2.artzig.vorbis.decoder", "vorbis", "audio/vorbis", 44100},
+    {"c2.artzig.avc.decoder", "h264", "video/avc", 0},
+    {"c2.artzig.vp9.decoder", "vp9", "video/x-vnd.on2.vp9", 0},
+    {"c2.artzig.mpeg4.decoder", "mpeg4", "video/mp4v-es", 0},
 };
+
+const std::vector<const Format *> &availableFormats() {
+    static const auto available = [] {
+        std::vector<const Format *> result;
+        for (const auto &format : formats)
+            if (!format.video() || azk_codec_video_profiles(format.decoder)) result.push_back(&format);
+        return result;
+    }();
+    return available;
+}
 
 class Interface final : public SimpleInterface<void>::BaseParams {
 public:
     Interface(const Format &format, const std::shared_ptr<C2ReflectorHelper> &reflector)
         : BaseParams(reflector, format.name, C2Component::KIND_DECODER,
-                     C2Component::DOMAIN_AUDIO, format.mime) {
+                     format.video() ? C2Component::DOMAIN_VIDEO : C2Component::DOMAIN_AUDIO, format.mime) {
         noPrivateBuffers(); noInputReferences(); noOutputReferences();
-        noInputLatency(); noPipelineLatency(); noTimeStretch();
+        noInputLatency(); noTimeStretch();
+        if (!format.video()) noPipelineLatency();
         setDerivedInstance(this);
         addParameter(DefineParam(mAttrib, C2_PARAMKEY_COMPONENT_ATTRIBUTES)
             .withConstValue(new C2ComponentAttributesSetting(C2Component::ATTRIB_IS_TEMPORAL)).build());
         addParameter(DefineParam(mActualOutputDelay, C2_PARAMKEY_OUTPUT_DELAY)
-            .withConstValue(new C2PortActualDelayTuning::output(1)).build());
+            .withConstValue(new C2PortActualDelayTuning::output(format.video() ? 34 : 1)).build());
+        addParameter(DefineParam(maxInput, C2_PARAMKEY_INPUT_MAX_BUFFER_SIZE)
+            .withConstValue(new C2StreamMaxBufferSizeInfo::input(0u, 4 * 1024 * 1024)).build());
+        if (format.video()) {
+            addParameter(DefineParam(size, C2_PARAMKEY_PICTURE_SIZE)
+                .withDefault(new C2StreamPictureSizeInfo::output(0u, 320, 240))
+                .withFields({C2F(size, width).inRange(2, 4096), C2F(size, height).inRange(2, 4096)})
+                .withSetter(SizeSetter).build());
+            addParameter(DefineParam(pixelFormat, C2_PARAMKEY_PIXEL_FORMAT)
+                .withConstValue(new C2StreamPixelFormatInfo::output(0u, HAL_PIXEL_FORMAT_RGBX_8888)).build());
+            addParameter(DefineParam(dataspace, C2_PARAMKEY_DATA_SPACE)
+                .withDefault(new C2StreamDataSpaceInfo::output(0u, 0))
+                .withFields({C2F(dataspace, value).any()})
+                .withSetter(Setter<decltype(*dataspace)>::StrictValueWithNoDeps).build());
+            return;
+        }
         addParameter(DefineParam(rate, C2_PARAMKEY_SAMPLE_RATE)
             .withDefault(new C2StreamSampleRateInfo::output(0u, format.rate))
             .withFields({C2F(rate, value).inRange(8000, 192000)})
@@ -45,16 +83,37 @@ public:
             .withSetter(Setter<decltype(*channels)>::StrictValueWithNoDeps).build());
         addParameter(DefineParam(pcm, C2_PARAMKEY_PCM_ENCODING)
             .withConstValue(new C2StreamPcmEncodingInfo::output(0u, C2Config::PCM_16)).build());
-        addParameter(DefineParam(maxInput, C2_PARAMKEY_INPUT_MAX_BUFFER_SIZE)
-            .withConstValue(new C2StreamMaxBufferSizeInfo::input(0u, 4 * 1024 * 1024)).build());
     }
     std::shared_ptr<C2StreamSampleRateInfo::output> rate;
     std::shared_ptr<C2StreamChannelCountInfo::output> channels;
     std::pair<uint32_t, uint32_t> audioConfig() const {
         auto guard = lock();
+        if (!rate) return {0, 0};
         return {rate->value, channels->value};
     }
+    std::tuple<uint32_t, uint32_t, uint32_t> videoConfig() const {
+        auto guard = lock();
+        return {size->width, size->height, dataspace->value};
+    }
 private:
+    // Pinned C2SoftAvcDec::IntfImpl::SizeSetter: reject invalid fields and
+    // preserve each previous value independently.
+    static C2R SizeSetter(bool, const C2P<C2StreamPictureSizeInfo::output> &old,
+                         C2P<C2StreamPictureSizeInfo::output> &next) {
+        C2R result = C2R::Ok();
+        if (!next.F(next.v.width).supportsAtAll(next.v.width)) {
+            result = result.plus(C2SettingResultBuilder::BadValue(next.F(next.v.width)));
+            next.set().width = old.v.width;
+        }
+        if (!next.F(next.v.height).supportsAtAll(next.v.height)) {
+            result = result.plus(C2SettingResultBuilder::BadValue(next.F(next.v.height)));
+            next.set().height = old.v.height;
+        }
+        return result;
+    }
+    std::shared_ptr<C2StreamPictureSizeInfo::output> size;
+    std::shared_ptr<C2StreamPixelFormatInfo::output> pixelFormat;
+    std::shared_ptr<C2StreamDataSpaceInfo::output> dataspace;
     std::shared_ptr<C2StreamPcmEncodingInfo::output> pcm;
     std::shared_ptr<C2StreamMaxBufferSizeInfo::input> maxInput;
 };
@@ -69,6 +128,8 @@ public:
 private:
     c2_status_t onInit() override {
         mDecoder = azk_codec_open(mFormat.decoder);
+        if (mDecoder && mFormat.video() && azk_codec_use_video_allocator(mDecoder) != 0)
+            return C2_CORRUPTED;
         return mDecoder ? C2_OK : C2_NO_MEMORY;
     }
     c2_status_t onFlush_sm() override {
@@ -192,9 +253,53 @@ private:
         });
     }
 
+    c2_status_t videoOutputs(const std::shared_ptr<C2BlockPool> &pool,
+                            const std::unique_ptr<C2Work> &current) {
+        for (;;) {
+            int meta[4]; int64_t pts; uint64_t index;
+            int result = azk_codec_peek_video_work(mDecoder, meta, &pts, &index);
+            if (result == 1 || result == 2) return C2_OK;
+            if (result != 0) return C2_CORRUPTED;
+            std::vector<std::unique_ptr<C2Param>> updates;
+            if (mParams->videoConfig() != std::make_tuple(uint32_t(meta[1]), uint32_t(meta[2]), uint32_t(meta[3]))) {
+                C2StreamPictureSizeInfo::output size(0u, meta[1], meta[2]);
+                C2StreamDataSpaceInfo::output dataspace(0u, meta[3]);
+                std::vector<std::unique_ptr<C2SettingResult>> failures;
+                const auto status = intf()->config_vb({&size, &dataspace}, C2_MAY_BLOCK, &failures);
+                if (status != C2_OK || !failures.empty()) return C2_CORRUPTED;
+                updates.emplace_back(C2Param::Copy(size));
+                updates.emplace_back(C2Param::Copy(dataspace));
+            }
+            std::shared_ptr<C2GraphicBlock> block;
+            // The original IGBA pool waits both allocation availability and the
+            // acquire fence in this overload. Preserve its block and pool data.
+            auto status = pool->fetchGraphicBlock(meta[1], meta[2], HAL_PIXEL_FORMAT_RGBX_8888,
+                    C2MemoryUsage(C2AndroidMemoryUsage::HW_TEXTURE_READ, C2AndroidMemoryUsage::HW_TEXTURE_WRITE), &block);
+            if (status != C2_OK) return status;
+            auto *raw = UnwrapNativeCodec2GrallocHandle(block->handle());
+            if (!raw) return C2_BAD_VALUE;
+            native_handle_t *imported = nullptr;
+            const auto importStatus = azk_graphics_import(raw, &imported);
+            native_handle_delete(raw); // the unwrapped handle borrows its FDs
+            if (importStatus) return C2_CORRUPTED;
+            AzkGraphicsBufferInfo target{};
+            result = azk_graphics_describe(imported, &target);
+            if (!result) result = azk_codec_render_video_work(mDecoder, &target);
+            azk_graphics_free(imported);
+            if (result) return C2_CORRUPTED;
+            auto buffer = createGraphicBuffer(block, C2Rect(meta[1], meta[2]));
+            buffer->setInfo(std::make_shared<C2StreamDataSpaceInfo::output>(0u, meta[3]));
+            emit(index, pts, std::move(buffer), std::move(updates), current);
+        }
+    }
+
     c2_status_t outputs(const std::shared_ptr<C2BlockPool> &pool,
                         const std::unique_ptr<C2Work> &current) {
-        for (;;) {
+        if (mFormat.video()) {
+            auto status = videoOutputs(pool, current);
+            if (status != C2_OK) return status;
+        }
+        while (!mFormat.video()) {
             int meta[3] = {};
             int64_t pts = 0;
             uint64_t index = 0;
@@ -302,24 +407,26 @@ private:
 };
 } // namespace
 
-c2_status_t createAudioComponent(const C2String &name, c2_node_id_t id,
+c2_status_t createFfmpegComponent(const C2String &name, c2_node_id_t id,
         const std::shared_ptr<C2ReflectorHelper> &reflector,
         std::shared_ptr<C2Component> *component) {
     if (!component || !reflector) return C2_BAD_VALUE;
     component->reset();
-    for (const auto &format : formats) if (name == format.name) {
+    for (const auto *entry : availableFormats()) if (name == entry->name) {
+        const auto &format = *entry;
         *component = std::make_shared<Component>(format, id, std::make_shared<Interface>(format, reflector));
         return C2_OK;
     }
     return C2_NOT_FOUND;
 }
 
-c2_status_t createAudioInterface(const C2String &name, c2_node_id_t id,
+c2_status_t createFfmpegInterface(const C2String &name, c2_node_id_t id,
         const std::shared_ptr<C2ReflectorHelper> &reflector,
         std::shared_ptr<C2ComponentInterface> *interface) {
     if (!interface || !reflector) return C2_BAD_VALUE;
     interface->reset();
-    for (const auto &format : formats) if (name == format.name) {
+    for (const auto *entry : availableFormats()) if (name == entry->name) {
+        const auto &format = *entry;
         *interface = std::make_shared<SimpleInterface<Interface>>(format.name, id,
                 std::make_shared<Interface>(format, reflector));
         return C2_OK;
@@ -327,13 +434,14 @@ c2_status_t createAudioInterface(const C2String &name, c2_node_id_t id,
     return C2_NOT_FOUND;
 }
 
-std::vector<std::shared_ptr<const C2Component::Traits>> audioTraits() {
+std::vector<std::shared_ptr<const C2Component::Traits>> componentTraits() {
     std::vector<std::shared_ptr<const C2Component::Traits>> result;
-    for (const auto &format : formats) {
+    for (const auto *entry : availableFormats()) {
+        const auto &format = *entry;
         auto traits = std::make_shared<C2Component::Traits>();
         traits->name = format.name;
         traits->kind = C2Component::KIND_DECODER;
-        traits->domain = C2Component::DOMAIN_AUDIO;
+        traits->domain = format.video() ? C2Component::DOMAIN_VIDEO : C2Component::DOMAIN_AUDIO;
         traits->mediaType = format.mime;
         traits->rank = 8;
         result.push_back(std::move(traits));

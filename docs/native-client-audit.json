@@ -530,20 +530,20 @@
   },
   "codec2_ffmpeg_followup": {
     "status": "Native component acceptance only: production MediaCodec JNI/NDK and decode routing have not switched; no component store is published yet",
-    "components": "AAC, MP3, FLAC, Opus and Vorbis use original SimpleC2Component and SimpleC2Interface around the existing system FFmpeg backend",
+    "components": "AAC, MP3, FLAC, Opus and Vorbis plus VAAPI AVC/VP9 and hardware-conditional MPEG-4 use original SimpleC2Component and SimpleC2Interface around system FFmpeg",
     "configuration": "Android AAC data, FLAC stream headers, split Vorbis headers, and original Opus parser for legacy/unified headers; initial Opus delay and seek preroll apply once",
     "work_identity": "Codec2 frameIndex travels through FFmpeg opaque buffer references independently of presentation timestamps; completion waits for decoder and output-queue ownership, including multiple or absent outputs; flush discards old work",
-    "graphics": "No new GPU copy or presentation changes; hardware-frame work tracking carries metadata only",
+    "graphics": "Allocator output mode retains the decoded VA surface until the C2 pool supplies RGBX storage. VAAPI imports that DMA-BUF and performs the existing VPP conversion directly into it; no extra GPU copy, destination allocation or software pixel staging. The original AIDL client owns allocation and Surface migration.",
     "validation": {
       "codec-work-test": "4 tests pass: duplicate PTS/full-width work indices, output-capacity retry, completion ownership, flush/index reuse, MP3 multi-output parity and legacy decode",
       "codec2-ffmpeg-test": "All five audio formats decode through original C2 interfaces, complete every input, deliver EOS and survive stop/start; AAC/FLAC/Opus/Vorbis also cover flush, both Opus CSD layouts and exact preroll sample counts; normal process exit",
-      "integration-test": "28 tests pass with 88 actions and zero structured runtime issues; 23 testkit tests pass",
-      "framework-module-test": "Passed after backend work tracking changes",
-      "audits": "C++ boundary and NDK ABI pass (135 reference symbols, 162 exports)"
+      "integration-test": "28 tests pass with 92 actions and zero structured runtime issues after the video output refactor; 23 testkit tests pass",
+      "framework-module-test": "Passed after the video output refactor",
+      "audits": "C++ boundary and NDK ABI pass (135 reference symbols, 162 exports)",
+      "codec-video-allocator-test": "Pass: real VAAPI decode to the same linear/GPU DMA-BUF allocation, crop, B-frame work identity, duplicate PTS, retry, flush, and output pixel retention after decoder destruction"
     },
     "remaining": [
-      "Publish the Codec2 component store and finish native capability negotiation",
-      "Add graphic-buffer video components over the existing VAAPI DMA-BUF path",
+      "Publish the Codec2 component store and finish native capability/profile negotiation and XML discovery",
       "Select original MediaCodec JNI/NDK and delete the old hosted client implementation"
     ],
     "packaging": "All reused AOSP sources were already packaged; archive and dependency pin are unchanged"
@@ -551,8 +551,24 @@
   "codec2_component_store_followup": {
     "status": "Cross-process native acceptance; not published by production sessions yet",
     "implementation": "Host component selection and traits delegate reflection/allocator policy to the original C2 platform store; original AIDL ComponentStore and Codec2Client handle transport",
-    "validation": "Codec2 service discovery from the broker declaration, five audio traits, missing/present interfaces, parameter reflection, BLOB input/output storage, multi-output MP3 decode with duplicate timestamps, EOS and component-service death pass across an unprivileged native client and separate service",
+    "validation": "Original Codec2 AIDL discovery, available traits, reflection, MP3 work/BLOB transfer, AVC and VP9 GPU output, EOS and service death pass. Video tests verify cropped dimensions, duplicate PTS, reordered work, dataspace, flush and Surface migration with retained output pixels.",
     "process_exit": "The existing Codec2 process wrapper exits immediately after local cleanup, matching AndroidRuntime. Original bufferpool eviction/invalidation threads are detached and have no global shutdown API; glibc static condition-variable destruction waits forever under their live workers.",
     "regressions": "Codec2 audio component tests, all three original bufferpool tests and C++ audit pass"
+  },
+  "codec2_video_followup": {
+    "status": "Native service acceptance passed; production MediaCodec routing and component-store publication have not switched",
+    "allocator": "Original C2IgbaBlockPool waits the acquire fence; the FFmpeg component returns that same C2 graphic block and its original pool data. Original GraphicsTracker owns rendering and Surface migration.",
+    "backend": "Existing VAAPI YUV-to-RGB VPP renders into the allocator DMA-BUF through DRM_PRIME_2 import. CPU readback exists only in pixel-verification tests.",
+    "capabilities": "VAAPI profile and decode-entrypoint queries gate component discovery. This machine supports AVC and VP9; MPEG-4 Simple and Advanced Simple are rejected by the driver and the new store excludes MPEG-4. The unchanged production catalogue still has its earlier static entries until native MediaCodecList activation.",
+    "validation": {
+      "codec2-service-test": "AVC/VP9 pass across Binder: cropped RGB output, B-frame/reordered work, duplicate PTS, EOS, flush, Surface migration, pixel readback; unavailable MPEG-4 is absent from list/interface/component creation",
+      "codec-video-allocator-test": "Linear and GPU layout output pixels, same allocation identity, retry, retained output after flush/close",
+      "codec-work-test": "4 passed",
+      "codec2-ffmpeg-test": "All five audio formats and existing lifecycle/CSD cases passed",
+      "framework-module-test": "Passed",
+      "integration-test": "28 tests / 92 actions / zero structured runtime issues; 23 testkit tests",
+      "audits": "C++ boundary and NDK ABI passed"
+    },
+    "packaging": "No additional AOSP files; archive and dependency pin unchanged"
   }
 }

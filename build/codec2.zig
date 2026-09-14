@@ -214,6 +214,18 @@ pub fn ffmpegTest(b: *std.Build, libraries: Libraries, platform: std.Build.LazyP
     const exe = b.addExecutable(.{ .name = "codec2-ffmpeg-test", .root_module = mod });
     @import("surfaceflinger.zig").runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, "codec2-ffmpeg", "Verify FFmpeg components through original Codec2 work and lifecycle", .standalone, null, &.{platform}, &.{});
 
+    const video_mod = b.createModule(.{ .target = mod.resolved_target.?, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
+    video_mod.include_dirs = mod.include_dirs.clone(b.allocator) catch @panic("OOM");
+    video_mod.addCSourceFile(.{ .file = b.path("tests/native/CodecVideoAllocatorTest.cpp"), .flags = flags });
+    video_mod.linkLibrary(backend);
+    for ([_][]const u8{ "libavcodec", "libavutil", "egl", "glesv2" }) |lib|
+        video_mod.linkSystemLibrary(lib, .{ .needed = true, .use_pkg_config = .force });
+    video_mod.addObjectFile(platform);
+    video_mod.linkLibrary(binder);
+    video_mod.linkLibrary(ndk);
+    const video_exe = b.addExecutable(.{ .name = "codec-video-allocator-test", .root_module = video_mod });
+    @import("surfaceflinger.zig").runBinaryTest(b, video_exe.getEmittedBin(), binder, ndk, broker, "codec-video-allocator", "Verify VAAPI conversion into allocator-owned DMA-BUF storage", .standalone, null, &.{platform}, &.{});
+
     const service_mod = b.createModule(.{ .target = mod.resolved_target.?, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
     service_mod.include_dirs = mod.include_dirs.clone(b.allocator) catch @panic("OOM");
     service_mod.addCSourceFiles(.{ .root = b.path("src/native/codec2"), .files = &.{ "FfmpegComponent.cpp", "FfmpegStore.cpp" }, .flags = flags });
@@ -222,6 +234,8 @@ pub fn ffmpegTest(b: *std.Build, libraries: Libraries, platform: std.Build.LazyP
     service_mod.linkLibrary(backend);
     service_mod.linkSystemLibrary("libavcodec", .{ .needed = true, .use_pkg_config = .force });
     service_mod.linkSystemLibrary("libavutil", .{ .needed = true, .use_pkg_config = .force });
+    service_mod.linkSystemLibrary("egl", .{ .needed = true, .use_pkg_config = .force });
+    service_mod.linkSystemLibrary("glesv2", .{ .needed = true, .use_pkg_config = .force });
     service_mod.addObjectFile(platform);
     service_mod.linkLibrary(binder);
     service_mod.linkLibrary(ndk);

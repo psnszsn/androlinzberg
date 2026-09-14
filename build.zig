@@ -835,6 +835,7 @@ pub fn build(b: *std.Build) void {
     });
     for (host_toolchain.codec.roots) |root| av_tc.addSystemIncludePath(root);
     av_tc.addIncludePath(b.path("src/codec"));
+    av_tc.addIncludePath(b.path("src/native/graphics/include"));
     const codec_mod = b.createModule(.{
         .root_source_file = b.path("src/codec/azk_codec.zig"),
         .target = target,

@@ -73,6 +73,27 @@ public:
     eglDestroyContext(display, context);
     azk_graphics_egl_terminate(display);
   }
+  // Test-only readback verifies the contents of the supplied allocation.
+  uint32_t readPixel(const android::sp<android::GraphicBuffer> &buffer) {
+    EGLImageKHR image;
+    assert(azk_graphics_import_egl_image(display, buffer->handle, &image) == 0);
+    GLuint texture, fbo;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    imageTarget(GL_TEXTURE_2D, image);
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+    assert(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
+    uint32_t pixel = 0;
+    glReadPixels(buffer->getWidth() / 2, buffer->getHeight() / 2, 1, 1,
+                 GL_RGBA, GL_UNSIGNED_BYTE, &pixel);
+    assert(glGetError() == GL_NO_ERROR);
+    glDeleteFramebuffers(1, &fbo);
+    glDeleteTextures(1, &texture);
+    assert(destroyImage(display, image));
+    return pixel;
+  }
   android::sp<android::Fence>
   render(const android::sp<android::GraphicBuffer> &buffer, uint32_t rgba,
          const android::sp<android::Fence>& gate = android::Fence::NO_FENCE) {

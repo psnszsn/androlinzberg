@@ -19,11 +19,20 @@ const Frame = struct {
 };
 
 const VFrame = struct {
-    hardware: *c.AzkHardwareFrame, // owned VA-API/VPP DMA-BUF frame
+    hardware: ?*c.AzkHardwareFrame = null, // owned legacy VPP output
+    decoded: ?*c.AVFrame = null, // retained decoder surface for allocator output
     width: c_int, // decoded/coded dimensions reported to MediaCodec
     height: c_int,
+    dataspace: c_int,
     pts: i64,
     work: ?*c.AVBufferRef = null,
+
+    fn release(self: VFrame) void {
+        if (self.hardware) |hardware| c.azk_hardware_frame_release(hardware);
+        var decoded = self.decoded;
+        c.av_frame_free(&decoded);
+        releaseWork(self.work);
+    }
 };
 
 pub const Dec = struct {
@@ -31,6 +40,7 @@ pub const Dec = struct {
     pkt: *c.AVPacket,
     frame: *c.AVFrame,
     is_video: bool = false,
+    allocator_output: bool = false,
     queue: std.ArrayList(Frame) = .empty,
     vqueue: std.ArrayList(VFrame) = .empty,
     surface_w: c_int = 0,
@@ -57,6 +67,27 @@ pub const Dec = struct {
             if (self.is_video) {
                 if (self.frame.format != c.AV_PIX_FMT_VAAPI)
                     return error.HardwareVideoRequired;
+                const work = try retainWork(self.frame);
+                errdefer releaseWork(work);
+                const pts = if (self.frame.pts != c.AV_NOPTS_VALUE) self.frame.pts else 0;
+                if (self.allocator_output) {
+                    var width: c_int = undefined;
+                    var height: c_int = undefined;
+                    var dataspace: c_int = undefined;
+                    if (c.azk_vaapi_frame_info(self.frame, &width, &height, &dataspace) != 0)
+                        return error.HardwareVideoPresentation;
+                    var decoded = c.av_frame_clone(self.frame) orelse return error.OutOfMemory;
+                    errdefer c.av_frame_free(&decoded);
+                    try self.vqueue.append(gpa, .{
+                        .decoded = decoded,
+                        .width = width,
+                        .height = height,
+                        .dataspace = dataspace,
+                        .pts = pts,
+                        .work = work,
+                    });
+                    continue;
+                }
                 const output = videoPresentationSize(
                     self.frame.width,
                     self.frame.height,
@@ -70,13 +101,12 @@ pub const Dec = struct {
                     &self.vaapi_vpp,
                 ) orelse return error.HardwareVideoPresentation;
                 errdefer c.azk_hardware_frame_release(hardware);
-                const work = try retainWork(self.frame);
-                errdefer releaseWork(work);
                 try self.vqueue.append(gpa, .{
                     .hardware = hardware,
                     .width = hardware.*.width,
                     .height = hardware.*.height,
-                    .pts = if (self.frame.pts != c.AV_NOPTS_VALUE) self.frame.pts else 0,
+                    .dataspace = hardware.*.dataspace,
+                    .pts = pts,
                     .work = work,
                 });
             } else {
@@ -121,7 +151,6 @@ fn convertFrame(f: *c.AVFrame) !Frame {
     const channels: usize = @intCast(f.ch_layout.nb_channels);
     const samples: usize = @intCast(f.nb_samples);
     const out = try gpa.alloc(u8, samples * channels * 2);
-    errdefer gpa.free(out);
     errdefer gpa.free(out);
     const dst = @as([*]i16, @ptrCast(@alignCast(out.ptr)))[0 .. samples * channels];
     switch (f.format) {
@@ -176,6 +205,11 @@ fn f2s16(v: f32) i16 {
 
 // ---------------------------------------------------------------- C ABI
 
+pub export fn azk_codec_video_profiles(codec_name: [*:0]const u8) u32 {
+    const codec = c.avcodec_find_decoder_by_name(codec_name) orelse return 0;
+    return c.azk_vaapi_decoder_profiles(codec.*.id);
+}
+
 /// codec_name: an ffmpeg decoder name ("aac", "opus", "mp3", "flac", "vorbis").
 pub export fn azk_codec_open(codec_name: [*:0]const u8) ?*Dec {
     const codec = c.avcodec_find_decoder_by_name(codec_name) orelse return null;
@@ -220,6 +254,13 @@ pub export fn azk_codec_set_video_target(d: *Dec, width: c_int, height: c_int) v
     // use them to rebuild the decoder/VPP pipeline.
     d.surface_w = @max(0, width);
     d.surface_h = @max(0, height);
+}
+
+/// Select allocator-owned video output before configuring the decoder.
+pub export fn azk_codec_use_video_allocator(d: *Dec) c_int {
+    if (!d.is_video or c.avcodec_is_open(d.ctx) != 0) return -1;
+    d.allocator_output = true;
+    return 0;
 }
 
 /// Send one encoded packet (or EOF). Always accepts: pending frames are
@@ -331,6 +372,7 @@ pub export fn azk_codec_receive_video_work(d: *Dec, out_meta: [*]c_int, out_pts:
 
 fn receiveVideo(d: *Dec, out_meta: [*]c_int, out_pts: *i64, out_handle: *usize, out_work: ?*u64) c_int {
     out_handle.* = 0;
+    if (d.allocator_output) return -1;
     if (d.vqueue.items.len == 0) d.pushDecoded() catch return -1;
     if (d.vqueue.items.len == 0) {
         if (d.eof_out) return 2;
@@ -344,9 +386,36 @@ fn receiveVideo(d: *Dec, out_meta: [*]c_int, out_pts: *i64, out_handle: *usize, 
     const frame = d.vqueue.orderedRemove(0);
     defer releaseWork(frame.work);
     out_meta[0] = 0;
-    out_meta[3] = frame.hardware.*.dataspace;
-    out_handle.* = @intFromPtr(frame.hardware);
+    out_meta[3] = frame.dataspace;
+    out_handle.* = @intFromPtr(frame.hardware.?);
     return 3;
+}
+
+/// Peek without consuming a decoded surface or its work reference. The caller
+/// allocates the matching C2 block and waits its acquire fence before render.
+pub export fn azk_codec_peek_video_work(d: *Dec, out_meta: [*]c_int, out_pts: *i64, out_work: *u64) c_int {
+    if (!d.allocator_output) return -1;
+    if (d.vqueue.items.len == 0) d.pushDecoded() catch return -1;
+    if (d.vqueue.items.len == 0) return if (d.eof_out) 2 else 1;
+    const frame = d.vqueue.items[0];
+    out_work.* = workIndex(frame.work orelse return -4);
+    out_meta[0] = 0;
+    out_meta[1] = frame.width;
+    out_meta[2] = frame.height;
+    out_meta[3] = frame.dataspace;
+    out_pts.* = frame.pts;
+    return 0;
+}
+
+/// The only GPU operation is the existing YUV-to-RGB conversion, now directed
+/// into caller storage. Failure leaves the decoded frame queued for retry.
+pub export fn azk_codec_render_video_work(d: *Dec, target: *const c.AzkGraphicsBufferInfo) c_int {
+    if (!d.allocator_output or d.vqueue.items.len == 0) return -1;
+    const frame = d.vqueue.items[0];
+    const result = c.azk_vaapi_render_into(frame.decoded, target, &d.vaapi_vpp);
+    if (result != 0) return result;
+    d.vqueue.orderedRemove(0).release();
+    return 0;
 }
 
 /// Returns 1 with a completed work index, or 0 if none is ready. Completion
@@ -400,10 +469,7 @@ pub export fn azk_codec_flush(d: *Dec) void {
         releaseWork(f.work);
     }
     d.queue.clearRetainingCapacity();
-    for (d.vqueue.items) |f| {
-        c.azk_hardware_frame_release(f.hardware);
-        releaseWork(f.work);
-    }
+    for (d.vqueue.items) |f| f.release();
     d.vqueue.clearRetainingCapacity();
     for (d.work_refs.items) |ref| releaseWork(ref);
     d.work_refs.clearRetainingCapacity();
@@ -417,10 +483,7 @@ pub export fn azk_codec_close(d: *Dec) void {
         releaseWork(f.work);
     }
     d.queue.deinit(gpa);
-    for (d.vqueue.items) |f| {
-        c.azk_hardware_frame_release(f.hardware);
-        releaseWork(f.work);
-    }
+    for (d.vqueue.items) |f| f.release();
     d.vqueue.deinit(gpa);
     for (d.work_refs.items) |ref| releaseWork(ref);
     d.work_refs.deinit(gpa);

@@ -559,9 +559,9 @@ covers both CSD layouts and exact seek-preroll sample counts. The framework
 module suite passes. All 28 APK tests pass with 88 actions and no structured
 runtime issues; 23 testkit tests pass. C++ and NDK ABI audits pass.
 
-These components are still exercised by native acceptance tests. Component
-store publication, capability negotiation, graphic-buffer video components
-and the production JNI/NDK switch remain pending. The original AOSP sources
+These components are still exercised by native acceptance tests. Production component
+store publication, capability negotiation and the JNI/NDK switch remain pending.
+Graphic-buffer video acceptance is recorded below. The original AOSP sources
 were already packaged, so this stage does not change the archive pin.
 
 ### Codec2 component store transport
@@ -569,7 +569,7 @@ were already packaged, so this stage does not change the archive pin.
 The native service test now uses the original AIDL `ComponentStore` and stock
 `Codec2Client` across processes. Host component selection delegates allocator
 configuration and reflection to the original platform store. The unprivileged
-client discovers the declared service, lists five audio traits, queries
+client discovers the declared service, lists available audio/video traits, queries
 interfaces, transfers BLOB input/output storage and decodes multi-output MP3
 work with duplicate timestamps. EOS and component-service death also pass.
 
@@ -579,4 +579,30 @@ returning through glibc static destruction hangs on their condition variables.
 Immediate exit matches AndroidRuntime and the production launcher/service
 lifetime. The audio component tests, three original bufferpool tests and C++
 audit pass. Production component-store publication remains pending alongside
-video integration and original MediaCodec JNI/NDK selection.
+capability negotiation and original MediaCodec JNI/NDK selection.
+
+### Codec2 video output
+
+AVC and VP9 now decode across the original Codec2 AIDL service/client boundary.
+The component fetches its RGBX destination from the original C2/IGBA pool,
+which waits the acquire fence. VAAPI imports that DMA-BUF and directs the
+existing YUV-to-RGB VPP conversion into it. The original graphic block and pool
+data return to the client, so stock GraphicsTracker can render and migrate it
+to another Surface. This adds no GPU copy or software pixel staging. The old
+app-side decoder path retains its existing output behavior until activation.
+
+`codec-video-allocator-test` verifies real VAAPI output pixels in the same
+linear and GPU-layout allocations, visible crop, reordered work, duplicate
+PTS, retry and output retention after flush and decoder destruction.
+`codec2-service-test` verifies AVC/VP9 output across Binder, including EOS,
+flush, dataspace, Surface migration and actual pixels. VAAPI profile and decode
+entrypoint queries gate discovery. This GPU rejects MPEG-4 Simple and Advanced
+Simple, so the new store excludes MPEG-4; its old static production catalogue
+entry remains until the native MediaCodecList switch.
+
+The five audio component tests, four work tests, framework module suite, C++
+audit and NDK ABI check pass. All 28 APK tests pass with 92 actions and zero
+structured runtime issues; all 23 testkit tests pass. Production component-store
+publication, complete capability/profile negotiation, XML discovery and the
+original MediaCodec JNI/NDK switch remain pending. This checkpoint adds no
+AOSP package files and does not change either archive or its dependency pin.

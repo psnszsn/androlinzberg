@@ -14,12 +14,12 @@ public:
               mReflector(std::static_pointer_cast<C2ReflectorHelper>(mPlatform->getParamReflector())) {}
     C2String getName() const override { return "artzig"; }
     c2_status_t createComponent(C2String name, std::shared_ptr<C2Component> *const out) override {
-        return createAudioComponent(name, mNextId.fetch_add(1), mReflector, out);
+        return createFfmpegComponent(name, mNextId.fetch_add(1), mReflector, out);
     }
     c2_status_t createInterface(C2String name, std::shared_ptr<C2ComponentInterface> *const out) override {
-        return createAudioInterface(name, mNextId.fetch_add(1), mReflector, out);
+        return createFfmpegInterface(name, mNextId.fetch_add(1), mReflector, out);
     }
-    std::vector<std::shared_ptr<const C2Component::Traits>> listComponents() override { return audioTraits(); }
+    std::vector<std::shared_ptr<const C2Component::Traits>> listComponents() override { return componentTraits(); }
     c2_status_t copyBuffer(std::shared_ptr<C2GraphicBuffer> src, std::shared_ptr<C2GraphicBuffer> dst) override {
         return mPlatform->copyBuffer(std::move(src), std::move(dst));
     }

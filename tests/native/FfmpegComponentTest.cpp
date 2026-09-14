@@ -61,7 +61,7 @@ static void audioFamily(const std::shared_ptr<C2ReflectorHelper> &reflector,
         encoded.csd = {std::move(unified)};
     }
     std::shared_ptr<C2Component> component;
-    assert(azk::codec2::createAudioComponent(name, 74, reflector, &component) == C2_OK);
+    assert(azk::codec2::createFfmpegComponent(name, 74, reflector, &component) == C2_OK);
     auto listener = std::make_shared<Listener>();
     assert(component->setListener_vb(listener, C2_MAY_BLOCK) == C2_OK);
     assert(component->start() == C2_OK);
@@ -124,8 +124,8 @@ int main() {
     assert(property_set("debug.stagefright.c2-poolmask", mask.c_str()) == 0);
     const auto reflector = std::make_shared<C2ReflectorHelper>();
     std::shared_ptr<C2Component> component;
-    assert(azk::codec2::createAudioComponent("missing", 1, reflector, &component) == C2_NOT_FOUND && !component);
-    assert(azk::codec2::createAudioComponent("c2.artzig.mp3.decoder", 73, reflector, &component) == C2_OK);
+    assert(azk::codec2::createFfmpegComponent("missing", 1, reflector, &component) == C2_NOT_FOUND && !component);
+    assert(azk::codec2::createFfmpegComponent("c2.artzig.mp3.decoder", 73, reflector, &component) == C2_OK);
     assert(component->intf()->getName() == "c2.artzig.mp3.decoder" && component->intf()->getId() == 73);
     C2StreamSampleRateInfo::output rate(0u);
     C2StreamChannelCountInfo::output channels(0u);
