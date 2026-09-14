@@ -60,6 +60,8 @@ objects: std.AutoHashMapUnmanaged(u64, *Object) = .empty,
 next_object_id: u64 = Client.context_object_id + 1,
 local_index: std.AutoHashMapUnmanaged(LocalKey, u64) = .empty,
 services: std.StringHashMapUnmanaged(Service) = .empty,
+/// Session manifest, independent of whether a declared service is running.
+declared_services: std.StringHashMapUnmanaged(void) = .empty,
 waiters: std.ArrayList(Waiter) = .empty,
 /// IServiceManager.registerForNotifications: service name -> the global ids of
 /// the IServiceCallback objects to notify (each holds a `service_refs` on its
@@ -102,6 +104,7 @@ pub const Options = struct {
     /// File every session process maps read-only for `SystemProperties`.
     prop_area_path: []const u8,
     first_app_uid: u32 = Client.default_app_uid,
+    declared_services: []const []const u8 = &.{},
     kernel_backlog: u31 = 16,
     delivery_limits: DeliveryBudget.Limits = .{},
     resource_limits: ResourceLimits = .{},
@@ -244,6 +247,26 @@ pub fn init(gpa: Allocator, io: Io, options: Options) !*Broker {
     errdefer gpa.free(cookie);
     const system_cookie = try gpa.dupe(u8, options.system_cookie);
     errdefer gpa.free(system_cookie);
+    var declared_services: std.StringHashMapUnmanaged(void) = .empty;
+    errdefer {
+        var names = declared_services.keyIterator();
+        while (names.next()) |name| gpa.free(name.*);
+        declared_services.deinit(gpa);
+    }
+    for (options.declared_services) |name| {
+        // VINTF AIDL names are interface/instance. The session launcher supplies
+        // this immutable manifest; addService and peer death cannot change it.
+        const slash = std.mem.indexOfScalar(u8, name, '/') orelse return error.InvalidDeclaration;
+        if (slash == 0 or slash + 1 == name.len or name.len > limits.max_name_len or
+            std.mem.indexOfScalar(u8, name[slash + 1 ..], '/') != null)
+            return error.InvalidDeclaration;
+        for (name) |c| if (!std.ascii.isAlphanumeric(c) and c != '.' and c != '_' and c != '-' and c != '/')
+            return error.InvalidDeclaration;
+        if (declared_services.contains(name)) continue;
+        const owned = try gpa.dupe(u8, name);
+        errdefer gpa.free(owned);
+        try declared_services.put(gpa, owned, {});
+    }
     var props = try prop_area.Area.create(io, options.prop_area_path);
     errdefer props.deinit();
     try seedProperties(&props);
@@ -257,6 +280,7 @@ pub fn init(gpa: Allocator, io: Io, options: Options) !*Broker {
         .socket_path = socket_path,
         .cookie = cookie,
         .system_cookie = system_cookie,
+        .declared_services = declared_services,
         .props = props,
         .delivery_limits = options.delivery_limits,
         .resource_limits = options.resource_limits,
@@ -392,6 +416,9 @@ pub fn deinit(b: *Broker) void {
     var names = b.services.keyIterator();
     while (names.next()) |name| gpa.free(name.*);
     b.services.deinit(gpa);
+    var declared = b.declared_services.keyIterator();
+    while (declared.next()) |name| gpa.free(name.*);
+    b.declared_services.deinit(gpa);
     var cbs = b.service_callbacks.iterator();
     while (cbs.next()) |entry| {
         gpa.free(entry.key_ptr.*);
@@ -1701,11 +1728,33 @@ fn handleServiceManagerTransact(
             try smReply(peer, header, data.items, entries.items);
         },
         SM.isDeclared => {
+            const name = r.readString16(gpa) catch return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "bad service name");
+            defer gpa.free(name);
             try smWriteI32(&data, gpa, 0); // no exception
-            try smWriteI32(&data, gpa, 0); // false: no VINTF-declared instances hosted
+            try smWriteI32(&data, gpa, @intFromBool(b.declared_services.contains(name)));
             try smReply(peer, header, data.items, entries.items);
         },
-        SM.getDeclaredInstances, SM.getUpdatableNames => {
+        SM.getDeclaredInstances => {
+            const interface = r.readString16(gpa) catch return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "bad interface name");
+            defer gpa.free(interface);
+            var instances: std.ArrayList([]const u8) = .empty;
+            defer instances.deinit(gpa);
+            var declared = b.declared_services.keyIterator();
+            while (declared.next()) |name| {
+                if (name.len > interface.len and std.mem.startsWith(u8, name.*, interface) and name.*[interface.len] == '/')
+                    try instances.append(gpa, name.*[interface.len + 1 ..]);
+            }
+            std.mem.sort([]const u8, instances.items, {}, struct {
+                fn lessThan(_: void, a: []const u8, other: []const u8) bool {
+                    return std.mem.lessThan(u8, a, other);
+                }
+            }.lessThan);
+            try smWriteI32(&data, gpa, 0);
+            try smWriteI32(&data, gpa, @intCast(instances.items.len));
+            for (instances.items) |instance| try smWriteString16(&data, gpa, instance);
+            try smReply(peer, header, data.items, entries.items);
+        },
+        SM.getUpdatableNames => {
             try smWriteI32(&data, gpa, 0); // no exception
             try smWriteI32(&data, gpa, 0); // empty String[]
             try smReply(peer, header, data.items, entries.items);

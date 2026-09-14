@@ -450,7 +450,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
     /** getContentProvider calls blocked until the owning package publishes. */
     private val providerWaiters = LinkedHashMap<String, MutableList<ProviderWaiter>>()
     @Volatile internal var processLauncher: HostedProcessStarts.Launcher<android.content.pm.ApplicationInfo>? = null
-    private val isolatedUidsByStart = HashMap<Long, Int>()
+    private val isolatedUidsByStart = HashMap<Long, Pair<Int, Int>>()
     private val processStarts by lazy {
         HostedProcessStarts<android.content.pm.ApplicationInfo>(
             schedule = { delay, callback ->
@@ -477,6 +477,52 @@ class HostedActivityManagerService(private val context: android.content.Context?
 
     override fun unregisterProcessObserver(observer: android.app.IProcessObserver) {
         processObservers.unregister(observer)
+    }
+
+    private val uidObservers by lazy {
+        com.android.server.am.HostedUidObservers(importanceHandler,
+            { serviceConstants().getLong("background_settle_time", 60_000L) })
+    }
+
+    /** AMS allows usage AppOps or PACKAGE_USAGE_STATS, then the stock observer
+     * dispatcher applies the caller's cross-user permission and UID filter. */
+    private fun enforceUidObserverPermission(callingPackage: String?, operation: String) {
+        val mode = appOps?.noteOperation(android.app.AppOpsManager.OP_GET_USAGE_STATS,
+            Binder.getCallingUid(), callingPackage, null, false, "", false)?.opMode
+            ?: android.app.AppOpsManager.MODE_DEFAULT
+        if (mode != android.app.AppOpsManager.MODE_ALLOWED)
+            enforceCallingPermission(android.Manifest.permission.PACKAGE_USAGE_STATS, operation)
+    }
+
+    override fun registerUidObserver(observer: android.app.IUidObserver?, which: Int,
+        cutpoint: Int, callingPackage: String?) {
+        registerUidObserverForUids(observer, which, cutpoint, callingPackage, null)
+    }
+
+    override fun registerUidObserverForUids(observer: android.app.IUidObserver?, which: Int,
+        cutpoint: Int, callingPackage: String?, uids: IntArray?): IBinder {
+        enforceUidObserverPermission(callingPackage, "registerUidObserver")
+        return uidObservers.register(observer ?: throw NullPointerException("observer"),
+            which, cutpoint, callingPackage, Binder.getCallingUid(), uids)
+    }
+
+    override fun unregisterUidObserver(observer: android.app.IUidObserver?) {
+        uidObservers.unregister(observer ?: throw NullPointerException("observer"))
+    }
+
+    override fun addUidToObserver(token: IBinder?, callingPackage: String?, uid: Int) {
+        enforceUidObserverPermission(callingPackage, "registerUidObserver")
+        uidObservers.add(token, uid)
+    }
+
+    override fun removeUidFromObserver(token: IBinder?, callingPackage: String?, uid: Int) {
+        enforceUidObserverPermission(callingPackage, "registerUidObserver")
+        uidObservers.remove(token, uid)
+    }
+
+    override fun isUidActive(uid: Int, callingPackage: String?): Boolean {
+        enforceUidObserverPermission(callingPackage, "isUidActive")
+        return uidObservers.isActive(uid) || pendingTopUids.contains(uid)
     }
 
     /** Foreground-service notifications are posted and cancelled through the hosted notification service. */
@@ -746,7 +792,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
         catch (_: android.os.RemoteException) { handleProcessDied(record); return }
         val uidState = processes.values.filter { it.uid == record.uid }.minOf { it.reportedProcState }
         stockTaskLocal.onUidProcStateChanged(record.uid, uidState)
-        publishAppOpsUidState(record.uid, uidState)
+        publishUidState(record.uid)
     }
 
     /** OomAdjuster applies UID state to AppOps after aggregating its processes.
@@ -754,7 +800,14 @@ class HostedActivityManagerService(private val context: android.content.Context?
      * getDefaultCapability's non-instrumented defaults are sufficient for this
      * window state update; service-specific while-in-use grants are separate.
      */
-    private fun publishAppOpsUidState(uid: Int, state: Int) {
+    private fun publishUidState(uid: Int) = synchronized(lock) {
+        // A death notification can race a new process attachment. Snapshot all
+        // remaining processes under the same lock before publishing either API.
+        val alive = processes.values.filter { it.uid == uid && !it.removed }
+        // OomAdjuster publishes its computed state; the temporary pending-top
+        // query override is cleared immediately after this update.
+        val state = alive.minOfOrNull { it.reportedProcState }
+            ?: android.app.ActivityManager.PROCESS_STATE_NONEXISTENT
         val capability = when (state) {
             android.app.ActivityManager.PROCESS_STATE_PERSISTENT,
             android.app.ActivityManager.PROCESS_STATE_PERSISTENT_UI,
@@ -763,6 +816,8 @@ class HostedActivityManagerService(private val context: android.content.Context?
             else -> android.app.ActivityManager.PROCESS_CAPABILITY_NONE
         } or android.net.NetworkPolicyManager.getDefaultProcessNetworkCapabilities(state)
         appOps?.updateUidProcState(uid, state, capability)
+        val adjustment = alive.minOfOrNull { HostedProcessInfoService.linuxOomScore(it.pid) } ?: -10000
+        uidObservers.update(uid, state, capability, adjustment)
     }
 
     /** ActiveServices.updateServiceConnectionActivitiesLocked: only a distinct
@@ -916,7 +971,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
             }
         }
         replayConfigurationOverrides(record)
-        publishAppOpsUidState(record.uid, uidProcessState(record.uid))
+        publishUidState(record.uid)
         if (record.uid != android.os.Process.SYSTEM_UID) processObserver?.invoke(record.packageName, record.uid, true)
         // Replay bind/start operations that were waiting for this process. Each
         // op re-locks internally and performs its Binder callbacks lock-free.
@@ -1049,12 +1104,13 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 }
                 for (waiter in failed) waiter.latch.countDown()
             }
+            // Publish final-process death before a replacement process can
+            // attach under the same UID and hide the GONE transition.
+            publishUidState(record.uid)
         }
         updateWindowProcessStates()
         Log.i(TAG, "process died: " + record.packageName + " pid=" + record.pid)
         processObservers.died(record.pid, record.uid)
-        val remainingState = uidProcessState(record.uid)
-        publishAppOpsUidState(record.uid, remainingState)
         processObserver?.invoke(record.packageName, record.uid, false)
     }
 
@@ -1180,9 +1236,10 @@ class HostedActivityManagerService(private val context: android.content.Context?
      * release only this start's component waiters, then clean any attached WPC. */
     private fun processStartFinishedLocked(request: HostedProcessStarts.Request<android.content.pm.ApplicationInfo>,
         failure: HostedProcessStarts.Failure?) {
-        isolatedUidsByStart.remove(request.sequence)?.let { uid ->
+        isolatedUidsByStart.remove(request.sequence)?.let { (uid, owner) ->
             com.android.server.LocalServices.getService(android.content.pm.PackageManagerInternal::class.java)
                 .removeIsolatedUid(uid)
+            batteryService?.isolatedUidRemoved(uid, owner)
         }
         val key = request.key
         val record = processes.values.firstOrNull { it.packageName == key.packageName &&
@@ -1301,9 +1358,13 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 val request = checkNotNull(processStarts.requestFor(target.process))
                 // ProcessList.newProcessRecordLocked records the owning app in PM;
                 // this is metadata, never a permission grant to the isolated UID.
-                com.android.server.LocalServices.getService(android.content.pm.PackageManagerInternal::class.java)
-                    .addIsolatedUid(identity.uid, target.info.applicationInfo.uid)
-                isolatedUidsByStart[request.sequence] = identity.uid
+                // Another service can share this already-starting process.
+                if (!isolatedUidsByStart.containsKey(request.sequence)) {
+                    com.android.server.LocalServices.getService(android.content.pm.PackageManagerInternal::class.java)
+                        .addIsolatedUid(identity.uid, target.info.applicationInfo.uid)
+                    batteryService?.isolatedUidAdded(identity.uid, target.info.applicationInfo.uid)
+                    isolatedUidsByStart[request.sequence] = identity.uid to target.info.applicationInfo.uid
+                }
             }
             started
         } catch (failure: Exception) { Log.e(TAG, "Cannot launch ${target.process.processName}", failure); false }

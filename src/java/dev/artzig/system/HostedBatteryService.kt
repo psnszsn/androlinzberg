@@ -73,6 +73,14 @@ class HostedBatteryService(private val activityManager: HostedActivityManagerSer
         synchronized(lock) { executor.execute { activityUsage.processCpu(processName, uid, userMs, systemMs) } }
     }
 
+    fun isolatedUidAdded(uid: Int, owner: Int) {
+        synchronized(lock) { executor.execute { videoUsage.isolatedUidAdded(uid, owner) } }
+    }
+
+    fun isolatedUidRemoved(uid: Int, owner: Int) {
+        synchronized(lock) { executor.execute { videoUsage.isolatedUidRemoved(uid, owner) } }
+    }
+
     /** BatteryService.isPoweredLocked: unknown status counts as powered. */
     fun isPowered(plugTypeSet: Int): Boolean = synchronized(lock) {
         snapshot.status == BatteryManager.BATTERY_STATUS_UNKNOWN ||

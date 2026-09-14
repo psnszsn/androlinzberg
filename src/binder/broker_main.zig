@@ -27,6 +27,8 @@ pub fn main(init: std.process.Init) !void {
     const cookie = init.minimal.environ.getPosix("AZK_BINDER_COOKIE");
     const system_cookie = init.minimal.environ.getPosix("AZK_BINDER_SYSTEM_COOKIE");
     var first_app_uid: u32 = Client.default_app_uid;
+    var declared_services: std.ArrayList([]const u8) = .empty;
+    defer declared_services.deinit(gpa);
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -42,6 +44,9 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, arg, "--first-app-uid") and i + 1 < args.len) {
             i += 1;
             first_app_uid = try std.fmt.parseInt(u32, args[i], 10);
+        } else if (std.mem.eql(u8, arg, "--declare-service") and i + 1 < args.len) {
+            i += 1;
+            try declared_services.append(gpa, args[i]);
         } else {
             std.debug.print("usage: AZK_BINDER_COOKIE=<cookie> AZK_BINDER_SYSTEM_COOKIE=<cookie> azk-binder-broker --socket <path> --prop-area <path> [--first-app-uid N]\n", .{});
             return error.InvalidArguments;
@@ -62,6 +67,7 @@ pub fn main(init: std.process.Init) !void {
             return error.InvalidArguments;
         },
         .first_app_uid = first_app_uid,
+        .declared_services = declared_services.items,
     });
     var group: Io.Group = .init;
     try group.concurrent(io, watchStdin, .{broker});

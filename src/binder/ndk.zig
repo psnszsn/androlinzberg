@@ -2764,10 +2764,33 @@ export fn AServiceManager_getService(instance: [*:0]const u8) callconv(.c) ?*AIB
 export fn AServiceManager_waitForService(instance: [*:0]const u8) callconv(.c) ?*AIBinder {
     return lookup(instance, true);
 }
-export fn AServiceManager_isDeclared(instance: [*:0]const u8) callconv(.c) bool {
-    const b = lookup(instance, false) orelse return false;
-    AIBinder_decStrong(b);
-    return true;
+// AOSP NDK service_manager.cpp delegates declaration queries to IServiceManager.
+// Send its original AIDL through the context object, shared with Java and C++.
+// Registration is deliberately irrelevant: the manifest survives service death.
+fn declarationQuery(code: u32, value: []const u8) ?*AParcel {
+    const binder = azk_binder_contextObject();
+    defer AIBinder_decStrong(binder);
+    var request: ?*AParcel = AParcel.create();
+    request.?.writeInterfaceToken("android.os.IServiceManager");
+    request.?.writeString(value, @intCast(value.len));
+    var reply: ?*AParcel = null;
+    const rc = AIBinder_transact(binder, code, &request, &reply, 0);
+    var accepted = false;
+    defer if (!accepted) {
+        if (reply) |p| p.destroy();
+    };
+    if (rc != STATUS_OK or reply == null) return null;
+    var status: ?*AStatus = null;
+    defer AStatus_delete(status);
+    if (AParcel_readStatusHeader(reply.?, &status) != STATUS_OK or !AStatus_isOk(status.?)) return null;
+    accepted = true;
+    return reply;
+}
+export fn AServiceManager_isDeclared(instance: ?[*:0]const u8) callconv(.c) bool {
+    const name = std.mem.span(instance orelse return false);
+    const reply = declarationQuery(9, name) orelse return false;
+    defer reply.destroy();
+    return (reply.readI32() orelse return false) != 0;
 }
 
 // ----- ABinderProcess (AZKB dispatch pool and independent socket reader)
@@ -2996,11 +3019,20 @@ export fn AServiceManager_registerLazyService(binder: *AIBinder, instance: [*:0]
 export fn AServiceManager_forceLazyServicesPersist(persist: bool) callconv(.c) void {
     _ = persist;
 }
-export fn AServiceManager_forEachDeclaredInstance(interface: [*:0]const u8, context: ?*anyopaque, callback: ?*const fn ([*:0]const u8, ?*anyopaque) callconv(.c) void) callconv(.c) void {
-    // The hosted broker has no VINTF manifest of declared instances.
-    _ = interface;
-    _ = context;
-    _ = callback;
+export fn AServiceManager_forEachDeclaredInstance(interface: ?[*:0]const u8, context: ?*anyopaque, callback: ?*const fn ([*:0]const u8, ?*anyopaque) callconv(.c) void) callconv(.c) void {
+    const name = std.mem.span(interface orelse @panic("interface == nullptr"));
+    const notify = callback orelse @panic("callback == nullptr");
+    const reply = declarationQuery(10, name) orelse return;
+    defer reply.destroy();
+    const count = reply.readI32() orelse return;
+    if (count < 0) return;
+    for (0..@intCast(count)) |_| {
+        const instance = reply.readString() catch return;
+        defer alloc.free(instance);
+        const terminated = alloc.dupeSentinel(u8, instance, 0) catch @panic("oom");
+        defer alloc.free(terminated);
+        notify(terminated, context);
+    }
 }
 export fn AServiceManager_isUpdatableViaApex(instance: [*:0]const u8) callconv(.c) bool {
     _ = instance;

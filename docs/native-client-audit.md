@@ -17,8 +17,8 @@ behavior; they do not establish native provenance or stock process boundaries.
 
 [`aosp-source-identity.py`](../tools/aosp-source-identity.py) compares the root
 framework build's static Java/Kotlin/annotation inputs against its explicitly
-supplied AOSP package and checkout. Its last acceptance report found 7,081
-unchanged inputs and 62 modified server inputs, with no modified or
+supplied AOSP package and checkout. Its last acceptance report found 7,086
+unchanged inputs and 63 modified server inputs, with no modified or
 repository-owned `android.*` / `com.android.internal.*` client replacements in
 that selection.
 
@@ -477,14 +477,37 @@ share the pooled duration; multiple codecs within one UID retain nesting.
 Power changes and activity/video updates use one ordered event queue. Timer
 checks cover power changes, nested starts/stops, reset, pooled rounding and
 read-only snapshots, including permission rejection. The packaged suite passes.
-These counters do not implement isolated-UID remapping,
+The original PowerStatsUidResolver now maps isolated video UIDs to their app.
+Outstanding codec notifications retain that mapping through process death;
+SDK sandbox UIDs also map to their owner. These counters do not implement
 Android battery history or energy estimation.
 
 The resource service is not yet published by the production session. Its
-native codec process, component store and UID notifications remain to be
-connected before enabling stock MediaCodec.
+native codec process and component store remain to be connected before
+enabling stock MediaCodec. UID notifications now come from the live process
+registry through AOSP UidObserverController. Its server patch removes the
+diagnostic-only AMS state mirror and retains stock registration, filtering,
+coalescing, callback order, state cutpoints and observer-death handling. The
+host supplies foreground/background settling and final-process death.
 
 The C++ audit, NDK ABI check (135 reference symbols, 162 exports), codec client
 link test and NewPipe launch regression pass. All 28 APK tests pass, with
 91 actions and zero structured runtime issues; the testkit passes 23 tests.
 The installed build and archive pin are current.
+
+### Service declarations
+
+The broker owns immutable AIDL interface/instance declarations supplied by the
+session launcher. Java, the C++ facade and NDK query that same manifest through
+the original IServiceManager protocol. Declarations exist before registration
+and survive service death. The production manifest remains empty until a
+Codec2 component service is enabled. Broker and native tests cover those
+lifetimes, exact interface filtering, sorted instances, duplicate declarations,
+null queries and reentrant enumeration callbacks.
+
+The UID/declaration follow-up passes the framework module suite, Binder broker
+and C++/NDK tests, source comparison, C++ audit and NDK ABI check. All 28 APK
+tests pass with 88 recorded actions and zero structured runtime issues; the
+testkit passes 23 tests. Source comparison reports 7,086 unchanged inputs and
+63 server adaptations, with no modified/owned client sources or missing
+references. The archive and dependency pin were refreshed together.

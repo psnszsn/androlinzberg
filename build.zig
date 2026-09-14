@@ -654,6 +654,7 @@ pub fn build(b: *std.Build) void {
     const facade_run = b.addSystemCommand(&.{"python3"});
     facade_run.addFileArg(b.path("tools/binder-facade-test.py"));
     facade_run.addArg("--release-pressure");
+    facade_run.addArgs(&.{ "--declare-service", "dev.artzig.facade.v2.IStore/default", "--declare-service", "dev.artzig.facade.v2.IStore/secondary" });
     facade_run.addArg("--probe");
     facade_run.addArtifactArg(facade_test);
     facade_run.addArg("--library");

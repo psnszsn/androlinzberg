@@ -30,6 +30,10 @@ const Harness = struct {
     }
 
     fn startWithResources(gpa: std.mem.Allocator, io: Io, limits: Broker.DeliveryBudget.Limits, resources: Broker.ResourceLimits) !*Harness {
+        return startConfigured(gpa, io, limits, resources, &.{});
+    }
+
+    fn startConfigured(gpa: std.mem.Allocator, io: Io, limits: Broker.DeliveryBudget.Limits, resources: Broker.ResourceLimits, declared: []const []const u8) !*Harness {
         var buf: [64]u8 = undefined;
         var nonce_bytes: [8]u8 = undefined;
         io.random(&nonce_bytes);
@@ -37,7 +41,7 @@ const Harness = struct {
         const path = try gpa.dupe(u8, try std.fmt.bufPrint(&buf, "/tmp/azk-binder-test-{x}.sock", .{nonce}));
         var prop_buf: [64]u8 = undefined;
         const prop_path = try gpa.dupe(u8, try std.fmt.bufPrint(&prop_buf, "/tmp/azk-binder-test-{x}.props", .{nonce}));
-        const broker = try Broker.init(gpa, io, .{ .socket_path = path, .cookie = cookie, .system_cookie = system_cookie, .prop_area_path = prop_path, .delivery_limits = limits, .resource_limits = resources });
+        const broker = try Broker.init(gpa, io, .{ .socket_path = path, .cookie = cookie, .system_cookie = system_cookie, .prop_area_path = prop_path, .delivery_limits = limits, .resource_limits = resources, .declared_services = declared });
         const h = try gpa.create(Harness);
         h.* = .{ .broker = broker, .path = path, .prop_path = prop_path };
         try h.group.concurrent(io, runBroker, .{broker});
@@ -1911,4 +1915,69 @@ test "real system and WebView supervisors lose authority while live UIDs stay qu
             try testing.expectEqual(Server.Message.ServiceResult.Status.ok, (try launchReply(&owner)).status);
         }
     }
+}
+
+fn expectManifestReply(peer: *Peer, code: u32, name: []const u8, values: []const []const u8) !void {
+    const gpa = testing.allocator;
+    var request = ParcelBuf{ .gpa = gpa };
+    defer request.deinit();
+    try request.token();
+    try request.string16(name);
+    try peer.client.serveTransact(.{ .target = ObjectRef.remote(Client.context_object_id), .code = code, .request_id = 100, .data = request.bytes.items });
+    const msg = try peer.next();
+    defer gpa.free(msg.fds);
+    try testing.expectEqual(Server.Message.Tag.reply, msg.header.tag);
+    const rep, const payload = try replyBody(msg.body);
+    try testing.expectEqual(Client.Message.Reply.Status.ok, rep.status);
+    var expected = ParcelBuf{ .gpa = gpa };
+    defer expected.deinit();
+    try expected.i32v(0);
+    try expected.i32v(@intCast(values.len));
+    if (code == 10) for (values) |value| try expected.string16(value);
+    try testing.expectEqualSlices(u8, expected.bytes.items, payload.data);
+    try testing.expectEqual(@as(usize, 0), payload.entries.len);
+}
+
+test "declared AIDL instances survive service startup and death independently of registration" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const interface = "dev.artzig.test.IStore";
+    const first = interface ++ "/alpha";
+    const h = try Harness.startConfigured(gpa, io, .{}, .{}, &.{ interface ++ "/zeta", first, first, "dev.artzig.test.IStoreExtra/other" });
+    defer h.stop(gpa, io);
+    var client: Peer = undefined;
+    try client.connect(io, h.path, cookie);
+    defer client.close();
+    try client.expectWelcome();
+    try expectManifestReply(&client, 9, first, &.{"true"});
+    try expectManifestReply(&client, 9, interface ++ "/missing", &.{});
+    try expectManifestReply(&client, 10, interface, &.{ "alpha", "zeta" });
+    try expectManifestReply(&client, 10, "dev.artzig.test", &.{});
+    var owner: Peer = undefined;
+    try owner.connect(io, h.path, system_cookie);
+    defer owner.close();
+    try owner.expectWelcome();
+    for ([_][]const u8{ first, "dev.artzig.test.undeclared" }, 1..) |name, index| {
+        try owner.client.serveRegisterService(index, ObjectRef.local(index), name);
+        const reply = try owner.next();
+        defer gpa.free(reply.fds);
+        try testing.expectEqual(Server.Message.Tag.service_result, reply.header.tag);
+        const result = try serviceResult(reply.body);
+        try testing.expectEqual(Server.Message.ServiceResult.Status.ok, result.status);
+    }
+    try expectManifestReply(&client, 9, "dev.artzig.test.undeclared", &.{});
+    try expectManifestReply(&client, 9, first, &.{"true"});
+    owner.close();
+    // Wait for the owner's service registration to disappear, then re-query
+    // the manifest; a disconnected server cannot remove the declaration.
+    for (0..100) |_| {
+        try client.client.serveLookupService(20, first, false);
+        const reply = try client.next();
+        defer gpa.free(reply.fds);
+        const result = try serviceResult(reply.body);
+        if (result.status == .not_found) break;
+        try io.sleep(.fromMilliseconds(10), .awake);
+    } else return error.ServiceDidNotDie;
+    try expectManifestReply(&client, 9, first, &.{"true"});
+    try expectManifestReply(&client, 10, interface, &.{ "alpha", "zeta" });
 }

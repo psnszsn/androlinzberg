@@ -1488,6 +1488,8 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/util/MutableLong.java");
     try c.file("$CJ/com/android/internal/util/ProgressReporter.java");
     try c.file("$FB/services/core/java/com/android/server/am/ActivityManagerDebugConfig.java");
+    try c.file("$FB/services/core/java/com/android/server/am/UidObserverController.java");
+    try c.file("$FB/services/core/java/com/android/server/power/stats/PowerStatsUidResolver.java");
     try c.file("$FB/services/core/java/com/android/server/am/AppTimeTracker.java");
     try c.file("$FB/services/core/java/com/android/server/power/ShutdownCheckPoints.java");
     try c.file("$FB/services/core/java/com/android/server/am/StackTracesDumpHelper.java");

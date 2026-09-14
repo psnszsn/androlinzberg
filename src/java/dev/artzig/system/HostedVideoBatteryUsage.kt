@@ -19,6 +19,16 @@ internal class HostedVideoBatteryUsage(private var onBattery: Boolean,
     private var batteryUs = 0L
     private var powerSince = now()
     private val total = Timer()
+    private val uidResolver = com.android.server.power.stats.PowerStatsUidResolver()
+    private val isolatedVideo = HashMap<Int, Int>()
+
+    @Synchronized fun isolatedUidAdded(uid: Int, owner: Int) = uidResolver.noteIsolatedUidAdded(uid, owner)
+    @Synchronized fun isolatedUidRemoved(uid: Int, owner: Int) = uidResolver.noteIsolatedUidRemoved(uid, owner)
+
+    // BatteryStatsImpl.mapUid. The host has no delayed CPU collector to hold
+    // removed mappings: retain them until outstanding codec notifications finish.
+    private fun owner(uid: Int): Int = if (android.os.Process.isSdkSandboxUid(uid))
+        android.os.Process.getAppUidForSdkSandboxUid(uid) else uidResolver.mapUid(uid)
 
     private fun batteryTime(timestamp: Long): Long = batteryUs +
         if (onBattery) (timestamp - powerSince).coerceAtLeast(0L) * 1000 else 0L
@@ -48,9 +58,14 @@ internal class HostedVideoBatteryUsage(private var onBattery: Boolean,
     }
 
     @Synchronized fun start(uid: Int, timestamp: Long = now()) {
+        val mapped = owner(uid)
+        if (uidResolver.mapUid(uid) != uid) {
+            uidResolver.retainIsolatedUid(uid)
+            isolatedVideo[uid] = (isolatedVideo[uid] ?: 0) + 1
+        }
         val time = batteryTime(timestamp)
         if (total.nesting++ == 0) total.started = time
-        val timer = timers.getOrPut(uid) { Timer() }
+        val timer = timers.getOrPut(mapped) { Timer() }
         if (timer.nesting == 0) {
             refresh(time)
             timer.started = time
@@ -60,9 +75,14 @@ internal class HostedVideoBatteryUsage(private var onBattery: Boolean,
 
     @Synchronized fun stop(uid: Int, timestamp: Long = now()) {
         if (total.nesting == 0) return
+        val mapped = owner(uid)
+        isolatedVideo[uid]?.let { count ->
+            if (count == 1) isolatedVideo.remove(uid) else isolatedVideo[uid] = count - 1
+            uidResolver.releaseIsolatedUid(uid)
+        }
         val time = batteryTime(timestamp)
         if (--total.nesting == 0) total.accumulated += time - total.started
-        val timer = timers[uid] ?: return
+        val timer = timers[mapped] ?: return
         if (timer.nesting == 1) refresh(time)
         if (timer.nesting > 0) timer.nesting--
     }
@@ -74,6 +94,8 @@ internal class HostedVideoBatteryUsage(private var onBattery: Boolean,
         total.nesting = 0
         refresh(time)
         timers.values.forEach { it.nesting = 0 }
+        for ((uid, count) in isolatedVideo) repeat(count) { uidResolver.releaseIsolatedUid(uid) }
+        isolatedVideo.clear()
     }
 
     @Synchronized fun snapshot(): Snapshot {

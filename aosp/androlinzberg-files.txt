@@ -10042,3 +10042,7 @@ F aosp frameworks/av/services/mediaresourcemanager/test/ResourceObserverService_
 F aosp frameworks/av/services/mediaresourcemanager/test/ServiceLog_test.cpp
 F aosp frameworks/base/core/java/android/os/IProcessInfoService.aidl
 F aosp frameworks/av/media/utils/ISchedulingPolicyService.h
+
+# Stock UID observer dispatch and isolated-UID power accounting.
+F aosp frameworks/base/services/core/java/com/android/server/am/UidObserverController.java
+F aosp frameworks/base/services/core/java/com/android/server/power/stats/PowerStatsUidResolver.java

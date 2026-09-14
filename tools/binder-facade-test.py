@@ -18,6 +18,7 @@ p.add_argument('--output', type=Path, required=True)
 p.add_argument('--probe', type=Path, required=True)
 p.add_argument('--server', type=Path, help='Use a production service executable in place of the probe server mode')
 p.add_argument('--broker', type=Path, required=True)
+p.add_argument('--declare-service', action='append', default=[], help='Immutable session AIDL declaration')
 p.add_argument('--library', type=Path, action='append', default=[])
 p.add_argument('--producer-crash', action='store_true')
 p.add_argument('--release-pressure', action='store_true')
@@ -63,7 +64,8 @@ try:
     log = (d / 'broker.log').open('w')
     logs.append(log)
     b = subprocess.Popen(
-        [str(a.broker.resolve()), '--socket', env['AZK_BINDER_SOCKET'], '--prop-area', env['AZK_PROP_AREA']],
+        [str(a.broker.resolve()), '--socket', env['AZK_BINDER_SOCKET'], '--prop-area', env['AZK_PROP_AREA'],
+         *[arg for name in a.declare_service for arg in ('--declare-service', name)]],
         env=env,
         cwd=r,
         stdin=subprocess.PIPE,

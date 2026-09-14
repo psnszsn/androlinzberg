@@ -57,6 +57,31 @@ object HostedVideoBatteryUsageSmoke {
         poweredPool.reset()
         check(poweredPool.snapshot().totalUs == 3000L)
         check(poweredPool.snapshot().uidUs.values.all { it == 999L })
+        val isolated = HostedVideoBatteryUsage(true) { time }
+        val child = 99001
+        isolated.isolatedUidAdded(child, 10001)
+        isolated.start(child)
+        isolated.start(child)
+        time += 10
+        isolated.isolatedUidRemoved(child, 10001)
+        isolated.stop(child)
+        time += 10
+        isolated.stop(child) // A late stop after process death still belongs to its app.
+        check(isolated.snapshot().uidUs == mapOf(10001 to 20000L))
+        isolated.isolatedUidAdded(child, 10002)
+        isolated.start(child)
+        time += 10
+        isolated.isolatedUidRemoved(child, 10002)
+        isolated.reset()
+        isolated.start(child) // Reset released the removed mapping.
+        time += 10
+        isolated.stop(child)
+        check(isolated.snapshot().uidUs == mapOf(10001 to 20000L, 10002 to 10000L, child to 10000L))
+        val sandbox = android.os.Process.toSdkSandboxUid(10003)
+        isolated.start(sandbox)
+        time += 10
+        isolated.stop(sandbox)
+        check(isolated.snapshot().uidUs[10003] == 10000L)
         val denied = HostedBatteryService(HostedActivityManagerService()).batteryStats
         check(runCatching { denied.noteStartVideo(10001) }.exceptionOrNull() is SecurityException)
         check(runCatching { denied.noteStopVideo(10001) }.exceptionOrNull() is SecurityException)

@@ -59,7 +59,7 @@ internal class HostedProcessInfoService(
     companion object {
         private const val INVALID_ADJ = -10000
 
-        private fun linuxOomScore(pid: Int): Int = try {
+        internal fun linuxOomScore(pid: Int): Int = try {
             File("/proc/$pid/oom_score_adj").readText().trim().toIntOrNull()
                 ?.takeIf { it in -1000..1000 } ?: INVALID_ADJ
         } catch (_: IOException) {

@@ -2901,6 +2901,7 @@ pub const proto_inputs = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/os/messagequeue.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/os/worksource.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/appexitinfo.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/activitymanager.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/appstartinfo.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/profilerinfo.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/pendingintent.proto" },
@@ -2922,6 +2923,7 @@ pub const proto_inputs = [_]SourcePath{
 };
 
 pub const proto_outputs = [_][]const u8{
+    "android/app/ActivityManagerProto.java",
     "android/aconfigd/Aconfigd.java",
     "android/hardware/location/ContextHubInfoProto.java",
     "android/service/print/PrintJobInfoProto.java",

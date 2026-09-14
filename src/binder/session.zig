@@ -96,6 +96,7 @@ pub const Session = struct {
         environ: std.process.Environ,
         storage: ?Storage = null,
         first_app_uid: u32 = Client.default_app_uid,
+        declared_services: []const []const u8 = &.{},
     };
 
     pub fn start(gpa: std.mem.Allocator, io: Io, options: Options) !Session {
@@ -143,8 +144,12 @@ pub const Session = struct {
         defer child_env.deinit();
         try child_env.put(cookie_env, cookie);
         try child_env.put(system_cookie_env, system_cookie);
+        var broker_args: std.ArrayList([]const u8) = .empty;
+        defer broker_args.deinit(gpa);
+        try broker_args.appendSlice(gpa, &.{ options.broker_exe, "--socket", socket_path, "--prop-area", prop_area_path, "--session-dir", dir, "--first-app-uid", uid_text });
+        for (options.declared_services) |name| try broker_args.appendSlice(gpa, &.{ "--declare-service", name });
         var child = try spawnService(gpa, io, .{
-            .argv = &.{ options.broker_exe, "--socket", socket_path, "--prop-area", prop_area_path, "--session-dir", dir, "--first-app-uid", uid_text },
+            .argv = broker_args.items,
             .environ_map = &child_env,
             .stdin = .pipe,
             .stdout = .pipe,

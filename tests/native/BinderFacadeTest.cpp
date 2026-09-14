@@ -9,6 +9,7 @@
 #include <binder/IPCThreadState.h>
 #include <binder/BpBinder.h>
 #include <binder/ProcessState.h>
+#include <binder/IServiceManager.h>
 #include <binder/IResultReceiver.h>
 #include <binder/IMemory.h>
 #include <binder/MemoryDealer.h>
@@ -724,6 +725,26 @@ int main(int argc, char **argv) {
   }
   auto *raw = AServiceManager_waitForService("dev.artzig.facade.v2");
   assert(raw);
+  assert(!AServiceManager_isDeclared(nullptr));
+  assert(!AServiceManager_isDeclared("dev.artzig.facade.v2"));
+  assert(AServiceManager_isDeclared("dev.artzig.facade.v2.IStore/default"));
+  assert(defaultServiceManager()->isDeclared(String16("dev.artzig.facade.v2.IStore/default")));
+  assert(!AServiceManager_checkService("dev.artzig.facade.v2.IStore/default"));
+  std::vector<std::string> instances;
+  const auto collect = [](const char *instance, void *context) {
+    auto *values = static_cast<std::vector<std::string> *>(context);
+    values->emplace_back(instance);
+    const std::string name = std::string("dev.artzig.facade.v2.IStore/") + instance;
+    assert(AServiceManager_isDeclared(name.c_str())); // Reentrant callback, no transport lock held.
+  };
+  AServiceManager_forEachDeclaredInstance("dev.artzig.facade.v2.IStore", &instances, collect);
+  assert((instances == std::vector<std::string>{"default", "secondary"}));
+  instances.clear();
+  AServiceManager_forEachDeclaredInstance("dev.artzig.facade.v2", &instances, collect);
+  assert(instances.empty());
+  AServiceManager_forEachDeclaredInstance("dev.artzig.facade.v2.IStore", nullptr,
+      [](const char *instance, void *context) { assert(instance && !context); });
+  pass("session AIDL declarations independent of registration; filtered enumeration and reentrant callbacks");
   auto server = IBinder::fromNative(raw);
   releaseReaderProgressTest(server);
   reexportReleaseTest(server);
