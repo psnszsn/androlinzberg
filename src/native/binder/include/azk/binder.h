@@ -16,6 +16,7 @@ void AParcel_markSensitive(const AParcel *);
 bool AParcel_getAllowFds(const AParcel *);
 int32_t AParcel_getDataSize(const AParcel *);
 int32_t AParcel_reset(AParcel *);
+int32_t AParcel_unmarshal(AParcel *, const uint8_t *, size_t);
 int32_t azk_parcel_setSize(AParcel *, size_t);
 int32_t azk_parcel_setCapacity(AParcel *, size_t);
 size_t azk_parcel_capacity(const AParcel *);

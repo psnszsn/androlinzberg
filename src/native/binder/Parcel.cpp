@@ -9,6 +9,13 @@
 #include <unistd.h>
 #include <cerrno>
 namespace android {
+// Pinned Parcel::setData replaces bytes and releases embedded object/FD
+// ownership, with position zero and exact (un-padded) length. AZKB owns storage.
+status_t Parcel::setData(const uint8_t* data, size_t size) {
+  if (size > INT32_MAX) return BAD_VALUE;
+  return AParcel_unmarshal(mParcel, data, size);
+}
+
 // Pinned Parcel's byte-array wire format and exception-header decoding.
 status_t Parcel::writeByteArray(size_t len, const uint8_t* val) {
   if (len > INT32_MAX) return BAD_VALUE;

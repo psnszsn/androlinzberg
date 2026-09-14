@@ -2442,13 +2442,14 @@ export fn AParcel_marshal(parcel: *const AParcel, buffer: [*]u8, start: usize, l
     @memcpy(buffer[0..len], p.data.items[start .. start + len]);
     return STATUS_OK;
 }
-export fn AParcel_unmarshal(parcel: *AParcel, buffer: [*]const u8, len: usize) callconv(.c) i32 {
+export fn AParcel_unmarshal(parcel: *AParcel, buffer: ?[*]const u8, len: usize) callconv(.c) i32 {
+    if (len > std.math.maxInt(i32) or (len > 0 and buffer == null)) return STATUS_BAD_VALUE;
     // clearContents resets pos to 0, so writeBytes lays the new data down from
     // the start (writing before the reset would leave an uninitialized prefix).
     parcel.clearContents();
-    parcel.writeBytes(buffer[0..len]);
+    if (len > 0) parcel.writeBytes(buffer.?[0..len]);
     parcel.pos = 0;
-    return STATUS_OK;
+    return parcel.err;
 }
 export fn AParcel_markSensitive(parcel: *const AParcel) callconv(.c) void {
     @constCast(parcel).sensitive = true;

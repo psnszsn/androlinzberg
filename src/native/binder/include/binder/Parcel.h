@@ -82,6 +82,7 @@ public:
     }
     AParcel_setDataPosition(mParcel, n);
   }
+  status_t setData(const uint8_t* data, size_t size);
   status_t setDataSize(size_t n) { return azk_parcel_setSize(mParcel, n); }
   status_t setDataCapacity(size_t n) {
     return azk_parcel_setCapacity(mParcel, n);

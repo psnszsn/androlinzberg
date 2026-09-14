@@ -652,6 +652,25 @@ int main(int argc, char **argv) {
   }
   parcelTests();
   {
+    Parcel parcel;
+    auto object = sp<Listener>::make();
+    wp<Listener> weak = object;
+    assert(parcel.writeStrongBinder(IInterface::asBinder(object)) == OK);
+    object.clear();
+    assert(weak.promote());
+    const uint8_t bytes[] = {1, 2, 3};
+    const auto size = parcel.dataSize(), position = parcel.dataPosition();
+    assert(parcel.setData(bytes, size_t(INT32_MAX) + 1) == BAD_VALUE);
+    assert(parcel.dataSize() == size && parcel.dataPosition() == position && weak.promote());
+    parcel.setError(BAD_VALUE);
+    assert(parcel.setData(bytes, sizeof(bytes)) == OK);
+    assert(!weak.promote() && parcel.objectsCount() == 0);
+    assert(parcel.dataSize() == sizeof(bytes) && parcel.dataPosition() == 0 && parcel.errorCheck() == OK);
+    assert(std::memcmp(parcel.data(), bytes, sizeof(bytes)) == 0);
+    assert(parcel.setData(nullptr, 0) == OK && parcel.dataSize() == 0 && parcel.dataPosition() == 0);
+    pass("setData replaces unpadded bytes, resets position/errors, releases Binder ownership and rejects oversized input without mutation");
+  }
+  {
     const int32_t values[] = {INT32_MIN, -1, 42, INT32_MAX};
     Parcel parcel;
     assert(parcel.writeInt32Array(4, values) == OK);
