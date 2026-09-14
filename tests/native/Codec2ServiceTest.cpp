@@ -13,6 +13,12 @@
 #include <gui/BufferItemConsumer.h>
 #include <gui/BufferItem.h>
 #include <gui/Surface.h>
+#include <media/stagefright/MediaCodecList.h>
+#include <media/stagefright/MediaCodecConstants.h>
+#include <media/stagefright/foundation/AMessage.h>
+#include <media/NdkMediaCodec.h>
+#include <media/NdkMediaFormat.h>
+#include <ResourceManagerService.h>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -24,6 +30,7 @@
 using android::Codec2Client;
 using HalStore = aidl::android::hardware::media::c2::utils::ComponentStore;
 constexpr const char *instance = "android.hardware.media.c2.IComponentStore/software";
+constexpr const char *videoInstance = "android.hardware.media.c2.IComponentStore/default";
 
 struct Listener final : Codec2Client::Listener {
     std::mutex mutex;
@@ -140,34 +147,155 @@ static void video(const std::shared_ptr<Codec2Client> &client, const char *name,
                  "work reordering, flush, dataspace and Surface migration pixels" << std::endl;
 }
 
+static void nativeMediaCodec(bool video) {
+    using namespace android;
+    std::unique_ptr<GpuBufferRenderer> renderer;
+    sp<BufferItemConsumer> consumer;
+    sp<Surface> surface;
+    if (video) {
+        renderer = std::make_unique<GpuBufferRenderer>();
+        std::tie(consumer, surface) = BufferItemConsumer::create(GRALLOC_USAGE_HW_TEXTURE, 2);
+    }
+    const char *mime = video ? "video/avc" : "audio/mpeg";
+    AMediaCodec *codec = AMediaCodec_createDecoderByType(mime);
+    assert(codec);
+    AMediaFormat *format = AMediaFormat_new();
+    AMediaFormat_setString(format, AMEDIAFORMAT_KEY_MIME, mime);
+    if (video) {
+        AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_WIDTH, 318);
+        AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_HEIGHT, 238);
+    } else {
+        AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_SAMPLE_RATE, 44100);
+        AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_CHANNEL_COUNT, 2);
+    }
+    assert(AMediaCodec_configure(codec, format, surface.get(), nullptr, 0) == AMEDIA_OK);
+    AMediaFormat_delete(format);
+    assert(AMediaCodec_start(codec) == AMEDIA_OK);
+    const auto packets = video ? videoPackets() : std::vector<std::vector<uint8_t>>{twoMp3Frames()};
+    ssize_t index;
+    size_t capacity = 0;
+    for (const auto &encoded : packets) {
+        index = AMediaCodec_dequeueInputBuffer(codec, 2000000);
+        assert(index >= 0);
+        uint8_t *input = AMediaCodec_getInputBuffer(codec, index, &capacity);
+        assert(input && capacity >= encoded.size());
+        std::memcpy(input, encoded.data(), encoded.size());
+        assert(AMediaCodec_queueInputBuffer(codec, index, 0, encoded.size(), 7654321, 0) == AMEDIA_OK);
+    }
+    index = AMediaCodec_dequeueInputBuffer(codec, 2000000);
+    assert(index >= 0);
+    assert(AMediaCodec_queueInputBuffer(codec, index, 0, 0, 7654321, AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM) == AMEDIA_OK);
+    size_t bytes = 0, frames = 0;
+    bool eos = false, changed = false;
+    for (unsigned attempt = 0; attempt < 24 && !eos; ++attempt) {
+        AMediaCodecBufferInfo info{};
+        index = AMediaCodec_dequeueOutputBuffer(codec, &info, 500000);
+        if (index == AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED) {
+            format = AMediaCodec_getOutputFormat(codec);
+            int32_t first = 0, second = 0;
+            assert(format && AMediaFormat_getInt32(format, video ? AMEDIAFORMAT_KEY_WIDTH : AMEDIAFORMAT_KEY_SAMPLE_RATE, &first));
+            assert(AMediaFormat_getInt32(format, video ? AMEDIAFORMAT_KEY_HEIGHT : AMEDIAFORMAT_KEY_CHANNEL_COUNT, &second));
+            assert(first == (video ? 318 : 44100) && second == (video ? 238 : 2));
+            AMediaFormat_delete(format);
+            changed = true;
+        } else if (index >= 0) {
+            eos = info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM;
+            if (video) {
+                const bool render = info.size != 0;
+                assert(AMediaCodec_releaseOutputBuffer(codec, index, render) == AMEDIA_OK);
+                if (render) {
+                    BufferItem item;
+                    assert(consumer->acquireBuffer(&item, 0) == OK);
+                    assertRed(renderer->readPixel(item.mGraphicBuffer));
+                    assert(consumer->releaseBuffer(item) == OK);
+                    ++frames;
+                }
+            } else {
+                uint8_t *output = AMediaCodec_getOutputBuffer(codec, index, &capacity);
+                assert(info.offset >= 0 && info.size >= 0 && size_t(info.offset) + info.size <= capacity);
+                if (info.size) {
+                    assert(output);
+                    if (!bytes) assert(info.presentationTimeUs == 7654321);
+                    bytes += info.size;
+                }
+                assert(AMediaCodec_releaseOutputBuffer(codec, index, false) == AMEDIA_OK);
+            }
+        } else assert(index == AMEDIACODEC_INFO_TRY_AGAIN_LATER || index == AMEDIACODEC_INFO_OUTPUT_BUFFERS_CHANGED);
+    }
+    assert(eos && changed);
+    if (video) assert(frames == packets.size());
+    else assert(bytes == 2 * 1152 * 2 * sizeof(int16_t));
+    assert(AMediaCodec_stop(codec) == AMEDIA_OK);
+    assert(AMediaCodec_delete(codec) == AMEDIA_OK);
+    if (consumer) consumer->abandon();
+    std::cout << "PASS original NDK MediaCodec and CCodec " << mime << " decode through the stock AIDL service" << std::endl;
+}
+
 int codec2ProcessTestMain(int argc, char **argv) {
     ABinderProcess_startThreadPool();
     if (argc > 1 && std::strcmp(argv[1], "server") == 0) {
         assert(property_set("ro.vendor.api_level", "202404") == 0);
         assert(property_set("media.c2.hal.selection", "aidl") == 0);
-        const auto mask = std::to_string(1u << android::C2PlatformAllocatorStore::BLOB);
+        const auto mask = std::to_string((1u << android::C2PlatformAllocatorStore::BLOB) | (1u << android::C2PlatformAllocatorStore::BUFFERQUEUE));
         assert(property_set("debug.stagefright.c2-poolmask", mask.c_str()) == 0);
-        auto service = ndk::SharedRefBase::make<HalStore>(azk::codec2::createStore());
+        auto service = ndk::SharedRefBase::make<HalStore>(azk::codec2::createStore(C2Component::DOMAIN_AUDIO));
+        auto videoService = ndk::SharedRefBase::make<HalStore>(azk::codec2::createStore(C2Component::DOMAIN_VIDEO));
         assert(service->status() == C2_OK);
         assert(AServiceManager_addService(service->asBinder().get(), instance) == STATUS_OK);
+        assert(videoService->status() == C2_OK);
+        assert(AServiceManager_addService(videoService->asBinder().get(), videoInstance) == STATUS_OK);
+        android::ResourceManagerService::instantiate();
         std::cout << "ready" << std::endl;
         std::cin.get();
         std::_Exit(0);
     }
     const auto &names = Codec2Client::GetServiceNames();
-    assert(names.size() == 1 && names[0] == "software");
+    assert(std::set<std::string>(names.begin(), names.end()) == std::set<std::string>({"software", "default"}));
     auto client = Codec2Client::CreateFromService("software");
+    auto videoClient = Codec2Client::CreateFromService("default");
     assert(client && AIBinder_isRemote(client->getAidlBase().get()));
+    assert(videoClient && AIBinder_isRemote(videoClient->getAidlBase().get()));
     const auto &traits = client->listComponents();
-    size_t expected = 5;
+    assert(traits.size() == 5);
+    size_t expected = 0;
     for (const char *backend : {"h264", "vp9", "mpeg4"}) expected += azk_codec_video_profiles(backend) != 0;
-    assert(traits.size() == expected);
+    assert(videoClient->listComponents().size() == expected);
+    for (const auto &trait : videoClient->listComponents())
+        assert(trait.domain == C2Component::DOMAIN_VIDEO && trait.owner == "default");
     for (const auto &trait : traits) {
-        assert((trait.domain == C2Component::DOMAIN_AUDIO || trait.domain == C2Component::DOMAIN_VIDEO) &&
+        assert(trait.domain == C2Component::DOMAIN_AUDIO && trait.owner == "software" &&
                 trait.kind == C2Component::KIND_DECODER);
         assert(trait.rank == 8 && !trait.name.empty() && !trait.mediaType.empty());
     }
+    // Exercise the original catalogue, XML parser and Codec2 profile mapper.
+    // Store instance ownership determines hardware/software flags in AOSP.
+    const auto catalogue = android::MediaCodecList::getLocalInstance();
+    assert(catalogue && catalogue->countCodecs() == 5 + expected);
+    for (size_t i = 0; i < catalogue->countCodecs(); ++i) {
+        const auto info = catalogue->getCodecInfo(i);
+        assert(info && !info->isEncoder());
+        android::Vector<android::AString> types;
+        info->getSupportedMediaTypes(&types);
+        assert(types.size() == 1);
+        const bool hardware = types[0].startsWith("video/");
+        assert(bool(info->getAttributes() & android::MediaCodecInfo::kFlagIsHardwareAccelerated) == hardware);
+        assert(bool(info->getAttributes() & android::MediaCodecInfo::kFlagIsSoftwareOnly) == !hardware);
+        auto caps = info->getCapabilitiesFor(types[0].c_str());
+        assert(caps);
+        android::Vector<android::MediaCodecInfo::ProfileLevel> profiles;
+        caps->getSupportedProfileLevels(&profiles);
+        if (hardware || types[0] == "audio/mp4a-latm") assert(!profiles.empty());
+        if (hardware) {
+            android::AString dimensions;
+            assert(caps->getDetails()->findString("size-range", &dimensions) && dimensions == "2x2-4096x4096");
+        }
+    }
+    std::cout << "PASS original MediaCodecList XML, profiles and hardware/software attributes" << std::endl;
+    nativeMediaCodec(false);
+    nativeMediaCodec(true);
     std::shared_ptr<Codec2Client::Interface> interface;
+    assert(client->createInterface("c2.artzig.avc.decoder", &interface) == C2_NOT_FOUND && !interface);
+    assert(videoClient->createInterface("c2.artzig.mp3.decoder", &interface) == C2_NOT_FOUND && !interface);
     assert(client->createInterface("missing", &interface) == C2_NOT_FOUND && !interface);
     assert(client->createInterface("c2.artzig.mp3.decoder", &interface) == C2_OK);
     C2StreamSampleRateInfo::output rate(0u);
@@ -216,14 +344,14 @@ int codec2ProcessTestMain(int argc, char **argv) {
     assert(component->stop() == C2_OK);
     assert(component->release() == C2_OK);
     component.reset();
-    video(client, "c2.artzig.avc.decoder", "libx264");
-    video(client, "c2.artzig.vp9.decoder", "libvpx-vp9");
+    video(videoClient, "c2.artzig.avc.decoder", "libx264");
+    video(videoClient, "c2.artzig.vp9.decoder", "libvpx-vp9");
     if (azk_codec_video_profiles("mpeg4")) {
-        video(client, "c2.artzig.mpeg4.decoder", "mpeg4");
+        video(videoClient, "c2.artzig.mpeg4.decoder", "mpeg4");
     } else {
         const auto previous = interface;
-        assert(client->createInterface("c2.artzig.mpeg4.decoder", &interface) == C2_NOT_FOUND && interface == previous);
-        assert(client->createComponent("c2.artzig.mpeg4.decoder", listener, &component) == C2_NOT_FOUND && !component);
+        assert(videoClient->createInterface("c2.artzig.mpeg4.decoder", &interface) == C2_NOT_FOUND && interface == previous);
+        assert(videoClient->createComponent("c2.artzig.mpeg4.decoder", listener, &component) == C2_NOT_FOUND && !component);
         std::cout << "PASS unavailable MPEG-4 hardware is excluded from Codec2 discovery" << std::endl;
     }
     auto death = std::make_shared<Listener>();

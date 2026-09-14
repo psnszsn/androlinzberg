@@ -10,16 +10,27 @@ namespace azk::codec2 {
 namespace {
 class Store final : public C2ComponentStore {
 public:
-    Store() : mPlatform(android::GetCodec2PlatformComponentStore()),
+    explicit Store(C2Component::domain_t domain) : mDomain(domain),
+              mPlatform(android::GetCodec2PlatformComponentStore()),
               mReflector(std::static_pointer_cast<C2ReflectorHelper>(mPlatform->getParamReflector())) {}
     C2String getName() const override { return "artzig"; }
     c2_status_t createComponent(C2String name, std::shared_ptr<C2Component> *const out) override {
+        if (!out) return C2_BAD_VALUE;
+        out->reset();
+        if (!supports(name)) return C2_NOT_FOUND;
         return createFfmpegComponent(name, mNextId.fetch_add(1), mReflector, out);
     }
     c2_status_t createInterface(C2String name, std::shared_ptr<C2ComponentInterface> *const out) override {
+        if (!out) return C2_BAD_VALUE;
+        out->reset();
+        if (!supports(name)) return C2_NOT_FOUND;
         return createFfmpegInterface(name, mNextId.fetch_add(1), mReflector, out);
     }
-    std::vector<std::shared_ptr<const C2Component::Traits>> listComponents() override { return componentTraits(); }
+    std::vector<std::shared_ptr<const C2Component::Traits>> listComponents() override {
+        std::vector<std::shared_ptr<const C2Component::Traits>> result;
+        for (auto &traits : componentTraits()) if (traits->domain == mDomain) result.push_back(std::move(traits));
+        return result;
+    }
     c2_status_t copyBuffer(std::shared_ptr<C2GraphicBuffer> src, std::shared_ptr<C2GraphicBuffer> dst) override {
         return mPlatform->copyBuffer(std::move(src), std::move(dst));
     }
@@ -40,10 +51,17 @@ public:
         return mPlatform->querySupportedValues_sm(fields);
     }
 private:
+    bool supports(const C2String &name) {
+        for (const auto &traits : listComponents()) if (traits->name == name) return true;
+        return false;
+    }
+    const C2Component::domain_t mDomain;
     std::shared_ptr<C2ComponentStore> mPlatform;
     std::shared_ptr<C2ReflectorHelper> mReflector;
     std::atomic<c2_node_id_t> mNextId{1};
 };
 }
-std::shared_ptr<C2ComponentStore> createStore() { return std::make_shared<Store>(); }
+std::shared_ptr<C2ComponentStore> createStore(C2Component::domain_t domain) {
+    return std::make_shared<Store>(domain);
+}
 }

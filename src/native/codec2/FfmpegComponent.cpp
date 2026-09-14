@@ -22,6 +22,7 @@ using namespace android;
 namespace {
 struct Format {
     const char *name, *decoder, *mime; uint32_t rate;
+    uint32_t profiles = 0;
     bool video() const { return rate == 0; }
 };
 constexpr Format formats[] = {
@@ -35,11 +36,13 @@ constexpr Format formats[] = {
     {"c2.artzig.mpeg4.decoder", "mpeg4", "video/mp4v-es", 0},
 };
 
-const std::vector<const Format *> &availableFormats() {
+const std::vector<Format> &availableFormats() {
     static const auto available = [] {
-        std::vector<const Format *> result;
-        for (const auto &format : formats)
-            if (!format.video() || azk_codec_video_profiles(format.decoder)) result.push_back(&format);
+        std::vector<Format> result;
+        for (auto format : formats) {
+            if (format.video()) format.profiles = azk_codec_video_profiles(format.decoder);
+            if (!format.video() || format.profiles) result.push_back(format);
+        }
         return result;
     }();
     return available;
@@ -60,6 +63,40 @@ public:
             .withConstValue(new C2PortActualDelayTuning::output(format.video() ? 34 : 1)).build());
         addParameter(DefineParam(maxInput, C2_PARAMKEY_INPUT_MAX_BUFFER_SIZE)
             .withConstValue(new C2StreamMaxBufferSizeInfo::input(0u, 4 * 1024 * 1024)).build());
+        std::vector<uint32_t> profiles;
+        std::vector<uint32_t> levels;
+        if (std::strcmp(format.decoder, "h264") == 0) {
+            if (format.profiles & 1) profiles.push_back(C2Config::PROFILE_AVC_BASELINE);
+            if (format.profiles & 2) profiles.push_back(C2Config::PROFILE_AVC_MAIN);
+            if (format.profiles & 4) profiles.push_back(C2Config::PROFILE_AVC_HIGH);
+            levels = {C2Config::LEVEL_AVC_1, C2Config::LEVEL_AVC_1B, C2Config::LEVEL_AVC_1_1,
+                C2Config::LEVEL_AVC_1_2, C2Config::LEVEL_AVC_1_3, C2Config::LEVEL_AVC_2,
+                C2Config::LEVEL_AVC_2_1, C2Config::LEVEL_AVC_2_2, C2Config::LEVEL_AVC_3,
+                C2Config::LEVEL_AVC_3_1, C2Config::LEVEL_AVC_3_2, C2Config::LEVEL_AVC_4,
+                C2Config::LEVEL_AVC_4_1, C2Config::LEVEL_AVC_4_2, C2Config::LEVEL_AVC_5,
+                C2Config::LEVEL_AVC_5_1, C2Config::LEVEL_AVC_5_2};
+        } else if (std::strcmp(format.decoder, "vp9") == 0) {
+            profiles = {C2Config::PROFILE_VP9_0};
+            levels = {C2Config::LEVEL_VP9_1, C2Config::LEVEL_VP9_1_1, C2Config::LEVEL_VP9_2,
+                C2Config::LEVEL_VP9_2_1, C2Config::LEVEL_VP9_3, C2Config::LEVEL_VP9_3_1,
+                C2Config::LEVEL_VP9_4, C2Config::LEVEL_VP9_4_1, C2Config::LEVEL_VP9_5,
+                C2Config::LEVEL_VP9_5_1, C2Config::LEVEL_VP9_5_2};
+        } else if (std::strcmp(format.decoder, "mpeg4") == 0) {
+            if (format.profiles & 1) profiles.push_back(C2Config::PROFILE_MP4V_SIMPLE);
+            if (format.profiles & 2) profiles.push_back(C2Config::PROFILE_MP4V_ADVANCED_SIMPLE);
+            levels = {C2Config::LEVEL_MP4V_0, C2Config::LEVEL_MP4V_0B, C2Config::LEVEL_MP4V_1,
+                C2Config::LEVEL_MP4V_2, C2Config::LEVEL_MP4V_3, C2Config::LEVEL_MP4V_3B,
+                C2Config::LEVEL_MP4V_4, C2Config::LEVEL_MP4V_4A, C2Config::LEVEL_MP4V_5};
+        } else if (std::strcmp(format.decoder, "aac") == 0) {
+            profiles = {C2Config::PROFILE_AAC_LC, C2Config::PROFILE_AAC_HE, C2Config::PROFILE_AAC_HE_PS};
+            levels = {C2Config::LEVEL_UNUSED};
+        }
+        if (!profiles.empty()) {
+            addParameter(DefineParam(profileLevel, C2_PARAMKEY_PROFILE_LEVEL)
+                .withDefault(new C2StreamProfileLevelInfo::input(0u, static_cast<C2Config::profile_t>(profiles.front()), static_cast<C2Config::level_t>(levels.back())))
+                .withFields({C2F(profileLevel, profile).oneOf(profiles), C2F(profileLevel, level).oneOf(levels)})
+                .withSetter(ProfileLevelSetter).build());
+        }
         if (format.video()) {
             addParameter(DefineParam(size, C2_PARAMKEY_PICTURE_SIZE)
                 .withDefault(new C2StreamPictureSizeInfo::output(0u, 320, 240))
@@ -96,6 +133,19 @@ public:
         return {size->width, size->height, dataspace->value};
     }
 private:
+    static C2R ProfileLevelSetter(bool, const C2P<C2StreamProfileLevelInfo::input> &old,
+                                  C2P<C2StreamProfileLevelInfo::input> &next) {
+        C2R result = C2R::Ok();
+        if (!next.F(next.v.profile).supportsAtAll(next.v.profile)) {
+            result = result.plus(C2SettingResultBuilder::BadValue(next.F(next.v.profile)));
+            next.set().profile = old.v.profile;
+        }
+        if (!next.F(next.v.level).supportsAtAll(next.v.level)) {
+            result = result.plus(C2SettingResultBuilder::BadValue(next.F(next.v.level)));
+            next.set().level = old.v.level;
+        }
+        return result;
+    }
     // Pinned C2SoftAvcDec::IntfImpl::SizeSetter: reject invalid fields and
     // preserve each previous value independently.
     static C2R SizeSetter(bool, const C2P<C2StreamPictureSizeInfo::output> &old,
@@ -114,6 +164,7 @@ private:
     std::shared_ptr<C2StreamPictureSizeInfo::output> size;
     std::shared_ptr<C2StreamPixelFormatInfo::output> pixelFormat;
     std::shared_ptr<C2StreamDataSpaceInfo::output> dataspace;
+    std::shared_ptr<C2StreamProfileLevelInfo::input> profileLevel;
     std::shared_ptr<C2StreamPcmEncodingInfo::output> pcm;
     std::shared_ptr<C2StreamMaxBufferSizeInfo::input> maxInput;
 };
@@ -412,8 +463,7 @@ c2_status_t createFfmpegComponent(const C2String &name, c2_node_id_t id,
         std::shared_ptr<C2Component> *component) {
     if (!component || !reflector) return C2_BAD_VALUE;
     component->reset();
-    for (const auto *entry : availableFormats()) if (name == entry->name) {
-        const auto &format = *entry;
+    for (const auto &format : availableFormats()) if (name == format.name) {
         *component = std::make_shared<Component>(format, id, std::make_shared<Interface>(format, reflector));
         return C2_OK;
     }
@@ -425,8 +475,7 @@ c2_status_t createFfmpegInterface(const C2String &name, c2_node_id_t id,
         std::shared_ptr<C2ComponentInterface> *interface) {
     if (!interface || !reflector) return C2_BAD_VALUE;
     interface->reset();
-    for (const auto *entry : availableFormats()) if (name == entry->name) {
-        const auto &format = *entry;
+    for (const auto &format : availableFormats()) if (name == format.name) {
         *interface = std::make_shared<SimpleInterface<Interface>>(format.name, id,
                 std::make_shared<Interface>(format, reflector));
         return C2_OK;
@@ -436,8 +485,7 @@ c2_status_t createFfmpegInterface(const C2String &name, c2_node_id_t id,
 
 std::vector<std::shared_ptr<const C2Component::Traits>> componentTraits() {
     std::vector<std::shared_ptr<const C2Component::Traits>> result;
-    for (const auto *entry : availableFormats()) {
-        const auto &format = *entry;
+    for (const auto &format : availableFormats()) {
         auto traits = std::make_shared<C2Component::Traits>();
         traits->name = format.name;
         traits->kind = C2Component::KIND_DECODER;

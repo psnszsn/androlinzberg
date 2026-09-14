@@ -606,3 +606,27 @@ structured runtime issues; all 23 testkit tests pass. Production component-store
 publication, complete capability/profile negotiation, XML discovery and the
 original MediaCodec JNI/NDK switch remain pending. This checkpoint adds no
 AOSP package files and does not change either archive or its dependency pin.
+
+### Stock codec catalogue and public NDK pipeline
+
+The native acceptance service now separates software audio (`software`) from
+VAAPI video (`default`). Original Codec2InfoBuilder therefore reports hardware
+and software flags correctly. Real VAAPI profiles gate component discovery and
+C2 profile negotiation; XML supplies supported sizes, channels and sample rates.
+The original parser reads this configuration through opt-in `ARTZIG_PLATFORM_ROOT`
+path relocation at the host libc boundary. Unavailable MPEG-4 is excluded.
+
+`codec2-service-test` verifies the original MediaCodecList catalogue and the
+public stock NDK MediaCodec API: configuration, input buffers, output format
+changes, dequeue/release, EOS and teardown. MP3 produces two PCM buffers; AVC
+produces eight cropped, reordered frames with actual Surface pixel checks.
+The harness supervises the existing SurfaceFlinger service required by original
+Surface setup, and publishes the original resource manager alongside Codec2.
+Cross-process C2 flush, Surface migration and service-death checks still pass.
+
+The codec service, audio components, direct VAAPI allocator, original bufferpool,
+C++ audit and NDK ABI checks pass. The full APK suite passes (28 tests, zero
+structured runtime issues), as do all 23 testkit tests. This is still a native
+acceptance checkpoint: production component publication and original MediaCodec
+JNI registration remain pending. The production launcher still selects its
+previous codec client. No AOSP archive or dependency pin changes in this step.

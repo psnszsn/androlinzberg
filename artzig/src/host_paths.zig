@@ -53,6 +53,17 @@ pub export fn azk_host_path(original: [*:0]const u8) callconv(.c) ?[*:0]const u8
         }, 0) catch return null;
         return translated.ptr;
     }
+    // Immutable Android configuration namespaces in a relocated host image.
+    // Native callers retain their pinned absolute paths and file semantics.
+    if (configured("ARTZIG_PLATFORM_ROOT")) |root| {
+        for ([_][]const u8{ "/system/etc", "/vendor/etc", "/odm/etc", "/product/etc", "/apex/com.android.media.swcodec/etc" }) |prefix| {
+            if (relative(path, prefix) != null) {
+                return (std.fmt.allocPrintSentinel(std.heap.c_allocator, "{s}{s}", .{
+                    std.mem.trimEnd(u8, root, "/"), path,
+                }, 0) catch return null).ptr;
+            }
+        }
+    }
     return original;
 }
 

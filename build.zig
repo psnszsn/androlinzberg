@@ -861,7 +861,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{ .{ .name = "azk_codec", .module = codec_mod }, .{ .name = "av", .module = av_mod } },
     }) });
     b.step("codec-work-test", "Verify FFmpeg output and Codec2 work lifetimes").dependOn(&b.addRunArtifact(codec_work_tests).step);
-    @import("build/codec2.zig").ffmpegTest(b, codec2, codec2_island.file, codec_mod, binder_cpp, binder_ndk, binder_broker);
+    @import("build/codec2.zig").ffmpegTest(b, codec2, codec2_island.file, codec_mod, binder_cpp, binder_ndk, binder_broker, sf_service);
     exe.root_module.addImport("azk_codec", codec_mod);
     const codec_jni_mod = b.createModule(.{
         .root_source_file = b.path("src/codec/jni.zig"),

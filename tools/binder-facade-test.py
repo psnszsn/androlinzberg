@@ -17,6 +17,8 @@ p = argparse.ArgumentParser()
 p.add_argument('--output', type=Path, required=True)
 p.add_argument('--probe', type=Path, required=True)
 p.add_argument('--server', type=Path, help='Use a production service executable in place of the probe server mode')
+p.add_argument('--support-service', type=Path, action='append', default=[],
+               help='Start a production dependency with ready/stdin-EOF supervision')
 p.add_argument('--broker', type=Path, required=True)
 p.add_argument('--declare-service', action='append', default=[], help='Immutable session AIDL declaration')
 p.add_argument('--library', type=Path, action='append', default=[])
@@ -75,6 +77,15 @@ try:
     )
     children.append(b)
     assert line(b).startswith('ready')
+    for index, executable in enumerate(a.support_service):
+        log = (d / f'support-{index}.log').open('w')
+        logs.append(log)
+        support = subprocess.Popen(
+            [str(executable.resolve())], env=env, cwd=r,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True,
+        )
+        children.append(support)
+        assert line(support).startswith('ready')
     if a.standalone:
         log = (d / 'client.log').open('w')
         logs.append(log)
@@ -188,7 +199,7 @@ finally:
     result['sha256'] = {
         str(p): hashlib.sha256(p.read_bytes()).hexdigest()
         for p in [a.probe.resolve(), a.broker.resolve(), *(p.resolve() for p in a.library),
-                  *([a.server.resolve()] if a.server else [])]
+                  *([a.server.resolve()] if a.server else []), *(p.resolve() for p in a.support_service)]
     }
     (d / 'results.json').write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2))

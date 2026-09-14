@@ -698,6 +698,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/av/media/libaaudio/src"), &gen.libaaudio_srcs, aaudio_includes.items, &(audio_flags ++ [_][]const u8{"-DAAUDIO_API=__attribute__((visibility(\"default\")))"}));
     g.add(b.path("src/native/audio"), &audio_host_srcs, audio_includes.items, &audio_flags);
     g.add(b.path(""), &our_srcs, bridge_includes.items, &.{});
+    if (o.codec2 != null) g.add(b.path("src/native"), &.{"PlatformFiles.cpp"}, &.{}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"core_jni_helpers.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.input_handle_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_region.cpp"}, &.{ apex_inc, hw_jni_inc }, &.{});
@@ -772,6 +773,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     link.addFileArg(o.input.native.getEmittedBin());
     link.addFileArg(o.input.verifier);
     if (o.codec2) |codec2| {
+        link.addArg("-Wl,--wrap=fopen,--wrap=stat");
         // Share libgui/foundation globals with JNI in one ELF image. Linking
         // another static libgui into a client executable duplicates global
         // construction/destruction (notably LayerStatePermissions).

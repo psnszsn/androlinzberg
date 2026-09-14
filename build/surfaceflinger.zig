@@ -143,10 +143,10 @@ pub const ClientMode = enum { standalone, application, system };
 
 pub fn runTest(b: *std.Build, mod: *std.Build.Module, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile, broker: *std.Build.Step.Compile, name: []const u8, description: []const u8, mode: ClientMode, service: ?*std.Build.Step.Compile) void {
     const exe = b.addExecutable(.{ .name = b.fmt("{s}-test", .{name}), .root_module = mod });
-    runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, name, description, mode, service, &.{}, &.{});
+    _ = runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, name, description, mode, service, &.{}, &.{});
 }
 
-pub fn runBinaryTest(b: *std.Build, exe: std.Build.LazyPath, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile, broker: *std.Build.Step.Compile, name: []const u8, description: []const u8, mode: ClientMode, service: ?*std.Build.Step.Compile, extra_libraries: []const std.Build.LazyPath, service_declarations: []const []const u8) void {
+pub fn runBinaryTest(b: *std.Build, exe: std.Build.LazyPath, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile, broker: *std.Build.Step.Compile, name: []const u8, description: []const u8, mode: ClientMode, service: ?*std.Build.Step.Compile, extra_libraries: []const std.Build.LazyPath, service_declarations: []const []const u8) @import("command.zig").Command {
     const run = @import("command.zig").create(b);
     run.addArg("python3");
     run.addFileArg(b.path("tools/binder-facade-test.py"));
@@ -183,6 +183,7 @@ pub fn runBinaryTest(b: *std.Build, exe: std.Build.LazyPath, binder: *std.Build.
     const install = b.addInstallDirectory(.{ .source_dir = output, .install_dir = .prefix, .install_subdir = b.fmt("test-results/{s}", .{name}) });
     const step = b.step(b.fmt("{s}-test", .{name}), description);
     step.dependOn(&install.step);
+    return run;
 }
 
 // Pinned libsurfaceflinger, libcompositionengine and libscheduler sources.
