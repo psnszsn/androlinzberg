@@ -197,6 +197,24 @@ pub fn clientTest(b: *std.Build, libraries: Libraries, platform: std.Build.LazyP
     @import("surfaceflinger.zig").runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, "codec2-client", "Link the complete stock codec client and verify NDK crypto metadata ownership", .standalone, null, &.{platform});
 }
 
+pub fn ffmpegTest(b: *std.Build, libraries: Libraries, platform: std.Build.LazyPath, codec: *std.Build.Module, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile, broker: *std.Build.Step.Compile) void {
+    const backend = b.addLibrary(.{ .name = "codec2_ffmpeg_backend", .root_module = codec });
+    const mod = b.createModule(.{ .target = libraries.client.root_module.resolved_target.?, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
+    mod.include_dirs = libraries.client.root_module.include_dirs.clone(b.allocator) catch @panic("OOM");
+    const flags = std.mem.concat(b.allocator, []const u8, &.{ libraries.flags, &.{"-UNDEBUG"} }) catch @panic("OOM");
+    mod.addCSourceFile(.{ .file = b.path("src/native/codec2/FfmpegComponent.cpp"), .flags = flags });
+    mod.addCSourceFile(.{ .file = b.path("tests/native/FfmpegComponentTest.cpp"), .flags = flags });
+    mod.addIncludePath(b.path("src/native/codec2"));
+    mod.linkLibrary(backend);
+    mod.linkSystemLibrary("libavcodec", .{ .needed = true, .use_pkg_config = .force });
+    mod.linkSystemLibrary("libavutil", .{ .needed = true, .use_pkg_config = .force });
+    mod.addObjectFile(platform);
+    mod.linkLibrary(binder);
+    mod.linkLibrary(ndk);
+    const exe = b.addExecutable(.{ .name = "codec2-ffmpeg-test", .root_module = mod });
+    @import("surfaceflinger.zig").runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, "codec2-ffmpeg", "Verify FFmpeg components through original Codec2 work and lifecycle", .standalone, null, &.{platform});
+}
+
 fn buildResources(b: *std.Build, o: Options, client: *std.Build.Step.Compile, flags: []const []const u8) *std.Build.Step.Compile {
     const mod = b.createModule(.{ .target = o.target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true, .pic = true });
     mod.include_dirs = client.root_module.include_dirs.clone(b.allocator) catch @panic("OOM");

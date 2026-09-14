@@ -15,6 +15,7 @@ const Frame = struct {
     sample_rate: c_int,
     channels: c_int,
     pts: i64,
+    work: ?*c.AVBufferRef = null,
 };
 
 const VFrame = struct {
@@ -22,6 +23,7 @@ const VFrame = struct {
     width: c_int, // decoded/coded dimensions reported to MediaCodec
     height: c_int,
     pts: i64,
+    work: ?*c.AVBufferRef = null,
 };
 
 pub const Dec = struct {
@@ -37,6 +39,9 @@ pub const Dec = struct {
     vaapi_vpp: ?*c.AzkVaapiVpp = null,
     eof_sent: bool = false,
     eof_out: bool = false,
+    // Codec2 frameIndex is independent of presentation time. The decoder's
+    // opaque references retain each work through reordering and delayed output.
+    work_refs: std.ArrayList(*c.AVBufferRef) = .empty,
 
     fn pushDecoded(self: *Dec) !void {
         // drain all currently-available frames into the queue
@@ -65,18 +70,38 @@ pub const Dec = struct {
                     &self.vaapi_vpp,
                 ) orelse return error.HardwareVideoPresentation;
                 errdefer c.azk_hardware_frame_release(hardware);
+                const work = try retainWork(self.frame);
+                errdefer releaseWork(work);
                 try self.vqueue.append(gpa, .{
                     .hardware = hardware,
                     .width = hardware.*.width,
                     .height = hardware.*.height,
                     .pts = if (self.frame.pts != c.AV_NOPTS_VALUE) self.frame.pts else 0,
+                    .work = work,
                 });
             } else {
-                try self.queue.append(gpa, try convertFrame(self.frame));
+                const converted = try convertFrame(self.frame);
+                errdefer gpa.free(converted.pcm);
+                errdefer releaseWork(converted.work);
+                try self.queue.append(gpa, converted);
             }
         }
     }
 };
+
+fn retainWork(frame: *c.AVFrame) !?*c.AVBufferRef {
+    if (frame.opaque_ref == null) return null;
+    return c.av_buffer_ref(frame.opaque_ref) orelse error.OutOfMemory;
+}
+
+fn releaseWork(work: ?*c.AVBufferRef) void {
+    var ref = work;
+    c.av_buffer_unref(&ref);
+}
+
+fn workIndex(ref: *c.AVBufferRef) u64 {
+    return std.mem.readInt(u64, ref.data[0..8], .little);
+}
 
 const VideoSize = struct { width: c_int, height: c_int };
 
@@ -96,6 +121,7 @@ fn convertFrame(f: *c.AVFrame) !Frame {
     const channels: usize = @intCast(f.ch_layout.nb_channels);
     const samples: usize = @intCast(f.nb_samples);
     const out = try gpa.alloc(u8, samples * channels * 2);
+    errdefer gpa.free(out);
     errdefer gpa.free(out);
     const dst = @as([*]i16, @ptrCast(@alignCast(out.ptr)))[0 .. samples * channels];
     switch (f.format) {
@@ -136,6 +162,7 @@ fn convertFrame(f: *c.AVFrame) !Frame {
         .sample_rate = f.sample_rate,
         .channels = @intCast(channels),
         .pts = if (f.pts != c.AV_NOPTS_VALUE) f.pts else 0,
+        .work = try retainWork(f),
     };
 }
 
@@ -178,6 +205,7 @@ pub export fn azk_codec_configure(d: *Dec, extradata: ?[*]const u8, len: c_int, 
         c.av_channel_layout_default(&d.ctx.ch_layout, channels);
     }
     d.ctx.pkt_timebase = .{ .num = 1, .den = 1000000 }; // MediaCodec uses µs
+    d.ctx.flags |= c.AV_CODEC_FLAG_COPY_OPAQUE;
     // FFmpeg's hardware decoder performs the GPU work asynchronously.
     d.ctx.thread_count = 1;
     d.ctx.thread_type = 0;
@@ -197,24 +225,56 @@ pub export fn azk_codec_set_video_target(d: *Dec, width: c_int, height: c_int) v
 /// Send one encoded packet (or EOF). Always accepts: pending frames are
 /// drained into the queue first. Returns 0 on success, <0 on error.
 pub export fn azk_codec_send(d: *Dec, data: ?[*]const u8, len: c_int, pts_us: i64, eof: c_int) c_int {
+    return sendPacket(d, data, len, pts_us, eof != 0, null);
+}
+
+/// Submit encoded data with its Codec2 frameIndex, preserving the original PTS.
+/// EOS is submitted separately through azk_codec_send, after the final packet.
+pub export fn azk_codec_send_work(d: *Dec, data: ?[*]const u8, len: c_int, pts_us: i64, work_id: u64) c_int {
+    return sendPacket(d, data, len, pts_us, false, work_id);
+}
+
+fn sendPacket(d: *Dec, data: ?[*]const u8, len: c_int, pts_us: i64, eof: bool, work_id: ?u64) c_int {
+    if (len < 0 or (len != 0 and data == null)) return avError(c.EINVAL);
     d.pushDecoded() catch return -1;
-    if (eof != 0) {
+    if (eof) {
         if (!d.eof_sent) {
-            _ = c.avcodec_send_packet(d.ctx, null);
+            const result = c.avcodec_send_packet(d.ctx, null);
+            if (result < 0 and result != c.AVERROR_EOF) return result;
             d.eof_sent = true;
         }
         return 0;
     }
+    if (work_id) |id| for (d.work_refs.items) |ref| {
+        if (workIndex(ref) == id) return avError(c.EINVAL);
+    };
     c.av_packet_unref(d.pkt);
+    defer c.av_packet_unref(d.pkt);
     if (c.av_new_packet(d.pkt, len) < 0) return -1;
-    @memcpy(d.pkt.data[0..@intCast(len)], data.?[0..@intCast(len)]);
+    if (len != 0) @memcpy(d.pkt.data[0..@intCast(len)], data.?[0..@intCast(len)]);
     d.pkt.pts = pts_us;
+    var accepted = false;
+    if (work_id) |id| {
+        const ref: *c.AVBufferRef = c.av_buffer_alloc(8) orelse return -1;
+        d.work_refs.append(gpa, ref) catch {
+            releaseWork(ref);
+            return -1;
+        };
+        std.mem.writeInt(u64, ref.data[0..8], id, .little);
+        d.pkt.opaque_ref = c.av_buffer_ref(ref);
+        if (d.pkt.opaque_ref == null) {
+            releaseWork(d.work_refs.pop().?);
+            return -1;
+        }
+    }
+    defer if (work_id != null and !accepted) releaseWork(d.work_refs.pop().?);
     var r = c.avcodec_send_packet(d.ctx, d.pkt);
     if (r == avError(c.EAGAIN)) {
         d.pushDecoded() catch return -1;
         r = c.avcodec_send_packet(d.ctx, d.pkt);
     }
     if (r < 0 and r != c.AVERROR_EOF) return r;
+    accepted = true;
     d.pushDecoded() catch return -1;
     return 0;
 }
@@ -223,6 +283,14 @@ pub export fn azk_codec_send(d: *Dec, data: ?[*]const u8, len: c_int, pts_us: i6
 /// dst/dst_cap: destination buffer. out_meta: {bytes, sample_rate, channels}.
 /// Returns 0 = frame, 1 = try again, 2 = end of stream, <0 = error.
 pub export fn azk_codec_receive_audio(d: *Dec, dst: [*]u8, dst_cap: c_int, out_meta: [*]c_int, out_pts: *i64) c_int {
+    return receiveAudio(d, dst, dst_cap, out_meta, out_pts, null);
+}
+
+pub export fn azk_codec_receive_audio_work(d: *Dec, dst: [*]u8, dst_cap: c_int, out_meta: [*]c_int, out_pts: *i64, out_work: *u64) c_int {
+    return receiveAudio(d, dst, dst_cap, out_meta, out_pts, out_work);
+}
+
+fn receiveAudio(d: *Dec, dst: [*]u8, dst_cap: c_int, out_meta: [*]c_int, out_pts: *i64, out_work: ?*u64) c_int {
     if (d.queue.items.len == 0) d.pushDecoded() catch return -1;
     if (d.queue.items.len == 0) {
         if (d.eof_out or (d.eof_sent and blk: {
@@ -233,6 +301,7 @@ pub export fn azk_codec_receive_audio(d: *Dec, dst: [*]u8, dst_cap: c_int, out_m
         } else return 1;
     }
     const pending = d.queue.items[0];
+    if (out_work) |id| id.* = workIndex(pending.work orelse return -4);
     if (pending.pcm.len > dst_cap) {
         out_meta[0] = @intCast(pending.pcm.len);
         out_meta[1] = pending.sample_rate;
@@ -242,6 +311,7 @@ pub export fn azk_codec_receive_audio(d: *Dec, dst: [*]u8, dst_cap: c_int, out_m
     }
     const f = d.queue.orderedRemove(0);
     defer gpa.free(f.pcm);
+    defer releaseWork(f.work);
     @memcpy(dst[0..f.pcm.len], f.pcm);
     out_meta[0] = @intCast(f.pcm.len);
     out_meta[1] = f.sample_rate;
@@ -252,6 +322,14 @@ pub export fn azk_codec_receive_audio(d: *Dec, dst: [*]u8, dst_cap: c_int, out_m
 
 /// Hardware frames return 3 and transfer an owned AzkHardwareFrame.
 pub export fn azk_codec_receive_video2(d: *Dec, out_meta: [*]c_int, out_pts: *i64, out_handle: *usize) c_int {
+    return receiveVideo(d, out_meta, out_pts, out_handle, null);
+}
+
+pub export fn azk_codec_receive_video_work(d: *Dec, out_meta: [*]c_int, out_pts: *i64, out_handle: *usize, out_work: *u64) c_int {
+    return receiveVideo(d, out_meta, out_pts, out_handle, out_work);
+}
+
+fn receiveVideo(d: *Dec, out_meta: [*]c_int, out_pts: *i64, out_handle: *usize, out_work: ?*u64) c_int {
     out_handle.* = 0;
     if (d.vqueue.items.len == 0) d.pushDecoded() catch return -1;
     if (d.vqueue.items.len == 0) {
@@ -259,14 +337,46 @@ pub export fn azk_codec_receive_video2(d: *Dec, out_meta: [*]c_int, out_pts: *i6
         return 1;
     }
     const pending = d.vqueue.items[0];
+    if (out_work) |id| id.* = workIndex(pending.work orelse return -4);
     out_meta[1] = pending.width;
     out_meta[2] = pending.height;
     out_pts.* = pending.pts;
     const frame = d.vqueue.orderedRemove(0);
+    defer releaseWork(frame.work);
     out_meta[0] = 0;
     out_meta[3] = frame.hardware.*.dataspace;
     out_handle.* = @intFromPtr(frame.hardware);
     return 3;
+}
+
+/// Returns 1 with a completed work index, or 0 if none is ready. Completion
+/// follows consumption of every queued output and release by the decoder.
+/// At decoder EOF only queued outputs can still belong to the work. This
+/// permits no-output and multi-output packets without guessing from timestamps.
+pub export fn azk_codec_poll_completed_work(d: *Dec, out_work: *u64) c_int {
+    for (d.work_refs.items, 0..) |ref, i| {
+        if (c.av_buffer_get_ref_count(ref) != 1) {
+            if (!d.eof_out) continue;
+            var queued = false;
+            for (d.queue.items) |frame| {
+                if (frame.work) |work| if (work.buffer == ref.buffer) {
+                    queued = true;
+                    break;
+                };
+            }
+            for (d.vqueue.items) |frame| {
+                if (frame.work) |work| if (work.buffer == ref.buffer) {
+                    queued = true;
+                    break;
+                };
+            }
+            if (queued) continue;
+        }
+        out_work.* = workIndex(ref);
+        releaseWork(d.work_refs.orderedRemove(i));
+        return 1;
+    }
+    return 0;
 }
 
 pub const HardwareFrame = c.AzkHardwareFrame;
@@ -283,19 +393,37 @@ test "surface resize keeps codec presentation at decoded dimensions" {
 
 pub export fn azk_codec_flush(d: *Dec) void {
     c.avcodec_flush_buffers(d.ctx);
-    for (d.queue.items) |f| gpa.free(f.pcm);
+    c.av_packet_unref(d.pkt);
+    c.av_frame_unref(d.frame);
+    for (d.queue.items) |f| {
+        gpa.free(f.pcm);
+        releaseWork(f.work);
+    }
     d.queue.clearRetainingCapacity();
-    for (d.vqueue.items) |f| c.azk_hardware_frame_release(f.hardware);
+    for (d.vqueue.items) |f| {
+        c.azk_hardware_frame_release(f.hardware);
+        releaseWork(f.work);
+    }
     d.vqueue.clearRetainingCapacity();
+    for (d.work_refs.items) |ref| releaseWork(ref);
+    d.work_refs.clearRetainingCapacity();
     d.eof_sent = false;
     d.eof_out = false;
 }
 
 pub export fn azk_codec_close(d: *Dec) void {
-    for (d.queue.items) |f| gpa.free(f.pcm);
+    for (d.queue.items) |f| {
+        gpa.free(f.pcm);
+        releaseWork(f.work);
+    }
     d.queue.deinit(gpa);
-    for (d.vqueue.items) |f| c.azk_hardware_frame_release(f.hardware);
+    for (d.vqueue.items) |f| {
+        c.azk_hardware_frame_release(f.hardware);
+        releaseWork(f.work);
+    }
     d.vqueue.deinit(gpa);
+    for (d.work_refs.items) |ref| releaseWork(ref);
+    d.work_refs.deinit(gpa);
     c.azk_vaapi_vpp_free(&d.vaapi_vpp);
     var hw_device = d.hw_device;
     c.av_buffer_unref(&hw_device);

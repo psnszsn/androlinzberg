@@ -535,3 +535,31 @@ Binder suites, C++ audit and NDK ABI check. All six service/compositor failure
 cases pass. All 28 APK tests pass with 88 actions and no structured runtime
 issues; 23 testkit tests pass. The installed tree includes `azk-media-service`.
 This stage reuses already packaged AOSP sources, so the archive pin is unchanged.
+
+### FFmpeg Codec2 audio components
+
+The native acceptance target now uses AOSP `SimpleC2Component` and
+`SimpleC2Interface` around the system FFmpeg decoder for AAC, MP3, FLAC, Opus
+and Vorbis. Android CSD is translated at that component boundary, including
+FLAC stream headers, split Vorbis headers, and legacy/unified Opus data parsed
+by AOSP. Opus initial delay and seek preroll are applied once.
+
+Codec2 frame indices travel through FFmpeg's opaque buffer references without
+replacing presentation timestamps. Input completion waits for decoder and
+queued-output ownership, handling packets with multiple or no output. Flush
+discards old work. Hardware frame tagging changes metadata only and adds no
+GPU copy. Original SimpleC2 bases share the native client DSO so C++ globals
+have one owner.
+
+`codec-work-test` passes four tests, including duplicate timestamps, full-width
+indices, capacity retry, multiple MP3 outputs, flush/reuse and legacy decode.
+`codec2-ffmpeg-test` passes all five audio formats, every input completion, EOS,
+stop/start and normal exit. AAC, FLAC, Opus and Vorbis also pass flush; Opus
+covers both CSD layouts and exact seek-preroll sample counts. The framework
+module suite passes. All 28 APK tests pass with 88 actions and no structured
+runtime issues; 23 testkit tests pass. C++ and NDK ABI audits pass.
+
+These components are still exercised by native acceptance tests. Component
+store publication, capability negotiation, graphic-buffer video components
+and the production JNI/NDK switch remain pending. The original AOSP sources
+were already packaged, so this stage does not change the archive pin.

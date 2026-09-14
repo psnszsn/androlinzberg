@@ -527,5 +527,25 @@
     "implementation": "Broker owns immutable session interface/instance declarations; stock IServiceManager AIDL serves Java, native C++ facade and NDK queries. Registration and service death do not change declaration state.",
     "production_manifest": "Empty until Codec2 component service activation; no unavailable codec advertised.",
     "validation": "Broker protocol and C++/NDK tests pass for pre-start declaration, duplicate removal, exact interface filtering, sorted enumeration, service death, null isDeclared and reentrant enumeration callbacks."
+  },
+  "codec2_ffmpeg_followup": {
+    "status": "Native component acceptance only: production MediaCodec JNI/NDK and decode routing have not switched; no component store is published yet",
+    "components": "AAC, MP3, FLAC, Opus and Vorbis use original SimpleC2Component and SimpleC2Interface around the existing system FFmpeg backend",
+    "configuration": "Android AAC data, FLAC stream headers, split Vorbis headers, and original Opus parser for legacy/unified headers; initial Opus delay and seek preroll apply once",
+    "work_identity": "Codec2 frameIndex travels through FFmpeg opaque buffer references independently of presentation timestamps; completion waits for decoder and output-queue ownership, including multiple or absent outputs; flush discards old work",
+    "graphics": "No new GPU copy or presentation changes; hardware-frame work tracking carries metadata only",
+    "validation": {
+      "codec-work-test": "4 tests pass: duplicate PTS/full-width work indices, output-capacity retry, completion ownership, flush/index reuse, MP3 multi-output parity and legacy decode",
+      "codec2-ffmpeg-test": "All five audio formats decode through original C2 interfaces, complete every input, deliver EOS and survive stop/start; AAC/FLAC/Opus/Vorbis also cover flush, both Opus CSD layouts and exact preroll sample counts; normal process exit",
+      "integration-test": "28 tests pass with 88 actions and zero structured runtime issues; 23 testkit tests pass",
+      "framework-module-test": "Passed after backend work tracking changes",
+      "audits": "C++ boundary and NDK ABI pass (135 reference symbols, 162 exports)"
+    },
+    "remaining": [
+      "Publish the Codec2 component store and finish native capability negotiation",
+      "Add graphic-buffer video components over the existing VAAPI DMA-BUF path",
+      "Select original MediaCodec JNI/NDK and delete the old hosted client implementation"
+    ],
+    "packaging": "All reused AOSP sources were already packaged; archive and dependency pin are unchanged"
   }
 }

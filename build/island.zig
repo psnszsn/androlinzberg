@@ -776,6 +776,10 @@ pub fn build(b: *std.Build, o: Options) Result {
         // another static libgui into a client executable duplicates global
         // construction/destruction (notably LayerStatePermissions).
         link.addArg("-Wl,-u,AMediaCodec_createCodecByName");
+        // The FFmpeg HAL component reuses both original SimpleC2 base units.
+        // Keep their shared foundation/Codec2 globals in this same ELF image.
+        link.addArg("-Wl,-u,_ZN7android17SimpleC2Component4intfEv");
+        link.addArg("-Wl,-u,_ZN7android17SimpleC2InterfaceIvE10BaseParams16noPrivateBuffersEv");
         link.addFileArg(codec2.client.getEmittedBin());
         link.addFileArg(codec2.transport.getEmittedBin());
     }

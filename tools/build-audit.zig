@@ -326,6 +326,7 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
         "src/native/binder/Parcel.cpp",
         "src/native/binder/ServiceNotifications.cpp",
         // Session bootstrap for the original native media services.
+        "src/native/codec2/FfmpegComponent.cpp",
         "src/native/codec2/MediaServiceHost.cpp",
         "src/native/graphics/HostComposer.cpp",
         "src/native/graphics/HostGralloc.cpp",

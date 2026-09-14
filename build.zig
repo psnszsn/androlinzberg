@@ -841,7 +841,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    codec_mod.addImport("av", av_tc.createModule());
+    const av_mod = av_tc.createModule();
+    codec_mod.addImport("av", av_mod);
     codec_mod.addIncludePath(b.path("src/codec"));
     codec_mod.addIncludePath(b.path("src/native/graphics/include"));
     codec_mod.addCSourceFile(.{
@@ -852,6 +853,14 @@ pub fn build(b: *std.Build) void {
         codec_mod.linkSystemLibrary(lib, .{ .needed = true, .use_pkg_config = .force });
     }
     codec_mod.linkSystemLibrary("libva", .{ .needed = true, .use_pkg_config = .force });
+    const codec_work_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/codec/work_test.zig"),
+        .target = target,
+        .optimize = .Debug,
+        .imports = &.{ .{ .name = "azk_codec", .module = codec_mod }, .{ .name = "av", .module = av_mod } },
+    }) });
+    b.step("codec-work-test", "Verify FFmpeg output and Codec2 work lifetimes").dependOn(&b.addRunArtifact(codec_work_tests).step);
+    @import("build/codec2.zig").ffmpegTest(b, codec2, codec2_island.file, codec_mod, binder_cpp, binder_ndk, binder_broker);
     exe.root_module.addImport("azk_codec", codec_mod);
     const codec_jni_mod = b.createModule(.{
         .root_source_file = b.path("src/codec/jni.zig"),
