@@ -64,6 +64,7 @@ object DesktopLauncher {
                     "activity_task" to tasks.asBinder(),
                     "dev.artzig.window.presenter" to presentation,
                     "SurfaceFlingerAIDL" to android.os.ServiceManager.checkService("SurfaceFlingerAIDL"),
+                    "media.resource_manager" to android.os.ServiceManager.checkService("media.resource_manager"),
                 )) {
                     if (binder == null) { sessionLost(name); return }
                     val death = android.os.IBinder.DeathRecipient { lost.compareAndSet(null, name) }

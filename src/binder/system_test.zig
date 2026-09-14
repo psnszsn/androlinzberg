@@ -1,8 +1,8 @@
 //! Multi-process hosted system-service test driver.
 //!
-//! Usage: azk-system-test <androlinzberg> <azk-binder-broker> <test-a.apk> <test-b.apk> <ndk-client> <identity-a.apk> <identity-b.apk> <surfaceflinger>
+//! Usage: azk-system-test <androlinzberg> <azk-binder-broker> <test-a.apk> <test-b.apk> <ndk-client> <identity-a.apk> <identity-b.apk> <surfaceflinger> <service-fixture.apk> <media-service> <media-probe>
 //!
-//! Starts the broker, SurfaceFlinger and system process, then two ART app peers: package
+//! Starts the broker, SurfaceFlinger, system and native media processes, then two ART app peers: package
 //! `dev.artzig.test.b` hosting a real `android.app.Service` through the
 //! session's activity manager, and package `dev.artzig.test.a` binding it
 //! across processes. Every child must exit 0.
@@ -22,8 +22,8 @@ pub fn main(init: std.process.Init) !void {
         return std.process.replace(io, .{ .argv = args[2..] });
     if ((args.len == 6 or args.len == 7) and std.mem.eql(u8, args[1], "--cold-window"))
         return coldWindow(init, args);
-    if (args.len < 10) {
-        std.debug.print("usage: azk-system-test <androlinzberg> <azk-binder-broker> <test-a.apk> <test-b.apk> <ndk-system-client> <identity-a.apk> <identity-b.apk> <surfaceflinger>\n", .{});
+    if (args.len < 12) {
+        std.debug.print("usage: azk-system-test <androlinzberg> <azk-binder-broker> <test-a.apk> <test-b.apk> <ndk-system-client> <identity-a.apk> <identity-b.apk> <surfaceflinger> <service-fixture.apk> <media-service> <media-probe>\n", .{});
         return error.InvalidArguments;
     }
     const launcher = args[1];
@@ -61,6 +61,7 @@ pub fn main(init: std.process.Init) !void {
         .launcher_exe = launcher,
         .broker_exe = broker_exe,
         .surfaceflinger_exe = surfaceflinger_exe,
+        .media_service_exe = args[10],
         .system_args = &.{"--javatest"},
         .environ = session_env,
     });
@@ -77,6 +78,19 @@ pub fn main(init: std.process.Init) !void {
     defer watchdog.cancel(io);
 
     try signalOutput(io, &env, launcher);
+
+    try env.put("AZK_BINDER_PACKAGE", "android:media-fixture");
+    var media_probe = try std.process.spawn(io, .{
+        .argv = &.{args[11]},
+        .environ_map = &env,
+        .stdin = .ignore,
+        .stdout = .inherit,
+        .stderr = .inherit,
+    });
+    peer_pids[0].store(media_probe.id.?, .release);
+    const media_ok = expectExit(io, &media_probe, "native media resource client");
+    peer_pids[0].store(0, .release);
+    if (!media_ok) return error.SystemTestFailed;
 
     var fixture_install = try spawnPeer(io, &env, launcher, "dev.artzig.systemtest.ServiceFixtureInstallSmoke", "android");
     if (!expectExit(io, &fixture_install, "service fixture install")) return error.SystemTestFailed;

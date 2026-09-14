@@ -69,12 +69,15 @@ pub const Session = struct {
     surfaceflinger: ?std.process.Child = null,
     presenter: ?std.process.Child = null,
     system: ?std.process.Child = null,
+    media: ?std.process.Child = null,
     ready_timeout: Io.Duration = .{ .nanoseconds = 30 * std.time.ns_per_s },
     shutdown_timeout: Io.Duration = .{ .nanoseconds = 5 * std.time.ns_per_s },
     system_ready: bool = false,
     /// Drains the system process's stdout after `ready` (app processes inherit
     /// the pipe as their stdout; an undrained pipe wedges the session).
-    drain: Io.Group = .init,
+    /// Stable address: media startup starts draining before start() returns
+    /// the Session value to its owner. Active groups cannot move with it.
+    drain: *Io.Group,
     dir: []u8,
     socket_path: []u8,
     prop_area_path: []u8,
@@ -91,6 +94,7 @@ pub const Session = struct {
         /// Omitted by transport-only fixtures; normal application sessions supply SF.
         surfaceflinger_exe: ?[]const u8 = null,
         task_presenter_exe: ?[]const u8 = null,
+        media_service_exe: ?[]const u8 = null,
         ready_timeout: Io.Duration = .{ .nanoseconds = 30 * std.time.ns_per_s },
         shutdown_timeout: Io.Duration = .{ .nanoseconds = 5 * std.time.ns_per_s },
         environ: std.process.Environ,
@@ -108,10 +112,17 @@ pub const Session = struct {
         if (options.surfaceflinger_exe) |exe| try session.startSurfaceFlinger(options, exe);
         if (options.task_presenter_exe) |exe| try session.startTaskPresenter(options, exe);
         try session.startSystemProcess(options);
+        if (options.media_service_exe) |exe| {
+            try session.awaitSystemReady();
+            try session.startMediaService(options, exe);
+        }
         return session;
     }
 
     fn startBroker(gpa: std.mem.Allocator, io: Io, options: Options) !Session {
+        const drain = try gpa.create(Io.Group);
+        errdefer gpa.destroy(drain);
+        drain.* = .init;
         // The final component is random and created with an exclusive mkdir,
         // so another local user cannot pre-create it or plant a symlink.
         var random: [16]u8 = undefined;
@@ -166,6 +177,7 @@ pub const Session = struct {
             .io = io,
             .gpa = gpa,
             .child = child,
+            .drain = drain,
             .dir = dir,
             .socket_path = socket_path,
             .prop_area_path = prop_area_path,
@@ -234,8 +246,29 @@ pub const Session = struct {
         };
     }
 
-    /// Spawns `androlinzberg --system-server` with the system cookie; only
-    /// the compositor and system process receive that cookie.
+    /// Starts the native resource services after their system dependencies.
+    fn startMediaService(s: *Session, options: Options, exe: []const u8) !void {
+        var env = try options.environ.createMap(s.gpa);
+        defer env.deinit();
+        try env.put(socket_env, s.socket_path);
+        try env.put(cookie_env, s.cookie);
+        try env.put(system_cookie_env, s.system_cookie);
+        try env.put(prop_area_env, s.prop_area_path);
+        try env.put("AZK_BINDER_PACKAGE", "android:media");
+        s.media = try spawnService(s.gpa, s.io, .{
+            .argv = &.{exe},
+            .environ_map = &env,
+            .stdin = .pipe,
+            .stdout = .pipe,
+            .stderr = .inherit,
+        });
+        awaitReady(s.io, s.media.?.stdout.?, s.ready_timeout) catch |err| {
+            return if (err == error.NotReady) error.MediaServiceNotReady else err;
+        };
+        try s.drain.concurrent(s.io, drainPipe, .{ s.io, s.media.?.stdout.? });
+    }
+
+    /// Spawns `androlinzberg --system-server` with the trusted service cookie.
     fn startSystemProcess(s: *Session, options: Options) !void {
         const io = s.io;
         var child_env = try options.environ.createMap(s.gpa);
@@ -290,6 +323,8 @@ pub const Session = struct {
     pub fn stop(s: *Session) void {
         const io = s.io;
         s.drain.cancel(io);
+        if (s.media) |*media| stopChild(io, media, s.shutdown_timeout);
+        s.media = null;
         if (s.system) |*system| stopChild(io, system, s.shutdown_timeout);
         s.system = null;
         if (s.presenter) |*presenter| stopChild(io, presenter, s.shutdown_timeout);
@@ -303,6 +338,7 @@ pub const Session = struct {
         s.gpa.free(s.prop_area_path);
         s.gpa.free(s.cookie);
         s.gpa.free(s.system_cookie);
+        s.gpa.destroy(s.drain);
     }
 };
 

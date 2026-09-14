@@ -28,6 +28,13 @@ pub fn main(init: std.process.Init) !void {
     try map.put("AZK_SESSION_FIXTURE_LOG", log);
     const cases = [_]struct { mode: []const u8, failure: ?anyerror, expected: []const u8 }{
         .{ .mode = "normal", .failure = null, .expected = "broker start\nsf start\nsystem start\nsystem stop\nsf stop\nbroker stop\n" },
+        .{ .mode = "media-normal", .failure = null, .expected = "broker start\nsf start\nsystem start\nmedia start\nmedia stop\nsystem stop\nsf stop\nbroker stop\n" },
+        .{ .mode = "media-spawn", .failure = error.MediaServiceNotReady, .expected = "broker start\nsf start\nsystem start\nsystem stop\nsf stop\nbroker stop\n" },
+        .{ .mode = "media-eof", .failure = error.MediaServiceNotReady, .expected = "broker start\nsf start\nsystem start\nmedia start\nsystem stop\nsf stop\nbroker stop\n" },
+        .{ .mode = "media-bad-ready", .failure = error.MediaServiceNotReady, .expected = "broker start\nsf start\nsystem start\nmedia start\nsystem stop\nsf stop\nbroker stop\n" },
+        .{ .mode = "media-timeout", .failure = error.ServiceReadyTimeout, .expected = "broker start\nsf start\nsystem start\nmedia start\nsystem stop\nsf stop\nbroker stop\n" },
+        .{ .mode = "media-system-eof", .failure = error.SystemProcessNotReady, .expected = "broker start\nsf start\nsystem start\nsf stop\nbroker stop\n" },
+        .{ .mode = "media-shutdown-timeout", .failure = null, .expected = "broker start\nsf start\nsystem start\nmedia start\nmedia stop\nsystem stop\nsf stop\nbroker stop\n" },
         .{ .mode = "presenter-normal", .failure = null, .expected = "broker start\nsf start\npresenter start\nsystem start\nsystem stop\npresenter stop\nsf stop\nbroker stop\n" },
         .{ .mode = "presenter-spawn", .failure = error.TaskPresenterNotReady, .expected = "broker start\nsf start\nsf stop\nbroker stop\n" },
         .{ .mode = "presenter-eof", .failure = error.TaskPresenterNotReady, .expected = "broker start\nsf start\npresenter start\nsf stop\nbroker stop\n" },
@@ -59,6 +66,7 @@ pub fn main(init: std.process.Init) !void {
             else if (std.mem.eql(u8, case.mode, "system-exec-format")) invalid_exe else exe,
             .surfaceflinger_exe = if (std.mem.eql(u8, case.mode, "sf-spawn")) "/azk-no-such-compositor-executable" else exe,
             .task_presenter_exe = if (std.mem.eql(u8, case.mode, "presenter-spawn")) "/azk-no-such-presenter-executable" else if (std.mem.startsWith(u8, case.mode, "presenter-")) exe else null,
+            .media_service_exe = if (std.mem.eql(u8, case.mode, "media-spawn")) "/azk-no-such-media-executable" else if (std.mem.startsWith(u8, case.mode, "media-")) exe else null,
             .environ = env,
             .storage = .{
                 .application_data = "/fixture/application-data",
@@ -131,12 +139,24 @@ fn event(init: std.process.Init, role: []const u8, state: []const u8) !void {
 }
 
 fn fixture(init: std.process.Init, args: []const [:0]const u8) !void {
+    const package = init.minimal.environ.getPosix("AZK_BINDER_PACKAGE") orelse "";
     const role: []const u8 = if (args.len < 2)
-        (if (std.mem.eql(u8, init.minimal.environ.getPosix("AZK_BINDER_PACKAGE") orelse "", "android:wayland")) "presenter" else "sf")
+        (if (std.mem.eql(u8, package, "android:wayland")) "presenter" else if (std.mem.eql(u8, package, "android:media")) "media" else "sf")
     else if (std.mem.eql(u8, args[1], "--socket")) "broker" else "system";
     const mode = init.minimal.environ.getPosix("AZK_SESSION_FIXTURE_MODE").?;
     try std.testing.expect(init.minimal.environ.getPosix("AZK_BINDER_SYSTEM_COOKIE") != null);
     try event(init, role, "start");
+    if (std.mem.eql(u8, role, "media")) {
+        if (std.mem.eql(u8, mode, "media-eof")) return;
+        if (std.mem.eql(u8, mode, "media-bad-ready")) {
+            try Io.File.stdout().writeStreamingAll(init.io, "ready-wrong\n");
+            return;
+        }
+        if (std.mem.eql(u8, mode, "media-timeout")) {
+            try Io.sleep(init.io, .{ .nanoseconds = 10 * std.time.ns_per_s }, .awake);
+            return;
+        }
+    }
     if (std.mem.eql(u8, role, "presenter")) {
         if (std.mem.eql(u8, mode, "presenter-eof")) return;
         if (std.mem.eql(u8, mode, "presenter-bad-ready")) {
@@ -159,7 +179,7 @@ fn fixture(init: std.process.Init, args: []const [:0]const u8) !void {
             return;
         }
     }
-    if (std.mem.eql(u8, role, "system") and std.mem.eql(u8, mode, "system-eof")) return;
+    if (std.mem.eql(u8, role, "system") and (std.mem.eql(u8, mode, "system-eof") or std.mem.eql(u8, mode, "media-system-eof"))) return;
     try Io.File.stdout().writeStreamingAll(init.io, "ready\n");
     var bytes: [32]u8 = undefined;
     while (true) {
@@ -170,6 +190,8 @@ fn fixture(init: std.process.Init, args: []const [:0]const u8) !void {
         if (count == 0) break;
     }
     try event(init, role, "stop");
+    if (std.mem.eql(u8, role, "media") and std.mem.eql(u8, mode, "media-shutdown-timeout"))
+        try Io.sleep(init.io, .{ .nanoseconds = 10 * std.time.ns_per_s }, .awake);
     if (std.mem.eql(u8, role, "sf") and std.mem.eql(u8, mode, "sf-shutdown-timeout"))
         try Io.sleep(init.io, .{ .nanoseconds = 10 * std.time.ns_per_s }, .awake);
     if (std.mem.eql(u8, role, "presenter") and std.mem.eql(u8, mode, "presenter-shutdown-timeout"))

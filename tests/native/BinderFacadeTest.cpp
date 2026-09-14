@@ -862,6 +862,14 @@ int main(int argc, char **argv) {
     char content[7];
     assert(read(descriptors[0], content, sizeof(content)) == sizeof(content));
     assert(std::string(content, sizeof(content)) == "layers\n");
+    auto *native = AIBinder_fromPlatformBinder(server);
+    const char *nativeArgs[] = {"--layers", "task \xce\xbb"};
+    assert(AIBinder_dump(native, descriptors[1], nativeArgs, 2) == STATUS_OK);
+    assert(read(descriptors[0], content, sizeof(content)) == sizeof(content));
+    assert(std::string(content, sizeof(content)) == "layers\n");
+    assert(AIBinder_dump(native, descriptors[1], nullptr, 0) == STATUS_BAD_VALUE);
+    assert(AIBinder_dump(nullptr, descriptors[1], nullptr, 0) == STATUS_UNEXPECTED_NULL);
+    AIBinder_decStrong(native);
     args.clear();
     assert(server->dump(descriptors[1], args) == BAD_VALUE);
     // Serialization borrows the caller FD; the receiver owns its transferred
@@ -870,7 +878,7 @@ int main(int argc, char **argv) {
     close(descriptors[1]);
     assert(read(descriptors[0], content, sizeof(content)) == 0);
     close(descriptors[0]);
-    pass("remote dump Unicode arguments, status, identity and FD ownership");
+    pass("C++ and NDK remote dump Unicode arguments, status, identity and FD ownership");
   }
   auto same = IBinder::fromNative(
       AServiceManager_waitForService("dev.artzig.facade.v2"));

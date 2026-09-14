@@ -718,6 +718,8 @@ pub fn build(b: *std.Build) void {
         .aosp = aosp,
     };
     const island = @import("build/island.zig").build(b, island_options);
+    const media_service = @import("build/codec2.zig").service(b, codec2, island.file, binder_cpp, binder_ndk);
+    const media_service_probe = @import("build/codec2.zig").serviceProbe(b, codec2, island.file, binder_cpp, binder_ndk);
     b.step("island", "Build libandroid_platform.so").dependOn(island.step);
     var codec2_island_options = island_options;
     codec2_island_options.codec2 = codec2;
@@ -1014,6 +1016,7 @@ pub fn build(b: *std.Build) void {
         .launcher = exe.getEmittedBin(),
         .broker = binder_broker.getEmittedBin(),
         .surfaceflinger = sf_service.getEmittedBin(),
+        .media_service = media_service.getEmittedBin(),
         .task_presenter = task_presenter.getEmittedBin(),
         .island = island.file,
         .idmap2 = idmap2.file,
@@ -1081,6 +1084,8 @@ pub fn build(b: *std.Build) void {
     });
     const system_test_run = @import("build/command.zig").create(b);
     setApplicationEnvironment(system_test_run, application_tree);
+    system_test_run.prependPathEnvironment("LD_LIBRARY_PATH", application_tree.path(b, "lib"));
+    system_test_run.prependPathEnvironment("LD_LIBRARY_PATH", application_tree.path(b, "lib/art"));
     system_test_run.addFileArg(system_test_driver.getEmittedBin());
     system_test_run.addFileArg(application_tree.path(b, "bin/androlinzberg"));
     system_test_run.addFileArg(application_tree.path(b, "bin/azk-binder-broker"));
@@ -1091,6 +1096,8 @@ pub fn build(b: *std.Build) void {
     system_test_run.addFileArg(java.fixtures.identity_b);
     system_test_run.addFileArg(application_tree.path(b, "bin/azk-surfaceflinger"));
     system_test_run.addFileArg(@import("build/service_fixtures.zig").build(b, aosp_dep, java));
+    system_test_run.addFileArg(application_tree.path(b, "bin/azk-media-service"));
+    system_test_run.addFileArg(media_service_probe.getEmittedBin());
     system_test_run.run.setName("run hosted system-service tests");
     b.step("system-test", "Run multi-process hosted system-service tests").dependOn(&system_test_run.run.step);
 
@@ -1435,7 +1442,7 @@ pub fn build(b: *std.Build) void {
             .dependOn(&desktop_launcher.run.step);
     }
     const session_loss_step = b.step("stock-session-loss-test", "Retire an idle APK session after service or compositor death");
-    for ([_][]const u8{ "system", "surfaceflinger", "presenter", "broker", "compositor" }) |fault| {
+    for ([_][]const u8{ "system", "surfaceflinger", "presenter", "media", "broker", "compositor" }) |fault| {
         const run = @import("build/command.zig").create(b);
         setApplicationEnvironment(run, application_tree);
         run.setEnvironment("AZK_WINDOW_BACKEND", "stock");

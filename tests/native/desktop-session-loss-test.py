@@ -15,7 +15,7 @@ import subprocess
 import time
 
 p = argparse.ArgumentParser()
-p.add_argument('--fault', choices=('system', 'surfaceflinger', 'presenter', 'broker', 'compositor'), required=True)
+p.add_argument('--fault', choices=('system', 'surfaceflinger', 'presenter', 'media', 'broker', 'compositor'), required=True)
 p.add_argument('--output', type=Path, required=True)
 p.add_argument('--seat', type=Path, required=True)
 p.add_argument('command', nargs=argparse.REMAINDER)
@@ -67,6 +67,7 @@ def collect():
             role = ('system' if b'--system-server' in argv else
                     'surfaceflinger' if executable == 'azk-surfaceflinger' else
                     'presenter' if executable == 'azk-task-presenter' else
+                    'media' if executable == 'azk-media-service' else
                     'broker' if executable == 'azk-binder-broker' else 'app')
             socket = os.fsdecode(argv[argv.index(b'--socket') + 1]) if role == 'broker' else None
             owned[pid] = {'fd': fd, 'role': role, 'socket': socket}
@@ -100,7 +101,7 @@ try:
         subprocess.run(['grim', str(out / 'before.png')], check=True, timeout=3)
         collect()
         services = {role: [(pid, value) for pid, value in owned.items() if value['role'] == role]
-                    for role in ('system', 'surfaceflinger', 'presenter', 'broker')}
+                    for role in ('system', 'surfaceflinger', 'presenter', 'media', 'broker')}
         assert all(len(values) == 1 for values in services.values()), {k: len(v) for k, v in services.items()}
         session_dir = Path(services['broker'][0][1]['socket']).parent
         info = json.loads((session_dir / 'session.json').read_text())

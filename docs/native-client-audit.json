@@ -498,8 +498,7 @@
       "installed_build": "Default installed build refreshed successfully with the current archive and pin"
     },
     "limits": [
-      "Resource service is compiled and tested but not yet published by the production session",
-      "Production MediaCodec JNI/NDK and decoding remain hosted until component-store and native service-process integration is complete",
+      "Production MediaCodec JNI/NDK and decoding remain hosted until component-store integration is complete",
       "Android battery history and energy estimation are not provided by the video session counters"
     ],
     "video_battery_accounting": "IBatteryStats video start/stop/reset feed pooled per-UID and global on-battery timers, enforce UPDATE_DEVICE_STATS, emit original codec state stats, and expose session microseconds in dumps; power transitions share the ordered event queue; original PowerStatsUidResolver maps isolated UIDs, retains late codec stops through process death, and SDK sandbox UIDs map to their owning app",
@@ -511,6 +510,17 @@
       "binder-cpp-test": "Passed NDK/C++ declaration lookup and enumeration contracts",
       "integration-test": "28 tests passed, 88 recorded actions and zero structured runtime issues; 23 testkit tests passed",
       "audits": "C++ audit and NDK ABI passed (135 reference symbols, 162 exports)"
+    },
+    "publication": "Production azk-media-service publishes the original resource manager and observer after hosted system readiness; the session supervises startup, death and ordered shutdown.",
+    "process_validation": {
+      "system-test": "Passed original remote resource client registration, video resource acquisition, system battery accounting, native and Java dumps, idempotent removal, and the existing multiprocess system suite",
+      "session-test": "Passed media readiness, startup ordering, timeout, spawn failure and descriptor/child cleanup; active drain group keeps a stable address across Session return",
+      "binder-cpp-test": "Passed NDK and C++ remote dumps, Unicode arguments, status propagation, caller identity and borrowed descriptor ownership",
+      "framework-module-test": "Passed",
+      "audits": "C++ boundary audit and NDK ABI passed (135 reference symbols, 162 exports)",
+      "integration-test": "All 28 APK tests passed, 88 actions with zero structured runtime issues; 23 testkit tests passed",
+      "stock-session-loss-test": "All six faults passed: media, system, SurfaceFlinger, presenter, broker and compositor; no retained descendants or session directories",
+      "installed_build": "Default installed build refreshed with azk-media-service; archive and source pin unchanged because all reused sources were already packaged"
     }
   },
   "service_declarations": {

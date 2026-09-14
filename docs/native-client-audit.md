@@ -144,7 +144,8 @@ DrmHal, metrics and AIDL/HIDL factory clients. The frozen DRM V1 NDK protocol
 and DRM 1.0–1.4 HIDL protocols are generated from the pin. The host advertises
 no VINTF DRM instances and has no HIDL service manager or DRM plugin, so this
 restores client provenance, not protected playback. The resource-manager client
-is linked for session bookkeeping; no resource-manager service is added.
+is linked for session bookkeeping. The production session now also publishes
+the original resource-manager service in its native media process.
 
 ### Missing-service clients are also non-stock
 
@@ -482,9 +483,12 @@ Outstanding codec notifications retain that mapping through process death;
 SDK sandbox UIDs also map to their owner. These counters do not implement
 Android battery history or energy estimation.
 
-The resource service is not yet published by the production session. Its
-native codec process and component store remain to be connected before
-enabling stock MediaCodec. UID notifications now come from the live process
+The production session publishes the original resource manager and observer
+from `azk-media-service`, after the system process is ready. A small bootstrap
+replaces Android init; AOSP owns service registration and resource policy.
+Shutdown stops media before its system dependencies, and media-service death
+retires the desktop session. The Codec2 component store remains to be connected
+before enabling stock MediaCodec. UID notifications now come from the live process
 registry through AOSP UidObserverController. Its server patch removes the
 diagnostic-only AMS state mirror and retains stock registration, filtering,
 coalescing, callback order, state cutpoints and observer-death handling. The
@@ -511,3 +515,23 @@ tests pass with 88 recorded actions and zero structured runtime issues; the
 testkit passes 23 tests. Source comparison reports 7,086 unchanged inputs and
 63 server adaptations, with no modified/owned client sources or missing
 references. The archive and dependency pin were refreshed together.
+
+### Native media process
+
+`system-test` exercises the production native resource service from another
+process: client registration, video resource acquisition, battery accounting,
+resource dumps and idempotent client removal. Remote NDK Binder dumps now send
+the original descriptor/String16 transaction. The C++ bridge dispatches through
+`onTransact`, which reaches Java service dumps; AOSP JavaBBinder's direct native
+`dump` method is intentionally empty. Native tests cover Unicode arguments,
+status propagation, caller identity and borrowed descriptor ownership.
+
+Session tests cover media readiness, startup failures, timeouts and ordered
+cleanup. Their drain task group has a stable allocation because media startup
+starts draining before the Session value is returned to its owner.
+
+The native-process follow-up passes the system, framework module, session and
+Binder suites, C++ audit and NDK ABI check. All six service/compositor failure
+cases pass. All 28 APK tests pass with 88 actions and no structured runtime
+issues; 23 testkit tests pass. The installed tree includes `azk-media-service`.
+This stage reuses already packaged AOSP sources, so the archive pin is unchanged.

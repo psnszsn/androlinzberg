@@ -1179,7 +1179,7 @@ const Runtime = struct {
             // Oneway transactions have no waiting caller; AOSP reports pid 0.
             current_caller_pid = if (oneway) 0 else in.caller_pid;
             const policy = ThreadPolicy.enter();
-            binder_status = target.?.class.?.on_transact.?(target.?, in.code, in.parcel, out);
+            binder_status = invokeTransaction(target.?, in.code, in.parcel, out);
             policy.restore();
             current_flags = prev_flags;
             serving_stack = prev_stack;
@@ -1564,7 +1564,7 @@ const Runtime = struct {
         const detach = attachCallbackThread();
         defer if (detach) detachCurrentThread();
         const class = target.class orelse return STATUS_UNEXPECTED_NULL;
-        const on_transact = class.on_transact orelse return STATUS_UNEXPECTED_NULL;
+        if (class.on_transact == null) return STATUS_UNEXPECTED_NULL;
         in.pos = 0;
         if (out) |o| {
             if (answerBinderControl(target, code, o)) {
@@ -1599,7 +1599,7 @@ const Runtime = struct {
             current_caller_uid = if (Runtime.instance) |r| r.uid else std.os.linux.getuid();
             current_caller_pid = if (Runtime.instance) |r| r.pid else @intCast(std.os.linux.getpid());
         }
-        const rc = on_transact(target, code, in, reply);
+        const rc = invokeTransaction(target, code, in, reply);
         current_flags = prev_flags;
         serving_stack = prev_stack;
         current_in_transaction = prev_in_transaction;
@@ -2862,9 +2862,28 @@ export fn AIBinder_Class_setOnDump(clazz: *AIBinder_Class, onDump: ?AIBinder_onD
 export fn AIBinder_Class_setHandleShellCommand(clazz: *AIBinder_Class, handleShellCommand: ?*const anyopaque) callconv(.c) void {
     clazz.shell_cmd = handleShellCommand;
 }
-export fn AIBinder_dump(binder: *AIBinder, fd: i32, args: ?[*]const [*:0]const u8, num_args: u32) callconv(.c) i32 {
-    if (binder.class) |c| if (c.on_dump) |cb| return cb(binder, fd, args, num_args);
-    return STATUS_OK;
+export fn AIBinder_dump(binder_opt: ?*AIBinder, fd: i32, args: ?[*]const [*:0]const u8, num_args: u32) callconv(.c) i32 {
+    const binder = binder_opt orelse return STATUS_UNEXPECTED_NULL;
+    if (binder.kind == .local) {
+        if (binder.class) |c| if (c.on_dump) |cb| return cb(binder, fd, args, num_args);
+        return STATUS_OK;
+    }
+    // Pinned BpBinder::dump: a borrowed descriptor followed by String16 args,
+    // without an interface token. The caller retains its descriptor ownership.
+    if (num_args > std.math.maxInt(i32) or (num_args != 0 and args == null)) return STATUS_BAD_VALUE;
+    const request = AParcel.create();
+    defer request.destroy();
+    const reply = AParcel.create();
+    defer reply.destroy();
+    const status = azk_parcel_writeFd(request, fd, false);
+    if (status != STATUS_OK) return status;
+    request.writeI32(@intCast(num_args));
+    for (0..num_args) |i| {
+        const arg = std.mem.span(args.?[i]);
+        request.writeString(arg, @intCast(arg.len));
+    }
+    if (request.err != STATUS_OK) return request.err;
+    return Runtime.get().transact(binder, DUMP_TRANSACTION, request, reply, 0);
 }
 export fn AIBinder_getExtension(binder: *AIBinder, out_ext: *?*AIBinder) callconv(.c) i32 {
     out_ext.* = null;
@@ -3308,7 +3327,38 @@ fn throwRuntime(env: JNIEnvPtr, msg: [*:0]const u8) void {
 const INTERFACE_TRANSACTION: u32 = ('_' << 24) | ('N' << 16) | ('T' << 8) | 'F';
 /// IBinder.PING_TRANSACTION ('_PNG'): answered with an empty OK reply.
 const PING_TRANSACTION: u32 = ('_' << 24) | ('P' << 16) | ('N' << 8) | 'G';
+const DUMP_TRANSACTION: u32 = ('_' << 24) | ('D' << 16) | ('M' << 8) | 'P';
 const EXTENSION_TRANSACTION: u32 = ('_' << 24) | ('E' << 16) | ('X' << 8) | 'T';
+
+/// BBinder::onTransact and ABBinder::dump decode the reserved dump operation
+/// before the generated AIDL dispatcher. Run under the ordinary caller identity.
+fn invokeTransaction(target: *AIBinder, code: u32, input: *AParcel, output: *AParcel) i32 {
+    const class = target.class.?;
+    if (code != DUMP_TRANSACTION) return class.on_transact.?(target, code, input, output);
+    var fd: i32 = -1;
+    if (azk_parcel_readFileDescriptorBorrowed(input, &fd) != STATUS_OK or fd < 0) return STATUS_BAD_VALUE;
+    const count = input.readI32() orelse return STATUS_BAD_VALUE;
+    var strings: std.ArrayList([:0]u8) = .empty;
+    defer {
+        for (strings.items) |s| alloc.free(s);
+        strings.deinit(alloc);
+    }
+    var i: i32 = 0;
+    while (i < count and input.pos < input.data.items.len) : (i += 1) {
+        const text = input.readString() catch return STATUS_BAD_VALUE;
+        defer alloc.free(text);
+        const terminated = alloc.dupeSentinel(u8, text, 0) catch return STATUS_NO_MEMORY;
+        strings.append(alloc, terminated) catch {
+            alloc.free(terminated);
+            return STATUS_NO_MEMORY;
+        };
+    }
+    const callback = class.on_dump orelse return STATUS_OK;
+    const pointers = alloc.alloc([*:0]const u8, strings.items.len) catch return STATUS_NO_MEMORY;
+    defer alloc.free(pointers);
+    for (strings.items, pointers) |text, *ptr| ptr.* = text.ptr;
+    return callback(target, fd, pointers.ptr, @intCast(pointers.len));
+}
 
 /// Pinned BBinder::transact answers ping before onTransact, including for
 /// JavaBBinder. Native objects also answer interface descriptors here; Java

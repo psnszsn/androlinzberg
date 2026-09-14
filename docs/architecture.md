@@ -1,8 +1,8 @@
 # Architecture
 
 androlinzberg runs Android applications in a shared desktop session. The launcher
-supervises a Binder broker, SurfaceFlinger, a hosted system process and a Wayland
-task presenter. ATMS starts separate ART application processes. This is a host
+supervises a Binder broker, SurfaceFlinger, a hosted system process, a native
+media service and a Wayland task presenter. ATMS starts separate ART application processes. This is a host
 adaptation of selected Android services, without booting an Android device.
 
 ## Main components
@@ -99,6 +99,13 @@ render each track through a PipeWire stream (`src/native/audio`); PCM travels
 through the AOSP shared control block, not through Binder. MediaExtractor uses
 original native clients over Binder to the system process's `media.extractor`
 service. These boundaries are detailed in the [native client audit](native-client-audit.md).
+
+`azk-media-service` publishes the original AOSP media resource manager and
+resource observer. Their native clients use the system process's activity,
+process-information and battery services. The launcher starts this process
+after those dependencies and stops it before them; its death retires the
+desktop session. The Codec2 component store and stock MediaCodec activation
+remain separate migration work.
 
 ### Android native libraries
 

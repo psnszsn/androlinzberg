@@ -34,6 +34,25 @@ AIBinder_Class *localClass(const String16 &descriptor) {
         return target->onTransact(code, in, &out, azk_binder_callFlags());
       });
   AIBinder_Class_disableInterfaceTokenHeader(cls);
+  AIBinder_Class_setOnDump(cls, [](AIBinder *n, int fd, const char **args,
+                                  uint32_t count) -> binder_status_t {
+    auto &target = *static_cast<sp<BBinder> *>(AIBinder_getUserData(n));
+    if (count > INT32_MAX) return BAD_VALUE;
+    // Remote dumps enter onTransact: JavaBBinder handles them in Java while
+    // its direct dump() override is intentionally empty in pinned AOSP.
+    Parcel input, output;
+    status_t status = input.writeFileDescriptor(fd, false);
+    if (status != OK) return status;
+    status = input.writeInt32(static_cast<int32_t>(count));
+    if (status != OK) return status;
+    for (uint32_t i = 0; i < count; ++i) {
+      status = input.writeString16(String16(args[i]));
+      if (status != OK) return status;
+    }
+    input.setDataPosition(0);
+    return target->onTransact(IBinder::DUMP_TRANSACTION, input, &output,
+                              azk_binder_callFlags());
+  });
   return cls;
 }
 } // namespace

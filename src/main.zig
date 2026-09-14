@@ -433,6 +433,7 @@ fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_
         .broker_exe = broker_exe,
         .launcher_exe = launcher_exe,
         .surfaceflinger_exe = try std.fs.path.join(arena, &.{ tree, "bin", "azk-surfaceflinger" }),
+        .media_service_exe = try std.fs.path.join(arena, &.{ tree, "bin", "azk-media-service" }),
         .task_presenter_exe = if (present_tasks)
             try std.fs.path.join(arena, &.{ tree, "bin", "azk-task-presenter" })
         else
