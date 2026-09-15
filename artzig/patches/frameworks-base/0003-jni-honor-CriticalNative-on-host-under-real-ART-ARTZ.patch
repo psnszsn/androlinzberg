@@ -14,9 +14,8 @@ Gate the prefix on ARTZIG_REAL_CRITICAL_NATIVE so the Android (bare)
 convention is used.
 ---
  core/jni/core_jni_helpers.h          | 2 +-
- libs/hwui/jni/PathIterator.cpp       | 2 +-
  libs/hwui/jni/graphics_jni_helpers.h | 2 +-
- 3 files changed, 3 insertions(+), 3 deletions(-)
+ 2 files changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/core/jni/core_jni_helpers.h b/core/jni/core_jni_helpers.h
 index 769fa723c..d1b4ef1bc 100644
@@ -31,19 +30,6 @@ index 769fa723c..d1b4ef1bc 100644
  #define CRITICAL_JNI_PARAMS
  #define CRITICAL_JNI_PARAMS_COMMA
  #else
-diff --git a/libs/hwui/jni/PathIterator.cpp b/libs/hwui/jni/PathIterator.cpp
-index e9de65559..534ef100e 100644
---- a/libs/hwui/jni/PathIterator.cpp
-+++ b/libs/hwui/jni/PathIterator.cpp
-@@ -40,7 +40,7 @@ public:
-     // A variant of 'next' (below) that is compatible with the host JVM.
-     static jint nextHost(JNIEnv* env, jclass clazz, jlong iteratorHandle, jfloatArray pointsArray) {
-         jfloat* points = env->GetFloatArrayElements(pointsArray, 0);
--#ifdef __ANDROID__
-+#if defined(__ANDROID__) || defined(ARTZIG_REAL_CRITICAL_NATIVE)
-         jint result = next(iteratorHandle, reinterpret_cast<jlong>(points));
- #else
-         jint result = next(env, clazz, iteratorHandle, reinterpret_cast<jlong>(points));
 diff --git a/libs/hwui/jni/graphics_jni_helpers.h b/libs/hwui/jni/graphics_jni_helpers.h
 index ff26ec177..17bc7822e 100644
 --- a/libs/hwui/jni/graphics_jni_helpers.h

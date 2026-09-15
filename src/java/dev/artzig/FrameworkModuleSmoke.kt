@@ -184,6 +184,7 @@ internal object FrameworkModuleSmoke {
         dev.artzig.window.WaylandPointerCaptureSmoke.run()
         dev.artzig.window.WaylandKeyboardMapSmoke.run()
         com.android.server.wm.StockSurfaceSyncSmoke.run()
+        testStockPathNatives()
         testStockPixelCopy()
         testStockVerity()
         testStockUsbDevice()
@@ -1190,6 +1191,38 @@ internal object FrameworkModuleSmoke {
         } finally { directory.deleteRecursively() }
     }
 
+    private fun testStockPathNatives() {
+        val path = android.graphics.Path().apply {
+            moveTo(2f, 3f)
+            lineTo(5f, 7f)
+            quadTo(8f, 11f, 13f, 17f)
+            close()
+        }
+        for (fill in android.graphics.Path.FillType.values()) {
+            path.fillType = fill
+            check(path.fillType == fill)
+            val copy = android.graphics.Path(path)
+            check(copy.fillType == fill)
+            val iterator = copy.pathIterator
+            val points = FloatArray(12) { -99f }
+            check(iterator.peek() == android.graphics.PathIterator.VERB_MOVE)
+            check(iterator.next(points, 2) == android.graphics.PathIterator.VERB_MOVE)
+            check(points[2] == 2f && points[3] == 3f)
+            check(iterator.next(points, 2) == android.graphics.PathIterator.VERB_LINE)
+            check(points.sliceArray(2..5).contentEquals(floatArrayOf(2f, 3f, 5f, 7f)))
+            check(iterator.next(points, 2) == android.graphics.PathIterator.VERB_QUAD)
+            check(points.sliceArray(2..7).contentEquals(floatArrayOf(5f, 7f, 8f, 11f, 13f, 17f)))
+            check(iterator.next(points, 2) == android.graphics.PathIterator.VERB_CLOSE)
+            check(!iterator.hasNext())
+            check(iterator.next(points, 2) == android.graphics.PathIterator.VERB_DONE)
+            check(points[0] == -99f && points[1] == -99f && points[10] == -99f && points[11] == -99f)
+            val stale = copy.pathIterator
+            copy.lineTo(19f, 23f)
+            check(runCatching { stale.hasNext() }.exceptionOrNull() is java.util.ConcurrentModificationException)
+        }
+        System.err.println("stock-path-natives: PASS fill types, copied geometry, iterator points, offsets and mutation")
+    }
+
     private fun testStockPixelCopy() {
         HostContexts.bootstrap(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
         StockReadbackSmoke.verifyGeometry()
@@ -1245,6 +1278,8 @@ internal object FrameworkModuleSmoke {
                 val hardware = checkNotNull(android.graphics.Bitmap.wrapHardwareBuffer(buffer,
                     android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB)))
                 try {
+                    // Bitmap keeps a weak reference to the supplied Java owner.
+                    check(hardware.hardwareBuffer === buffer)
                     val copied = checkNotNull(hardware.copy(android.graphics.Bitmap.Config.ARGB_8888, false))
                     try {
                         val actual = copied.getPixel(0, 0)

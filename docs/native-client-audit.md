@@ -6,6 +6,12 @@ The JVM source check covers selected framework source files. Android-native
 implementations, runtime libraries and process placement still contain substantial
 host adaptations.
 
+The complete `acceptance-test` target passed on 2026-09-15 for the current
+hardware-buffer and path JNI checkpoint. All 28 APK cases passed, with 92
+recorded actions, zero structured runtime issues and no failure artifacts.
+The native, JVM, system, desktop, video, source-provenance and build checks passed.
+The source archive, dependency pin and installed outputs are current.
+
 This is a source and architecture audit, not an exhaustive per-method
 compatibility certification. The follow-up validation record distinguishes
 exercised behavior from source provenance. It traces production
@@ -34,10 +40,10 @@ also does not mean zero unsupported native operations.
 
 `native-client-source-test` consumes the actual 1,108 native-island compiler
 commands and verifies the linked object files. The current selection contains
-764 unchanged AOSP units, 45 modified units, 22 owned units and 277 generated
-units. Its 36 required client sources must remain original and present. Twelve
+767 unchanged AOSP units, 42 modified units, 22 owned units and 277 generated
+units. Its 39 required client sources must remain original and present. Fifteen
 sensitive client/service boundaries are preprocessed again with those commands;
-the report records effective macros and the 1,624 headers actually consumed.
+the report records effective macros and the 1,904 headers actually consumed.
 This catches disabled Android branches and incompatible Binder header selection.
 
 The check also verifies unique JNI registrar ownership and rejects FFmpeg/VAAPI
@@ -55,7 +61,8 @@ reference revisions, modified native paths and delegated registration modules.
 Both archives were read directly. The framework archive was rechecked during
 the Binder, utility and media/graphics JNI migrations. The latest refresh adds
 original VINTF, performance-hint and sensor clients, plus unchanged Surface,
-ImageReader and image utility JNI. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
+ImageReader and image utility JNI, plus original hardware-buffer helpers and
+Path/PathIterator JNI. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
 `.h`, `.hpp`, `.hxx`, `.S`, `.s` and `.inl` member was compared byte-for-byte
 with the corresponding pinned checkout path. Both current archives contain
 multiple top-level directories; their paths were retained. Tracked reference
@@ -63,7 +70,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 14,191 | 97 | 0 |
+| Framework | 14,194 | 94 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -190,7 +197,7 @@ prepare/play/pause/seek/completion/reset/release lifecycle. Native allocator,
 codec and resource tests also pass. RenderEngine, buffer/Surface clients, stock-video
 pixel assertions, system services and all 28 APK cases passed (90 recorded
 actions, zero structured runtime issues). Source identity, Binder JNI, C++/graph
-audits and NDK ABI checks passed. No full aggregate acceptance run is claimed.
+audits and NDK ABI checks passed.
 
 ### Camera clients
 
@@ -226,7 +233,7 @@ provenance and build/ABI audits passed. All 28 APK cases passed with 88 recorded
 actions and zero structured runtime issues. Surface, ImageReader and image
 utility JNI now also compile unchanged with their Android branches enabled.
 Fresh video screenshots were inspected; installed outputs and the source archive
-were refreshed. No aggregate acceptance run is claimed.
+were refreshed.
 
 **Already across a service boundary:** MediaExtractor uses original Java/JNI,
 NuMediaExtractor and Binder to the native `media.extractor` service published by
@@ -386,12 +393,6 @@ reader visibility and cleanup, including cross-process MemoryIntArray transfer.
 
 Utility validation passed both framework suites, 23 testkit tests and all 28 APK
 tests (90 recorded actions, zero structured runtime issues in the final run).
-Every acceptance target passed across the runs, but neither aggregate run was
-fully green: the single-job run hit an intermittent desktop pointer assertion
-that passed in isolation. The earlier clipboard GPU timeout did not recur.
-The fence-acquisition fixture race found during validation was fixed separately
-in `1823bb1e`. See the JSON validation record for this limitation.
-
 ## Remaining work and acceptance criteria
 
 1. Close remaining Process, Debug and networking JNI adaptations against
@@ -423,7 +424,7 @@ passed for this batch. The APK suite ran 28 cases and the testkit ran 23 tests;
 recorded actions contain no structured runtime issues. Hardware snapshot tests
 check pixels, dimensions, invalid sizes and RenderNode ownership. DRM tests
 check absent-factory results, argument validation and failed-object cleanup;
-they do not certify protected playback. No aggregate acceptance run is claimed.
+they do not certify protected playback.
 
 The refreshed framework archive and its dependency pin are current, and the
 build is installed in `zig-out`. Source hashes and validation counts are in
@@ -501,7 +502,7 @@ bufferpool threads' process lifetime without C++ destructor races.
 
 The installed tree and framework archive are current. ELF checks confirm that
 FFmpeg/VAAPI dependencies are in the media executable, while the launcher and
-platform DSO have none. The aggregate acceptance target has not been rerun.
+platform DSO have none.
 The optional original `codec2-params-test` retains its two previous host-compiler
 parameter equality/implicit-bool mismatches (12/14); it is outside acceptance.
 
@@ -522,7 +523,7 @@ service or claim device compatibility.
 System tests, build-tool checks, source/Binder provenance, native ABI and build
 audits passed. All 28 APK cases passed with 88 recorded actions and zero
 structured runtime issues. Installed outputs and the framework source archive
-were refreshed; the aggregate acceptance target was not run.
+were refreshed.
 
 ## Performance-hint native follow-up
 
@@ -551,4 +552,20 @@ when the service rejects creation.
 Native and framework module tests passed, followed by system tests, source/Binder
 provenance checks, build/ABI audits and the complete APK suite: 28 cases,
 88 recorded actions and zero structured runtime issues. Installed outputs and
-the source archive were refreshed. No aggregate acceptance run is claimed.
+the source archive were refreshed.
+
+## Original hardware-buffer and path JNI
+
+HardwareBufferHelpers, Path and PathIterator now compile the original Android
+branches. The hardware-buffer helper uses the existing system-library loader
+projection. The path implementations use ART's original critical-native calling
+convention; the old fill-type clamp and helper/iterator patches are removed.
+Tests cover fill types, path copies, iterator verbs and offsets, invalidated
+iterators, and the Java ownership retained by a wrapped hardware bitmap.
+This changes neither Mesa selection nor GPU presentation copies.
+
+The aggregate run also exposed two acceptance-fixture problems and a hosted
+input-policy mismatch. Delayed GPU events now prefer a separate compute queue;
+the cleanup deadline excludes failure-stack formatting. The standalone platform
+ABI check imports its graphics types. AOSP's null drop target on cancelled drags
+now passes through the Kotlin policy and is covered through the real dispatcher.

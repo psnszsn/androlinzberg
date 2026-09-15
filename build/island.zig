@@ -721,7 +721,17 @@ pub fn build(b: *std.Build, o: Options) Result {
 
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_matrix.cpp"}, &.{ apex_inc, hw_jni_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/services/core/jni"), &.{ "com_android_server_display_DisplayControl.cpp", "com_android_server_wm_TaskFpsCallbackController.cpp" }, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc }, &.{});
-    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, &.{ hw_jni_inc, o.aosp.path(b, "frameworks/av/media/ndk/include") }, &.{"-DARTZIG_HOST_GRAPHICS"});
+    for (gen.jni_srcs) |file| {
+        if (std.mem.eql(u8, file, "jni/HardwareBufferHelpers.cpp")) {
+            // Original libandroid lookup through the existing Android loader projection.
+            g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{file}, &.{hw_jni_inc}, &.{ "-D__ANDROID__", "-Ddlopen=azk_android_dlopen" });
+        } else if (std.mem.eql(u8, file, "jni/Path.cpp") or std.mem.eql(u8, file, "jni/PathIterator.cpp")) {
+            // Bionic cdefs leaves this rename empty for 64-bit off_t without FILE_OFFSET_BITS.
+            g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{file}, &.{ hw_jni_inc, extractor_headers.getDirectory() }, &(android_abi_flags ++ .{"-D__RENAME_IF_FILE_OFFSET64(x)="}));
+        } else {
+            g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{file}, &.{ hw_jni_inc, o.aosp.path(b, "frameworks/av/media/ndk/include") }, &.{"-DARTZIG_HOST_GRAPHICS"});
+        }
+    }
     g.add(o.aosp.path(b, "libnativehelper"), &gen.nativehelper_srcs, &.{}, &.{ "-U_GNU_SOURCE", "-D_POSIX_C_SOURCE=200809L", "-D_DEFAULT_SOURCE" });
     var bridge_includes: std.ArrayList(std.Build.LazyPath) = .empty;
     bridge_includes.appendSlice(b.allocator, extractor_includes) catch @panic("OOM");

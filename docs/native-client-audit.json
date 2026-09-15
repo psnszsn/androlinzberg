@@ -1,10 +1,10 @@
 {
-  "revision": "a4c8346b + compiled native island provenance gate",
+  "revision": "48976040 + original hardware-buffer helper and path JNI",
   "reference": "Pinned checkout described by aosp/README.md; project revisions below",
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 14191,
+      "unchanged": 14194,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -40,9 +40,6 @@
         "frameworks/base/libs/hwui/hwui/Bitmap.h",
         "frameworks/base/libs/hwui/jni/Bitmap.cpp",
         "frameworks/base/libs/hwui/jni/Graphics.cpp",
-        "frameworks/base/libs/hwui/jni/HardwareBufferHelpers.cpp",
-        "frameworks/base/libs/hwui/jni/Path.cpp",
-        "frameworks/base/libs/hwui/jni/PathIterator.cpp",
         "frameworks/base/libs/hwui/jni/android_graphics_HardwareRenderer.cpp",
         "frameworks/base/libs/hwui/jni/graphics_jni_helpers.h",
         "frameworks/base/libs/hwui/pipeline/skia/GLFunctorDrawable.cpp",
@@ -105,7 +102,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "ea8f1d1548f5f3666063a15c317c6079e57d9fb5783be6a591dc8ef7c630cabc"
+      "archive_sha256": "65d05c08e88e74b548f43f60b41ae98e293500f30bc14487dbcac5063b87ae8f"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -250,7 +247,7 @@
   "registration_scope_note": "9 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
-      "sha256": "3e00f95e2b7b8a81dcade624119e3b0d28ae680d61f8c0e63edec39196731dac",
+      "sha256": "acc12bcbd152a739f01f733f358ffda4816ced520474bcdf3ea77dbcd0ac8471",
       "defined_symbols": [
         "register_localized_collators",
         "register_android_functions",
@@ -269,7 +266,7 @@
       ]
     }
   },
-  "framework_package_refresh": "2026-09-15: original VINTF, performance-hint and sensor clients; Surface/ImageReader/Utils JNI source guard patches removed. Rechecked against the clean pinned reference.",
+  "framework_package_refresh": "2026-09-15: original VINTF, performance-hint and sensor clients; Surface/ImageReader/image utility JNI; original hardware-buffer helpers and Path/PathIterator JNI",
   "binder_jni_followup": {
     "runtime_revision": "b7d78a39",
     "verified_date": "2026-09-13",
@@ -436,7 +433,7 @@
     "shutdown": "Launcher unwinds session cleanup, then uses the existing AndroidRuntime immediate-exit hook; original bufferpool detached threads retain process lifetime.",
     "installed_binaries": {
       "bin/androlinzberg": {
-        "sha256": "a1de5d78e87b238d04d8c72dd8aa3aef2f12b5340f36d202b33f4af533ceca76",
+        "sha256": "2fa9fb380f0c37cc4659138c050d2c70ffe0d9525c13d17674a819e6cb2ee4cf",
         "needed": [
           "libm.so.6",
           "libc.so.6",
@@ -446,7 +443,7 @@
         ]
       },
       "bin/azk-media-service": {
-        "sha256": "bf634aa4ef2d4016dee01e4434d7e83e9b6806efef2486ca353c884cbe2c5081",
+        "sha256": "8b554a6aec4729df9226ef72eb8435c2e7dda867153ed2d040cb85fca0e6e46e",
         "needed": [
           "libavcodec.so.63",
           "libavutil.so.61",
@@ -466,7 +463,7 @@
         ]
       },
       "lib/libandroid_platform.so": {
-        "sha256": "91191267f5e000db2c194fa832c7d3418640f93fabb1d6f2eb3087c3441c75ab",
+        "sha256": "acc12bcbd152a739f01f733f358ffda4816ced520474bcdf3ea77dbcd0ac8471",
         "needed": [
           "libbinder_ndk.so",
           "libbinder.so",
@@ -700,15 +697,62 @@
     "report": "zig-out/test-results/native-client-source.json",
     "inputs": 1108,
     "source_counts": {
-      "unchanged": 764,
-      "modified": 45,
+      "unchanged": 767,
+      "modified": 42,
       "owned": 22,
       "generated": 277
     },
-    "required_original_clients": 36,
-    "preprocessed_boundaries": 12,
-    "consumed_headers": 1624,
+    "required_original_clients": 39,
+    "preprocessed_boundaries": 15,
+    "consumed_headers": 1904,
     "scope": "Actual native island Step.Run compiler commands, linked objects, selected client headers/macros and platform/NDK ELF owners. Static archive translation units, ART and runtime loader resolution remain outside the check.",
-    "validation": "Provenance gate, five failure regressions, build-tools-test, cpp-audit and graph-audit passed; production compilation commands and installed libraries unchanged."
+    "validation": "Passed in the complete acceptance target, including 39 original-source guards, 15 header/macro probes and five audit failure regressions."
+  },
+  "graphics_helpers_followup": {
+    "sources": [
+      "frameworks/base/libs/hwui/jni/HardwareBufferHelpers.cpp",
+      "frameworks/base/libs/hwui/jni/Path.cpp",
+      "frameworks/base/libs/hwui/jni/PathIterator.cpp"
+    ],
+    "implementation": "Original Android branches, existing azk_android_dlopen system library projection, original critical-native calling convention. Removed the Path fill-type clamp and host helper/iterator patch sections.",
+    "validation": {
+      "target": "acceptance-test",
+      "passed": true,
+      "verified_date": "2026-09-15",
+      "log": "/tmp/azk-graphics-acceptance224.log",
+      "apk_cases": 28,
+      "recorded_actions": 92,
+      "structured_runtime_issues": 0,
+      "failure_artifacts": 0,
+      "unsuccessful_actions": 0,
+      "video": "All three fresh stock-video screenshots inspected; SurfaceView, TextureView, resize and pixel checks passed",
+      "installed_outputs": "refreshed",
+      "known_optional_exclusions": [
+        "performance-hint TestSessionCreationWithNullLayers remains a pinned null-SurfaceControl failure outside aggregate acceptance",
+        "codec2-params-test retains two known host-compiler parameter comparisons outside aggregate acceptance"
+      ]
+    },
+    "contracts": [
+      "All path fill types, copied geometry, iterator verbs/array offsets and stale-iterator failure",
+      "Hardware Bitmap preserves the supplied HardwareBuffer Java owner and original native buffer identity",
+      "Full framework, image-queue, native, system, desktop, APK and provenance acceptance"
+    ]
+  },
+  "current_acceptance": {
+    "target": "acceptance-test",
+    "passed": true,
+    "verified_date": "2026-09-15",
+    "log": "/tmp/azk-graphics-acceptance224.log",
+    "apk_cases": 28,
+    "recorded_actions": 92,
+    "structured_runtime_issues": 0,
+    "failure_artifacts": 0,
+    "unsuccessful_actions": 0,
+    "video": "All three fresh stock-video screenshots inspected; SurfaceView, TextureView, resize and pixel checks passed",
+    "installed_outputs": "refreshed",
+    "known_optional_exclusions": [
+      "performance-hint TestSessionCreationWithNullLayers remains a pinned null-SurfaceControl failure outside aggregate acceptance",
+      "codec2-params-test retains two known host-compiler parameter comparisons outside aggregate acceptance"
+    ]
   }
 }

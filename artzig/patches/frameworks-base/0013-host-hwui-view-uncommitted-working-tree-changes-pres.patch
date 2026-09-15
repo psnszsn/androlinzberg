@@ -184,43 +184,6 @@ index 95f90ed8d..d884af384 100644
      uirenderer::HardwareBufferHelpers::init();
      return android::RegisterMethodsOrDie(env, "android/graphics/Bitmap", gBitmapMethods,
                                           NELEM(gBitmapMethods));
-diff --git a/libs/hwui/jni/HardwareBufferHelpers.cpp b/libs/hwui/jni/HardwareBufferHelpers.cpp
-index d3b48d36b..2e1e8df5e 100644
---- a/libs/hwui/jni/HardwareBufferHelpers.cpp
-+++ b/libs/hwui/jni/HardwareBufferHelpers.cpp
-@@ -18,6 +18,8 @@
- 
- #ifdef __ANDROID__
- #include <dlfcn.h>
-+#elif defined(ARTZIG_HOST_GPU)
-+#include "HostHardwareBuffer.h"
- #endif
- #include <log/log.h>
- 
-@@ -48,6 +50,8 @@ AHardwareBuffer* android::uirenderer::HardwareBufferHelpers::AHardwareBuffer_fro
-                         "Failed to find symbol AHardwareBuffer_fromHardwareBuffer, did you forget "
-                         "to call HardwareBufferHelpers::init?");
-     return fromHardwareBuffer(env, hardwarebuffer);
-+#elif defined(ARTZIG_HOST_GPU)
-+    return android::android_hardware_HardwareBuffer_getNativeHardwareBuffer(env, hardwarebuffer);
- #else
-     ALOGE("ERROR attempting to invoke AHardwareBuffer_fromHardwareBuffer on non Android "
-           "configuration");
-@@ -62,9 +66,12 @@ jobject android::uirenderer::HardwareBufferHelpers::AHardwareBuffer_toHardwareBu
-                         "Failed to find symbol AHardwareBuffer_toHardwareBuffer, did you forget to "
-                         "call HardwareBufferHelpers::init?");
-     return toHardwareBuffer(env, ahardwarebuffer);
-+#elif defined(ARTZIG_HOST_GPU)
-+    return android::android_hardware_HardwareBuffer_createFromAHardwareBuffer(env,
-+                                                                              ahardwarebuffer);
- #else
-     ALOGE("ERROR attempting to invoke AHardwareBuffer_toHardwareBuffer on non Android "
-           "configuration");
-     return nullptr;
- #endif
--}
-\ No newline at end of file
-+}
 diff --git a/libs/hwui/platform/host/renderthread/RenderThread.cpp b/libs/hwui/platform/host/renderthread/RenderThread.cpp
 index d7aabe525..54e4575f9 100644
 --- a/libs/hwui/platform/host/renderthread/RenderThread.cpp

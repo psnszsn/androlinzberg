@@ -39,6 +39,8 @@ REQUIRED = {CORE + name for name in (
     "SensorEventQueue.cpp", "SensorManager.cpp",
 )} | {"external/sqlite/android/" + name for name in (
     "sqlite3_android.cpp", "PhoneNumberUtils.cpp", "OldPhoneNumberUtils.cpp",
+)} | {"frameworks/base/libs/hwui/jni/" + name for name in (
+    "Path.cpp", "PathIterator.cpp", "HardwareBufferHelpers.cpp",
 )}
 # These units previously lost Android registrations or allocated the wrong ABI
 # when compiled as host variants. Inspect the compiler's effective macros and
@@ -48,6 +50,9 @@ ANDROID_BRANCHES = {CORE + name for name in (
     "android_media_ImageReader.cpp", "android_media_Utils.cpp",
 )} | {"frameworks/base/native/android/sensor.cpp", "frameworks/native/services/sensorservice/SensorService.cpp",
       "src/native/SensorServiceBootstrap.cpp", "src/native/SensorClientTest.cpp"}
+ANDROID_BRANCHES |= {"frameworks/base/libs/hwui/jni/" + name for name in (
+    "Path.cpp", "PathIterator.cpp", "HardwareBufferHelpers.cpp",
+)}
 HEADER_PROBES = ANDROID_BRANCHES | {CORE + name for name in (
     "android_util_Binder.cpp", "android_os_Parcel.cpp", "android_hardware_Camera.cpp",
     "android_os_PerformanceHintManager.cpp",

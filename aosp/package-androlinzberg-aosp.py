@@ -23,7 +23,6 @@ framework_patches = tuple(
     for number, suffix in (
         (3, "-jni-honor-CriticalNative-on-host-under-real-ART-ARTZ.patch"),
         (6, "-androidfw-replace-CombinedIterator-merge-in-Theme-Ap.patch"),
-        (7, "-host-fixes-for-app-playback-static-Display-null-Disp.patch"),
         (9, "-add-direct-Wayland-EGL-presentation-to-host-HWUI.patch"),
         (11, "-CursorWindow-always-parcel-as-shared-memory-on-the-a.patch"),
         (13, "-host-hwui-view-uncommitted-working-tree-changes-pres.patch"),
