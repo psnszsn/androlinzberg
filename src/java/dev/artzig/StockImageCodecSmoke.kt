@@ -11,11 +11,17 @@ import android.graphics.ImageDecoder
 import android.graphics.ImageFormat
 import android.graphics.Movie
 import android.graphics.Paint
+import android.graphics.Point
+import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.graphics.pdf.PdfDocument
+import android.graphics.pdf.PdfEditor
+import android.os.ParcelFileDescriptor
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -26,7 +32,8 @@ internal object StockImageCodecSmoke {
         gifFrames()
         yuvEncoding()
         pdfDocument()
-        println("stock-image-codecs: PASS ByteBuffer, GIF, YUV/JPEG-R and PDF")
+        pdfEditing()
+        println("stock-image-codecs: PASS ByteBuffer, GIF, YUV/JPEG-R, PDF creation/editing")
     }
 
     private inline fun <reified T : Throwable> fails(block: () -> Unit) {
@@ -165,5 +172,70 @@ internal object StockImageCodecSmoke {
         check(text.substring(xref).startsWith("xref"))
         document.close()
         fails<IllegalStateException> { document.startPage(pageInfo) }
+    }
+
+    private fun pdfEditing() {
+        val input = File.createTempFile("stock-pdf-input-", ".pdf")
+        val output = File.createTempFile("stock-pdf-edited-", ".pdf")
+        try {
+            val document = PdfDocument()
+            for ((index, size) in listOf(160 to 120, 200 to 100).withIndex()) {
+                val page = document.startPage(PdfDocument.PageInfo.Builder(size.first, size.second, index).create())
+                page.canvas.drawColor(if (index == 0) Color.RED else Color.BLUE)
+                document.finishPage(page)
+            }
+            input.outputStream().use { document.writeTo(it) }
+            document.close()
+            val descriptor = ParcelFileDescriptor.open(input, ParcelFileDescriptor.MODE_READ_ONLY)
+            val editor = PdfEditor(descriptor)
+            try {
+                check(editor.pageCount == 2)
+                val size = Point()
+                editor.getPageSize(1, size)
+                check(size == Point(200, 100))
+                fails<IllegalArgumentException> { editor.removePage(2) }
+                fails<IllegalArgumentException> { editor.getPageSize(-1, size) }
+                val perspective = Matrix().apply {
+                    setValues(floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0.5f, 0f, 1f))
+                }
+                fails<IllegalStateException> { editor.setTransformAndClip(0, perspective, null) }
+                editor.removePage(0)
+                check(editor.pageCount == 1)
+                editor.setPageMediaBox(0, Rect(0, 0, 180, 90))
+                editor.setPageCropBox(0, Rect(10, 10, 170, 80))
+                editor.setTransformAndClip(0, Matrix().apply { setTranslate(2f, 3f) }, Rect(0, 0, 180, 90))
+                val destination = ParcelFileDescriptor.open(output,
+                    ParcelFileDescriptor.MODE_READ_WRITE or ParcelFileDescriptor.MODE_TRUNCATE)
+                editor.write(destination)
+                check(!destination.fileDescriptor.valid())
+            } finally {
+                editor.close()
+            }
+            check(!descriptor.fileDescriptor.valid())
+            fails<IllegalStateException> { editor.pageCount }
+            fails<IllegalStateException> { editor.close() }
+            val reopened = PdfEditor(ParcelFileDescriptor.open(output, ParcelFileDescriptor.MODE_READ_ONLY))
+            try {
+                check(reopened.pageCount == 1)
+                val box = Rect()
+                check(reopened.getPageMediaBox(0, box) && box == Rect(0, 0, 180, 90))
+                check(reopened.getPageCropBox(0, box) && box == Rect(10, 10, 170, 80))
+            } finally {
+                reopened.close()
+            }
+            input.writeText("not a PDF")
+            ParcelFileDescriptor.open(input, ParcelFileDescriptor.MODE_READ_ONLY).use { invalid ->
+                fails<IOException> { PdfEditor(invalid) }
+            }
+            val pipe = ParcelFileDescriptor.createPipe()
+            try {
+                fails<IllegalArgumentException> { PdfEditor(pipe[0]) }
+            } finally {
+                pipe.forEach { it.close() }
+            }
+        } finally {
+            input.delete()
+            output.delete()
+        }
     }
 }

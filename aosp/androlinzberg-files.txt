@@ -10428,3 +10428,15 @@ F aosp external/modp_b64/modp_b64_data.h
 F aosp external/modp_b64/LICENSE
 F aosp external/libultrahdr/adobe-hdr-gain-map-license/NOTICE
 F aosp external/libultrahdr/adobe-hdr-gain-map-license/Android.bp
+
+# Original PDFium dependency closure for HWUI PDF editing.
+D aosp external/pdfium/build
+D aosp external/pdfium/constants
+D aosp external/pdfium/core
+D aosp external/pdfium/fpdfsdk
+D aosp external/pdfium/public
+D aosp external/pdfium/third_party
+F aosp external/pdfium/Android.bp
+F aosp external/pdfium/LICENSE
+F aosp external/pdfium/AUTHORS
+D aosp external/pdfium/fxjs

@@ -490,11 +490,11 @@ fn configureFonts(init: std.process.Init) void {
     if (init.minimal.environ.getPosix("ARTZIG_FONT_FALLBACK_XML") != null) return;
     const t0 = monotonicMs();
     defer std.debug.print("azk: fonts: fontconfig query took {d} ms\n", .{monotonicMs() - t0});
-    if (fonts.generate(init.gpa, init.minimal.environ)) |xml| {
-        defer init.gpa.free(xml);
-        _ = setenv("ARTZIG_FONT_FALLBACK_XML", xml, 1);
-        _ = setenv("ARTZIG_FONTS_XML", xml, 1);
-        _ = setenv("ARTZIG_FONT_DIR", "/", 1);
+    if (fonts.generate(init.gpa, init.io, init.minimal.environ)) |config| {
+        defer config.deinit(init.gpa);
+        _ = setenv("ARTZIG_FONT_FALLBACK_XML", config.xml, 1);
+        _ = setenv("ARTZIG_FONTS_XML", config.xml, 1);
+        _ = setenv("ARTZIG_FONT_DIR", config.directory, 1);
     } else {
         std.debug.print("azk: fonts: fontconfig query failed; set ARTZIG_FONT_FALLBACK_XML\n", .{});
     }

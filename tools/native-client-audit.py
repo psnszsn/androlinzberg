@@ -76,6 +76,18 @@ HEADER_PROBES.update({"frameworks/base/libs/hwui/jni/" + name for name in (
 REQUIRED.add("external/skia/src/pdf/SkPDFDocument.cpp")
 REQUIRED.add("frameworks/native/libs/nativedisplay/surfacetexture/EGLConsumer.cpp")
 HEADER_PROBES.add("frameworks/native/libs/nativedisplay/surfacetexture/EGLConsumer.cpp")
+REQUIRED.update({
+    "frameworks/base/libs/hwui/apex/jni_runtime.cpp",
+    "frameworks/base/libs/hwui/jni/pdf/PdfEditor.cpp",
+    "frameworks/base/libs/hwui/jni/pdf/PdfUtils.cpp",
+    "external/pdfium/fpdfsdk/fpdf_view.cpp",
+    "external/pdfium/core/fxge/android/cfpf_skiafontmgr.cpp",
+})
+HEADER_PROBES.update({
+    "frameworks/base/libs/hwui/apex/jni_runtime.cpp",
+    "frameworks/base/libs/hwui/jni/pdf/PdfEditor.cpp",
+    "external/pdfium/core/fxge/android/cfpf_skiafontmgr.cpp",
+})
 SKIA_ANDROID_BUFFER = "external/skia/src/gpu/ganesh/vk/AHardwareBufferVk.cpp"
 SKIA_ANDROID_SOURCES = {SKIA_ANDROID_BUFFER,
     "external/skia/src/gpu/vk/VulkanInterface.cpp",
@@ -124,6 +136,7 @@ SKIA_ANDROID_SOURCES.add("external/skia/src/gpu/ganesh/gl/AHardwareBufferGL.cpp"
 REQUIRED.update(SKIA_ANDROID_SOURCES)
 HEADER_PROBES.update(SKIA_ANDROID_SOURCES)
 REGISTRARS = (
+    "register_android_graphics_classes", "android::register_android_graphics_pdf_PdfEditor(",
     "android::register_android_app_Activity(", "android::register_android_app_ActivityThread(",
     "android::register_android_ddm_DdmHandleNativeHeap(",
     "register_android_os_Binder(", "android::register_android_os_Parcel(",
@@ -135,6 +148,11 @@ REGISTRARS = (
     "register_android_graphics_YuvImage(", "android::register_android_graphics_pdf_PdfDocument(",
     "register_android_media_MediaCodec(", "register_android_media_MediaCodecList(",
 )
+
+
+def registrar_matches(symbol: str, registrar: str) -> bool:
+    # Demangled C++ entries include their argument list; C exports are exact names.
+    return symbol.startswith(registrar) if registrar.endswith("(") else symbol == registrar
 
 
 def digest(path: Path) -> str:
@@ -214,6 +232,8 @@ def boundary_errors(source: str, probe: dict, repo: Path) -> list[str]:
                 or "SK_BUILD_FOR_UNIX" in macros
                 or macros.get("__ANDROID_API__") != "36"):
             errors.append(f"Skia Android hardware-buffer implementation disabled or mixed with Unix ABI: {source}")
+    if source.startswith("external/pdfium/") and "OS_ANDROID" not in probe["macros"]:
+        errors.append(f"PDFium Android implementation branch disabled: {source}")
     if source in ANDROID_BRANCHES and "__ANDROID__" not in probe["macros"]:
         errors.append(f"Android implementation branch disabled: {source}")
     if source in (CORE + "android_util_Binder.cpp", CORE + "android_os_Parcel.cpp"):
@@ -286,9 +306,9 @@ def main() -> int:
     platform, ndk = elf(args.platform), elf(args.ndk)
     owners = {}
     for registrar in REGISTRARS:
-        matches = [symbol for symbol in platform["symbols"] if symbol.startswith(registrar)]
+        matches = [symbol for symbol in platform["symbols"] if registrar_matches(symbol, registrar)]
         owners[registrar] = matches
-        if len(matches) != 1 or any(symbol.startswith(registrar) for symbol in ndk["symbols"]):
+        if len(matches) != 1 or any(registrar_matches(symbol, registrar) for symbol in ndk["symbols"]):
             errors.append(f"missing, ambiguous or duplicate JNI registrar owner: {registrar}")
     for name in platform["needed"]:
         if name.startswith(("libavcodec.", "libavformat.", "libavutil.", "libswscale.", "libva.")):

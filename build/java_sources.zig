@@ -1322,6 +1322,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/com/android/internal/util/GcUtils.java");
     try c.file("$FB/media/java/android/media/quality/PictureProfileHandle.java");
     try c.file("$FB/graphics/java/android/graphics/pdf/PdfDocument.java");
+    try c.file("$FB/graphics/java/android/graphics/pdf/PdfEditor.java");
     // Stock wrappers now own shared libui buffers and fences through stock JNI.
     try c.file("$FB/opengl/java/android/opengl/EGLObjectHandle.java");
     try c.file("$FB/opengl/java/android/opengl/EGLSync.java");

@@ -6,7 +6,7 @@ implementations, runtime libraries and process placement still contain substanti
 host adaptations.
 
 The complete `acceptance-test` target passed on 2026-09-15 for the original
-image-codec and buffer-consumer checkpoint. All 28 APK cases passed, with 93 recorded
+PDF editing and graphics registration checkpoint. All 28 APK cases passed, with 88 recorded
 actions, zero structured runtime issues and no failure artifacts. Native, JVM,
 system, desktop, video, source-provenance and build checks passed. Source
 packages, pins and installed outputs are current.
@@ -22,7 +22,7 @@ behavior; they do not establish native provenance or stock process boundaries.
 
 [`aosp-source-identity.py`](../tools/aosp-source-identity.py) compares the root
 framework build's static Java/Kotlin/annotation inputs against its explicitly
-supplied AOSP package and checkout. Its last acceptance report found 7,087
+supplied AOSP package and checkout. Its last acceptance report found 7,088
 unchanged inputs and 64 modified server inputs, with no modified or
 repository-owned `android.*` / `com.android.internal.*` client replacements in
 that selection.
@@ -37,17 +37,17 @@ also does not mean zero unsupported native operations.
 
 ## Compiled native and Skia check
 
-`native-client-source-test` consumes the actual 2,071 native-island and linked Skia compiler
+`native-client-source-test` consumes the actual 2,553 native-island and linked Skia compiler
 commands and verifies the linked object files. The current selection contains
-1,751 unchanged AOSP units, 23 modified units, 20 owned units and 277 generated
-units. Its 89 required client sources must remain original and present. Thirty-four
+2,233 unchanged AOSP units, 23 modified units, 20 owned units and 277 generated
+units. Its 94 required client sources must remain original and present. Thirty-seven
 sensitive client/service boundaries are preprocessed again with those commands;
-the report records effective macros and the 2,380 headers actually consumed.
+the report records effective macros and the 2,465 headers actually consumed.
 This catches disabled Android branches and incompatible Binder header selection.
 
 The check also verifies unique JNI registrar ownership and rejects FFmpeg/VAAPI
 dependencies in the platform client ELF. It runs in `acceptance-test` and writes
-`zig-out/test-results/native-client-source.json`. The check and its six failure
+`zig-out/test-results/native-client-source.json`. The check and its seven failure
 regressions passed, along with the build-tool, C++ and graph audits. It does not
 yet inspect translation units inside other linked static libraries, ART, or runtime
 loader resolution. Those remain necessary before claiming complete native
@@ -89,7 +89,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 14,373 | 60 | 0 |
+| Framework | 15,983 | 60 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -620,8 +620,8 @@ graph links and diagnostics, are in `zig-out/test-results/stock-audio-delivery/`
 Original HWUI Movie/GIF and YuvImage JPEG/JPEG-R JNI now register alongside
 ByteBuffer stream initialization. GIF decoding uses pinned giflib; JPEG/R uses
 pinned libultrahdr, image_io and modp_b64. Original PdfDocument Java/JNI uses the
-real Skia PDF backend with HarfBuzz font subsetting. PDF editing/rendering and
-additional unselected image codec backends are not established by this batch.
+real Skia PDF backend with HarfBuzz font subsetting. PDF rendering and additional unselected image codec backends are not established
+by this batch. PDF editing is covered below.
 
 StockImageCodecSmoke verifies read-only heap and direct ByteBuffer decoding with
 offsets, animated GIF pixels and rewind, padded NV21/YUY2 crop encoding, JPEG/R
@@ -633,3 +633,23 @@ build audits and full acceptance passed. All 28 APK cases completed with 93 reco
 actions, zero structured runtime issues and no failure artifacts. Fresh SurfaceView,
 TextureView and resized-video screenshots were inspected. Source packages, pins
 and installed outputs are current.
+
+
+## PDF editing and graphics registration
+
+Original PdfEditor Java/JNI and PdfUtils now use the pinned PDFium implementation.
+The complete original HWUI graphics registrar replaces the copied registration
+table. Font discovery uses a bounded directory of links to fontconfig-selected
+host fonts; native file and FreeType entry points resolve Android font paths there.
+This avoids treating the whole host filesystem as `/system/fonts` and retains the
+same font files, face indices and fallback selection. Font configuration is
+published atomically through `std.Io`.
+
+The framework regression verifies page deletion, media/crop boxes, transformation,
+save/reopen, descriptor ownership, closed-object errors and malformed/nonseekable
+input. Framework compatibility, APK launch and the compiled provenance check pass.
+The first aggregate run exposed a desktop test race: pointer creation was
+acknowledged by the injector before Android had published the input device. The
+harness now waits for that publication before pressing; the dedicated test passes.
+Full aggregate acceptance then passed, including all 28 APK cases, 88 recorded
+actions with zero runtime issues, and inspected SurfaceView/TextureView video frames.

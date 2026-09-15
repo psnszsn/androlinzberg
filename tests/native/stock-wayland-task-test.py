@@ -846,6 +846,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
             else:
                 verify_pixels('TASK_WINDOW_READY', (0, 255, 255), 'first-task')
                 if desktop and not mixed_outputs:
+                    change_pointer('RESIZE_POINTER_CREATE_READY', b'p')
                     physical_pointer('RESIZE_POINTER_PRESS_READY', b'b')
                     for marker, name, fullscreen in [
                             ('PENDING_FULLSCREEN_TASK_WINDOW_READY', 'pending-fullscreen', True),

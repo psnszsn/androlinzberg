@@ -45,6 +45,8 @@ internal object StockResourcePathSmoke {
         check(AssetManager.FRAMEWORK_APK_PATH == "/system/framework/framework-res.apk")
         check(SystemFonts.SYSTEM_FONT_DIR == "/system/fonts/")
         check(SystemFonts.LEGACY_FONTS_XML == "/system/etc/fonts.xml")
+        val fontFiles = checkNotNull(File(SystemFonts.SYSTEM_FONT_DIR).listFiles())
+        check(fontFiles.isNotEmpty() && fontFiles.all { it.isFile && it.canRead() })
         val files = listOf(
             "/system/etc/font_fallback.xml" to checkNotNull(System.getenv("ARTZIG_FONT_FALLBACK_XML")),
             SystemFonts.LEGACY_FONTS_XML to checkNotNull(System.getenv("ARTZIG_FONTS_XML")),

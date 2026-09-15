@@ -60,6 +60,12 @@ class NativeAuditTest(unittest.TestCase):
             owned = repo / "Owned.cpp"; owned.write_text("host")
             self.assertEqual(audit.classify(owned, package, reference, repo)["kind"], "owned")
 
+    def test_c_registrar_requires_exact_export_and_cpp_requires_arguments(self):
+        self.assertTrue(audit.registrar_matches("register_android_graphics_classes", "register_android_graphics_classes"))
+        self.assertFalse(audit.registrar_matches("register_android_graphics_classes_backup", "register_android_graphics_classes"))
+        self.assertTrue(audit.registrar_matches("android::register_pdf(_JNIEnv*)", "android::register_pdf("))
+        self.assertFalse(audit.registrar_matches("android::register_pdf_backup(_JNIEnv*)", "android::register_pdf("))
+
     def test_dependency_file_escaped_paths(self):
         with tempfile.TemporaryDirectory() as temp:
             header = Path(temp) / "header with spaces.h"

@@ -778,6 +778,18 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, hwui_includes, &hwui_flags);
     // Pinned HWUI codecs and PDF writer, with their original Soong dependency closure.
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{ "jni/Movie.cpp", "jni/MovieImpl.cpp", "jni/GIFMovie.cpp", "jni/YuvToJpegEncoder.cpp", "jni/pdf/PdfDocument.cpp" }, hwui_includes ++ &[_]std.Build.LazyPath{ o.aosp.path(b, "external/giflib"), o.aosp.path(b, "external/libultrahdr/lib/include"), o.aosp.path(b, "external/libultrahdr"), o.aosp.path(b, "external/skia/include/docs") }, &hwui_flags);
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{ "jni/pdf/PdfEditor.cpp", "jni/pdf/PdfUtils.cpp", "apex/jni_runtime.cpp" }, hwui_includes ++ &[_]std.Build.LazyPath{o.aosp.path(b, "external/pdfium/public")}, &hwui_flags);
+    const pdfium_includes = &.{ o.aosp.path(b, "external/pdfium"), o.aosp.path(b, "external/pdfium/third_party"), extractor_headers.getDirectory() };
+    const pdfium_flags = &(android_abi_flags ++ [_][]const u8{ "-O3", "-fexceptions", "-DANDROID", "-DCOMPONENT_BUILD", "-DFPDF_IMPLEMENTATION", "-DOPJ_STATIC", "-DPNG_PREFIX", "-DPNG_USE_READ_MACROS" });
+    for (@import("gen/pdfium_sources.zig").sources) |source| {
+        // Current libc++ instantiates unique_ptr destruction earlier; provide the
+        // original complete image type without changing the pinned sources.
+        const image_type = std.mem.eql(u8, source, "core/fxcodec/jbig2/JBig2_SddProc.cpp") or std.mem.eql(u8, source, "core/fxcodec/jbig2/JBig2_SymbolDict.cpp");
+        // Host FreeType hides its internal Adobe glyph table. Instantiate the
+        // exact table supplied by PDFium, alongside its original lookup code.
+        const glyph_table = std.mem.eql(u8, source, "core/fxge/freetype/fx_freetype.cpp");
+        g.add(o.aosp.path(b, "external/pdfium"), &.{source}, pdfium_includes, if (image_type) pdfium_flags ++ &[_][]const u8{ "-include", "core/fxcodec/jbig2/JBig2_Image.h" } else if (glyph_table) pdfium_flags ++ &[_][]const u8{"-DDEFINE_PS_TABLES_DATA"} else pdfium_flags);
+    }
     g.add(o.aosp.path(b, "external/giflib"), &.{ "dgif_lib.c", "egif_lib.c", "gifalloc.c", "gif_err.c", "gif_hash.c", "quantize.c" }, &.{}, &.{"-DHAVE_REALLOCARRAY"});
     g.add(o.aosp.path(b, "external/libultrahdr"), &@import("gen/island_sources.zig").ultrahdr_srcs, &.{ o.aosp.path(b, "external/libultrahdr"), o.aosp.path(b, "external/libultrahdr/lib/include"), o.aosp.path(b, "external/image_io/includes") }, &.{ "-DUHDR_ENABLE_INTRINSICS", "-DUHDR_WRITE_XMP", "-frtti" });
     g.add(o.aosp.path(b, "external/image_io"), &@import("gen/island_sources.zig").image_io_srcs, &.{ o.aosp.path(b, "external/image_io/includes"), o.aosp.path(b, "external/modp_b64") }, &.{ "-DUNIX_ENV=1", "-frtti" });
@@ -785,6 +797,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "libnativehelper"), &gen.nativehelper_srcs, &.{}, &.{ "-U_GNU_SOURCE", "-D_POSIX_C_SOURCE=200809L", "-D_DEFAULT_SOURCE" });
     var bridge_includes: std.ArrayList(std.Build.LazyPath) = .empty;
     bridge_includes.appendSlice(b.allocator, extractor_includes) catch @panic("OOM");
+    bridge_includes.append(b.allocator, apex_inc) catch @panic("OOM");
     bridge_includes.appendSlice(b.allocator, &.{ o.aosp.path(b, "frameworks/av/include"), o.aosp.path(b, "frameworks/av/media/libstagefright/include"), o.aosp.path(b, "frameworks/av/media/module/foundation/include"), o.aosp.path(b, "frameworks/av/services/mediaextractor"), o.aosp.path(b, "frameworks/av/media/libmedia/include"), o.aosp.path(b, "frameworks/av/media/libmediametrics/include"), o.aosp.path(b, "frameworks/base/media/jni"), hw_jni_inc, o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc, b.path("src/native/graphics/include"), b.path("src/platform"), o.aosp.path(b, "system/media/audio/include") }) catch @panic("OOM");
     bridge_includes.appendSlice(b.allocator, &.{
         o.aosp.path(b, "frameworks/av/media/libaaudio/include"),
@@ -937,7 +950,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     link.addFileArg(o.input.verifier);
     {
         const codec2 = o.codec2;
-        link.addArg("-Wl,--wrap=fopen,--wrap=stat");
+        link.addArg("-Wl,--wrap=fopen,--wrap=stat,--wrap=opendir,--wrap=FT_Open_Face");
         // Share libgui/foundation globals with JNI in one ELF image. Linking
         // another static libgui into a client executable duplicates global
         // construction/destruction (notably LayerStatePermissions).

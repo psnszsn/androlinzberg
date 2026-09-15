@@ -88,6 +88,7 @@ platform/external/okhttp
 platform/external/okio
 platform/external/ow2-asm
 platform/external/pcre
+platform/external/pdfium
 platform/external/perfetto
 platform/external/piex
 platform/external/protobuf

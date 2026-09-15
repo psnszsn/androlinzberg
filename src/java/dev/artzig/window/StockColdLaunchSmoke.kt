@@ -737,6 +737,17 @@ object StockColdLaunchSmoke {
                 SystemClock.sleep(5)
             }
         }
+        // Creating the compositor device only acknowledges the harness client.
+        // Wait for Android's separate Wayland client to publish its capability
+        // before sending an event that would otherwise be lost without a pointer.
+        physicalInput("RESIZE_POINTER_CREATE_READY")
+        val inputDevices = android.hardware.input.IInputManager.Stub.asInterface(
+            android.os.ServiceManager.getService(android.content.Context.INPUT_SERVICE))
+        val pointerDeadline = SystemClock.uptimeMillis() + 5_000
+        while (inputDevices.getInputDevice(0) == null) {
+            check(SystemClock.uptimeMillis() < pointerDeadline) { "Initial pointer device was not published" }
+            SystemClock.sleep(5)
+        }
         physicalInput("RESIZE_POINTER_PRESS_READY")
         awaitPointer("Physical press did not reach the initial task") { it.lastOrNull() == 0 }
         var previous = initial

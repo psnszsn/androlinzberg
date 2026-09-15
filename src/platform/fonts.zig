@@ -5,7 +5,7 @@
 //! families (sans-serif/serif/monospace at every weight/style), the emoji
 //! font, and its sorted coverage-trimmed fallback chain, and write an
 //! Android-style font_fallback.xml that minikin then loads unchanged.
-//! Font paths are absolute; SystemFonts is pointed at fontDir "/".
+//! Expose selected files in a dedicated font directory for stock native discovery.
 const std = @import("std");
 
 const fc = struct {
@@ -29,11 +29,6 @@ const fc = struct {
     extern fn FcWeightToOpenType(fc_weight: c_int) c_int;
     extern fn FcWeightFromOpenType(ot_weight: c_int) c_int;
 };
-
-extern "c" fn fopen(path: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
-extern "c" fn fwrite(ptr: [*]const u8, size: usize, n: usize, f: *anyopaque) usize;
-extern "c" fn fclose(f: *anyopaque) c_int;
-extern "c" fn mkdir(path: [*:0]const u8, mode: c_uint) c_int;
 
 const Face = struct { file: []const u8, index: i32, weight: i32, italic: bool };
 
@@ -79,6 +74,26 @@ fn sameFace(a: Face, b: Face) bool {
     return a.index == b.index and std.mem.eql(u8, a.file, b.file);
 }
 
+fn fontName(file: []const u8) [68]u8 {
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(file, &digest, .{});
+    var name: [68]u8 = undefined;
+    name[0..64].* = std.fmt.bytesToHex(digest, .lower);
+    // FreeType reads the file format; PDFium's directory scanner selects these extensions.
+    name[64..].* = ".ttf".*;
+    return name;
+}
+
+pub const Configuration = struct {
+    xml: [:0]const u8,
+    directory: [:0]const u8,
+
+    pub fn deinit(self: Configuration, allocator: std.mem.Allocator) void {
+        allocator.free(self.xml);
+        allocator.free(self.directory);
+    }
+};
+
 fn writeFont(out: *std.ArrayList(u8), gpa: std.mem.Allocator, f: Face) !void {
     var buf: [64]u8 = undefined;
     try out.appendSlice(gpa, "        <font weight=\"");
@@ -90,7 +105,8 @@ fn writeFont(out: *std.ArrayList(u8), gpa: std.mem.Allocator, f: Face) !void {
         try out.appendSlice(gpa, try std.fmt.bufPrint(&buf, "{d}", .{f.index}));
     }
     try out.appendSlice(gpa, "\">");
-    try out.appendSlice(gpa, f.file[1..]); // fontDir "/" + path-without-leading-slash
+    const name = fontName(f.file);
+    try out.appendSlice(gpa, &name);
     try out.appendSlice(gpa, "</font>\n");
 }
 
@@ -124,8 +140,8 @@ fn family(out: *std.ArrayList(u8), gpa: std.mem.Allocator, name: []const u8, fcn
     try out.appendSlice(gpa, "    </family>\n");
 }
 
-/// Generate the XML; the caller owns the returned path.
-pub fn generate(gpa: std.mem.Allocator, environ: anytype) ?[:0]const u8 {
+/// Generate the XML and immutable font directory; the caller owns both paths.
+pub fn generate(gpa: std.mem.Allocator, io: std.Io, environ: anytype) ?Configuration {
     if (fc.FcInit() == 0) return null;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
@@ -195,14 +211,33 @@ pub fn generate(gpa: std.mem.Allocator, environ: anytype) ?[:0]const u8 {
     }
     out.appendSlice(a, "</familyset>\n") catch return null;
 
-    // write to $XDG_RUNTIME_DIR/artzig/font_fallback.xml (or /tmp)
+    // A content-addressed font view gives concurrent launchers the same complete
+    // selection without exposing the host filesystem to recursive font scanners.
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(out.items, &digest, .{});
     const runtime_dir = environ.getPosix("XDG_RUNTIME_DIR") orelse "/tmp";
-    const dir = std.fmt.allocPrintSentinel(a, "{s}/artzig", .{runtime_dir}, 0) catch return null;
-    _ = mkdir(dir, 0o700);
-    const path = std.fmt.allocPrintSentinel(a, "{s}/font_fallback.xml", .{dir}, 0) catch return null;
-    const f = fopen(path, "w") orelse return null;
-    _ = fwrite(out.items.ptr, 1, out.items.len, f);
-    _ = fclose(f);
+    const root = std.fmt.allocPrint(a, "{s}/artzig/font-configs/{s}", .{ runtime_dir, std.fmt.bytesToHex(digest, .lower) }) catch return null;
+    const directory = std.fmt.allocPrint(a, "{s}/fonts", .{root}) catch return null;
+    const cwd = std.Io.Dir.cwd();
+    _ = cwd.createDirPathStatus(io, directory, .fromMode(0o700)) catch return null;
+    for (seen.items) |face| {
+        const name = fontName(face.file);
+        const link = std.fs.path.join(a, &.{ directory, &name }) catch return null;
+        cwd.symLinkAtomic(io, face.file, link, .{}) catch return null;
+    }
+    const path = std.fmt.allocPrint(a, "{s}/font_fallback.xml", .{root}) catch return null;
+    var atomic = cwd.createFileAtomic(io, path, .{ .permissions = .fromMode(0o600), .replace = true }) catch return null;
+    defer atomic.deinit(io);
+    var buffer: [4096]u8 = undefined;
+    var writer = atomic.file.writer(io, &buffer);
+    writer.interface.writeAll(out.items) catch return null;
+    writer.flush() catch return null;
+    atomic.replace(io) catch return null;
+    const xml = gpa.dupeSentinel(u8, path, 0) catch return null;
+    const font_directory = gpa.dupeSentinel(u8, directory, 0) catch {
+        gpa.free(xml);
+        return null;
+    };
     std.debug.print("azk: fonts: {d} faces from fontconfig ({d} fallback families) -> {s}\n", .{ seen.items.len, n_fallback, path });
-    return gpa.dupeSentinel(u8, path, 0) catch null;
+    return .{ .xml = xml, .directory = font_directory };
 }

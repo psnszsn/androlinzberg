@@ -1,10 +1,10 @@
 {
-  "revision": "Original startup and native-heap JNI checkpoint (2026-09-15)",
+  "revision": "Original PDF editing and graphics registration checkpoint (2026-09-15)",
   "reference": "Pinned checkout described by aosp/README.md; project revisions below",
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 14373,
+      "unchanged": 15983,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -68,7 +68,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "d721da95900ad71e8d3bd5e42ac8820378412c41076205f77809ab0092bae3ed"
+      "archive_sha256": "39e83777abf3897b526f201eba60c87ff095b27fd382911ad572d99b8e72180b"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -200,6 +200,10 @@
     "external/modp_b64": {
       "revision": "576d46f65ee032ef584bd9f56a9cd68eb22f2cb9",
       "tracked_clean": true
+    },
+    "external/pdfium": {
+      "revision": "61aafefc3df2bda22588c7764d1177018f0af4e4",
+      "tracked_clean": true
     }
   },
   "date": "2026-09-15",
@@ -229,7 +233,7 @@
   "registration_scope_note": "9 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
-      "sha256": "b1bf229c7f47976d9e8a3681e2761d896c5dfea417e5e7cca1f4fd655d9d5887",
+      "sha256": "72e2ccd4a07ecabab21193965f22be156730853296a8114eaecbd0950f335972",
       "defined_symbols": [
         "register_localized_collators",
         "register_android_functions",
@@ -248,7 +252,7 @@
       ]
     }
   },
-  "framework_package_refresh": "2026-09-15: original image codec/PDF creation JNI and GLConsumer/SurfaceTexture buffer clients, with pinned GIF/JPEG-R dependencies",
+  "framework_package_refresh": "2026-09-15: original PDF editing and complete HWUI graphics registrar, pinned PDFium; bounded host font directory",
   "binder_jni_followup": {
     "runtime_revision": "b7d78a39",
     "verified_date": "2026-09-13",
@@ -677,18 +681,18 @@
   "compiled_island_followup": {
     "target": "native-client-source-test",
     "report": "zig-out/test-results/native-client-source.json",
-    "inputs": 2071,
+    "inputs": 2553,
     "source_counts": {
-      "unchanged": 1751,
+      "unchanged": 2233,
       "modified": 23,
       "owned": 20,
       "generated": 277
     },
-    "required_original_clients": 89,
-    "preprocessed_boundaries": 34,
-    "consumed_headers": 2380,
+    "required_original_clients": 94,
+    "preprocessed_boundaries": 37,
+    "consumed_headers": 2465,
     "scope": "Native island and linked Skia Step.Run translation units; effective macros and consumed headers for selected restored boundaries; platform/NDK ELF owners. Other static linked libraries, ART and runtime loader resolution are outside this check.",
-    "validation": "Passed full acceptance292: 89 original-source guards, 34 header/macro probes and audit failure regressions."
+    "validation": "Passed full acceptance311: 94 original-source guards, 37 header/macro probes and seven audit failure regressions."
   },
   "graphics_helpers_followup": {
     "sources": [
@@ -724,9 +728,9 @@
     "target": "acceptance-test",
     "passed": true,
     "verified_date": "2026-09-15",
-    "log": "/tmp/azk-stock-image-acceptance292.log",
+    "log": "/tmp/azk-stock-pdf-acceptance311.log",
     "apk_cases": 28,
-    "recorded_actions": 93,
+    "recorded_actions": 88,
     "structured_runtime_issues": 0,
     "failure_artifacts": 0,
     "unsuccessful_actions": 0,
@@ -895,5 +899,18 @@
     },
     "remaining": "PDF editing/renderer closure and additional unselected image codec backends are not established by this batch.",
     "buffer_consumers": "Original GLConsumer, SyncFeatures, BufferQueueCore and SurfaceTexture EGLConsumer. Shared EGL driver owns Android buffer conversion and Mesa display/image lifetime; no extra presentation copy."
+  },
+  "pdf_editor_followup": {
+    "implementation": "Original PdfEditor Java/JNI, PdfUtils and full HWUI apex graphics registration with pinned PDFium. Font path relocation at host filesystem/FreeType boundaries.",
+    "validation": {
+      "framework_compatibility": "passed /tmp/azk-stock-pdf-build303.log",
+      "apk_launch": "passed /tmp/azk-stock-pdf-launch305.log; zero structured runtime issues",
+      "native_provenance": "passed /tmp/azk-stock-pdf-audit306.log",
+      "desktop_pointer_handshake": "passed /tmp/azk-stock-pdf-suspension310.log",
+      "aggregate_acceptance": "passed /tmp/azk-stock-pdf-acceptance311.log; 28 APK cases, 88 actions, zero issues or failed actions; fresh video screenshots inspected",
+      "installed_outputs": "refreshed /tmp/azk-stock-pdf-install315.log; platform SHA-256 matches compiled provenance"
+    },
+    "font_boundary": "Content-addressed fontconfig-selected symlink directory and XML; original native callers use file/FreeType path relocation. Atomic std.Io publication.",
+    "remaining": "PdfRenderer/libpdfclient and additional unselected image codec backends are not established."
   }
 }
