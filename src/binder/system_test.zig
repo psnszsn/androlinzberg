@@ -62,6 +62,7 @@ pub fn main(init: std.process.Init) !void {
         .broker_exe = broker_exe,
         .surfaceflinger_exe = surfaceflinger_exe,
         .media_service_exe = args[10],
+        .platform_root = std.fs.path.dirname(std.fs.path.dirname(launcher).?).?,
         .system_args = &.{"--javatest"},
         .environ = session_env,
     });

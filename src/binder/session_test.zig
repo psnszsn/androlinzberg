@@ -68,6 +68,7 @@ pub fn main(init: std.process.Init) !void {
             .task_presenter_exe = if (std.mem.eql(u8, case.mode, "presenter-spawn")) "/azk-no-such-presenter-executable" else if (std.mem.startsWith(u8, case.mode, "presenter-")) exe else null,
             .media_service_exe = if (std.mem.eql(u8, case.mode, "media-spawn")) "/azk-no-such-media-executable" else if (std.mem.startsWith(u8, case.mode, "media-")) exe else null,
             .environ = env,
+            .platform_root = "/fixture/platform",
             .storage = .{
                 .application_data = "/fixture/application-data",
                 .external_storage = "/fixture/external-storage",
@@ -147,6 +148,7 @@ fn fixture(init: std.process.Init, args: []const [:0]const u8) !void {
     try std.testing.expect(init.minimal.environ.getPosix("AZK_BINDER_SYSTEM_COOKIE") != null);
     try event(init, role, "start");
     if (std.mem.eql(u8, role, "media")) {
+        try std.testing.expectEqualStrings("/fixture/platform", init.minimal.environ.getPosix("ARTZIG_PLATFORM_ROOT") orelse "");
         if (std.mem.eql(u8, mode, "media-eof")) return;
         if (std.mem.eql(u8, mode, "media-bad-ready")) {
             try Io.File.stdout().writeStreamingAll(init.io, "ready-wrong\n");

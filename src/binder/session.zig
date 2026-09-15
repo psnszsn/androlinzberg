@@ -95,6 +95,8 @@ pub const Session = struct {
         surfaceflinger_exe: ?[]const u8 = null,
         task_presenter_exe: ?[]const u8 = null,
         media_service_exe: ?[]const u8 = null,
+        /// Immutable native configuration used by clients inside service processes.
+        platform_root: ?[]const u8 = null,
         ready_timeout: Io.Duration = .{ .nanoseconds = 30 * std.time.ns_per_s },
         shutdown_timeout: Io.Duration = .{ .nanoseconds = 5 * std.time.ns_per_s },
         environ: std.process.Environ,
@@ -255,6 +257,7 @@ pub const Session = struct {
         try env.put(system_cookie_env, s.system_cookie);
         try env.put(prop_area_env, s.prop_area_path);
         try env.put("AZK_BINDER_PACKAGE", "android:media");
+        if (options.platform_root) |root| try env.put("ARTZIG_PLATFORM_ROOT", root);
         s.media = try spawnService(s.gpa, s.io, .{
             .argv = &.{exe},
             .environ_map = &env,
