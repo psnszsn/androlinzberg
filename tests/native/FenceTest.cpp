@@ -1,12 +1,15 @@
 #include <binder/Parcel.h>
 #include <fcntl.h>
+#include <cerrno>
 #include <jni.h>
 #include <nativehelper/JNIHelp.h>
 #include <ui/Fence.h>
 #include <unistd.h>
 #include <GLES2/gl2.h>
 #include <sync/sync.h>
-#include "HardwareBufferRender.h"
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include "renderthread/EglManager.h"
 
 using namespace android;
 
@@ -85,7 +88,7 @@ void testFence(JNIEnv* env, jclass) {
 }
 
 // Called with the existing EGL smoke's context current. This exercises the
-// same acquire/release seam as stock DeferredLayerUpdater with a real sync_file.
+// original EglManager acquire/release contract with a real sync_file.
 void testHostGpuFence(JNIEnv* env, jclass) {
 #define CHECK_GPU_FENCE(condition) \
     do { \
@@ -94,21 +97,33 @@ void testHostGpuFence(JNIEnv* env, jclass) {
             return; \
         } \
     } while (0)
+    struct ScopedManager {
+        EGLDisplay display = eglGetCurrentDisplay();
+        EGLContext context = eglGetCurrentContext();
+        EGLSurface draw = eglGetCurrentSurface(EGL_DRAW);
+        EGLSurface read = eglGetCurrentSurface(EGL_READ);
+        uirenderer::renderthread::EglManager manager;
+        ~ScopedManager() {
+            manager.destroy();
+            eglMakeCurrent(display, draw, read, context);
+        }
+    } scope;
+    auto& manager = scope.manager;
+    manager.initialize();
     EGLSyncKHR eglFence = EGL_NO_SYNC_KHR;
-    EGLDisplay display = EGL_NO_DISPLAY;
     int fd = -1;
-    CHECK_GPU_FENCE(artzig::createGpuReleaseFence(true, &eglFence, &display, &fd) == OK);
+    CHECK_GPU_FENCE(manager.createReleaseFence(true, &eglFence, &fd) == OK);
     base::unique_fd owner(fd);
-    CHECK_GPU_FENCE(display == eglGetCurrentDisplay() && fd >= 0);
+    CHECK_GPU_FENCE(manager.eglDisplay() == eglGetCurrentDisplay() && fd >= 0);
     CHECK_GPU_FENCE(eglFence == EGL_NO_SYNC_KHR);
-    CHECK_GPU_FENCE(artzig::waitOnGpuFence(fd) == OK);
+    CHECK_GPU_FENCE(manager.fenceWait(fd) == OK);
     CHECK_GPU_FENCE(fcntl(fd, F_GETFD) >= 0); // The wait must only borrow this fd.
     base::unique_fd copy(dup(fd));
     CHECK_GPU_FENCE(copy.get() >= 0);
     glFinish();
     owner.reset();
     CHECK_GPU_FENCE(sync_wait(copy.get(), 1000) == 0);
-    CHECK_GPU_FENCE(artzig::waitOnGpuFence(-1) == OK);
+    CHECK_GPU_FENCE(manager.fenceWait(-1) == -EBADF);
 #undef CHECK_GPU_FENCE
 }
 } // namespace

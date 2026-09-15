@@ -4,7 +4,7 @@
 // Follows eglCreateWindowSurfaceTmpl/getNativePixelFormat/dataSpaceFromEGLColorSpace
 // in frameworks/native/opengl/libs/EGL/egl_platform_entries.cpp. Its Android
 // vendor-loader implementation cannot drive Mesa's GBM native-window ABI.
-#include "HardwareBufferRender.h"
+#include <EGL/egl.h>
 #include <android/native_window.h>
 #include <android-base/unique_fd.h>
 #include <azk/graphics_egl.h>
@@ -16,6 +16,33 @@
 #include <azk/graphics_buffer.h>
 #include <gui/Surface.h>
 #include <ui/GraphicBuffer.h>
+#include "FileBlobCache.h"
+
+// The original EGL cache class is a C++ ABI. Policy and Mesa callbacks live in
+// egl_cache.zig; these calls only expose its native object operations.
+extern "C" void azk_egl_set_cache_filename(const char* filename);
+namespace android {
+void egl_set_cache_filename(const char* filename) {
+    azk_egl_set_cache_filename(filename);
+}
+}
+extern "C" void* azk_egl_cache_create(const char* filename) {
+    return new (std::nothrow) android::FileBlobCache(12 * 1024, 64 * 1024, 2 * 1024 * 1024, filename);
+}
+extern "C" void azk_egl_cache_destroy(void* cache) {
+    delete static_cast<android::FileBlobCache*>(cache);
+}
+extern "C" void azk_egl_cache_write(void* cache) {
+    static_cast<android::FileBlobCache*>(cache)->writeToFile();
+}
+extern "C" void azk_egl_cache_put(void* cache, const void* key, size_t keySize,
+        const void* value, size_t valueSize) {
+    static_cast<android::FileBlobCache*>(cache)->set(key, keySize, value, valueSize);
+}
+extern "C" size_t azk_egl_cache_get(void* cache, const void* key, size_t keySize,
+        void* value, size_t valueSize) {
+    return static_cast<android::FileBlobCache*>(cache)->get(key, keySize, value, valueSize);
+}
 
 namespace {
 struct Window {
@@ -160,12 +187,6 @@ extern "C" int azk_egl_window_reclaim(void* opaque, uint64_t* id, int* fd) {
     if (fence->isValid() && *fd < 0) return -errno;
     return android::OK;
 }
-extern "C" int azk_egl_render_fence(int* fd) {
-    EGLSyncKHR fence = EGL_NO_SYNC_KHR;
-    EGLDisplay display = EGL_NO_DISPLAY;
-    return artzig::createGpuReleaseFence(false, &fence, &display, fd);
-}
-
 // Pinned EGLImpl uses this private libEGL API for its initialization counter.
 extern "C" int azk_egl_initCount(EGLDisplay);
 namespace android {

@@ -42,6 +42,15 @@ REQUIRED = {CORE + name for name in (
 )} | {"frameworks/base/libs/hwui/jni/" + name for name in (
     "Path.cpp", "PathIterator.cpp", "HardwareBufferHelpers.cpp",
 )}
+REQUIRED.update({
+    'frameworks/base/native/android/hardware_buffer_jni.cpp',
+    'external/skia/src/gpu/ganesh/surface/SkSurface_AndroidFactories.cpp',
+    'frameworks/base/libs/hwui/pipeline/skia/SkiaProfileRenderer.cpp',
+    'frameworks/base/libs/hwui/pipeline/skia/VkFunctorDrawable.cpp',
+    'frameworks/native/opengl/libs/EGL/BlobCache.cpp',
+    'frameworks/native/opengl/libs/EGL/FileBlobCache.cpp',
+    'system/core/libstats/socket_lazy/libstatssocket_lazy.cpp',
+})
 # These units previously lost Android registrations or allocated the wrong ABI
 # when compiled as host variants. Inspect the compiler's effective macros and
 # complete header dependency output, not just the presence of a -D argument.
@@ -63,6 +72,45 @@ SKIA_ANDROID_SOURCES = {SKIA_ANDROID_BUFFER,
     "external/skia/src/gpu/vk/VulkanUtilsPriv.cpp",
     "external/skia/src/gpu/ganesh/vk/GrVkCaps.cpp",
 }
+# Restored renderer and native buffer clients must stay original in the actual build.
+REQUIRED.update({
+    'external/skia/src/gpu/android/AHardwareBufferUtils.cpp',
+    'external/skia/src/gpu/ganesh/GrAHardwareBufferImageGenerator.cpp',
+    'external/skia/src/gpu/ganesh/GrAHardwareBufferUtils.cpp',
+    'external/skia/src/gpu/ganesh/gl/AHardwareBufferGL.cpp',
+    'external/skia/src/image/SkImage_AndroidFactories.cpp',
+    'frameworks/base/libs/hwui/AutoBackendTextureRelease.cpp',
+    'frameworks/base/libs/hwui/renderthread/CacheManager.cpp',
+    'frameworks/base/libs/hwui/DeferredLayerUpdater.cpp',
+    'frameworks/base/libs/hwui/HardwareBitmapUploader.cpp',
+    'frameworks/base/libs/hwui/ProfileDataContainer.cpp',
+    'frameworks/base/libs/hwui/apex/android_bitmap.cpp',
+    'frameworks/base/libs/hwui/hwui/Bitmap.cpp',
+    'frameworks/base/libs/hwui/jni/Bitmap.cpp',
+    'frameworks/base/libs/hwui/jni/Graphics.cpp',
+    'frameworks/base/libs/hwui/jni/android_graphics_HardwareRenderer.cpp',
+    'frameworks/base/libs/hwui/pipeline/skia/GLFunctorDrawable.cpp',
+    'frameworks/base/libs/hwui/pipeline/skia/SkiaGpuPipeline.cpp',
+    'frameworks/base/libs/hwui/pipeline/skia/SkiaOpenGLPipeline.cpp',
+    'frameworks/base/libs/hwui/pipeline/skia/SkiaRecordingCanvas.cpp',
+    'frameworks/base/libs/hwui/pipeline/skia/SkiaVulkanPipeline.cpp',
+    'frameworks/base/libs/hwui/renderthread/CanvasContext.cpp',
+    'frameworks/base/libs/hwui/renderthread/DrawFrameTask.cpp',
+    'frameworks/base/libs/hwui/renderthread/EglManager.cpp',
+    'frameworks/base/libs/hwui/renderthread/HintSessionWrapper.cpp',
+    'frameworks/base/libs/hwui/renderthread/RenderProxy.cpp',
+    'frameworks/base/libs/hwui/renderthread/RenderThread.cpp',
+    'frameworks/base/libs/hwui/renderthread/VulkanManager.cpp',
+    'frameworks/base/libs/hwui/renderthread/VulkanSurface.cpp',
+})
+HWUI_ANDROID_SOURCES = {"frameworks/base/libs/hwui/" + name for name in (
+    "renderthread/EglManager.cpp", "renderthread/RenderThread.cpp",
+    "renderthread/CanvasContext.cpp", "pipeline/skia/SkiaOpenGLPipeline.cpp",
+    "hwui/Bitmap.cpp", "jni/Bitmap.cpp", "jni/android_graphics_HardwareRenderer.cpp",
+)}
+ANDROID_BRANCHES.update(HWUI_ANDROID_SOURCES)
+HEADER_PROBES.update(HWUI_ANDROID_SOURCES)
+SKIA_ANDROID_SOURCES.add("external/skia/src/gpu/ganesh/gl/AHardwareBufferGL.cpp")
 REQUIRED.update(SKIA_ANDROID_SOURCES)
 HEADER_PROBES.update(SKIA_ANDROID_SOURCES)
 REGISTRARS = (

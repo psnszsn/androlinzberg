@@ -115,7 +115,7 @@ pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, aosp: std.Build.La
         "external/skia/src/gpu/ganesh/gl/AHardwareBufferGL.cpp",
         "external/skia/src/gpu/ganesh/vk/AHardwareBufferVk.cpp",
         "external/skia/tools/SkSharingProc.cpp",
-    }) |file| mod.addCSourceFile(.{ .file = aosp.path(b, file), .flags = flags });
+    }) |file| mod.addCSourceFile(.{ .file = aosp.path(b, file), .flags = if (std.mem.eql(u8, file, "external/skia/src/gpu/ganesh/gl/AHardwareBufferGL.cpp")) std.mem.concat(b.allocator, []const u8, &.{ flags, &graphics.egl_image_flags }) catch @panic("oom") else flags });
     mod.addCSourceFile(.{ .file = b.path("src/native/graphics/HostTrace.cpp"), .flags = flags });
     mod.addCSourceFile(.{ .file = b.path("src/native/graphics/HostRenderEngineCapabilities.cpp"), .flags = flags });
     for (declarations.renderengine_flag_packages) |package|

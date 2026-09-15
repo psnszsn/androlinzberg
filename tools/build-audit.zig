@@ -308,11 +308,9 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
     const expected = [_][]const u8{
         "src/native/AospJniBridge.cpp",
         "src/native/ArrayUtilsJniBridge.cpp",
-        "src/native/ArtzigGpuPipeline.cpp",
         "src/native/BinderJniBridge.cpp",
         "src/native/EglWindow.cpp",
         "src/native/GraphicsEnvironmentBackend.cpp",
-        "src/native/HardwareBufferRender.cpp",
         "src/native/HostInputDispatcher.cpp",
         "src/native/HostLooper.cpp",
         "src/native/MediaPlayerJniBridge.cpp",

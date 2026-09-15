@@ -6,6 +6,7 @@
 const std = @import("std");
 const Io = std.Io;
 const Delivery = @import("egl_window.zig").Delivery;
+const shader_cache = @import("egl_cache.zig");
 pub const Handle = ?*anyopaque;
 const alloc = std.heap.c_allocator;
 const none = 0x3038;
@@ -51,27 +52,21 @@ extern "EGL" fn eglInitialize(Handle, ?*i32, ?*i32) u32;
 extern "EGL" fn eglTerminate(Handle) u32;
 extern "EGL" fn eglQueryString(Handle, i32) ?[*:0]const u8;
 extern "EGL" fn eglGetProcAddress([*:0]const u8) ?*const anyopaque;
-extern fn azk_egl_native_client_buffer(Handle) callconv(.c) Handle;
-extern fn azk_egl_native_buffer_handle(Handle) callconv(.c) Handle;
-extern fn azk_egl_native_buffer_acquire(Handle) callconv(.c) void;
-extern fn azk_egl_native_buffer_release(Handle) callconv(.c) void;
-extern fn azk_graphics_import_egl_image(Handle, Handle, *Handle) callconv(.c) i32;
 extern "gbm" fn gbm_surface_create(Handle, u32, u32, u32, u32) Handle;
 extern "gbm" fn gbm_surface_destroy(Handle) void;
 
 var gbm_display: std.atomic.Value(usize) = .init(0);
 var gbm_device: std.atomic.Value(usize) = .init(0);
-threadlocal var host_error: i32 = success;
 var mutex: Io.Mutex = .init;
 var surfaces: std.AutoHashMapUnmanaged(usize, Surface) = .empty;
-const NativeImage = struct { display: Handle, buffer: Handle, release: *const fn (Handle) callconv(.c) void };
-var native_images: std.AutoHashMapUnmanaged(usize, NativeImage) = .empty;
 var extension_strings: std.AutoHashMapUnmanaged(usize, [:0]u8) = .empty;
 const Display = struct { refs: i32, major: i32, minor: i32 };
 var displays: std.AutoHashMapUnmanaged(usize, Display) = .empty;
 const InitializeDisplay = *const fn (Handle, ?*i32, ?*i32) callconv(.c) u32;
 const ReleaseDisplay = *const fn (Handle, ?*u64) callconv(.c) u32;
-var shared_display_ownership: ?struct { initialize: InitializeDisplay, release: ReleaseDisplay } = null;
+extern fn azk_graphics_egl_initialize(Handle, ?*i32, ?*i32) callconv(.c) u32;
+extern fn azk_graphics_egl_release(Handle, ?*u64) callconv(.c) u32;
+var shared_display_ownership: ?struct { initialize: InitializeDisplay, release: ReleaseDisplay } = .{ .initialize = &azk_graphics_egl_initialize, .release = &azk_graphics_egl_release };
 
 /// Bind the common graphics display owner before clients enter EGL.
 pub fn bindDisplayOwnership(initialize_display: InitializeDisplay, release_display: ReleaseDisplay) void {
@@ -107,15 +102,42 @@ pub fn defaultDisplay(device: Handle) Handle {
 fn isGbm(display: Handle) bool {
     return display != null and @intFromPtr(display) == gbm_display.load(.acquire);
 }
+extern fn azk_graphics_egl_error(i32) callconv(.c) void;
+extern fn azk_graphics_egl_get_error() callconv(.c) i32;
 fn fail(code: i32) void {
-    _ = eglGetError();
-    host_error = code;
+    azk_graphics_egl_error(code);
 }
 pub fn getError() i32 {
-    const native = eglGetError();
-    const saved = host_error;
-    host_error = success;
-    return if (native != success) native else saved;
+    return azk_graphics_egl_get_error();
+}
+
+// EglManager::createReleaseFence's native-fence path at the GBM driver seam.
+// The caller immediately owns the returned descriptor through std.Io.File.
+pub fn renderFence(fd: *i32) i32 {
+    const api = struct {
+        extern "EGL" fn eglGetCurrentDisplay() Handle;
+        extern "GLESv2" fn glFlush() void;
+        extern "GLESv2" fn glFinish() void;
+    };
+    fd.* = -1;
+    const display = api.eglGetCurrentDisplay();
+    if (display == null or eglGetCurrentContext() == null) return -38;
+    const extensions = eglQueryString(display, 0x3055);
+    if (extensions != null and hasExtension(std.mem.span(extensions.?), "EGL_ANDROID_native_fence_sync")) {
+        const create: *const fn (Handle, u32, ?[*]const i32) callconv(.c) Handle =
+            @ptrCast(eglGetProcAddress("eglCreateSyncKHR") orelse return std.math.minInt(i32));
+        const destroy: *const fn (Handle, Handle) callconv(.c) u32 =
+            @ptrCast(eglGetProcAddress("eglDestroySyncKHR") orelse return std.math.minInt(i32));
+        const duplicate: *const fn (Handle, Handle) callconv(.c) i32 =
+            @ptrCast(eglGetProcAddress("eglDupNativeFenceFDANDROID") orelse return std.math.minInt(i32));
+        const sync = create(display, 0x3144, null) orelse return std.math.minInt(i32);
+        defer _ = destroy(display, sync);
+        api.glFlush();
+        fd.* = duplicate(display, sync);
+        return if (fd.* < 0) std.math.minInt(i32) else 0;
+    }
+    api.glFinish();
+    return 0;
 }
 
 pub fn queryString(io: Io, display: Handle, name: i32) ?[*:0]const u8 {
@@ -126,8 +148,9 @@ pub fn queryString(io: Io, display: Handle, name: i32) ?[*:0]const u8 {
     const extensions = std.mem.span(native);
     if (!hasExtension(extensions, "EGL_EXT_image_dma_buf_import")) return native;
     if (extension_strings.get(@intFromPtr(display))) |cached| return cached.ptr;
-    const combined = std.fmt.allocPrintSentinel(alloc, "{s}{s}{s}{s}", .{
+    const combined = std.fmt.allocPrintSentinel(alloc, "{s}{s}{s}{s}{s}", .{
         extensions,
+        if (hasExtension(extensions, "EGL_KHR_swap_buffers_with_damage")) "" else " EGL_KHR_swap_buffers_with_damage",
         if (!isGbm(display) or hasExtension(extensions, "EGL_ANDROID_presentation_time")) "" else " EGL_ANDROID_presentation_time",
         if (hasExtension(extensions, "EGL_ANDROID_image_native_buffer")) "" else " EGL_ANDROID_image_native_buffer",
         if (hasExtension(extensions, "EGL_ANDROID_get_native_client_buffer")) "" else " EGL_ANDROID_get_native_client_buffer",
@@ -149,77 +172,22 @@ fn hasExtension(extensions: []const u8, name: []const u8) bool {
     return false;
 }
 
-// Pinned eglGetNativeClientBufferANDROIDImpl delegates to the original
-// AHardwareBuffer conversion. The EGL driver imports its existing DMA-BUF,
-// retaining the Android buffer for every associated EGLImage's lifetime.
+// Android EGLImage ownership is shared with SurfaceFlinger's RenderEngine in
+// the graphics driver boundary. Both clients import the same DMA-BUF storage.
+extern fn azk_graphics_egl_native_client_buffer(Handle) callconv(.c) Handle;
+extern fn azk_graphics_egl_create_image_khr(Handle, Handle, u32, Handle, ?[*]const i32) callconv(.c) Handle;
+extern fn azk_graphics_egl_create_image(Handle, Handle, u32, Handle, ?[*]const isize) callconv(.c) Handle;
+extern fn azk_graphics_egl_destroy_image(Handle, Handle) callconv(.c) u32;
 pub fn nativeClientBuffer(buffer: Handle) Handle {
-    if (buffer == null) {
-        fail(bad_parameter);
-        return null;
-    }
-    return azk_egl_native_client_buffer(buffer);
+    return azk_graphics_egl_native_client_buffer(buffer);
 }
-
 pub fn createImage(io: Io, comptime Attribute: type, display: Handle, context: Handle, target: u32, buffer: Handle, attributes: ?[*]const Attribute) Handle {
-    const Create = *const fn (Handle, Handle, u32, Handle, ?[*]const Attribute) callconv(.c) Handle;
-    const create: Create = @ptrCast(eglGetProcAddress(if (Attribute == i32) "eglCreateImageKHR" else "eglCreateImage") orelse {
-        fail(bad_parameter);
-        return null;
-    });
-    if (target != 0x3140) return create(display, context, target, buffer, attributes);
-    // Publish the image and its Android reference atomically with respect to
-    // display termination, which destroys the driver's remaining images.
-    mutex.lockUncancelable(io);
-    defer mutex.unlock(io);
-    if (eglQueryString(display, 0x3054) == null) return null; // EGL_VERSION validates the display.
-    if (context != null) {
-        fail(0x3006); // EGL_BAD_CONTEXT
-        return null;
-    }
-    const handle = azk_egl_native_buffer_handle(buffer) orelse {
-        fail(bad_parameter);
-        return null;
-    };
-    // ANDROID_image_native_buffer ignores attributes other than
-    // EGL_IMAGE_PRESERVED_KHR. DMA-BUF import always preserves the contents.
-    if (attributes) |attrs| {
-        var index: usize = 0;
-        while (attrs[index] != none) : (index += 2) {
-            if (attrs[index] == 0x30d2 and attrs[index + 1] != 0 and attrs[index + 1] != 1) {
-                fail(bad_parameter);
-                return null;
-            }
-        }
-    }
-    azk_egl_native_buffer_acquire(buffer);
-    var image: Handle = null;
-    if (azk_graphics_import_egl_image(display, handle, &image) != 0) {
-        azk_egl_native_buffer_release(buffer);
-        fail(bad_parameter);
-        return null;
-    }
-    native_images.put(alloc, @intFromPtr(image), .{ .display = display, .buffer = buffer, .release = &azk_egl_native_buffer_release }) catch {
-        const destroy: *const fn (Handle, Handle) callconv(.c) u32 = @ptrCast(eglGetProcAddress("eglDestroyImageKHR").?);
-        _ = destroy(display, image);
-        azk_egl_native_buffer_release(buffer);
-        fail(bad_alloc);
-        return null;
-    };
-    return image;
+    _ = io;
+    return if (Attribute == i32) azk_graphics_egl_create_image_khr(display, context, target, buffer, attributes) else azk_graphics_egl_create_image(display, context, target, buffer, attributes);
 }
-
 pub fn destroyImage(io: Io, display: Handle, image: Handle) u32 {
-    const destroy: *const fn (Handle, Handle) callconv(.c) u32 = @ptrCast(eglGetProcAddress("eglDestroyImageKHR") orelse {
-        fail(bad_parameter);
-        return 0;
-    });
-    mutex.lockUncancelable(io);
-    defer mutex.unlock(io);
-    if (destroy(display, image) == 0) return 0;
-    if (native_images.fetchRemove(@intFromPtr(image))) |entry| {
-        entry.value.release(entry.value.buffer);
-    }
-    return 1;
+    _ = io;
+    return azk_graphics_egl_destroy_image(display, image);
 }
 pub fn chooseConfig(display: Handle, attributes: ?[*]const i32, configs: ?[*]Handle, size: i32, count: *i32) u32 {
     if (!isGbm(display) or attributes == null) return eglChooseConfig(display, attributes, configs, size, count);
@@ -513,15 +481,22 @@ pub fn swapBuffers(io: Io, display: Handle, surface: Handle) u32 {
 fn driverSwap(display: Handle, surface: Handle, rects: ?[*]const i32, count: i32) u32 {
     if (count > 0) {
         const Swap = *const fn (Handle, Handle, ?[*]const i32, i32) callconv(.c) u32;
-        if (eglGetProcAddress("eglSwapBuffersWithDamageKHR")) |address| {
-            const swap: Swap = @ptrCast(address);
-            return swap(display, surface, rects, count);
+        // A non-null GLVND entry point does not imply driver support.
+        const extensions = std.mem.span(eglQueryString(display, 0x3055) orelse return eglSwapBuffers(display, surface));
+        inline for (.{ .{ "EGL_KHR_swap_buffers_with_damage", "eglSwapBuffersWithDamageKHR" }, .{ "EGL_EXT_swap_buffers_with_damage", "eglSwapBuffersWithDamageEXT" } }) |entry| {
+            if (hasExtension(extensions, entry[0])) {
+                if (eglGetProcAddress(entry[1])) |address| {
+                    const swap: Swap = @ptrCast(address);
+                    return swap(display, surface, rects, count);
+                }
+            }
         }
     }
     return eglSwapBuffers(display, surface);
 }
 
 pub fn swapBuffersWithDamage(io: Io, display: Handle, surface: Handle, rects: ?[*]const i32, count: i32) u32 {
+    defer shader_cache.flush(io, false);
     mutex.lockUncancelable(io);
     defer mutex.unlock(io);
     // Validate handles before rectangle arguments, as the pinned EGL client does.
@@ -712,6 +687,7 @@ pub fn initialize(io: Io, display: Handle, major: ?*i32, minor: ?*i32) u32 {
             return 0;
         }
         entry.value_ptr.* = .{ .refs = 0, .major = version_major, .minor = version_minor };
+        shader_cache.install(io, display);
     }
     entry.value_ptr.refs += 1;
     if (major) |value| value.* = entry.value_ptr.major;
@@ -724,6 +700,7 @@ pub fn initCount(io: Io, display: Handle) i32 {
     return if (displays.get(@intFromPtr(display))) |state| state.refs else 0;
 }
 pub fn terminate(io: Io, display: Handle) u32 {
+    defer shader_cache.flush(io, true);
     mutex.lockUncancelable(io);
     defer mutex.unlock(io);
     if (displays.getPtr(@intFromPtr(display))) |state| {
@@ -746,18 +723,6 @@ pub fn terminate(io: Io, display: Handle) u32 {
     const result = if (shared_display_ownership) |owner| owner.release(display, &remaining) else eglTerminate(display);
     if (result != 0 and remaining == 0) {
         if (extension_strings.fetchRemove(@intFromPtr(display))) |entry| alloc.free(entry.value);
-        while (true) {
-            var images = native_images.iterator();
-            var removed = false;
-            while (images.next()) |entry| if (entry.value_ptr.display == display) {
-                const retained = entry.value_ptr.*;
-                _ = native_images.remove(entry.key_ptr.*);
-                retained.release(retained.buffer);
-                removed = true;
-                break;
-            };
-            if (!removed) break;
-        }
         while (true) {
             // Deletion invalidates hash-map iterators; collect one entry and
             // restart only when an unbound buffer has actually been removed.

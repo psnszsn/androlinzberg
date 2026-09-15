@@ -570,9 +570,6 @@ export fn glEGLImageTargetTexture2DOES(target: c_uint, image: ?*anyopaque) void 
     function(target, image);
 }
 
-comptime {
-    _ = @import("graphics_egl.zig");
-}
 pub fn activeIo() Io {
     ensureIo();
     return io;

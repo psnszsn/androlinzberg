@@ -4,18 +4,10 @@
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 14194,
+      "unchanged": 14231,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
-        "external/skia/include/android/AHardwareBufferUtils.h",
-        "external/skia/include/android/GrAHardwareBufferUtils.h",
-        "external/skia/linux/include/config/SkUserConfig.h",
-        "external/skia/src/gpu/android/AHardwareBufferUtils.cpp",
-        "external/skia/src/gpu/ganesh/GrAHardwareBufferImageGenerator.cpp",
-        "external/skia/src/gpu/ganesh/GrAHardwareBufferUtils.cpp",
-        "external/skia/src/gpu/ganesh/gl/AHardwareBufferGL.cpp",
-        "external/skia/src/image/SkImage_AndroidFactories.cpp",
         "frameworks/av/media/libstagefright/MediaExtractorFactory.cpp",
         "frameworks/av/media/ndk/NdkImageReader.cpp",
         "frameworks/base/core/jni/android_hardware_OverlayProperties.cpp",
@@ -31,28 +23,6 @@
         "frameworks/base/libs/androidfw/AssetsProvider.cpp",
         "frameworks/base/libs/androidfw/CursorWindow.cpp",
         "frameworks/base/libs/androidfw/LoadedArsc.cpp",
-        "frameworks/base/libs/hwui/AutoBackendTextureRelease.cpp",
-        "frameworks/base/libs/hwui/DeferredLayerUpdater.cpp",
-        "frameworks/base/libs/hwui/Layer.h",
-        "frameworks/base/libs/hwui/WebViewFunctorManager.h",
-        "frameworks/base/libs/hwui/apex/android_bitmap.cpp",
-        "frameworks/base/libs/hwui/hwui/Bitmap.cpp",
-        "frameworks/base/libs/hwui/hwui/Bitmap.h",
-        "frameworks/base/libs/hwui/jni/Bitmap.cpp",
-        "frameworks/base/libs/hwui/jni/Graphics.cpp",
-        "frameworks/base/libs/hwui/jni/android_graphics_HardwareRenderer.cpp",
-        "frameworks/base/libs/hwui/jni/graphics_jni_helpers.h",
-        "frameworks/base/libs/hwui/pipeline/skia/GLFunctorDrawable.cpp",
-        "frameworks/base/libs/hwui/pipeline/skia/SkiaRecordingCanvas.cpp",
-        "frameworks/base/libs/hwui/platform/host/Readback.cpp",
-        "frameworks/base/libs/hwui/platform/host/renderthread/RenderThread.cpp",
-        "frameworks/base/libs/hwui/renderthread/CanvasContext.cpp",
-        "frameworks/base/libs/hwui/renderthread/CanvasContext.h",
-        "frameworks/base/libs/hwui/renderthread/DrawFrameTask.cpp",
-        "frameworks/base/libs/hwui/renderthread/ReliableSurface.h",
-        "frameworks/base/libs/hwui/renderthread/RenderProxy.cpp",
-        "frameworks/base/libs/hwui/renderthread/RenderProxy.h",
-        "frameworks/base/libs/hwui/renderthread/RenderThread.h",
         "frameworks/base/media/jni/android_media_MediaMetricsJNI.cpp",
         "frameworks/base/native/android/surface_control.cpp",
         "frameworks/base/services/core/jni/com_android_server_wm_TaskFpsCallbackController.cpp",
@@ -102,7 +72,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "65d05c08e88e74b548f43f60b41ae98e293500f30bc14487dbcac5063b87ae8f"
+      "archive_sha256": "30e2eaf6623389a5eef31161b7ee3d7c41dd7d8ad480a225de1bc019a92c6b4b"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -247,7 +217,7 @@
   "registration_scope_note": "9 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
-      "sha256": "b27546e94213c84ef8c87179ea8ab6c4e31213f69e65c8b96a1e973a23827684",
+      "sha256": "e55b161753b26478db32431314e3587fce7d8760dbdb59a09c4222f7999ad715",
       "defined_symbols": [
         "register_localized_collators",
         "register_android_functions",
@@ -695,18 +665,18 @@
   "compiled_island_followup": {
     "target": "native-client-source-test",
     "report": "zig-out/test-results/native-client-source.json",
-    "inputs": 1973,
+    "inputs": 1990,
     "source_counts": {
-      "unchanged": 1632,
-      "modified": 42,
-      "owned": 22,
+      "unchanged": 1669,
+      "modified": 24,
+      "owned": 20,
       "generated": 277
     },
-    "required_original_clients": 43,
-    "preprocessed_boundaries": 19,
-    "consumed_headers": 2082,
+    "required_original_clients": 78,
+    "preprocessed_boundaries": 27,
+    "consumed_headers": 2341,
     "scope": "Native island and linked Skia Step.Run translation units; effective macros and consumed headers for selected restored boundaries; platform/NDK ELF owners. Other static linked libraries, ART and runtime loader resolution are outside this check.",
-    "validation": "Passed in complete acceptance, including 43 original-source guards, 19 header/macro probes and six audit failure regressions."
+    "validation": "Passed in full acceptance: 78 original-source guards, 27 header/macro probes and six audit failure regressions."
   },
   "graphics_helpers_followup": {
     "sources": [
@@ -742,9 +712,9 @@
     "target": "acceptance-test",
     "passed": true,
     "verified_date": "2026-09-15",
-    "log": "/tmp/azk-skia-egl-acceptance238.log",
+    "log": "/tmp/azk-stock-hwui-acceptance263.log",
     "apk_cases": 28,
-    "recorded_actions": 89,
+    "recorded_actions": 94,
     "structured_runtime_issues": 0,
     "failure_artifacts": 0,
     "unsuccessful_actions": 0,
@@ -775,6 +745,53 @@
         "codec2-params-test retains two known host-compiler parameter comparisons outside aggregate acceptance"
       ]
     },
-    "remaining": "The hosted HWUI pipeline and Skia GL buffer import adaptations remain. Original full HWUI compile probe passed for 165 units, but production linking and runtime validation are pending. Vulkan Android hardware-buffer driver support is not claimed."
+    "remaining": "Hosted HWUI and Skia GL import adaptations removed by hwui_renderer_followup. Android Vulkan driver support remains unverified."
+  },
+  "hwui_renderer_followup": {
+    "implementation": "Original HWUI EglManager, RenderThread, CacheManager, HintSessionWrapper, CanvasContext, GL/Vulkan pipelines, Bitmap/upload/readback, WebView functors and complete JNI. Original Skia hardware-buffer factories, GL/Vulkan imports and surface factory. Original native HardwareBuffer Java conversions and FileBlobCache.",
+    "removed": "Hosted GPU pipeline, hardware-buffer rendering helper, host headers and 21 obsolete patch files; remaining mixed patch files retain only unrelated changes.",
+    "driver_boundary": "System Mesa through existing Android EGL/GBM window driver; shared display/EGLImage ownership retains original Android buffers. Damage swaps use supported Mesa KHR/EXT entry points or ordinary swap of the same DMA-BUF. Stock FileBlobCache uses Mesa blob callbacks; no extra presentation copy.",
+    "source_provenance": {
+      "target": "native-client-source-test",
+      "report": "zig-out/test-results/native-client-source.json",
+      "inputs": 1990,
+      "source_counts": {
+        "unchanged": 1669,
+        "modified": 24,
+        "owned": 20,
+        "generated": 277
+      },
+      "required_original_clients": 78,
+      "preprocessed_boundaries": 27,
+      "consumed_headers": 2341,
+      "scope": "Native island and linked Skia Step.Run translation units; effective macros and consumed headers for selected restored boundaries; platform/NDK ELF owners. Other static linked libraries, ART and runtime loader resolution are outside this check.",
+      "validation": "Passed in full acceptance: 78 original-source guards, 27 header/macro probes and six audit failure regressions."
+    },
+    "contracts": [
+      "Real shader cache file persistence and reopen across contexts",
+      "Original EglManager sync_file ownership and EBADF for invalid fences",
+      "GLSurfaceView reference balance with existing HWUI owners",
+      "EGL pixel, resize, timestamp and consumer DMA-BUF identity",
+      "Hardware-bitmap landscape/portrait geometry",
+      "Original SurfaceView/TextureView video and resize through Wayland"
+    ],
+    "validation": {
+      "target": "acceptance-test",
+      "passed": true,
+      "verified_date": "2026-09-15",
+      "log": "/tmp/azk-stock-hwui-acceptance263.log",
+      "apk_cases": 28,
+      "recorded_actions": 94,
+      "structured_runtime_issues": 0,
+      "failure_artifacts": 0,
+      "unsuccessful_actions": 0,
+      "video": "All three fresh stock-video screenshots inspected; SurfaceView, TextureView, resize and pixel checks passed",
+      "installed_outputs": "refreshed",
+      "known_optional_exclusions": [
+        "performance-hint TestSessionCreationWithNullLayers remains a pinned null-SurfaceControl failure outside aggregate acceptance",
+        "codec2-params-test retains two known host-compiler parameter comparisons outside aggregate acceptance"
+      ]
+    },
+    "remaining": "Process/Debug/network JNI and remaining libgui/OpenGL/native wrapper adaptations; host driver, allocator, Binder/AZKB and runtime exceptions remain explicit. Android Vulkan hardware-buffer driver support is not claimed."
   }
 }

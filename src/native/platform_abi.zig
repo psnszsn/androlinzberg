@@ -11,7 +11,6 @@ pub export fn getprogname() callconv(.c) [*:0]const u8 {
 
 // The pinned Android EGL client and HWUI use one default display. Mesa's
 // implicit default may choose a different platform from the hosted window.
-extern "c" fn azk_hwui_default_egl_display() ?*anyopaque;
 extern "EGL" fn eglGetDisplay(?*anyopaque) ?*anyopaque;
 extern "EGL" fn eglGetProcAddress([*:0]const u8) ?*const anyopaque;
 // One Android EGL dispatch table serves native Skia/HWUI and app-loaded libEGL.
@@ -57,10 +56,7 @@ pub export fn azk_egl_getProcAddress(name: [*:0]const u8) callconv(.c) ?*const a
 }
 pub export fn bionic_eglGetDisplay(display: ?*anyopaque) callconv(.c) ?*anyopaque {
     if (display != null) return eglGetDisplay(display);
-    // Register the GBM display for pbuffer translation while preserving a
-    // Wayland display selected by the legacy HWUI presentation path.
-    _ = egl_backend.defaultDisplay(azk_graphics_gbm_device());
-    return azk_hwui_default_egl_display();
+    return egl_backend.defaultDisplay(azk_graphics_gbm_device());
 }
 
 comptime {
@@ -178,6 +174,9 @@ pub export fn azk_egl_releaseThread() callconv(.c) u32 {
 pub export fn azk_egl_initialize(display: Handle, major: ?*i32, minor: ?*i32) callconv(.c) u32 {
     return egl_backend.initialize(g_io, display, major, minor);
 }
+pub export fn azk_egl_set_cache_filename(filename: [*:0]const u8) callconv(.c) void {
+    @import("egl_cache.zig").setFilename(g_io, filename);
+}
 pub export fn azk_egl_terminate(display: Handle) callconv(.c) u32 {
     return egl_backend.terminate(g_io, display);
 }
@@ -224,4 +223,16 @@ pub export fn azk_egl_swapBuffersWithDamage(display: Handle, surface: Handle, re
 }
 pub export fn azk_egl_setDamageRegion(display: Handle, surface: Handle, rects: ?[*]const i32, count: i32) callconv(.c) u32 {
     return egl_backend.setDamageRegion(g_io, display, surface, rects, count);
+}
+
+// Pinned Bitmap destruction requests Bionic M_PURGE. glibc's equivalent asks
+// the allocator to return unused pages; having no pages to return is success.
+extern "c" fn malloc_trim(usize) c_int;
+pub export fn azk_android_mallopt(option: c_int, _: c_int) callconv(.c) c_int {
+    if (option != -101) return 0;
+    _ = malloc_trim(0);
+    return 1;
+}
+pub export fn azk_egl_render_fence(fd: *i32) callconv(.c) i32 {
+    return egl_backend.renderFence(fd);
 }

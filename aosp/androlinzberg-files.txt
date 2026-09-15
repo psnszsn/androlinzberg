@@ -10383,3 +10383,16 @@ D aosp hardware/libhardware_legacy
 D aosp hardware/interfaces/sensors
 D aosp system/hardware/interfaces/suspend/aidl
 F aosp frameworks/base/core/jni/android_hardware_SensorManager.cpp
+
+# Original HWUI ShaderCache file-backed BlobCache implementation.
+F aosp frameworks/native/opengl/libs/EGL/FileBlobCache.cpp
+F aosp frameworks/native/opengl/libs/EGL/FileBlobCache.h
+
+# Original HWUI lazy statistics capability probe and public declarations.
+F aosp system/core/libstats/socket_lazy/libstatssocket_lazy.cpp
+F aosp system/core/libstats/socket_lazy/libstatssocket_lazy.h
+D aosp system/core/libstats/socket_lazy/include
+F aosp packages/modules/StatsD/lib/libstatssocket/include/stats_event.h
+F aosp packages/modules/StatsD/lib/libstatssocket/include/stats_socket.h
+F aosp frameworks/native/opengl/libs/EGL/BlobCache.cpp
+F aosp frameworks/native/opengl/libs/EGL/BlobCache.h

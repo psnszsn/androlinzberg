@@ -15,6 +15,7 @@ pub fn resolve(a: std.mem.Allocator, io: std.Io, tree: []const u8) ![]const art.
         .{ "libbinder_ndk.so", "lib/art/libbinder_ndk.so" },
         .{ "libaaudio.so", "lib/libandroid_platform.so" },
         .{ "libandroid.so", "lib/libandroid_platform.so" },
+        .{ "libstatssocket.so", "lib/libandroid_platform.so" },
         .{ "libmediandk.so", "lib/libandroid_platform.so" },
         .{ "libvintf_jni.so", "lib/libandroid_platform.so" },
         .{ "libjnigraphics.so", "lib/libandroid_platform.so" },

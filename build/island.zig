@@ -1,4 +1,4 @@
-//! libandroid_platform.so — the native island: AOSP hwui (host variant) +
+//! libandroid_platform.so — the native island: original AOSP HWUI +
 //! graphics/core JNI + libbase/liblog/libcutils/libutils + androidfw + minikin
 //! + our shims, built with zig c++ and linked against our static Skia
 //! (build/skia.zig). Replaces tools/build-native.sh; the source lists live in
@@ -110,7 +110,6 @@ const audio_host_srcs = [_][]const u8{
     "AAudioSmoke.cpp", "AudioServiceJni.cpp", "HostAudioFlinger.cpp", "HostAudioPolicyService.cpp", "HostAudioTrack.cpp", "HostSchedPolicy.cpp", "azk_pipewire.c",
 };
 const our_srcs = [_][]const u8{
-    "src/native/ArtzigGpuPipeline.cpp",           "src/native/HardwareBufferRender.cpp",
     "src/native/AospJniBridge.cpp",               "src/native/EglWindow.cpp",
     "src/native/BinderJniBridge.cpp",             "src/native/HostLooper.cpp",
     "src/native/binder/ServiceNotifications.cpp",
@@ -523,7 +522,6 @@ pub fn build(b: *std.Build, o: Options) Result {
         } else false;
         if (!shared) g.add(o.aosp.path(b, "frameworks/native/libs/ui"), &.{file}, &.{o.aosp.path(b, "frameworks/native/libs/ui/include_private")}, &.{});
     }
-    g.add(b.path("tests/native"), &.{"FenceTest.cpp"}, &.{}, &.{});
     g.add(b.path("tests/native"), &.{"ReadbackTest.cpp"}, &.{}, &.{"-DARTZIG_HOST_GRAPHICS"});
     g.add(o.hwui_stats.sources, &.{"statslog_hwui.cpp"}, &.{}, &.{});
     g.add(o.aosp.path(b, "system/core/libstats/bootstrap"), &.{ "StatsBootstrapAtomClient.cpp", "BootstrapClientInternal.cpp" }, &.{}, &.{});
@@ -539,7 +537,8 @@ pub fn build(b: *std.Build, o: Options) Result {
         "src/gpu/ganesh/vk/AHardwareBufferVk.cpp",
         "src/gpu/ganesh/GrAHardwareBufferImageGenerator.cpp",
         "src/image/SkImage_AndroidFactories.cpp",
-    }, &.{b.path("src/native/graphics/include")}, &.{ "-DARTZIG_HOST_GRAPHICS", "-DSK_GANESH", "-DSK_GL" });
+        "src/gpu/ganesh/surface/SkSurface_AndroidFactories.cpp",
+    }, &.{b.path("src/native/graphics/include")}, &@import("graphics.zig").egl_image_flags);
 
     g.add(o.aosp.path(b, "frameworks/native/libs/tonemap"), &.{"tonemap.cpp"}, &.{}, &.{});
 
@@ -596,14 +595,9 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_os_VintfObject.cpp"}, vintf_includes.items, &.{ "-DLIBVINTF_TARGET", "-DJNI_OnLoad=azk_vintf_JNI_OnLoad" });
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_os_VintfRuntimeInfo.cpp"}, vintf_includes.items, &.{"-DLIBVINTF_TARGET"});
 
-    // Original JNI over the native Android-window / Mesa platform ABI.
-    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "android_opengl_EGL14.cpp", "com_google_android_gles_jni_EGLImpl.cpp" }, &.{
-        o.aosp.path(b, "frameworks/base/core/jni/include"),
-        o.aosp.path(b, "frameworks/native/opengl/libs/EGL/include"),
-    }, &.{
+    const egl_client_flags = @import("graphics.zig").egl_image_flags ++ [_][]const u8{
         "-DEGL_NO_PLATFORM_SPECIFIC_TYPES",
         "-DeglGetDisplay=bionic_eglGetDisplay",
-        "-DeglGetError=azk_egl_getError",
         "-DeglQueryString=azk_egl_queryString",
         "-DeglChooseConfig=azk_egl_chooseConfig",
         "-DeglGetConfigAttrib=azk_egl_getConfigAttrib",
@@ -621,14 +615,25 @@ pub fn build(b: *std.Build, o: Options) Result {
         "-DeglGetCurrentSurface=azk_egl_currentSurface",
         "-DeglBindTexImage=azk_egl_bindTexImage",
         "-DeglReleaseTexImage=azk_egl_releaseTexImage",
-    });
+        "-DeglGetProcAddress=azk_egl_getProcAddress",
+        "-DeglBeginFrame=azk_egl_beginFrame",
+        "-DeglSwapBuffersWithDamageKHR=azk_egl_swapBuffersWithDamage",
+        "-DeglSetDamageRegionKHR=azk_egl_setDamageRegion",
+        "-DeglPresentationTimeANDROID=azk_egl_presentationTime",
+        "-DeglDupNativeFenceFDANDROID=azk_egl_dupNativeFenceFD",
+    };
+    // Original JNI over the native Android-window / Mesa platform ABI.
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "android_opengl_EGL14.cpp", "com_google_android_gles_jni_EGLImpl.cpp" }, &.{
+        o.aosp.path(b, "frameworks/base/core/jni/include"),
+        o.aosp.path(b, "frameworks/native/opengl/libs/EGL/include"),
+    }, &egl_client_flags);
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_opengl_EGLExt.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{
         "-DeglPresentationTimeANDROID=azk_egl_presentationTime",
         "-DeglDupNativeFenceFDANDROID=azk_egl_dupNativeFenceFD",
     });
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_opengl_EGL15.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni/android/opengl"), &.{ "util.cpp", "poly_clip.cpp" }, &.{ apex_inc, b.path("src/native"), o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), o.aosp.path(b, "frameworks/native/opengl/include") }, &.{"-DARTZIG_HOST_GRAPHICS"});
-    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_bitmap.cpp"}, &.{ apex_inc, hw_jni_inc }, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_bitmap.cpp"}, &.{ apex_inc, hw_jni_inc, extractor_headers.getDirectory() }, &(android_abi_flags ++ .{"-D__RENAME_IF_FILE_OFFSET64(x)="}));
     g.add(o.aosp.path(b, "frameworks/native/opengl/libs/ETC1"), &.{"etc1.cpp"}, &.{o.aosp.path(b, "frameworks/native/opengl/include")}, &.{});
     const tracing_includes = &.{
         o.aosp.path(b, "frameworks/native/libs/tracing_perfetto/include"),
@@ -680,8 +685,39 @@ pub fn build(b: *std.Build, o: Options) Result {
     // These pinned files rely on Bionic/transitive includes for all_of, ioctl
     // and EXT4_SUPER_MAGIC. Declare those headers explicitly for host libc++.
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "com_android_internal_content_FileSystemUtils.cpp", "com_android_internal_content_NativeLibraryHelper.cpp" }, &.{ zip_inc, o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{ "-include", "algorithm", "-include", "sys/ioctl.h", "-include", "linux/magic.h" });
-    // Match the Ganesh/OpenGL configuration of the linked Skia library.
-    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.hwui_srcs, &.{ apex_inc, b.path("src/native") }, &.{ "-DSK_GANESH", "-DSK_GL", "-DARTZIG_HOST_GRAPHICS" });
+    const hwui_includes = &.{
+        apex_inc,                                                     hw_jni_inc,                                                  extractor_headers.getDirectory(),
+        o.aosp.path(b, "frameworks/base/core/jni"),                   o.aosp.path(b, "frameworks/base/core/jni/include"),          o.aosp.path(b, "frameworks/native/opengl/libs/EGL"),
+        o.aosp.path(b, "frameworks/native/opengl/libs/EGL/include"),  o.aosp.path(b, "frameworks/native/opengl/include"),          o.aosp.path(b, "frameworks/native/vulkan/include"),
+        o.aosp.path(b, "frameworks/native/libs/graphicsenv/include"), o.aosp.path(b, "frameworks/native/libs/properties/include"), o.aosp.path(b, "frameworks/native/include/private"),
+        o.aosp.path(b, "system/libfmq/include"),                      o.aosp.path(b, "system/core/libstats/socket_lazy/include"),  o.aosp.path(b, "frameworks/av/media/ndk/include"),
+    };
+    const hwui_flags = android_abi_flags ++ egl_client_flags ++ [_][]const u8{
+        "-UEGL_NO_PLATFORM_SPECIFIC_TYPES",
+        "-DVK_USE_PLATFORM_ANDROID_KHR",
+        "-D__RENAME_IF_FILE_OFFSET64(x)=",
+        "-DM_PURGE=-101",
+        "-include",
+        "malloc.h",
+        "-Dmallopt=azk_android_mallopt",
+        "-Ddlopen=azk_android_dlopen",
+        "-Dashmem_create_region=azk_ndk_ashmem_create_region",
+        "-Dashmem_get_size_region=azk_ndk_ashmem_get_size_region",
+        "-Dashmem_set_prot_region=azk_ndk_ashmem_set_prot_region",
+    };
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.hwui_srcs, hwui_includes, &hwui_flags);
+    g.add(b.path("tests/native"), &.{"FenceTest.cpp"}, hwui_includes, &hwui_flags);
+    g.add(o.aosp.path(b, "frameworks/native/opengl/libs/EGL"), &.{"FileBlobCache.cpp"}, hwui_includes, &hwui_flags);
+    g.add(o.aosp.path(b, "frameworks/native/opengl/libs/EGL"), &.{"BlobCache.cpp"}, hwui_includes, &hwui_flags);
+    // InputDispatcher already links the original full stats socket implementation.
+    // Isolate the lazy library's forwarding exports in this combined ELF; HWUI
+    // keeps its original availability probe and resolves the full implementation.
+    var lazy_stats_flags: std.ArrayList([]const u8) = .empty;
+    lazy_stats_flags.append(b.allocator, "-Ddlopen=azk_android_dlopen") catch @panic("OOM");
+    for ([_][]const u8{ "AStatsEvent_obtain", "AStatsEvent_build", "AStatsEvent_write", "AStatsEvent_release", "AStatsEvent_setAtomId", "AStatsEvent_writeInt32", "AStatsEvent_writeInt64", "AStatsEvent_writeFloat", "AStatsEvent_writeBool", "AStatsEvent_writeByteArray", "AStatsEvent_writeString", "AStatsEvent_writeStringArray", "AStatsEvent_writeAttributionChain", "AStatsEvent_addBoolAnnotation", "AStatsEvent_addInt32Annotation", "AStatsSocket_close" }) |symbol| {
+        lazy_stats_flags.append(b.allocator, b.fmt("-D{s}=azk_lazy_{s}", .{ symbol, symbol })) catch @panic("OOM");
+    }
+    g.add(o.aosp.path(b, "system/core/libstats/socket_lazy"), &.{"libstatssocket_lazy.cpp"}, &.{ o.aosp.path(b, "system/core/libstats/socket_lazy/include"), o.aosp.path(b, "packages/modules/StatsD/lib/libstatssocket/include") }, lazy_stats_flags.items);
     g.add(o.aosp.path(b, "bionic/libc"), &.{"bionic/fortify.cpp"}, &.{ o.aosp.path(b, "bionic/libc"), o.aosp.path(b, "bionic/libc/async_safe/include") }, &.{"-DARTZIG_HOST_FORTIFY"});
     const input_transport_headers = b.addWriteFiles();
     _ = input_transport_headers.addCopyFile(o.aosp.path(b, "external/rust/cxx/include/cxx.h"), "rust/cxx.h");
@@ -726,19 +762,9 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_hardware_SerialPort.cpp"}, webview_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_android_internal_content_om_OverlayManagerImpl.cpp"}, webview_includes, &.{});
 
-    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_matrix.cpp"}, &.{ apex_inc, hw_jni_inc }, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_matrix.cpp"}, hwui_includes, &hwui_flags);
     g.add(o.aosp.path(b, "frameworks/base/services/core/jni"), &.{ "com_android_server_display_DisplayControl.cpp", "com_android_server_wm_TaskFpsCallbackController.cpp" }, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc }, &.{});
-    for (gen.jni_srcs) |file| {
-        if (std.mem.eql(u8, file, "jni/HardwareBufferHelpers.cpp")) {
-            // Original libandroid lookup through the existing Android loader projection.
-            g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{file}, &.{hw_jni_inc}, &.{ "-D__ANDROID__", "-Ddlopen=azk_android_dlopen" });
-        } else if (std.mem.eql(u8, file, "jni/Path.cpp") or std.mem.eql(u8, file, "jni/PathIterator.cpp")) {
-            // Bionic cdefs leaves this rename empty for 64-bit off_t without FILE_OFFSET_BITS.
-            g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{file}, &.{ hw_jni_inc, extractor_headers.getDirectory() }, &(android_abi_flags ++ .{"-D__RENAME_IF_FILE_OFFSET64(x)="}));
-        } else {
-            g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{file}, &.{ hw_jni_inc, o.aosp.path(b, "frameworks/av/media/ndk/include") }, &.{"-DARTZIG_HOST_GRAPHICS"});
-        }
-    }
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, hwui_includes, &hwui_flags);
     g.add(o.aosp.path(b, "libnativehelper"), &gen.nativehelper_srcs, &.{}, &.{ "-U_GNU_SOURCE", "-D_POSIX_C_SOURCE=200809L", "-D_DEFAULT_SOURCE" });
     var bridge_includes: std.ArrayList(std.Build.LazyPath) = .empty;
     bridge_includes.appendSlice(b.allocator, extractor_includes) catch @panic("OOM");
@@ -807,7 +833,9 @@ pub fn build(b: *std.Build, o: Options) Result {
     }
     g.add(o.aosp.path(b, "frameworks/av/media/libaaudio/src"), &gen.libaaudio_srcs, aaudio_includes.items, &(audio_flags ++ [_][]const u8{"-DAAUDIO_API=__attribute__((visibility(\"default\")))"}));
     g.add(b.path("src/native/audio"), &audio_host_srcs, audio_includes.items, &audio_flags);
+    bridge_includes.append(b.allocator, o.aosp.path(b, "frameworks/native/opengl/libs/EGL")) catch @panic("OOM");
     g.add(b.path(""), &our_srcs, bridge_includes.items, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{"hardware_buffer_jni.cpp"}, hwui_includes, &android_abi_flags);
     g.add(b.path("src/native"), &.{"PlatformFiles.cpp"}, &.{}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"core_jni_helpers.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.input_handle_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});

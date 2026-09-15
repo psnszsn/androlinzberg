@@ -333,9 +333,8 @@ zig build -j10 cpp-audit
   LUT sampling keys through a real JNI int array and propagates the pinned
   Java constructor's validation exception. The native Parcel interface carries
   nullable parcelable arrays and packed enum arrays without an alternate codec.
-- PixelCopy's HWUI JNI retains a null-native-window guard (patch 31), reporting
-  SourceInvalid through the original callback. Valid stock Surfaces provide
-  real ANativeWindow instances and use the existing HWUI readback path.
+- PixelCopy compiles the original HWUI JNI and Readback implementation. Stock
+  Surfaces provide real ANativeWindow instances to its buffer/readback path.
 - `src/binder/runtime_init_jni.zig` connects stock RuntimeInit to the launcher's
   Kotlin entry dispatcher. Common initialization precedes target class
   initialization. Supervised APKs enter a Linux user namespace with their granted
@@ -407,8 +406,9 @@ AudioFlinger tracks. It contains the C macros and callback code around
 - `graphics/SurfaceFlingerHost.cpp` initializes and publishes the pinned
   SurfaceFlinger legacy/AIDL services before entering the stock main loop.
 
-- `ArtzigGpuPipeline.cpp` connects HWUI to stock ANativeWindow queues and shared
-  GBM/Ganesh rendering. The task presenter owns every Wayland surface.
+- Original HWUI EglManager, RenderThread and Skia pipelines render through the
+  Android EGL window ABI onto system Mesa GBM buffers. The task presenter owns
+  every Wayland surface.
 - `GraphicsEnvironmentBackend.cpp` connects stock GraphicsEnvironment JNI and
   GraphicsEnv to the hosted library loader. Class loaders have no associated
   Android linker namespace; namespace lookup returns null, and requested
@@ -417,7 +417,13 @@ AudioFlinger tracks. It contains the C macros and callback code around
   The graphicsenv ANGLE override flag is generated in force-read-only mode for
   both Java and C++; its default is false. No mutable native flag store or new
   Wayland, PipeWire or FFmpeg implementation is added.
-- `HardwareBufferRender.cpp` imports DMA-BUF buffers into EGL and Skia.
+- Original Skia AHardwareBuffer factories and GL imports call the common
+  `src/platform/graphics_egl.zig` EGL image owner. It retains Android buffers and
+  imports their existing DMA-BUFs through system Mesa.
+- `egl_cache.zig` connects stock HWUI cache setup to Mesa's Android blob-cache
+  callbacks. Original FileBlobCache supplies persistence, checksums and eviction
+  through C++ object accessors in EglWindow. Zig owns callback synchronization
+  and flushes dirty entries at frame boundaries or EGL display release.
 - `HwuiRenderProxyBridge.cpp` supplies two C calls for HWUI `RenderProxy`.
 - `AospJniBridge.cpp` registers AOSP JNI code and manages Skia bitmap access.
   Stock GLUtils/Visibility/ETC1 use pinned OpenGL utility JNI and ETC1 encoding.
@@ -482,7 +488,8 @@ you add an application-owned C++ file.
 The pinned GL/Ganesh RenderEngine is built by `build/renderengine.zig` and checked
 by `renderengine-test`. It shares libui, libgui, Skia and the Zig allocator with
 the hosted SurfaceFlinger service. Its texture import
-uses the pinned Skia AHardwareBuffer utilities with a small DMA-BUF adaptation.
+uses the unchanged Skia AHardwareBuffer utilities over the shared EGL image
+backend. Android image targets become Mesa DMA-BUF imports below those clients.
 `src/platform/graphics_egl.zig` owns explicit display references for HWUI,
 GLConsumer and RenderEngine, because Mesa does not reference-count repeated
 `eglInitialize` calls as AOSP's balanced image/probe lifecycle assumes.
@@ -578,11 +585,12 @@ before C++ listeners can call Java. `buffer-jvm-test` and
 `surface-client-jvm-test` verify ownership, fences and SF callbacks.
 
 Stock Surface, SurfaceTexture and BLAST JNI drive the HWUI ANativeWindow path.
-`ArtzigGpuPipeline` connects/dequeues/imports/queues buffers through stock
-ReliableSurface, using a shared RenderThread GBM/Ganesh context and surfaceless
-EGL. Producer fences travel with queue or cancellation; waits stay on the
-render thread. Native Choreographer, DisplayManagerGlobal JNI and stock
-Looper-driven ThreadBase restore pinned RenderThread callback scheduling.
+Original SkiaOpenGLPipeline and EglManager render through ReliableSurface and
+the Android EGL window ABI. The GBM driver queues the rendered buffer through
+the stock producer without a presentation blit. Producer fences travel with
+queue or cancellation; waits stay on the render thread. Original RenderThread
+uses native Choreographer, DisplayManagerGlobal JNI and Looper-driven ThreadBase
+for callback scheduling.
 `surface-buffer-jvm-test` verifies pixels, resize, two independent consumers,
 abandonment recovery, BLAST commits and zero retained allocations. The legacy
 direct Wayland target and its RenderProxy/CanvasContext extensions are removed.

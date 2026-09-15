@@ -37,3 +37,6 @@ void __assert_fail(const char *, const char *, unsigned int,
 // These bionic C entry points are intentionally absent from glibc headers.
 extern "C" int __system_property_get(const char *, char *);
 extern "C" int __system_property_set(const char *, const char *);
+
+// The pinned private EGL declaration has C++ linkage unless declared earlier.
+extern "C" void azk_egl_beginFrame(void *, void *);

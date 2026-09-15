@@ -25,6 +25,7 @@ internal object StockGlSurfaceViewSmoke {
     fun run() {
         val egl = EGLContext.getEGL() as EGL10
         val display = egl.eglGetDisplay(EGL10.EGL_DEFAULT_DISPLAY)
+        val existingOwners = EGLImpl.getInitCount(display)
         if (!egl.eglInitialize(display, null)) {
             check(System.getenv("AZK_TEST_REQUIRE_EGL") != "1")
             return
@@ -97,7 +98,7 @@ internal object StockGlSurfaceViewSmoke {
             view.surfaceChanged(view.holder, 0, 16, 8)
             expect("created", "changed", "draw")
             check(renderThread.get() !== Thread.currentThread())
-            check(EGLImpl.getInitCount(display) == 2)
+            check(EGLImpl.getInitCount(display) == existingOwners + 2)
             val redraw = CountDownLatch(1)
             view.surfaceRedrawNeededAsync(view.holder) { redraw.countDown() }
             check(redraw.await(10, TimeUnit.SECONDS))
@@ -119,7 +120,7 @@ internal object StockGlSurfaceViewSmoke {
             check(created.get() == 1)
             view.preserveEGLContextOnPause = false
             view.onPause()
-            check(EGLImpl.getInitCount(display) == 1)
+            check(EGLImpl.getInitCount(display) == existingOwners + 1)
             view.onResume()
             expect("created", "changed", "draw")
             check(created.get() == 2)
@@ -137,7 +138,7 @@ internal object StockGlSurfaceViewSmoke {
         failure.get()?.let { throw AssertionError("stock GLThread callback", it) }
         check(surfaces.get() == destroyed.get())
         check(renderThread.get()?.isAlive == false)
-        check(EGLImpl.getInitCount(display) == 0)
+        check(EGLImpl.getInitCount(display) == existingOwners)
         System.err.println("stock-glsurfaceview: renderer ordering, queued work, dirty redraws, pause/context preservation and surface/thread cleanup passed")
     }
 }

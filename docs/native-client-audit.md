@@ -6,11 +6,11 @@ The JVM source check covers selected framework source files. Android-native
 implementations, runtime libraries and process placement still contain substantial
 host adaptations.
 
-The complete `acceptance-test` target passed on 2026-09-15 for the current
-Skia/EGL dependency checkpoint. All 28 APK cases passed, with 89
-recorded actions, zero structured runtime issues and no failure artifacts.
-The native, JVM, system, desktop, video, source-provenance and build checks passed.
-The source archive, dependency pin and installed outputs are current.
+The complete `acceptance-test` target passed on 2026-09-15 for the original-HWUI
+checkpoint. All 28 APK cases passed, with 94 recorded actions, zero structured
+runtime issues and no failure artifacts. Native, JVM, system, desktop, video,
+source-provenance and build checks passed. Source packages, pins and installed
+outputs are current.
 
 This is a source and architecture audit, not an exhaustive per-method
 compatibility certification. The follow-up validation record distinguishes
@@ -38,12 +38,12 @@ also does not mean zero unsupported native operations.
 
 ## Compiled native and Skia check
 
-`native-client-source-test` consumes the actual 1,973 native-island and linked Skia compiler
+`native-client-source-test` consumes the actual 1,990 native-island and linked Skia compiler
 commands and verifies the linked object files. The current selection contains
-1,632 unchanged AOSP units, 42 modified units, 22 owned units and 277 generated
-units. Its 43 required client sources must remain original and present. Nineteen
+1,669 unchanged AOSP units, 24 modified units, 20 owned units and 277 generated
+units. Its 78 required client sources must remain original and present. Twenty-seven
 sensitive client/service boundaries are preprocessed again with those commands;
-the report records effective macros and the 2,082 headers actually consumed.
+the report records effective macros and the 2,341 headers actually consumed.
 This catches disabled Android branches and incompatible Binder header selection.
 
 The check also verifies unique JNI registrar ownership and rejects FFmpeg/VAAPI
@@ -68,8 +68,9 @@ inode at the consumer, without another presentation copy.
 The handwritten input/HWUI flag headers were deleted. The original input flag
 generator uses production mode with read-only defaults, preserving exported flags
 that force-read-only mode omits. Full acceptance passed. The hosted HWUI renderer
-and GL import adaptations remain; a separate compile probe passed for 165 original
-HWUI units, but their production linking and runtime validation are pending.
+and GL import adaptations have since been removed. Their original sources link
+and full acceptance passes, including shader-cache persistence, EGL ownership,
+hardware-bitmap geometry, DMA-BUF identity and SurfaceView/TextureView video.
 Android Vulkan driver support is not established by compiling that source.
 
 ## Evidence and counting rules
@@ -88,7 +89,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 14,194 | 94 | 0 |
+| Framework | 14,231 | 64 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -315,11 +316,13 @@ commands and generated reports.
 
 **App-side adaptations remain:**
 
-- [`ArtzigGpuPipeline.cpp`](../src/native/ArtzigGpuPipeline.cpp) replaces HWUI's
-  GPU pipeline with GBM/EGL/Ganesh context and buffer handling. Packaged HWUI
-  CanvasContext, RenderThread-related code, layer updates, bitmap and WebView
-  functor paths also differ from the reference. Stock RenderNode/Canvas Java
-  and an existing SurfaceFlinger do not remove these modifications.
+- HWUI now compiles the original EglManager, RenderThread, CacheManager,
+  CanvasContext, Skia GL/Vulkan pipelines, layer updates, Bitmap, Readback and
+  WebView functor implementations. Original Skia hardware-buffer factories
+  and GL imports use the shared EGL image driver seam. The owned GPU pipeline
+  and hardware-buffer rendering helper were deleted. System Mesa still owns
+  rendering; compiling the Vulkan client does not establish Android Vulkan
+  hardware-buffer driver support.
 - EGL10, EGL14, EGL15 and EGLExt compile their original JNI. The host EGL
   driver adapter translates Android windows to Mesa GBM drawables and delivers
   the rendered DMA-BUF itself through the original Surface/BufferQueue producer.
@@ -331,15 +334,15 @@ commands and generated reports.
   Generated GLES bindings remain reused with native fixes for JNI array
   bases and buffer bounds.
 - HardwareRenderer snapshots use AOSP's AImageReader / RenderProxy algorithm.
-  A build guard enables it on the host; Bitmap's native buffer factory delegates
-  GPU import to the existing render-thread owner. The Kotlin snapshot and its
-  JNI/RenderNode ownership bridges have been deleted.
+  Original Bitmap and Skia hardware-buffer factories own GPU import through
+  the shared EGL driver. The Kotlin snapshot and its JNI/RenderNode ownership
+  bridges have been deleted.
 - Software Bitmap storage now uses Android RGBA consistently across Skia and
   its consumers. Original GLUtils uploads those bytes directly; the host upload
   copy and ImageDecoder layout workaround are removed. NDK raw-pixel and
   MediaMetadataRetriever thumbnail tests exercise the byte order.
-- Bitmap uses its original JNI registration. The native GraphicsJNI color-type
-  mapper recognizes both RGBA and BGRA as ARGB_8888; the JNI override is gone.
+- Bitmap and GraphicsJNI use their original sources and JNI registration.
+  Host color-type overrides have been removed.
 - ADisplay compiles original `libs/nativedisplay/ADisplay.cpp` and queries
   SurfaceFlinger for physical displays, modes, refresh rates, vsync offsets and
   composition preferences. The fixed hostgraphics display implementation is
@@ -351,9 +354,8 @@ commands and generated reports.
   is used inside clients as well as services. Stock allocator/mapper loading
   could retain a host implementation behind its HAL; allocation is not
   inherently all server-side on Android.
-- libgui/SurfaceComposerClient, GLConsumer, native SurfaceTexture, Skia hardware
-  buffer imports and several native Surface/Image wrappers have packaged
-  patches. See the exact file inventory; some are portability fixes, others
+- libgui/SurfaceComposerClient, GLConsumer, native SurfaceTexture and several
+  native Surface/Image wrappers retain packaged patches. See the exact file inventory; some are portability fixes, others
   change transport, imports, lifetime or failure behavior.
 - The original WebView APK is unchanged, but it loads these adapted native
   graphics/media/runtime dependencies. APK provenance is not provenance of
@@ -368,10 +370,9 @@ stock code; the Looper poll accessor is an additional host/test seam.
 [`pointer_icon_jni.zig`](../src/binder/pointer_icon_jni.zig) registers methods on
 `dev.artzig.window.WaylandCursor`, not replacement PointerIcon natives.
 
-Closing graphics means restoring stock HWUI/EGL/native clients and confining
-GBM/Wayland translation to driver, allocator and compositor interfaces. Keep
-the working separate presenter and SF architecture; do not move app rendering
-wholesale into system_server.
+Remaining graphics adaptations are concentrated in EGL, allocator, libgui,
+loader and compositor interfaces. The original HWUI clients render in the app
+process, while the separate presenter and SurfaceFlinger own presentation.
 
 ## Runtime, core utilities and additional client differences
 
@@ -424,9 +425,10 @@ tests (90 recorded actions, zero structured runtime issues in the final run).
    service-death tests.
 4. Complete compiled native source/flags/header and ELF provenance checks.
    Sensors, Codec2, MediaPlayer and metadata retrieval now use original service clients.
-5. Restore app graphics clients while retaining host EGL/gralloc/compositor
-   implementations at their appropriate boundaries. Then close device,
-   networking, loader and runtime gaps against the declared scope.
+5. Close remaining libgui, OpenGL binding and native Surface/Image wrapper
+   adaptations. HWUI and Skia buffer clients are now original; host EGL, gralloc
+   and compositor implementations remain at their platform boundaries. Close
+   device, networking, loader and runtime gaps against the declared scope.
 
 The native acceptance check must expand from the island and Skia compilation commands
 to the remaining linked library and runtime closure, with the adaptation inventory and

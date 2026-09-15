@@ -128,7 +128,9 @@ pub fn configure(b: *std.Build, mod: *std.Build.Module, aosp: std.Build.LazyPath
 }
 pub const Libraries = struct { ui: *std.Build.Step.Compile, gui: *std.Build.Step.Compile };
 pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, aosp: std.Build.LazyPath, generated: Generated, hidl: *std.Build.Step.Compile) Libraries {
-    const mod = b.createModule(.{ .root_source_file = b.path("src/platform/graphics_buffer.zig"), .target = target, .optimize = optimize, .link_libc = true, .link_libcpp = true, .pic = true });
+    // EGL composes storage with the original libui native-buffer ABI. Storage
+    // itself stays independent so handle validation can run without that closure.
+    const mod = b.createModule(.{ .root_source_file = b.path("src/platform/graphics_egl.zig"), .target = target, .optimize = optimize, .link_libc = true, .link_libcpp = true, .pic = true });
     const ui = b.addLibrary(.{ .name = "ui_host", .root_module = mod });
     configure(b, mod, aosp, generated);
     const flags = &.{ "-std=c++23", "-fno-exceptions", "-fno-rtti", "-fno-sanitize=undefined", "-D_GNU_SOURCE", "-D__ANDROID_HOST__", "-DARTZIG_HOST_THREAD_PRIORITY", "-DANDROID_UTILS_CALLSTACK_ENABLED=0", "-DDEBUG_ONLY_CODE=0", "-Wno-invalid-specialization", "-Wno-inconsistent-missing-override", "-Wno-deprecated-declarations", "-Wno-deprecated-enum-compare", "-Wno-deprecated-anon-enum-enum-conversion", "-Wno-deprecated-literal-operator", "-include", b.pathResolve(&.{"src/native/azk_prelude.h"}), "-include", b.pathResolve(&.{"src/native/graphics/include/azk/graphics_compat.h"}), "-D__INTRODUCED_IN(x)=", "-D__INTRODUCED_IN_64(x)=", "-D__INTRODUCED_IN_32(x)=" };
@@ -159,3 +161,14 @@ pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     const gui = b.addLibrary(.{ .name = "gui_host", .root_module = gui_mod });
     return .{ .ui = ui, .gui = gui };
 }
+
+// Original Skia imports Android native buffers through this common EGL driver
+// boundary in both app HWUI and SurfaceFlinger's RenderEngine.
+pub const egl_image_flags = [_][]const u8{
+    "-DeglGetNativeClientBufferANDROID=azk_graphics_egl_native_client_buffer",
+    "-DeglCreateImageKHR=azk_graphics_egl_create_image_khr",
+    "-DeglCreateImage=azk_graphics_egl_create_image",
+    "-DeglDestroyImageKHR=azk_graphics_egl_destroy_image",
+    "-DeglDestroyImage=azk_graphics_egl_destroy_image",
+    "-DeglGetError=azk_graphics_egl_get_error",
+};

@@ -1,19 +1,5 @@
-From 48cf7c5ce2728b97ed89e1702068cadb0e39f511 Mon Sep 17 00:00:00 2001
-From: artzig <artzig@localhost>
-Date: Thu, 3 Sep 2026 22:12:00 +0000
-Subject: [PATCH] framework: make bootstrap-time flags read-only
-
-AssetManager consults the RRO constraint flag while ActivityThread creates the
-system context, before SettingsProvider and the initial Application exist. The
-standalone graphics entry point likewise constructs Paint before an
-Application. Keep both declaration defaults fixed so these bootstrap paths do
-not require DeviceConfig storage.
-
-Change-Id: I4ed5d119c8f30f7e2d07120f4ad28a6c3a65fa17
----
- core/java/android/content/res/flags.aconfig | 1 +
- libs/hwui/aconfig/hwui_flags.aconfig        | 1 +
- 2 files changed, 2 insertions(+)
+From: Androlinzberg maintainers
+Subject: [PATCH] resources: keep the early RRO constraint flag read only
 
 diff --git a/core/java/android/content/res/flags.aconfig b/core/java/android/content/res/flags.aconfig
 index 5c9d399f9..1f15e446d 100644
@@ -27,17 +13,3 @@ index 5c9d399f9..1f15e446d 100644
      namespace: "resource_manager"
      description: "Feature flag for setting constraints for a RRO"
      bug: "371801644"
-diff --git a/libs/hwui/aconfig/hwui_flags.aconfig b/libs/hwui/aconfig/hwui_flags.aconfig
-index 992028acc..6ed268aac 100644
---- a/libs/hwui/aconfig/hwui_flags.aconfig
-+++ b/libs/hwui/aconfig/hwui_flags.aconfig
-@@ -7,6 +7,7 @@ flag {
-   description: "API for AGSL authored runtime color filters and blenders"
-   bug: "358126864"
-   is_exported: true
-+  is_fixed_read_only: true
- }
-
- flag {
--- 
-2.55.0

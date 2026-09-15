@@ -22,12 +22,60 @@ internal object StockEglWindowSmoke {
         } }
     }
     fun run() {
-        modern()
-        legacy()
+        val cache = java.nio.file.Files.createTempDirectory("azk-egl-cache-").toFile()
+        try {
+            android.graphics.HardwareRenderer.setupDiskCache(cache)
+            modern(cache.name)
+            check(java.io.File(cache, "com.android.opengl.shaders_cache").length() > 8) {
+                "Mesa shader blobs were not persisted by the Android EGL cache"
+            }
+            // Reopen the original file format and recreate the same program/context.
+            android.graphics.HardwareRenderer.setupDiskCache(cache)
+            modern(cache.name)
+            legacy()
+        } finally {
+            // HWUI's process-wide cache keeps this directory until VM shutdown.
+            cache.deleteOnExit()
+            java.io.File(cache, "com.android.opengl.shaders_cache").deleteOnExit()
+            java.io.File(cache, "com.android.skia.shaders_cache").deleteOnExit()
+        }
+        println("stock-egl-cache: original shader cache persisted and reopened across EGL contexts")
         println("stock-egl-window: EGL14/EGL10 DMA-BUF identity, pixels, timestamps, GL state, resize and held-buffer ownership passed")
     }
 
-    private fun modern() {
+    private fun compileCacheProgram(seed: String) {
+        val shaders = listOf(
+            GLES20.GL_VERTEX_SHADER to "// $seed\nvoid main() { gl_Position=vec4(0.0,0.0,0.0,1.0); gl_PointSize=1.0; }",
+            GLES20.GL_FRAGMENT_SHADER to "// $seed\nprecision mediump float; void main() { gl_FragColor=vec4(1.0,0.0,0.0,1.0); }")
+            .map { (type, source) ->
+                GLES20.glCreateShader(type).also { shader ->
+                    GLES20.glShaderSource(shader, source)
+                    GLES20.glCompileShader(shader)
+                    val status = IntArray(1)
+                    GLES20.glGetShaderiv(shader, GLES20.GL_COMPILE_STATUS, status, 0)
+                    check(status[0] == GLES20.GL_TRUE) { GLES20.glGetShaderInfoLog(shader) }
+                }
+            }
+        val program = GLES20.glCreateProgram()
+        try {
+            shaders.forEach { GLES20.glAttachShader(program, it) }
+            GLES20.glLinkProgram(program)
+            val status = IntArray(1)
+            GLES20.glGetProgramiv(program, GLES20.GL_LINK_STATUS, status, 0)
+            check(status[0] == GLES20.GL_TRUE) { GLES20.glGetProgramInfoLog(program) }
+            GLES20.glUseProgram(program)
+            GLES20.glViewport(0, 0, 16, 8)
+            GLES20.glDrawArrays(GLES20.GL_POINTS, 0, 1)
+            GLES20.glFinish()
+            check(GLES20.glGetError() == GLES20.GL_NO_ERROR)
+        } finally {
+            GLES20.glUseProgram(0)
+            GLES20.glDeleteProgram(program)
+            shaders.forEach { GLES20.glDeleteShader(it) }
+        }
+    }
+
+    private fun modern(shaderSeed: String) {
         val display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
         check(EGL14.eglInitialize(display, null, 0, null, 0))
         val configs = arrayOfNulls<android.opengl.EGLConfig>(1)
@@ -45,6 +93,7 @@ internal object StockEglWindowSmoke {
             window = EGL14.eglCreateWindowSurface(display, configs[0], reader.surface, intArrayOf(EGL14.EGL_NONE), 0)
             check(window != EGL14.EGL_NO_SURFACE) { "create window: ${EGL14.eglGetError().toString(16)}" }
             check(EGL14.eglMakeCurrent(display, window, window, context))
+            compileCacheProgram(shaderSeed)
             repeat(20) { frame ->
                 paint(16, 8)
                 val timestamp = 123_456_789L + frame

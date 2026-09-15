@@ -63,7 +63,7 @@ internal object StockResourcePathSmoke {
         check(!Files.exists(Path.of("/system/framework/framework-res.apk.unmapped")))
 
         val libraryNames = setOf("libc.so", "libdl.so", "libstdc++.so", "libEGL.so",
-            "libbinder.so", "libbinder_ndk.so", "libaaudio.so", "libandroid.so", "libmediandk.so",
+            "libbinder.so", "libbinder_ndk.so", "libaaudio.so", "libandroid.so", "libmediandk.so", "libstatssocket.so",
             "libjnigraphics.so", "libvintf_jni.so", "liblog.so", "libm.so", "libz.so", "libGLESv2.so", "libGLESv3.so")
         val libraryDirectory = File("/system/lib64")
         check(libraryDirectory.isDirectory)
