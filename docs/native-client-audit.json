@@ -1,10 +1,10 @@
 {
-  "revision": "92b1adc7 + performance-hint native client migration",
+  "revision": "f446bdd7 + sensor clients and graphics JNI source restoration",
   "reference": "Pinned checkout described by aosp/README.md; project revisions below",
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 13996,
+      "unchanged": 14191,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -19,14 +19,11 @@
         "frameworks/av/media/libstagefright/MediaExtractorFactory.cpp",
         "frameworks/av/media/ndk/NdkImageReader.cpp",
         "frameworks/base/core/jni/android_hardware_OverlayProperties.cpp",
-        "frameworks/base/core/jni/android_media_ImageReader.cpp",
-        "frameworks/base/core/jni/android_media_Utils.cpp",
         "frameworks/base/core/jni/android_net_LocalSocketImpl.cpp",
         "frameworks/base/core/jni/android_opengl_GLES20.cpp",
         "frameworks/base/core/jni/android_opengl_GLES30.cpp",
         "frameworks/base/core/jni/android_opengl_GLES31.cpp",
         "frameworks/base/core/jni/android_opengl_GLES32.cpp",
-        "frameworks/base/core/jni/android_view_Surface.cpp",
         "frameworks/base/core/jni/android_view_TunnelModeEnabledListener.cpp",
         "frameworks/base/core/jni/com_google_android_gles_jni_GLImpl.cpp",
         "frameworks/base/core/jni/core_jni_helpers.h",
@@ -87,6 +84,7 @@
         "frameworks/native/services/inputflinger/dispatcher/InputDispatcher.cpp",
         "frameworks/native/services/inputflinger/dispatcher/InputDispatcher.h",
         "frameworks/native/services/powermanager/PowerHalController.cpp",
+        "frameworks/native/services/sensorservice/SensorService.cpp",
         "frameworks/native/services/surfaceflinger/BackgroundExecutor.cpp",
         "frameworks/native/services/surfaceflinger/CompositionEngine/src/HwcAsyncWorker.cpp",
         "frameworks/native/services/surfaceflinger/PowerAdvisor/SessionLayerMap.h",
@@ -107,7 +105,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "7a85f9e281763e862a4c46fe720c58aa975ac38c054bb46f21f2df42783c0e11"
+      "archive_sha256": "ea8f1d1548f5f3666063a15c317c6079e57d9fb5783be6a591dc8ef7c630cabc"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -244,16 +242,15 @@
     "src/binder/pointer_icon_jni.zig",
     "src/binder/egl_interop_test.zig",
     "src/binder/traffic_stats_jni.zig",
-    "src/binder/sensor_manager_jni.zig",
     "src/binder/activity_jni.zig",
     "src/binder/audio_system_jni.zig",
     "src/binder/ndk_codec_test.zig",
     "src/binder/runtime_init_jni.zig"
   ],
-  "registration_scope_note": "10 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
+  "registration_scope_note": "9 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
-      "sha256": "4df79b295285df444525c327aea20cd2db62dad49e3153d9c395f9329b772646",
+      "sha256": "3e00f95e2b7b8a81dcade624119e3b0d28ae680d61f8c0e63edec39196731dac",
       "defined_symbols": [
         "register_localized_collators",
         "register_android_functions",
@@ -266,13 +263,13 @@
       ]
     },
     "lib/art/libbinder_ndk.so": {
-      "sha256": "d919a27040412a4f3a1ca9146d9e1fe77988d1bb545ec1255b81d3d994b3ce62",
+      "sha256": "41b0fabad0332c286b4614710ae96a713c4e35bda50e065b085828c781670692",
       "defined_symbols": [
         "azk_register_binder_jni"
       ]
     }
   },
-  "framework_package_refresh": "2026-09-15: original VINTF JNI/libvintf, libkver, tinyxml2 and original parser conformance tests. Rechecked against the clean pinned reference.",
+  "framework_package_refresh": "2026-09-15: original VINTF, performance-hint and sensor clients; Surface/ImageReader/Utils JNI source guard patches removed. Rechecked against the clean pinned reference.",
   "binder_jni_followup": {
     "runtime_revision": "b7d78a39",
     "verified_date": "2026-09-13",
@@ -654,5 +651,48 @@
     },
     "loader": "JNI dlopen binds to azk_android_dlopen, which reuses host path mapping and the private system/lib64 soname aliases; no copied platform ELF or second runtime",
     "test_compiler": "Production client and original tests match Soong CommonGlobalCflags -ftrivial-auto-var-init=zero; required for the client session failure out-pointer and the test bitfield/union comparison"
+  },
+  "sensor_followup": {
+    "client": "Original SystemSensorManager JNI, libsensor and NDK sensor.cpp; generated native privacy, sensor HAL and suspend protocols",
+    "server": "Original SensorService in the system process, with constructor mode initialization for an absent physical HAL",
+    "bootstrap": "Service factory compiled with the same Android ABI flags as SensorService; published before clients construct SensorManager",
+    "capability": "No physical sensor HAL. Empty discovery, actual BitTube event queues, unsupported sensor enable and direct channels retain original failures.",
+    "deleted": [
+      "src/binder/sensor_manager_jni.zig"
+    ],
+    "sources_sha256": {
+      "frameworks/base/core/jni/android_hardware_SensorManager.cpp": "7eaa222f67e6f2277e3dae64e6dd61cf46bdde4612a7ed085207c3781e9b1209",
+      "frameworks/base/native/android/sensor.cpp": "df829938d9e26314c51e1ac8b8adf11e5bfcee818513350559e7b4d39a04f5fd",
+      "frameworks/native/libs/sensor/BitTube.cpp": "8c79b70daa18f11168417c4df63ea7efcef1dd976645fc1d3c5377a0780ef2c2",
+      "frameworks/native/libs/sensor/ISensorEventConnection.cpp": "b7b94e0e61401c2f1e07b13b64609731049ac0d874e24b6d6dbb0466ef815375",
+      "frameworks/native/libs/sensor/ISensorServer.cpp": "688bcd75086416d0862ca332454a718c3a6f1f714235e45d0586449c54c60230",
+      "frameworks/native/libs/sensor/Sensor.cpp": "5e3f42a146317990dac8dbd8e079042438c31df5fb7c156dc784ce07e3cefb07",
+      "frameworks/native/libs/sensor/SensorEventQueue.cpp": "fad0ca277e50ce2b292f7eba116cebabcdc290058e04cdb539f477f887f315b5",
+      "frameworks/native/libs/sensor/SensorManager.cpp": "214914214a31d733c261725a65b8ddb2456e95dbaa8fde8998d7577c6424f4d0",
+      "frameworks/base/core/jni/android_view_Surface.cpp": "246bd24e6573ae29269f7d093d2cf8138ddccf56718810e423652fb1cf8f40aa",
+      "frameworks/base/core/jni/android_media_ImageReader.cpp": "22bebd38547cbc9cd52285581a768d49bbcad8bc2dc609cb425bcd8d1b6064c2",
+      "frameworks/base/core/jni/android_media_Utils.cpp": "499997f6d4ba651d5f6bf81f9ebce618e8a345c68861911d7107a6f434d44be0"
+    },
+    "validation": {
+      "framework": "framework-module-test and image-queue-jvm-test passed, including original Java/NDK sensor operations and borrowed descriptor lifetime",
+      "system": "system-test passed; all peers exited cleanly",
+      "apk_cases": 28,
+      "recorded_actions": 88,
+      "structured_runtime_issues": 0,
+      "failure_artifacts": 0,
+      "graphics": "gui-test, surface-wayland-test, renderengine-test and stock-video-test passed; all three fresh video screenshots inspected",
+      "other_checks": [
+        "source-identity-test: 7086 unchanged clients, zero modified/owned clients, 64 server adaptations",
+        "binder-jni-source-test",
+        "ndk-abi",
+        "cpp-audit",
+        "graph-audit",
+        "build-tools-test"
+      ],
+      "installed_outputs": "refreshed",
+      "framework_log": "/tmp/azk-sensor-framework188.log",
+      "system_apk_graphics_log": "/tmp/azk-sensor-acceptance191.log",
+      "aggregate_acceptance": "not run"
+    }
   }
 }

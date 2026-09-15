@@ -114,6 +114,8 @@ extern int register_android_graphics_RuntimeXfermode(JNIEnv*);
 extern int register_android_graphics_Camera(JNIEnv*);
 extern int register_android_hardware_camera2_CameraMetadata(JNIEnv*);
 extern int register_android_hardware_Camera(JNIEnv*);
+extern int register_android_hardware_SensorManager(JNIEnv*);
+extern int azk_register_sensor_smoke(JNIEnv*);
 namespace android {
 int register_android_os_VintfObject(JNIEnv*);
 int register_android_os_PerformanceHintManager(JNIEnv*);
@@ -138,14 +140,16 @@ jobject nativeBundle(JNIEnv* env, jobject) {
 }
 
 // Bootstrap only: the service implementation and generated Binder protocol are AOSP.
+extern jobject azkCreateSensorService(JNIEnv* env, jobject);
 static jobject nativeCreateMediaExtractorService(JNIEnv* env, jobject) {
     return android::javaObjectForIBinder(env, android::sp<android::MediaExtractorService>::make());
 }
-extern "C" int azk_register_media_extractor_service(JNIEnv* env) {
+extern "C" int azk_register_native_system_services(JNIEnv* env) {
     const JNINativeMethod methods[] = {
+        {"nativeCreateSensorService", "()Landroid/os/IBinder;", reinterpret_cast<void*>(azkCreateSensorService)},
         {"nativeCreateMediaExtractorService", "()Landroid/os/IBinder;", reinterpret_cast<void*>(nativeCreateMediaExtractorService)},
     };
-    return jniRegisterNativeMethods(env, "dev/artzig/system/SystemServices", methods, 1);
+    return jniRegisterNativeMethods(env, "dev/artzig/system/SystemServices", methods, std::size(methods));
 }
 
 static jboolean nativePermission(JNIEnv* env, jobject, jstring permission, jint pid, jint uid) {
@@ -723,7 +727,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_android_media_Crypto),
             E(register_android_media_Drm),
             E(azk_register_media_metrics_smoke),
-            E(azk_register_media_extractor_service),
+            E(azk_register_native_system_services),
             E(register_android_media_AudioDeviceAttributes),
             E(register_android_media_AudioEffectDescriptor),
             E(register_android_media_AudioSystem),
@@ -777,6 +781,8 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_android_graphics_RuntimeXfermode),
             E(register_android_graphics_Camera),
             E(android::register_android_os_PerformanceHintManager),
+            E(register_android_hardware_SensorManager),
+            E(azk_register_sensor_smoke),
             E(android::register_android_server_HintManagerService),
             E(android::register_android_os_VintfObject),
             E(android::register_android_os_VintfRuntimeInfo),

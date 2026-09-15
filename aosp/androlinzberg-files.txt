@@ -10373,3 +10373,13 @@ F aosp frameworks/base/core/jni/android_os_PerformanceHintManager.cpp
 F aosp frameworks/base/native/android/performance_hint.cpp
 F aosp frameworks/base/native/android/tests/performance_hint/PerformanceHintNativeTest.cpp
 F aosp frameworks/native/include/private/performance_hint_private.h
+
+# Original sensor client/service and their HAL/streaming-proto closure.
+D aosp frameworks/native/libs/sensor
+D aosp frameworks/native/libs/sensorprivacy
+D aosp frameworks/native/services/sensorservice
+D aosp frameworks/base/libs/protoutil
+D aosp hardware/libhardware_legacy
+D aosp hardware/interfaces/sensors
+D aosp system/hardware/interfaces/suspend/aidl
+F aosp frameworks/base/core/jni/android_hardware_SensorManager.cpp

@@ -317,6 +317,9 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
         "src/native/HostLooper.cpp",
         "src/native/MediaPlayerJniBridge.cpp",
         "src/native/PlatformFiles.cpp",
+        // Original sensor service construction and public NDK contract checks.
+        "src/native/SensorClientTest.cpp",
+        "src/native/SensorServiceBootstrap.cpp",
         // Host audio services behind the pinned libaudioclient AIDL (src/native/audio).
         "src/native/audio/AAudioSmoke.cpp",
         "src/native/audio/AudioServiceJni.cpp",

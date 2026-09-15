@@ -1,0 +1,18 @@
+From: Androlinzberg host integration
+Subject: [PATCH] SensorService: initialize normal mode without a physical HAL
+
+SensorService::onFirstRef sets the operating mode only after discovering physical
+sensors. The hosted system also publishes the original service without a HAL;
+initialize its queryable mode in the constructor so injection stays disabled.
+
+--- a/services/sensorservice/SensorService.cpp
++++ b/services/sensorservice/SensorService.cpp
+@@ -162,7 +162,7 @@
+ 
+ SensorService::SensorService()
+     : mInitCheck(NO_INIT), mSocketBufferSize(SOCKET_BUFFER_SIZE_NON_BATCHED),
+-      mWakeLockAcquired(false), mLastReportedProxIsActive(false) {
++      mWakeLockAcquired(false), mCurrentOperatingMode(NORMAL), mLastReportedProxIsActive(false) {
+     mUidPolicy = new UidPolicy(this);
+     mSensorPrivacyPolicy = new SensorPrivacyPolicy(this);
+     mMicSensorPrivacyPolicy = new MicrophonePrivacyPolicy(this);

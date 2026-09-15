@@ -761,7 +761,6 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     @import("pointer_icon_jni.zig").register(env, &g_platform_library) catch return -1;
     @import("egl_interop_test.zig").register(env) catch return -1;
     @import("traffic_stats_jni.zig").register(env) catch return -1;
-    @import("sensor_manager_jni.zig").register(env) catch return -1;
     @import("activity_jni.zig").register(env) catch return -1;
     @import("audio_system_jni.zig").register(env, &g_platform_library) catch return -1;
     @import("ndk_codec_test.zig").register(env, &g_platform_library) catch return -1;

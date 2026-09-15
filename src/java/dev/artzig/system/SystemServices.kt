@@ -23,6 +23,7 @@ import com.android.server.utils.TimingsTraceAndSlog
  */
 internal object SystemServices {
     private const val TAG = "SystemServer"
+    private external fun nativeCreateSensorService(): android.os.IBinder
     private external fun nativeCreateMediaExtractorService(): android.os.IBinder
     private external fun nativeCreateAudioPolicyService(): android.os.IBinder
     private external fun nativeCreateAudioFlingerService(): android.os.IBinder
@@ -104,6 +105,8 @@ internal object SystemServices {
             HostedSensorPrivacyService(context))
         val appOps = com.android.server.appop.HostedAppOpsBootstrap.create(context)
         activityManager.appOps = appOps
+        // Publish before services construct SystemSensorManager and wait for its native Binder.
+        android.os.ServiceManager.addService("sensorservice", nativeCreateSensorService())
         LocalServices.addService(com.android.server.pm.permission.PermissionManagerServiceInterface::class.java,
             HostedPermissionPolicy(packageManager))
         com.android.server.pm.permission.PermissionManagerService.create(context, android.util.ArrayMap())
@@ -226,9 +229,8 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.MEDIA_SESSION_SERVICE, mediaSessions)
         android.os.ServiceManager.addService(Context.MEDIA_METRICS_SERVICE, HostedMediaMetricsService())
         android.os.ServiceManager.addService("media.extractor", nativeCreateMediaExtractorService())
-        // Phase 4: location (no providers), lights (none), color display (no transforms);
-        // sensors are the in-process SystemSensorManager seam, input-device managers ride
-        // the hosted input service.
+        // Phase 4: location (no providers), lights (none), color display (no transforms).
+        // Original native sensor clients now use the system sensor service.
         val location = HostedLocationManagerService()
         location.packageService = packageManager
         android.os.ServiceManager.addService(Context.LOCATION_SERVICE, location)

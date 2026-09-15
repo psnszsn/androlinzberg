@@ -7,6 +7,8 @@ const std = @import("std");
 const gen = @import("gen/island_sources.zig");
 
 pub const Options = struct {
+    cppstream_headers: std.Build.LazyPath,
+    input_dispatcher_headers: std.Build.LazyPath,
     xsd: []const @import("generators.zig").CppXsd,
     media_generated: @import("graphics.zig").Generated,
     hwui_stats: @import("graphics.zig").Generated,
@@ -550,6 +552,24 @@ pub fn build(b: *std.Build, o: Options) Result {
         if (std.mem.startsWith(u8, file, prefix)) g.add(o.surfaceflinger_generated.sources, &.{b.fmt("{s}.cpp", .{file[prefix.len .. file.len - 5]})}, hint_includes, &.{});
     }
 
+    const sensors = @import("sensor_sources.zig");
+    const sensor_headers = b.addWriteFiles();
+    // BoringSSL exposes EVP digest declarations through digest.h; host OpenSSL uses evp.h.
+    _ = sensor_headers.add("openssl/digest.h", "#include <openssl/evp.h>\n");
+    var sensor_includes: std.ArrayList(std.Build.LazyPath) = .empty;
+    sensor_includes.appendSlice(b.allocator, &.{ sensor_headers.getDirectory(), o.cppstream_headers, o.input_dispatcher_headers, extractor_headers.getDirectory() }) catch @panic("OOM");
+    for (sensors.includes) |path| sensor_includes.append(b.allocator, o.aosp.path(b, path)) catch @panic("OOM");
+    const android_abi_flags = [_][]const u8{ "-D__unused=__attribute__((unused))", "-D__ANDROID__", "-D__ANDROID_API__=36", "-D__BIONIC_AVAILABILITY_GUARD(x)=1", "-include", "android/api-level.h", "-ftrivial-auto-var-init=zero" };
+    for (sensors.groups) |group| g.add(o.aosp.path(b, group.root), group.files, sensor_includes.items, &android_abi_flags);
+    g.add(b.path("src/native"), &.{ "SensorServiceBootstrap.cpp", "SensorClientTest.cpp" }, sensor_includes.items, &android_abi_flags);
+    g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{"sensor.cpp"}, sensor_includes.items, &android_abi_flags);
+    var hidl_sensor_includes: std.ArrayList(std.Build.LazyPath) = .empty;
+    // Both the HIDL and AIDL implementations call their private header convert.h.
+    hidl_sensor_includes.append(b.allocator, o.aosp.path(b, "hardware/interfaces/sensors/1.0/default/include/sensors")) catch @panic("OOM");
+    hidl_sensor_includes.appendSlice(b.allocator, sensor_includes.items) catch @panic("OOM");
+    g.add(o.aosp.path(b, "hardware/interfaces/sensors/1.0/default"), &.{"convert.cpp"}, hidl_sensor_includes.items, &android_abi_flags);
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_hardware_SensorManager.cpp"}, sensor_includes.items, &(android_abi_flags ++ .{ "-include", "arpa/inet.h" }));
+
     // Original VINTF XML/runtime clients. Keep their C++ runtime in this ELF;
     // a separately linked runtime would duplicate libc++ locale state.
     const vintf = @import("vintf_sources.zig");
@@ -610,6 +630,11 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "system/incremental_delivery/incfs"), &.{ "incfs_ndk.c", "incfs.cpp", "MountRegistry.cpp", "path.cpp" }, &.{}, &.{"-D_FILE_OFFSET_BITS=64"});
     g.add(o.incremental_sysprop_source.dirname(), &.{"IncrementalProperties.sysprop.cpp"}, &.{}, &.{});
     for (o.aidl_source_roots, @import("generator_sources.zig").cpp_aidl) |root, entry| {
+        // SensorService also uses this callback from the media server protocol closure.
+        if (std.mem.eql(u8, entry.input, "com/android/internal/app/IAppOpsCallback.aidl")) {
+            g.add(root, &.{entry.output.?}, extractor_includes, &.{});
+            continue;
+        }
         // Codec2's native library owns its work and bufferpool protocols.
         if (@import("codec2.zig").isProtocol(entry) or @import("codec2.zig").isClientProtocol(entry) or @import("codec2.zig").isResourceProtocol(entry) or @import("codec2.zig").isPlayerProtocol(entry) or @import("codec2.zig").isCameraProtocol(entry)) continue;
         if (entry.output) |output| g.add(root, &.{output}, extractor_includes, &.{});
@@ -768,6 +793,11 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.buffer_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{ "apex/android_canvas.cpp", "apex/android_paint.cpp" }, &.{ apex_inc, hw_jni_inc }, &.{});
     for (gen.surface_jni_srcs) |file| {
+        // Original Android branches register HardwareBuffer and image-plane operations.
+        if (std.mem.eql(u8, file, "android_media_ImageReader.cpp") or std.mem.eql(u8, file, "android_media_Utils.cpp")) {
+            g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{file}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), extractor_headers.getDirectory(), apex_inc }, &android_abi_flags);
+            continue;
+        }
         const flags: []const []const u8 = if (std.mem.eql(u8, file, "android_view_TunnelModeEnabledListener.cpp"))
             &.{"-DARTZIG_HOST_GRAPHICS"}
         else
@@ -777,7 +807,10 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/properties.cpp"}, &.{apex_inc}, &.{});
     const texture_inc = o.aosp.path(b, "frameworks/native/libs/nativedisplay/include");
     g.add(o.aosp.path(b, "frameworks/native/libs/nativedisplay"), &gen.surface_texture_srcs, &.{ texture_inc, b.path("src/native/graphics/include") }, &.{});
-    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.texture_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc, texture_inc }, &.{});
+    for (gen.texture_jni_srcs) |file| {
+        const flags: []const []const u8 = if (std.mem.eql(u8, file, "android_view_Surface.cpp")) &android_abi_flags else &.{};
+        g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{file}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), extractor_headers.getDirectory(), apex_inc, texture_inc }, flags);
+    }
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_google_android_gles_jni_GLImpl.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
 
     const media_format_includes = &[_]std.Build.LazyPath{

@@ -15,6 +15,7 @@ pub const Options = struct {
     sysprop_tool: *std.Build.Step.Compile,
     sysprop_cpp_tool: *std.Build.Step.Compile,
     javastream_tool: *std.Build.Step.Compile,
+    cppstream_tool: *std.Build.Step.Compile,
     javanano_tool: *std.Build.Step.Compile,
 };
 
@@ -43,6 +44,7 @@ pub const CppXsd = struct {
 };
 
 pub const GeneratedNative = struct {
+    cppstream_headers: LazyPath,
     xsd: []const CppXsd,
     media: @import("graphics.zig").Generated,
     hwui_stats: @import("graphics.zig").Generated,
@@ -501,6 +503,9 @@ fn aidlCpp(
         var include_roots: std.StringHashMapUnmanaged(void) = .empty;
         include_roots.put(b.allocator, entry.root, {}) catch @panic("OOM");
         for (declarations.cpp_aidl) |dependency| {
+            if (!entry.include_selected_roots) break;
+            // The native privacy declarations are a separate Soong module.
+            if (!dependency.include_selected_roots) continue;
             // The frozen observer interface and the live resource-manager tree
             // contain the same observer names. Soong resolves each against its
             // selected version, never both definitions in one compilation.
@@ -733,6 +738,21 @@ fn nanoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.
     const result = files.toOwnedSlice(b.allocator) catch @panic("OOM");
     _ = exposePaths(b, "gen-nano", "Generate javanano message sources", result);
     return .{ .java = result, .root = tree.getDirectory() };
+}
+
+fn frameworkProtoCpp(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.Compile, plugin: *std.Build.Step.Compile) LazyPath {
+    const run = command.create(b);
+    run.addFileArg(protoc.getEmittedBin());
+    run.addPrefixedFileArg("--plugin=protoc-gen-cppstream=", plugin.getEmittedBin());
+    const output = run.addPrefixedOutputDirectoryArg("--cppstream_out=", "cppstream-headers");
+    run.addPrefixedDirectoryArg("-I", aosp.path(""));
+    run.addPrefixedDirectoryArg("-I", aosp.path("external/protobuf/src"));
+    for (declarations.cppstream) |entry| run.addFileArg(aosp.path(entry.input));
+    var headers: std.ArrayList(LazyPath) = .empty;
+    for (declarations.cppstream) |entry| headers.append(b.allocator, output.path(b, entry.output)) catch @panic("OOM");
+    run.run.setName("generate original streaming proto C++ constants");
+    _ = exposePaths(b, "gen-cppstream", "Generate original C++ streaming proto headers", headers.items);
+    return output;
 }
 
 fn frameworkProtoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.Compile, plugin: *std.Build.Step.Compile, package_rewriter: *std.Build.Step.Compile) []const LazyPath {
@@ -1318,6 +1338,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     const incremental_sysprop = syspropCpp(b, o.aosp, o.sysprop_cpp_tool, declarations.incremental_sysprop);
     const codec2_sysprop = syspropCpp(b, o.aosp, o.sysprop_cpp_tool, declarations.codec2_sysprop);
     const nano_java = nanoJava(b, o.aosp, o.protoc, o.javanano_tool, package_rewriter);
+    const cppstream_headers = frameworkProtoCpp(b, o.aosp, o.protoc, o.cppstream_tool);
     const proto_java = protoJava(b, o.aosp, o.protoc, o.javastream_tool, package_rewriter);
     const stats_java = statsJava(b, o.aosp, stats_tool);
     const express_metric_ids_java = expressMetricIdsJava(b, o.aosp);
@@ -1344,6 +1365,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     for (aconfig_java.cpp_headers) |path| path.addStepDependencies(aggregate);
     for (aconfig_java.cpp_sources) |path| path.addStepDependencies(aggregate);
     for (xsd.cpp) |native| native.source_root.addStepDependencies(aggregate);
+    cppstream_headers.addStepDependencies(aggregate);
     inline for (.{ gui, renderengine, perfetto, surfaceflinger, input, input_dispatcher, media }) |native| {
         native.headers.addStepDependencies(aggregate);
         native.sources.addStepDependencies(aggregate);
@@ -1367,6 +1389,7 @@ pub fn build(b: *std.Build, o: Options) Result {
             .system_features_processor_dependencies = system_features_java.dependencies,
         },
         .native = .{
+            .cppstream_headers = cppstream_headers,
             .xsd = xsd.cpp,
             .media = media,
             .media_stats = .{ .headers = media_stats_headers.getDirectory(), .sources = media_stats_sources.getDirectory() },

@@ -16,8 +16,9 @@ import android.os.MemoryFile
 import java.io.UncheckedIOException
 import java.lang.reflect.InvocationTargetException
 
-/** Stock sensor client contracts on the hosted device with no sensorservice. */
+/** Original JNI/libsensor contracts against the system service with no sensor HAL. */
 internal object StockSystemSensorSmoke {
+    private external fun nativeVerifyNdk(packageName: String): Int
     private inline fun <reified T : Throwable> rejects(action: () -> Any?): T {
         var failure = runCatching(action).exceptionOrNull()
         if (failure is InvocationTargetException) failure = failure.cause
@@ -26,6 +27,7 @@ internal object StockSystemSensorSmoke {
     }
     fun run(drainMainQueue: () -> Unit) {
         val context = checkNotNull(ActivityThread.currentApplication())
+        check(android.os.ServiceManager.checkService("sensorservice") != null)
         val manager = checkNotNull(context.getSystemService(SensorManager::class.java))
         check(manager.javaClass == SystemSensorManager::class.java)
         check(manager === context.getSystemService(Context.SENSOR_SERVICE))
@@ -68,12 +70,14 @@ internal object StockSystemSensorSmoke {
         manager.unregisterDynamicSensorCallback(null)
         val create = SensorManager::class.java.getMethod("createDirectChannel", MemoryFile::class.java)
         rejects<NullPointerException> { create.invoke(manager, null) }
+        val createHardware = SensorManager::class.java.getMethod("createDirectChannel", HardwareBuffer::class.java)
+        rejects<NullPointerException> { createHardware.invoke(manager, null) }
         val small = MemoryFile("sensor-small", 1)
         try { rejects<IllegalArgumentException> { manager.createDirectChannel(small) } } finally { small.close() }
         val memory = MemoryFile("sensor-channel", 104)
         try {
             val failure = rejects<UncheckedIOException> { manager.createDirectChannel(memory) }
-            check(failure.cause?.message == "create MemoryFile direct channel failed -19")
+            check(failure.cause?.message == "create MemoryFile direct channel failed -12")
             check(memory.fileDescriptor.valid())
             memory.writeBytes(byteArrayOf(17), 0, 0, 1)
             val result = ByteArray(1)
@@ -81,11 +85,10 @@ internal object StockSystemSensorSmoke {
         } finally { memory.close() }
         rejects<IllegalStateException> { manager.createDirectChannel(memory) }
         // The public API cannot obtain a physical sensor from the empty inventory.
-        // A fabricated handle still must not produce a successful event connection.
+        // A real BitTube queue can be created, but a fabricated sensor cannot be enabled.
         val sensor = Sensor::class.java.getDeclaredConstructor().apply { isAccessible = true }.newInstance()
         check(!manager.registerListener(listener, sensor, -1))
-        val failure = rejects<RuntimeException> { manager.registerListener(listener, sensor, 20_000) }
-        check(failure.message == "Cannot construct native SensorEventQueue.")
+        repeat(3) { check(!manager.registerListener(listener, sensor, 20_000)) }
         check(!manager.flush(listener))
         manager.unregisterListener(listener)
         // No sensor-service writes occur on an empty result, including caller-owned lists.
@@ -95,13 +98,9 @@ internal object StockSystemSensorSmoke {
         val supplied = arrayListOf(sensor)
         nativeDynamic.invoke(null, nativeManager, supplied)
         check(supplied.size == 1 && supplied[0] === sensor)
-        val direct = SystemSensorManager::class.java.getDeclaredMethod("nativeCreateDirectChannel",
-            java.lang.Long.TYPE, Integer.TYPE, java.lang.Long.TYPE, Integer.TYPE, Integer.TYPE,
-            HardwareBuffer::class.java).apply { isAccessible = true }
-        check(direct.invoke(null, nativeManager, 0, 104L, 0, -1, null) == -22)
-        check(direct.invoke(null, nativeManager, 0, 104L, 2, -1, null) == -22)
-        check(direct.invoke(null, nativeManager, 0, 104L, 1, -1, null) == -19)
         check(SystemSensorManager(context, Looper.getMainLooper()).getSensorList(Sensor.TYPE_ALL).isEmpty())
-        System.err.println("stock-system-sensors: PASS discovery, validation, callbacks, injection, queue failure and borrowed channels")
+        val nativeResult = nativeVerifyNdk(context.packageName)
+        check(nativeResult == 0) { "NDK sensor contract failed at check $nativeResult" }
+        System.err.println("stock-system-sensors: PASS original JNI/Binder discovery, validation, callbacks, injection, unsupported sensor enable and borrowed channels")
     }
 }

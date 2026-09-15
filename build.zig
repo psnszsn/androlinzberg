@@ -290,6 +290,14 @@ pub fn build(b: *std.Build) void {
     b.step("javastream-tool", "Build the protoc-gen-javastream plugin")
         .dependOn(&b.addInstallArtifact(javastream_tool, .{}).step);
 
+    const cppstream_tool = @import("build/javastream.zig").build(b, .{
+        .backend = .cpp,
+        .root = aosp.path(b, "frameworks/base/tools/streaming_proto"),
+        .protobuf_src = aosp.path(b, "external/protobuf"),
+        .target = target,
+        .protobuf = protobuf.library,
+    });
+
     // --- protoc-gen-javanano: nano message classes (MetricsProto), built from
     // the packaged protobuf fork's javanano generator.
     const javanano_tool = @import("build/javanano.zig").build(b, .{
@@ -308,6 +316,7 @@ pub fn build(b: *std.Build) void {
         .sysprop_tool = sysprop_tool,
         .sysprop_cpp_tool = sysprop_cpp_tool,
         .javastream_tool = javastream_tool,
+        .cppstream_tool = cppstream_tool,
         .javanano_tool = javanano_tool,
     });
 
@@ -687,6 +696,8 @@ pub fn build(b: *std.Build) void {
         .host_paths_library = artzig_dep.namedLazyPath("host-paths-library"),
         .host_paths_headers = artzig_dep.namedLazyPath("host-paths-headers"),
         .xsd = generated.native.xsd,
+        .cppstream_headers = generated.native.cppstream_headers,
+        .input_dispatcher_headers = generated.native.input_dispatcher.headers,
         .media_generated = generated.native.media,
         .hwui_stats = generated.native.hwui_stats,
         .surfaceflinger_generated = generated.native.surfaceflinger,

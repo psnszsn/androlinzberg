@@ -36,7 +36,8 @@ also does not mean zero unsupported native operations.
 reference revisions, modified native paths and delegated registration modules.
 Both archives were read directly. The framework archive was rechecked during
 the Binder, utility and media/graphics JNI migrations. The latest refresh adds
-original VINTF clients and the performance-hint JNI/native client. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
+original VINTF, performance-hint and sensor clients, plus unchanged Surface,
+ImageReader and image utility JNI. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
 `.h`, `.hpp`, `.hxx`, `.S`, `.s` and `.inl` member was compared byte-for-byte
 with the corresponding pinned checkout path. Both current archives contain
 multiple top-level directories; their paths were retained. Tracked reference
@@ -44,7 +45,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 13,996 | 99 | 0 |
+| Framework | 14,191 | 97 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -64,7 +65,7 @@ the build selection; it is not a complete dynamic-symbol resolution audit.
 
 [`main.zig`](../src/main.zig) calls the Binder and graphics registrars and then
 [`host_natives.zig`](../src/platform/host_natives.zig) when booting APK ART.
-[`framework_jni.zig`](../src/binder/framework_jni.zig) has 10 delegated
+[`framework_jni.zig`](../src/binder/framework_jni.zig) has 9 delegated
 registration modules, plus its own registrations and the Binder registrar.
 That number is not a replaced-class count: it includes host-only cursor helpers
 and dev.artzig EGL/NDK regression helpers. Registering a helper does not prove
@@ -187,16 +188,27 @@ identity in the existing test server; application publication restrictions remai
 unchanged. CameraManager now follows the standard disabled-service exception
 path.
 
-### Missing-service clients are also non-stock
+### Sensors
 
-| Client | Current implementation and behavior | Stock boundary to restore |
-|---|---|---|
-| SystemSensorManager | [`sensor_manager_jni.zig`](../src/binder/sensor_manager_jni.zig) returns empty discovery and unavailable queues/channels | Original JNI/libsensor to `sensorservice` |
+SystemSensorManager now uses the original JNI and libsensor; the NDK sensor
+entry points use the same client. The system process publishes original
+SensorService before any service can request a sensor manager. A server
+constructor patch initializes normal mode when no physical HAL exists.
+The factory uses the same Android ABI flags as the service, including the
+Android layout of `utils::Thread`.
 
-Matching a missing-service result is still a replacement implementation. Adding
-a server later will not automatically make these clients use it. Restoring stock
-discovery also needs care: some AOSP clients wait for services rather than fail
-immediately. Hardware support is separate from native client provenance.
+Discovery is empty on this host. Event queues use actual BitTube connections;
+enabling unavailable sensors fails, and direct-channel creation returns the
+original service-backed failure. The old sensor JNI replacement is deleted.
+This restores client provenance without claiming physical sensor support.
+
+Framework and image-queue tests passed, including original JNI and NDK sensor
+contracts. System, native graphics, stock-video pixel checks, source/Binder
+provenance and build/ABI audits passed. All 28 APK cases passed with 88 recorded
+actions and zero structured runtime issues. Surface, ImageReader and image
+utility JNI now also compile unchanged with their Android branches enabled.
+Fresh video screenshots were inspected; installed outputs and the source archive
+were refreshed. No aggregate acceptance run is claimed.
 
 **Already across a service boundary:** MediaExtractor uses original Java/JNI,
 NuMediaExtractor and Binder to the native `media.extractor` service published by
@@ -373,8 +385,8 @@ in `1823bb1e`. See the JSON validation record for this limitation.
 3. Verify actual PipeWire delivery of a known PCM sequence against a
    controlled sink in addition to track position, callbacks and
    service-death tests.
-4. Restore SensorManager native clients and required service discovery. Codec2 owns FFmpeg decoding in the separate media
-   service; MediaPlayer and metadata retrieval now use original service clients.
+4. Complete compiled native source/flags/header and ELF provenance checks.
+   Sensors, Codec2, MediaPlayer and metadata retrieval now use original service clients.
 5. Restore app graphics clients while retaining host EGL/gralloc/compositor
    implementations at their appropriate boundaries. Then close device,
    networking, loader and runtime gaps against the declared scope.

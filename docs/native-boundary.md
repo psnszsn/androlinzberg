@@ -278,6 +278,11 @@ zig build -j10 cpp-audit
   generated XSD parsers. Runtime queries read host uname, procfs, properties and
   SELinux state; missing Android manifests retain the original compatibility
   failure. `libvintf_jni.so` maps to the platform library.
+- SystemSensorManager and NDK sensor APIs use original JNI/libsensor over
+  Binder to original SensorService in the system process. Its constructor
+  initializes normal mode when no HAL is present. Discovery is empty; event
+  queues use BitTube, and absent hardware retains original enable/channel
+  failures. No sensor JNI replacement remains.
 - PerformanceHintManager uses original JNI and the native performance-hint
   client over IHintManager to AOSP HintManagerService in the system process.
   A constructor adaptation initializes unsupported capabilities when no Power

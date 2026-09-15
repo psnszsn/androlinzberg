@@ -116,6 +116,7 @@ platform/frameworks/opt/telephony
 platform/frameworks/proto_logging
 platform/hardware/interfaces
 platform/hardware/libhardware
+platform/hardware/libhardware_legacy
 platform/libcore
 platform/libnativehelper
 platform/packages/modules/AdServices

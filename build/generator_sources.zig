@@ -330,6 +330,8 @@ pub const CppAidl = struct {
     vintf_stable: bool = false,
     version: ?u32 = null,
     min_sdk_version: ?u32 = null,
+    /// False for self-contained protocols that duplicate framework Java definitions.
+    include_selected_roots: bool = true,
     include_roots: []const []const u8 = &.{},
     hash: ?[]const u8 = null,
     root: []const u8,
@@ -338,6 +340,21 @@ pub const CppAidl = struct {
 };
 
 pub const cpp_aidl = [_]CppAidl{
+    // Original sensor service, privacy and suspend protocols.
+    .{ .backend = .ndk, .vintf_stable = true, .min_sdk_version = 35, .version = 3, .hash = "b051523be857524c99057b69f253a7d0bd295400", .root = "hardware/interfaces/sensors/aidl", .input = "android/hardware/sensors/AdditionalInfo.aidl", .output = "android/hardware/sensors/AdditionalInfo.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .min_sdk_version = 35, .version = 3, .hash = "b051523be857524c99057b69f253a7d0bd295400", .root = "hardware/interfaces/sensors/aidl", .input = "android/hardware/sensors/DynamicSensorInfo.aidl", .output = "android/hardware/sensors/DynamicSensorInfo.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .min_sdk_version = 35, .version = 3, .hash = "b051523be857524c99057b69f253a7d0bd295400", .root = "hardware/interfaces/sensors/aidl", .input = "android/hardware/sensors/Event.aidl", .output = "android/hardware/sensors/Event.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .min_sdk_version = 35, .version = 3, .hash = "b051523be857524c99057b69f253a7d0bd295400", .root = "hardware/interfaces/sensors/aidl", .input = "android/hardware/sensors/ISensors.aidl", .output = "android/hardware/sensors/ISensors.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .min_sdk_version = 35, .version = 3, .hash = "b051523be857524c99057b69f253a7d0bd295400", .root = "hardware/interfaces/sensors/aidl", .input = "android/hardware/sensors/ISensorsCallback.aidl", .output = "android/hardware/sensors/ISensorsCallback.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .min_sdk_version = 35, .version = 3, .hash = "b051523be857524c99057b69f253a7d0bd295400", .root = "hardware/interfaces/sensors/aidl", .input = "android/hardware/sensors/SensorInfo.aidl", .output = "android/hardware/sensors/SensorInfo.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .min_sdk_version = 35, .version = 3, .hash = "b051523be857524c99057b69f253a7d0bd295400", .root = "hardware/interfaces/sensors/aidl", .input = "android/hardware/sensors/SensorStatus.aidl", .output = "android/hardware/sensors/SensorStatus.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .min_sdk_version = 35, .version = 3, .hash = "b051523be857524c99057b69f253a7d0bd295400", .root = "hardware/interfaces/sensors/aidl", .input = "android/hardware/sensors/SensorType.aidl", .output = "android/hardware/sensors/SensorType.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .min_sdk_version = 35, .version = 1, .hash = "082a58c2505b703702f34ab8abcb1d1b5e890be4", .root = "system/hardware/interfaces/suspend/aidl", .input = "android/system/suspend/ISystemSuspend.aidl", .output = "android/system/suspend/ISystemSuspend.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .min_sdk_version = 35, .version = 1, .hash = "082a58c2505b703702f34ab8abcb1d1b5e890be4", .root = "system/hardware/interfaces/suspend/aidl", .input = "android/system/suspend/IWakeLock.aidl", .output = "android/system/suspend/IWakeLock.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .min_sdk_version = 35, .version = 1, .hash = "082a58c2505b703702f34ab8abcb1d1b5e890be4", .root = "system/hardware/interfaces/suspend/aidl", .input = "android/system/suspend/WakeLockType.aidl", .output = "android/system/suspend/WakeLockType.cpp" },
+    .{ .include_selected_roots = false, .root = "frameworks/native/libs/sensorprivacy/aidl", .input = "android/hardware/ISensorPrivacyListener.aidl", .output = "android/hardware/ISensorPrivacyListener.cpp" },
+    .{ .include_selected_roots = false, .root = "frameworks/native/libs/sensorprivacy/aidl", .input = "android/hardware/ISensorPrivacyManager.aidl", .output = "android/hardware/ISensorPrivacyManager.cpp" },
+
     // Original NDK performance-hint client to IHintManager.
     .{ .backend = .ndk, .min_sdk_version = 35, .include_roots = &.{"hardware/interfaces/power/aidl"}, .root = "frameworks/base/core/java", .input = "android/os/IHintManager.aidl", .output = "android/os/IHintManager.cpp" },
     .{ .backend = .ndk, .min_sdk_version = 35, .include_roots = &.{"hardware/interfaces/power/aidl"}, .root = "frameworks/base/core/java", .input = "android/os/IHintSession.aidl", .output = "android/os/IHintSession.cpp" },
@@ -829,6 +846,9 @@ pub const HidlCpp = struct {
 
 /// Soong libhidlbase's generated C++ protocol sources and headers.
 pub const hidl_cpp = [_]HidlCpp{
+    .{ .fqname = "android.hardware.sensors@1.0", .sources = &.{ "android/hardware/sensors/1.0/SensorsAll.cpp", "android/hardware/sensors/1.0/types.cpp" } },
+    .{ .fqname = "android.hardware.sensors@2.0", .sources = &.{ "android/hardware/sensors/2.0/SensorsAll.cpp", "android/hardware/sensors/2.0/SensorsCallbackAll.cpp", "android/hardware/sensors/2.0/types.cpp" } },
+    .{ .fqname = "android.hardware.sensors@2.1", .sources = &.{ "android/hardware/sensors/2.1/SensorsAll.cpp", "android/hardware/sensors/2.1/SensorsCallbackAll.cpp", "android/hardware/sensors/2.1/types.cpp" } },
     .{ .fqname = "android.hidl.memory.token@1.0", .sources = &.{"android/hidl/memory/token/1.0/MemoryTokenAll.cpp"} },
     .{ .fqname = "android.hardware.graphics.bufferqueue@1.0", .sources = &.{
         "android/hardware/graphics/bufferqueue/1.0/GraphicBufferProducerAll.cpp",
@@ -2667,6 +2687,8 @@ pub const logtags = [_]Logtags{
 };
 
 pub const aconfig = [_]Aconfig{
+    .{ .package = "com.android.hardware.libsensor.flags", .cpp_source = true, .container = "system", .source = .aosp, .declarations = &.{"frameworks/native/libs/sensor/libsensor_flags.aconfig"} },
+    .{ .package = "com.android.frameworks.sensorservice.flags", .cpp_source = true, .container = "system", .source = .aosp, .declarations = &.{"frameworks/native/services/sensorservice/sensorservice_flags.aconfig"} },
     .{ .package = "com.android.server.power.hint", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/services/core/java/com/android/server/power/hint/flags.aconfig"} },
     .{ .package = "com.android.system.virtualmachine.flags", .container = "com.android.virt", .source = .aosp, .declarations = &.{"packages/modules/Virtualization/build/avf_flags.aconfig"} },
     .{ .package = "android.chre.flags", .container = "system", .source = .aosp, .declarations = &.{"system/chre/chre_flags.aconfig"} },
@@ -2770,7 +2792,7 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.companion.virtualdevice.flags", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/core/java/android/companion/virtual/flags/flags.aconfig", "frameworks/base/core/java/android/companion/virtual/flags/launched_flags.aconfig" } },
     .{ .package = "android.credentials.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/credentials/flags.aconfig"} },
     .{ .package = "android.nfc", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/nfc-non-updatable/flags/flags.aconfig"} },
-    .{ .package = "android.permission.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/permission/flags.aconfig"} },
+    .{ .package = "android.permission.flags", .cpp_source = true, .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/permission/flags.aconfig"} },
     .{ .package = "android.sdk", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/android-sdk-flags/flags.aconfig"} },
     .{ .package = "android.security", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/core/java/android/security/flags.aconfig", "frameworks/base/core/java/android/security/responsible_apis_flags.aconfig" } },
     .{ .package = "android.service.autofill", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/services/autofill/bugfixes.aconfig", "frameworks/base/services/autofill/features.aconfig" } },
@@ -2868,6 +2890,10 @@ pub const nano = [_]Nano{
 pub const proto_relocations = .{
     .{ .output = "android/aconfigd/Aconfigd.java", .from = "android.aconfigd", .to = "android.internal.configinfra.aconfigd.x" },
 };
+pub const cppstream = [_]struct { input: []const u8, output: []const u8 }{
+    .{ .input = "frameworks/base/core/proto/android/service/sensor_service.proto", .output = "frameworks/base/core/proto/android/service/sensor_service.proto.h" },
+};
+
 pub const proto_inputs = [_]SourcePath{
     .{ .source = .aosp, .path = "packages/modules/ConfigInfrastructure/aconfigd/proto/aconfigd.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/hardware/location/context_hub_info.proto" },
