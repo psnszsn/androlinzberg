@@ -956,7 +956,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
-        .imports = &.{.{ .name = "art", .module = art_mod }},
+        .imports = &.{
+            .{ .name = "art", .module = art_mod },
+            .{ .name = "graphics_types", .module = b.createModule(.{ .root_source_file = b.path("src/platform/graphics_types.zig") }) },
+        },
     });
     const platform_abi_check = b.addObject(.{ .name = "platform-abi-check", .root_module = platform_abi_test_mod });
     const launcher_check = b.addObject(.{ .name = "launcher-check", .root_module = exe.root_module });
