@@ -418,12 +418,9 @@ tests (90 recorded actions, zero structured runtime issues in the final run).
 2. Decide whether libbinder and AZKB remain explicit native adaptations or
    whether literal native identity requires replacing them below the restored
    Binder JNI boundary.
-3. Verify actual PipeWire delivery of a known PCM sequence against a
-   controlled sink in addition to track position, callbacks and
-   service-death tests.
-4. Complete compiled native source/flags/header and ELF provenance checks.
+3. Complete compiled native source/flags/header and ELF provenance checks.
    Sensors, Codec2, MediaPlayer and metadata retrieval now use original service clients.
-5. Close remaining libgui, OpenGL binding and native Surface/Image wrapper
+4. Close remaining libgui, OpenGL binding and native Surface/Image wrapper
    adaptations. HWUI and Skia buffer clients are now original; host EGL, gralloc
    and compositor implementations remain at their platform boundaries. Close
    device, networking, loader and runtime gaps against the declared scope.
@@ -598,3 +595,18 @@ fabricated heap dump. The hosted loader has no deferred compatibility-warning
 journal. RuntimeInit and architecture-specific zygote probes remain explicit
 runtime adaptations. Full acceptance passed, including the DDM failure-response
 protocol regression.
+
+## Audio delivery acceptance
+
+`stock-audio-delivery-test` sends 98,304 deterministic stereo frames through
+original AudioTrack JNI, its native client and the hosted audio service. A
+private PipeWire server captures the sink monitor. The check verifies every
+frame, channel ordering, gain and sample integrity, and confirms the PipeWire
+stream belongs to a process other than the application. Silence, swapped
+channels and corrupted PCM are rejected by the capture verifier's own checks.
+
+The dedicated target passed with unity gain, zero sample error and zero
+structured runtime issues. It is now required by `acceptance-test`; this
+dedicated run follows the complete startup-JNI acceptance checkpoint above.
+The audio backend is unchanged. Artifacts, including PCM, process ownership,
+graph links and diagnostics, are in `zig-out/test-results/stock-audio-delivery/`.

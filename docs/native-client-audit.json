@@ -819,5 +819,42 @@
         "codec2-params-test retains two known host-compiler parameter comparisons outside aggregate acceptance"
       ]
     }
+  },
+  "audio_delivery_followup": {
+    "target": "stock-audio-delivery-test",
+    "required_by": "acceptance-test",
+    "passed": true,
+    "log": "/tmp/azk-stock-audio-delivery278.log",
+    "artifacts": "zig-out/test-results/stock-audio-delivery",
+    "result": {
+      "passed": true,
+      "application_pid": 3809482,
+      "audio_service_pid": 3809513,
+      "recorder_exit_after_requested_stop": 1,
+      "captured_frames": 112384,
+      "verified_frames": 98304,
+      "phase": 0,
+      "channels": [
+        {
+          "gain": 1.0,
+          "relative_rms_error": 0.0
+        },
+        {
+          "gain": 1.0,
+          "relative_rms_error": 0.0
+        }
+      ],
+      "non_silent_frames": 98304,
+      "structured_runtime_issues": 0
+    },
+    "scope": "Original AudioTrack JNI and native client, remote hosted audio service, real private PipeWire sink monitor; complete known stereo sequence, not just playback counters",
+    "negative_checks": [
+      "silence",
+      "swapped channels",
+      "corrupted PCM"
+    ],
+    "production_backend_changes": false,
+    "validation_note": "Dedicated test after the full startup-JNI acceptance checkpoint; existing production audio code unchanged",
+    "build_validation": "install, graph-audit, cpp-audit and source-identity-test passed (/tmp/azk-stock-audio-checks279.log)"
   }
 }

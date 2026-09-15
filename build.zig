@@ -1511,6 +1511,24 @@ pub fn build(b: *std.Build) void {
     framework_module_smoke.run.setName("run hosted framework module tests");
     b.step("framework-module-test", "Test stock framework values and hosted service contracts").dependOn(&framework_module_smoke.run.step);
     jvm_test_step.dependOn(&framework_module_smoke.run.step);
+    const audio_delivery = @import("build/command.zig").create(b);
+    setApplicationEnvironment(audio_delivery, application_tree);
+    audio_delivery.addArg("python3");
+    audio_delivery.addFileArg(b.path("tests/native/stock-audio-delivery-test.py"));
+    audio_delivery.addArgs(&.{ "--output", "zig-out/test-results/stock-audio-delivery", "--" });
+    audio_delivery.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    audio_delivery.addArg("--javatest");
+    audio_delivery.setEnvironment("AZK_TEST_CLASS", "dev.artzig.StockAudioDeliverySmoke");
+    audio_delivery.run.addArgs(&.{ "--env-path", "AZK_TEST_APK" });
+    audio_delivery.run.addFileArg(java.fixtures.example);
+    audio_delivery.run.addFileInput(b.path("tests/native/audio_capture_analysis.py"));
+    audio_delivery.run.has_side_effects = true;
+    audio_delivery.run.setName("verify stock AudioTrack PCM at a private PipeWire sink");
+    const audio_capture_checks = b.addSystemCommand(&.{"python3"});
+    audio_capture_checks.addFileArg(b.path("tests/native/audio_capture_analysis.py"));
+    audio_delivery.run.step.dependOn(&audio_capture_checks.step);
+    b.step("stock-audio-delivery-test", "Capture known stock AudioTrack PCM through the hosted service and PipeWire")
+        .dependOn(&audio_delivery.run.step);
     const webview_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(webview_smoke, application_tree);
     webview_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));
@@ -1759,6 +1777,7 @@ pub fn build(b: *std.Build) void {
         "stock-task-desktop-suspension-test",
         "stock-task-tablet-test",
         "stock-video-test",
+        "stock-audio-delivery-test",
         "stock-ime-test",
         "stock-clipboard-test",
         "stock-drag-test",

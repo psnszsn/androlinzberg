@@ -7,3 +7,4 @@ zig-pkg/
 aosp/
 vendor/*
 javac.*.args
+__pycache__/
