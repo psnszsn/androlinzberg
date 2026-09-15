@@ -1,10 +1,10 @@
 {
-  "revision": "4076231e + MediaPlayer and RGBA migration",
+  "revision": "8f4a934a + Camera client migration",
   "reference": "Pinned checkout described by aosp/README.md; project revisions below",
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 13903,
+      "unchanged": 13905,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -19,8 +19,6 @@
         "frameworks/av/media/libstagefright/MediaExtractorFactory.cpp",
         "frameworks/av/media/ndk/NdkImageReader.cpp",
         "frameworks/base/core/jni/android_hardware_OverlayProperties.cpp",
-        "frameworks/base/core/jni/android_hardware_camera2_CameraMetadata.cpp",
-        "frameworks/base/core/jni/android_hardware_camera2_utils_SurfaceUtils.cpp",
         "frameworks/base/core/jni/android_media_ImageReader.cpp",
         "frameworks/base/core/jni/android_media_Utils.cpp",
         "frameworks/base/core/jni/android_net_LocalSocketImpl.cpp",
@@ -109,7 +107,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "7918ec4a1a279b6e0041316b41632211d3d976cf9c9975faf8a43c678bbddb0e"
+      "archive_sha256": "beaf0ecf38caee90650f85552e583ca979ec9650356497c87e370c4068804f1d"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -241,16 +239,15 @@
     "src/binder/performance_hint_jni.zig",
     "src/binder/traffic_stats_jni.zig",
     "src/binder/sensor_manager_jni.zig",
-    "src/binder/legacy_camera_jni.zig",
     "src/binder/activity_jni.zig",
     "src/binder/audio_system_jni.zig",
     "src/binder/ndk_codec_test.zig",
     "src/binder/runtime_init_jni.zig"
   ],
-  "registration_scope_note": "13 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
+  "registration_scope_note": "12 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
-      "sha256": "16089d3be3b3132f5d9085a65758f171265061ac5d81377a30f63691057ff0dc",
+      "sha256": "91191267f5e000db2c194fa832c7d3418640f93fabb1d6f2eb3087c3441c75ab",
       "defined_symbols": [
         "register_localized_collators",
         "register_android_functions",
@@ -261,7 +258,7 @@
       ]
     },
     "lib/art/libbinder_ndk.so": {
-      "sha256": "f6f28ab485133b048c73b427b45e43b106b7c95ec88e2d5654c46484a4140c6c",
+      "sha256": "ce238ead27064e357c621b76b74104d19a2c72e8d4cc814442326ba3fbdb586e",
       "defined_symbols": [
         "azk_register_binder_jni"
       ]
@@ -444,7 +441,7 @@
         ]
       },
       "bin/azk-media-service": {
-        "sha256": "6b972ac256e288da8835232ad1ebec8af6318a76a7febd28f55650ea689397d8",
+        "sha256": "bf634aa4ef2d4016dee01e4434d7e83e9b6806efef2486ca353c884cbe2c5081",
         "needed": [
           "libavcodec.so.63",
           "libavutil.so.61",
@@ -464,7 +461,7 @@
         ]
       },
       "lib/libandroid_platform.so": {
-        "sha256": "16089d3be3b3132f5d9085a65758f171265061ac5d81377a30f63691057ff0dc",
+        "sha256": "91191267f5e000db2c194fa832c7d3418640f93fabb1d6f2eb3087c3441c75ab",
         "needed": [
           "libbinder_ndk.so",
           "libbinder.so",
@@ -564,5 +561,37 @@
       "frameworks/base/libs/hwui/utils/Color.cpp": "1c4c684f00f0e52fd5fb844fb91983fd372fb7c1d1ed8cffb2cd66dfdb7c4594"
     },
     "validation": "Framework module suite passed, including distinct NDK RGBA bytes, GL utility behavior and remote thumbnail pixels. RenderEngine, buffer/Surface client tests, stock-video pixel assertions and all 28 APK cases passed. Fullscreen playback screenshot inspected."
+  },
+  "camera_client_followup": {
+    "status": "Production migration validated",
+    "source_sha256": {
+      "frameworks/base/core/jni/android_hardware_Camera.cpp": "cacaca904ab135b9e7a5a18cafb80762bf5991a9cf0f7e14c6a62fe8baa47ad4",
+      "frameworks/base/core/jni/android_hardware_camera2_CameraMetadata.cpp": "44a4ee42091fc8307ddddd6e861fd5f4f78625457c70e6a1660f5ee3e4702775",
+      "frameworks/base/core/jni/android_hardware_camera2_utils_SurfaceUtils.cpp": "fffdcec0b01b1a8f70c8ad1180a64c76a19ea40f7628feabb0e7f4dc426db0db"
+    },
+    "native": "Original Camera, CameraBase, CameraUtils, parameters and camera AIDL clients shared by JNI and MediaPlayerService",
+    "configuration": "Standard config.disable_cameraservice=true reflects the absent host capture backend; CameraBase returns zero without waiting",
+    "removed": [
+      "legacy_camera_jni.zig",
+      "HostedLegacyCamera.kt",
+      "camera metadata Java Binder bridge and patch",
+      "SurfaceUtils unused-header workaround"
+    ],
+    "validation": {
+      "broker_defaults": "31 passed",
+      "native_client": "passed: disabled discovery, typed lookup, Binder attribution/info and connection failures",
+      "framework_module": "passed: original JNI parameter/released/absent-camera behavior and metadata parceling",
+      "system_test": "passed, including privileged vendor descriptor/cache fixtures through original JNI and native service proxy",
+      "apk_cases": 28,
+      "apk_recorded_actions": 88,
+      "apk_structured_runtime_issues": 0,
+      "source_identity_binder_jni_cpp_graph_ndk_abi": "passed",
+      "aggregate_acceptance": "not run",
+      "logs": [
+        "/tmp/azk-camera-native86.log",
+        "/tmp/azk-camera-acceptance90.log"
+      ]
+    },
+    "test_scope": "Platform vendor fixtures run in the existing system-test process; ordinary applications retain the broker namespace restriction. No production camera service or capture HAL is fabricated."
   }
 }

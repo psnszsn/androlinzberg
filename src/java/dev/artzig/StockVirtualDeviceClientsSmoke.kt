@@ -4,7 +4,6 @@ import android.app.ActivityThread
 import android.companion.virtual.VirtualDeviceManager
 import android.companion.virtual.VirtualDeviceParams
 import android.content.Context
-import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.os.Parcel
@@ -70,8 +69,9 @@ internal object StockVirtualDeviceClientsSmoke {
         val cameras = checkNotNull(context.getSystemService(CameraManager::class.java))
         check(cameras.cameraIdList.isEmpty())
         check(cameras.concurrentCameraIds.isEmpty())
-        val unavailable = rejects<CameraAccessException> { cameras.getCameraCharacteristics("missing") }
-        check(unavailable.reason == CameraAccessException.CAMERA_DISCONNECTED)
+        // CameraManager follows the standard disabled-cameraserver configuration.
+        val unavailable = rejects<IllegalArgumentException> { cameras.getCameraCharacteristics("missing") }
+        check(unavailable.message == "No cameras available on device")
         // Camera keys are stock value types even though no capture device is available.
         check(CameraCharacteristics.LENS_FACING.name == "android.lens.facing")
         check(CameraCharacteristics.Key("android.lens.facing", Int::class.javaPrimitiveType!!) == CameraCharacteristics.LENS_FACING)

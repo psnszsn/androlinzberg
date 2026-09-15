@@ -44,7 +44,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 13,903 | 101 | 0 |
+| Framework | 13,905 | 99 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -64,7 +64,7 @@ the build selection; it is not a complete dynamic-symbol resolution audit.
 
 [`main.zig`](../src/main.zig) calls the Binder and graphics registrars and then
 [`host_natives.zig`](../src/platform/host_natives.zig) when booting APK ART.
-[`framework_jni.zig`](../src/binder/framework_jni.zig) has 13 delegated
+[`framework_jni.zig`](../src/binder/framework_jni.zig) has 12 delegated
 registration modules, plus its own registrations and the Binder registrar.
 That number is not a replaced-class count: it includes host-only cursor helpers
 and dev.artzig EGL/NDK regression helpers. Registering a helper does not prove
@@ -173,11 +173,24 @@ pixel assertions, system services and all 28 APK cases passed (90 recorded
 actions, zero structured runtime issues). Source identity, Binder JNI, C++/graph
 audits and NDK ABI checks passed. No full aggregate acceptance run is claimed.
 
+### Camera clients
+
+Original legacy Camera JNI, camera metadata JNI and native Camera/CameraBase
+clients now share the generated native camera service protocol. The hosted JNI,
+Kotlin camera adapter and Java vendor-tag Binder bridge have been removed.
+The standard `config.disable_cameraservice=true` configuration describes this
+host without a capture backend and avoids waiting for an absent cameraserver.
+This restores client provenance; it does not add camera capture hardware. Native
+Binder, public framework, system and all 28 APK tests passed (88 recorded
+actions, zero structured runtime issues). Vendor-tag fixtures run with system
+identity in the existing test server; application publication restrictions remain
+unchanged. CameraManager now follows the standard disabled-service exception
+path.
+
 ### Missing-service clients are also non-stock
 
 | Client | Current implementation and behavior | Stock boundary to restore |
 |---|---|---|
-| Legacy Camera | [`legacy_camera_jni.zig`](../src/binder/legacy_camera_jni.zig) and `HostedLegacyCamera` implement absent-camera failures | Original Camera JNI/CameraBase to `media.camera` |
 | SystemSensorManager | [`sensor_manager_jni.zig`](../src/binder/sensor_manager_jni.zig) returns empty discovery and unavailable queues/channels | Original JNI/libsensor to `sensorservice` |
 | PerformanceHintManager | [`performance_hint_jni.zig`](../src/binder/performance_hint_jni.zig) returns no manager and rejects sessions | Original JNI/native hint client, IHintManager and associated power-service boundary |
 
@@ -360,7 +373,7 @@ in `1823bb1e`. See the JSON validation record for this limitation.
 3. Verify actual PipeWire delivery of a known PCM sequence against a
    controlled sink in addition to track position, callbacks and
    service-death tests.
-4. Restore Camera, SensorManager and PerformanceHint native clients and their
+4. Restore SensorManager and PerformanceHint native clients and their
    required service discovery. Codec2 owns FFmpeg decoding in the separate media
    service; MediaPlayer and metadata retrieval now use original service clients.
 5. Restore app graphics clients while retaining host EGL/gralloc/compositor

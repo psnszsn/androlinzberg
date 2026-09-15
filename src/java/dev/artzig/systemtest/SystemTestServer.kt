@@ -5,6 +5,7 @@ package dev.artzig.systemtest
 internal object SystemTestServer {
     @JvmStatic fun main(args: Array<String>) {
         dev.artzig.StockZygoteCommandBufferSmoke.checkLaunchAuthority(true)
+        dev.artzig.StockCameraMetadataSmoke.runServiceContracts()
         ActivityUriGrantSystemSmoke.setCallerApis(true)
         // Exercise the pinned flag-enabled private sharing contract in this
         // fixture server; the production generated default stays unchanged.

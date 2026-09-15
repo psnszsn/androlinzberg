@@ -660,6 +660,7 @@ test "session-wide properties: policy, area contents, change push" {
     defer reader.deinit();
     var buf: [prop_area.long_value_max]u8 = undefined;
     // Broker-seeded defaults are visible before any set.
+    try testing.expectEqualStrings("true", reader.get("config.disable_cameraservice", &buf).?);
     try testing.expectEqualStrings("35", reader.get("ro.build.version.sdk", &buf).?);
     try testing.expectEqual(@as(usize, 301), reader.get("ro.build.version.known_codenames", &buf).?.len);
 

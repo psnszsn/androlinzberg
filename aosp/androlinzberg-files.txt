@@ -10317,3 +10317,5 @@ F aosp external/tremolo/NOTICE
 F aosp frameworks/av/media/module/foundation/ColorUtils_ndk.cpp
 F aosp external/flac/config.h
 F aosp external/flac/src/libFLAC/deduplication/bitreader_read_rice_signed_block.c
+
+F aosp frameworks/base/core/jni/android_hardware_Camera.cpp

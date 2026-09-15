@@ -92,3 +92,8 @@ Record the revision, command, environment requirements, archive checksums, exit
 status and source-identity report alongside the retained test artifacts. Check
 that every APK case produced fresh results and inspect the rendering screenshots.
 The acceptance target does not remove caches or create worktrees automatically.
+
+`camera-client-test` checks original CameraBase disabled discovery and native
+Binder queries, attribution, connection failures and typed service lookup. The
+framework module checks public Camera and metadata contracts; `system-test`
+checks vendor descriptor/cache discovery using a privileged fixture.

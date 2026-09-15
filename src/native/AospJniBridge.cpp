@@ -59,7 +59,6 @@ extern "C" int azk_register_aaudio_smoke(JNIEnv* env);
 #include <binder/IBinder.h>
 #include <binder/Parcel.h>
 #include <binder/Status.h>
-#include <camera/VendorTagDescriptor.h>
 #include <nativehelper/ScopedLocalRef.h>
 
 #include <cstdio>
@@ -114,6 +113,7 @@ extern int register_android_graphics_BitmapRegionDecoder(JNIEnv*);
 extern int register_android_graphics_RuntimeXfermode(JNIEnv*);
 extern int register_android_graphics_Camera(JNIEnv*);
 extern int register_android_hardware_camera2_CameraMetadata(JNIEnv*);
+extern int register_android_hardware_Camera(JNIEnv*);
 extern int register_android_media_MediaHTTPConnection(JNIEnv*);
 extern int register_android_media_MediaExtractor(JNIEnv*);
 extern int register_android_media_Descrambler(JNIEnv*);
@@ -770,6 +770,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_android_graphics_BitmapRegionDecoder),
             E(register_android_graphics_RuntimeXfermode),
             E(register_android_graphics_Camera),
+            E(register_android_hardware_Camera),
             E(register_android_hardware_camera2_CameraMetadata),
             E(register_android_media_MediaHTTPConnection),
             E(register_android_media_MediaExtractor),
@@ -898,104 +899,6 @@ int azk_register_graphics_jni(JNIEnv* env) {
 
 }  // extern "C"
 
-// Pinned CameraMetadata_setupGlobalVendorTagDescriptor control flow over the
-// host's shared Java/NDK Binder. Reusing ICameraService's C++ proxy would pull
-// in the native capture/output stack. Resolve transaction IDs and errors from
-// the generated Java AIDL; keep descriptor parsing in stock C++ parcelables.
-namespace {
-jint cameraServiceConstant(JNIEnv* env, const char* name) {
-    ScopedLocalRef<jclass> cls(env, env->FindClass("android/hardware/ICameraService"));
-    if (!cls.get()) return -1;
-    jfieldID field = env->GetStaticFieldID(cls.get(), name, "I");
-    return field ? env->GetStaticIntField(cls.get(), field) : -1;
-}
-android::sp<android::IBinder> cameraMetadataService(JNIEnv* env) {
-    ScopedLocalRef<jclass> cls(env, env->FindClass("android/os/ServiceManager"));
-    if (!cls.get()) return nullptr;
-    jmethodID get = env->GetStaticMethodID(cls.get(), "getService",
-            "(Ljava/lang/String;)Landroid/os/IBinder;");
-    if (!get) return nullptr;
-    ScopedLocalRef<jstring> name(env, env->NewStringUTF("media.camera"));
-    if (!name.get()) return nullptr;
-    const jvalue args[] = {{.l = name.get()}};
-    ScopedLocalRef<jobject> service(env, env->CallStaticObjectMethodA(cls.get(), get, args));
-    if (env->ExceptionCheck() || !service.get()) return nullptr;
-    return android::IBinder::fromNative(AIBinder_fromJavaBinder(env, service.get()));
-}
-android::binder::Status cameraMetadataServiceCall(JNIEnv* env,
-        const android::sp<android::IBinder>& service, const char* transactionName,
-        android::Parcelable* result) {
-    using namespace android;
-    ScopedLocalRef<jclass> cls(env, env->FindClass("android/hardware/ICameraService$Stub"));
-    if (!cls.get()) return binder::Status::fromStatusT(BAD_VALUE);
-    jfieldID field = env->GetStaticFieldID(cls.get(), transactionName, "I");
-    if (!field) return binder::Status::fromStatusT(BAD_VALUE);
-    const jint code = env->GetStaticIntField(cls.get(), field);
-    Parcel request, response;
-    status_t status = request.writeInterfaceToken(String16("android.hardware.ICameraService"));
-    if (status == OK) status = service->transact(code, request, &response);
-    if (status != OK) return binder::Status::fromStatusT(status);
-    binder::Status remote;
-    status = remote.readFromParcel(response);
-    if (status != OK) return binder::Status::fromStatusT(status);
-    if (!remote.isOk()) return remote;
-    status = response.readParcelable(result);
-    return status == OK ? remote : binder::Status::fromStatusT(status);
-}
-} // namespace
-
-extern "C" jint azk_camera_setup_vendor_tags(JNIEnv *env) {
-    using namespace android;
-    const jint disconnected = cameraServiceConstant(env, "ERROR_DISCONNECTED");
-    const jint invalidOperation = cameraServiceConstant(env, "ERROR_INVALID_OPERATION");
-    if (env->ExceptionCheck()) return -1;
-    sp<IBinder> cameraService = cameraMetadataService(env);
-    if (env->ExceptionCheck()) return -1;
-    status_t err = cameraService ? OK : NAME_NOT_FOUND;
-
-    if (err != OK) {
-        ALOGE("%s: Failed to get camera service, received error %s (%d)", __FUNCTION__,
-                strerror(-err), err);
-        return disconnected;
-    }
-
-    sp<VendorTagDescriptor> desc = new VendorTagDescriptor();
-    binder::Status res = cameraMetadataServiceCall(env, cameraService, "TRANSACTION_getCameraVendorTagDescriptor", desc.get());
-
-    if (res.serviceSpecificErrorCode() == disconnected) {
-        // No camera module available, not an error on devices with no cameras
-        VendorTagDescriptor::clearGlobalVendorTagDescriptor();
-        return OK;
-    } else if (!res.isOk()) {
-        VendorTagDescriptor::clearGlobalVendorTagDescriptor();
-        ALOGE("%s: Failed to setup vendor tag descriptors: %s", __FUNCTION__,
-              res.toString8().c_str());
-        return res.serviceSpecificErrorCode();
-    }
-    if (0 < desc->getTagCount()) {
-        err = VendorTagDescriptor::setAsGlobalVendorTagDescriptor(desc);
-    } else {
-        sp<VendorTagDescriptorCache> cache = new VendorTagDescriptorCache();
-        binder::Status res = cameraMetadataServiceCall(env, cameraService, "TRANSACTION_getCameraVendorTagCache", cache.get());
-        if (res.serviceSpecificErrorCode() == disconnected) {
-            // No camera module available, not an error on devices with no cameras
-            VendorTagDescriptorCache::clearGlobalVendorTagCache();
-            return OK;
-        } else if (!res.isOk()) {
-            VendorTagDescriptorCache::clearGlobalVendorTagCache();
-            ALOGE("%s: Failed to setup vendor tag cache: %s", __FUNCTION__,
-                  res.toString8().c_str());
-            return res.serviceSpecificErrorCode();
-        }
-
-        err = VendorTagDescriptorCache::setAsGlobalVendorTagCache(cache);
-    }
-
-    if (err != OK) {
-        return invalidOperation;
-    }
-    return OK;
-}
 // AOSP NativeMessageQueue and ALooper share Looper::getForThread(). The host
 // observes its epoll descriptor; only stock pollOnce drains it and dispatches.
 #include <utils/Looper.h>

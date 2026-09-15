@@ -7,7 +7,6 @@ import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.impl.CameraMetadataNative
 import android.hardware.camera2.params.ColorSpaceTransform
 import android.os.Binder
-import android.os.IBinder
 import android.os.Parcel
 import android.os.ServiceManager
 import android.os.ServiceSpecificException
@@ -117,6 +116,7 @@ internal object StockCameraMetadataSmoke {
     }
 
     private class VendorService : Binder() {
+        init { attachInterface(null, "android.hardware.ICameraService") }
         enum class Mode { DESCRIPTOR, CACHE, DISCONNECTED, CACHE_DISCONNECTED, DENIED }
         var mode = Mode.DESCRIPTOR
         val calls = ArrayList<String>()
@@ -168,15 +168,12 @@ internal object StockCameraMetadataSmoke {
     }
 
     private fun vendorDiscovery() {
-        @Suppress("UNCHECKED_CAST")
-        val services = ServiceManager::class.java.getDeclaredField("sCache")
-            .apply { isAccessible = true }.get(null) as MutableMap<String, IBinder>
-        val previous = services.remove("media.camera")
+        check(ServiceManager.checkService("media.camera") == null)
         val service = VendorService()
         try {
             val missing = rejects<ServiceSpecificException> { CameraMetadataNative.setupGlobalVendorTagDescriptor() }
             check(missing.errorCode == ICameraService.ERROR_DISCONNECTED)
-            services["media.camera"] = service
+            ServiceManager.addService("media.camera", service)
             CameraMetadataNative.setupGlobalVendorTagDescriptor()
             check(service.calls == listOf("descriptor"))
             check(CameraMetadataNative.getTag("dev.artzig.camera.gain") == VENDOR_TAG)
@@ -209,23 +206,26 @@ internal object StockCameraMetadataSmoke {
                 .map { it.name } == listOf("dev.artzig.camera.gain"))
         } finally {
             // Clear both stock global caches through the service's disconnected responses.
-            try {
-                services["media.camera"] = service
-                service.mode = VendorService.Mode.CACHE_DISCONNECTED
-                CameraMetadataNative.setupGlobalVendorTagDescriptor()
-                service.mode = VendorService.Mode.DISCONNECTED
-                CameraMetadataNative.setupGlobalVendorTagDescriptor()
-            } finally {
-                if (previous == null) services.remove("media.camera") else services["media.camera"] = previous
-            }
+            service.mode = VendorService.Mode.CACHE_DISCONNECTED
+            CameraMetadataNative.setupGlobalVendorTagDescriptor()
+            service.mode = VendorService.Mode.DISCONNECTED
+            CameraMetadataNative.setupGlobalVendorTagDescriptor()
+            // The isolated test process owns this service until process exit.
         }
     }
 
     fun run() {
         valuesAndCopies()
         parceling()
+        val missing = rejects<ServiceSpecificException> { CameraMetadataNative.setupGlobalVendorTagDescriptor() }
+        check(missing.errorCode == ICameraService.ERROR_DISCONNECTED)
+        println("stock camera metadata values, parceling and absent service: PASS")
+    }
+
+    /** Runs in the existing system-test process, which can publish platform services. */
+    fun runServiceContracts() {
         vendorDiscovery()
-        println("stock camera metadata values, parceling and vendor Binder contracts: PASS")
+        System.err.println("stock camera metadata vendor Binder contracts: PASS")
     }
 
     private const val VENDOR_ID = 42L

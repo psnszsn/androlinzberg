@@ -28,11 +28,14 @@ pub fn isResourceProtocol(entry: declarations.CppAidl) bool {
         std.mem.eql(u8, entry.input, "android/app/ProcessStateEnum.aidl");
 }
 
+pub fn isCameraProtocol(entry: declarations.CppAidl) bool {
+    return std.mem.eql(u8, entry.root, "frameworks/av/camera/aidl") or
+        std.mem.startsWith(u8, entry.root, "hardware/interfaces/common/") or
+        std.mem.eql(u8, entry.input, "com/android/internal/compat/IPlatformCompatNative.aidl");
+}
+
 pub fn isPlayerProtocol(entry: declarations.CppAidl) bool {
     return std.mem.eql(u8, entry.input, "com/android/internal/app/IAppOpsCallback.aidl") or
-        std.mem.eql(u8, entry.input, "com/android/internal/compat/IPlatformCompatNative.aidl") or
-        std.mem.eql(u8, entry.root, "frameworks/av/camera/aidl") or
-        std.mem.startsWith(u8, entry.root, "hardware/interfaces/common/") or
         std.mem.eql(u8, entry.input, "android/permission/IPermissionChecker.aidl") or
         std.mem.eql(u8, entry.input, "android/os/IPowerManager.aidl") or
         std.mem.eql(u8, entry.input, "android/os/IWakeLockCallback.aidl") or
@@ -80,6 +83,7 @@ pub const Libraries = struct {
     client: *std.Build.Step.Compile,
     resources: *std.Build.Step.Compile,
     player: *std.Build.Step.Compile,
+    camera: *std.Build.Step.Compile,
     aosp: std.Build.LazyPath,
     flags: []const []const u8,
 };
@@ -141,7 +145,28 @@ pub fn build(b: *std.Build, o: Options) Libraries {
     const client_flags = clientFlags(b, flags);
     const resources = buildResources(b, o, client, client_flags);
     const player = buildPlayer(b, o, client, client_flags);
-    return .{ .transport = library, .client = client, .resources = resources, .player = player, .aosp = o.aosp, .flags = client_flags };
+    const camera = buildCamera(b, o, client, client_flags);
+    return .{ .transport = library, .client = client, .resources = resources, .player = player, .camera = camera, .aosp = o.aosp, .flags = client_flags };
+}
+
+fn buildCamera(b: *std.Build, o: Options, client: *std.Build.Step.Compile, flags: []const []const u8) *std.Build.Step.Compile {
+    const mod = b.createModule(.{ .target = o.target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true, .pic = true });
+    mod.include_dirs = client.root_module.include_dirs.clone(b.allocator) catch @panic("OOM");
+    for (@import("media_player_sources.zig").includes) |path| mod.addIncludePath(o.aosp.path(b, path));
+    for (@import("camera_sources.zig").groups) |group|
+        mod.addCSourceFiles(.{ .root = o.aosp.path(b, group.root), .files = group.files, .flags = flags });
+    for (declarations.cpp_aidl, o.sources) |entry, root| {
+        if (isCameraProtocol(entry)) if (entry.output) |source|
+            mod.addCSourceFile(.{ .file = root.path(b, source), .flags = flags });
+    }
+    var index: usize = 0;
+    for (declarations.aconfig) |entry| {
+        if (!entry.cpp_source) continue;
+        if (std.mem.eql(u8, entry.package, "com.android.internal.camera.flags"))
+            mod.addCSourceFile(.{ .file = o.flag_sources[index], .flags = flags });
+        index += 1;
+    }
+    return b.addLibrary(.{ .name = "camera_client", .root_module = mod });
 }
 
 fn buildPlayer(b: *std.Build, o: Options, client: *std.Build.Step.Compile, flags: []const []const u8) *std.Build.Step.Compile {
@@ -168,8 +193,7 @@ fn buildPlayer(b: *std.Build, o: Options, client: *std.Build.Step.Compile, flags
     var flag_index: usize = 0;
     for (declarations.aconfig) |entry| {
         if (!entry.cpp_source) continue;
-        if (std.mem.eql(u8, entry.package, "com.android.internal.camera.flags") or
-            std.mem.eql(u8, entry.package, "com.android.media.editing.flags"))
+        if (std.mem.eql(u8, entry.package, "com.android.media.editing.flags"))
             mod.addCSourceFile(.{ .file = o.flag_sources[flag_index], .flags = player_flags });
         flag_index += 1;
     }
@@ -231,6 +255,17 @@ fn buildClients(b: *std.Build, o: Options, flags: []const []const u8, transport:
     allocator_test.linkLibrary(o.ndk);
     @import("surfaceflinger.zig").runTest(b, allocator_test, o.binder, o.ndk, o.broker, "codec2-allocator", "Verify original Codec2 linear allocation and imported storage", .standalone, null);
     return library;
+}
+
+pub fn cameraTest(b: *std.Build, libraries: Libraries, platform: std.Build.LazyPath, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile, broker: *std.Build.Step.Compile) void {
+    const mod = b.createModule(.{ .target = libraries.camera.root_module.resolved_target.?, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
+    mod.include_dirs = libraries.camera.root_module.include_dirs;
+    mod.addCSourceFile(.{ .file = b.path("tests/native/CameraClientTest.cpp"), .flags = std.mem.concat(b.allocator, []const u8, &.{ libraries.flags, &.{"-UNDEBUG"} }) catch @panic("OOM") });
+    mod.addObjectFile(platform);
+    mod.linkLibrary(binder);
+    mod.linkLibrary(ndk);
+    const exe = b.addExecutable(.{ .name = "camera-client-test", .root_module = mod });
+    _ = @import("surfaceflinger.zig").runBinaryTest(b, exe.getEmittedBin(), binder, ndk, broker, "camera-client", "Verify original CameraBase discovery and native Binder client contracts", .standalone, null, &.{platform}, &.{});
 }
 
 pub fn clientTest(b: *std.Build, libraries: Libraries, platform: std.Build.LazyPath, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile, broker: *std.Build.Step.Compile) void {

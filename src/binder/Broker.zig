@@ -333,6 +333,8 @@ fn seedProperties(props: *prop_area.Area) prop_area.Error!void {
         .{ "ro.product.cpu.abilist64", "x86_64,arm64-v8a" },
         .{ "ro.product.cpu.abilist32", "" },
         .{ "ro.hardware", "artzig" },
+        // CameraUtils uses the standard no-cameraserver configuration before waiting.
+        .{ "config.disable_cameraservice", "true" },
         .{ "ro.debuggable", "0" },
         .{ "ro.hw_timeout_multiplier", "1" },
         .{ "debug.force_rtl", "0" },

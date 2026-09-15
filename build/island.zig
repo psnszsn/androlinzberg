@@ -365,6 +365,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     // Stock media extractor client/service, descrambler and their native data types.
     // Keep Android's loader declarations separate from the host libc headers.
     const extractor_headers = b.addWriteFiles();
+    _ = extractor_headers.addCopyFile(o.aosp.path(b, "bionic/libc/include/android/api-level.h"), "android/api-level.h");
     _ = extractor_headers.addCopyFile(o.aosp.path(b, "bionic/libc/include/android/dlext.h"), "android/dlext.h");
     const extractor_includes = &[_]std.Build.LazyPath{
         o.aosp.path(b, "frameworks/av/media/module/extractors/wav/include"),
@@ -432,6 +433,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{ "android_media_MediaCodec.cpp", "android_media_MediaCodecList.cpp" }, codec_includes.items, &.{ "-D__ANDROID__", "-D__ANDROID_API__=36", "-Dbetoh64=be64toh", "-D__unused=__attribute__((unused))", "-Wno-invalid-specialization" });
     codec_includes.append(b.allocator, o.aosp.path(b, "frameworks/base/libs/hwui/apex/include")) catch @panic("OOM");
     g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{ "android_media_MediaMetadataRetriever.cpp", "android_media_SyncParams.cpp" }, codec_includes.items, &.{ "-D__ANDROID__", "-D__ANDROID_API__=36", "-D__unused=__attribute__((unused))", "-D__packed=__attribute__((packed))" });
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_hardware_Camera.cpp"}, codec_includes.items, &.{ "-D__ANDROID__", "-D__ANDROID_API__=36", "-D__unused=__attribute__((unused))", "-D__packed=__attribute__((packed))", "-D__BIONIC_AVAILABILITY_GUARD(x)=1", "-include", "android/api-level.h" });
     g.add(b.path("src/native"), &.{"MediaPlayerJniBridge.cpp"}, codec_includes.items, &.{ "-D__ANDROID__", "-D__ANDROID_API__=36", "-D__unused=__attribute__((unused))", "-D__packed=__attribute__((packed))", "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections" });
     g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{ "android_media_MediaCrypto.cpp", "android_media_MediaDrm.cpp" }, drm_includes, &.{"-Dbetoh64=be64toh"});
     g.add(o.aosp.path(b, "frameworks/av/drm/libmediadrm"), &.{
@@ -571,7 +573,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.incremental_sysprop_source.dirname(), &.{"IncrementalProperties.sysprop.cpp"}, &.{}, &.{});
     for (o.aidl_source_roots, @import("generator_sources.zig").cpp_aidl) |root, entry| {
         // Codec2's native library owns its work and bufferpool protocols.
-        if (@import("codec2.zig").isProtocol(entry) or @import("codec2.zig").isClientProtocol(entry) or @import("codec2.zig").isResourceProtocol(entry) or @import("codec2.zig").isPlayerProtocol(entry)) continue;
+        if (@import("codec2.zig").isProtocol(entry) or @import("codec2.zig").isClientProtocol(entry) or @import("codec2.zig").isResourceProtocol(entry) or @import("codec2.zig").isPlayerProtocol(entry) or @import("codec2.zig").isCameraProtocol(entry)) continue;
         if (entry.output) |output| g.add(root, &.{output}, extractor_includes, &.{});
     }
     g.add(o.aosp.path(b, "frameworks/native/libs/input"), &gen.input_srcs, &.{ fn_inc, o.aosp.path(b, "frameworks/native/libs/input"), input_compat_inc, binder_inc }, &.{aidl_inc});
@@ -589,6 +591,10 @@ pub fn build(b: *std.Build, o: Options) Result {
         o.aosp.path(b, "frameworks/native/libs/binderthreadstate/include"),
     }, &.{});
     for (gen.core_jni_srcs) |file| {
+        if (std.mem.eql(u8, file, "android_hardware_camera2_CameraMetadata.cpp")) {
+            g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{file}, &.{ o.aosp.path(b, "frameworks/av/camera/include/camera"), o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{});
+            continue;
+        }
         // The host AndroidRuntime header omits the platform's transitive trace include.
         const extra: []const []const u8 = if (std.mem.eql(u8, file, "android_view_InputEventReceiver.cpp"))
             &.{ aidl_inc, "-include", "utils/Trace.h" }
@@ -803,6 +809,11 @@ pub fn build(b: *std.Build, o: Options) Result {
         link.addArg("-Wl,-u,_ZN7android17SimpleC2Component4intfEv");
         link.addArg("-Wl,-u,_ZN7android17SimpleC2InterfaceIvE10BaseParams16noPrivateBuffersEv");
         link.addArg("-Wl,-u,_ZNK4aidl7android8hardware5media2c25utils14ComponentStore6statusEv");
+        // JNI and MediaPlayerService share every libcamera_client parcelable and
+        // parameter implementation, including symbols used only by the service.
+        link.addArg("-Wl,--whole-archive");
+        link.addFileArg(codec2.camera.getEmittedBin());
+        link.addArg("-Wl,--no-whole-archive");
         link.addFileArg(codec2.client.getEmittedBin());
         link.addFileArg(codec2.transport.getEmittedBin());
     }

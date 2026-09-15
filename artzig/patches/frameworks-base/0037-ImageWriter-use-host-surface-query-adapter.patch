@@ -5,19 +5,7 @@ Keep ImageReader, ImageWriter and SurfaceUtils Java sources and registration
 unchanged. The installed media_jni library supports their stock initialization.
 Enable actual gralloc usage, HardwareBuffer and image-plane operations; the
 Layoutlib branches deliberately erase CPU usage and are unsuitable for GBM.
-Remove an unused camera header from the native surface queries.
 
-diff --git a/core/jni/android_hardware_camera2_utils_SurfaceUtils.cpp b/core/jni/android_hardware_camera2_utils_SurfaceUtils.cpp
---- a/core/jni/android_hardware_camera2_utils_SurfaceUtils.cpp
-+++ b/core/jni/android_hardware_camera2_utils_SurfaceUtils.cpp
-@@ -16,7 +16,6 @@
- 
- #define LOG_TAG "Camera-SurfaceUtils-JNI"
- // #define LOG_NDEBUG 0
--#include <camera/CameraUtils.h>
- #include <utils/Errors.h>
- #include <utils/Log.h>
- #include <utils/Trace.h>
 diff --git a/core/jni/android_media_ImageReader.cpp b/core/jni/android_media_ImageReader.cpp
 --- a/core/jni/android_media_ImageReader.cpp
 +++ b/core/jni/android_media_ImageReader.cpp

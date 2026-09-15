@@ -721,6 +721,7 @@ pub fn build(b: *std.Build) void {
     const island = @import("build/island.zig").build(b, island_options);
     const media_service_probe = @import("build/codec2.zig").serviceProbe(b, codec2, island.file, binder_cpp, binder_ndk);
     b.step("island", "Build libandroid_platform.so").dependOn(island.step);
+    @import("build/codec2.zig").cameraTest(b, codec2, island.file, binder_cpp, binder_ndk, binder_broker);
     @import("build/codec2.zig").clientTest(b, codec2, island.file, binder_cpp, binder_ndk, binder_broker);
     @import("build/codec2.zig").resourceTests(b, codec2, island.file, binder_cpp, binder_ndk, binder_broker);
     const idmap2 = @import("build/idmap2.zig").build(b, .{
@@ -1748,6 +1749,7 @@ pub fn build(b: *std.Build) void {
         "source-identity-test",
         "binder-jni-source-test",
         "codec2-client-test",
+        "camera-client-test",
         "codec2-transport-test",
         "codec2-allocator-test",
         "codec2-bufferpool-test",

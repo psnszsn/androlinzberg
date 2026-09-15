@@ -1,16 +1,9 @@
 package dev.artzig
 
 import android.app.ActivityThread
-import android.content.AttributionSourceState
 import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.hardware.Camera
-import android.hardware.ICameraService
-import android.os.Binder
-import android.os.IBinder
-import android.os.Parcel
-import android.os.ServiceManager
-import android.os.ServiceSpecificException
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Modifier
 
@@ -85,80 +78,14 @@ internal object StockLegacyCameraSmoke {
         rejects<RuntimeException> { camera.startPreview() }
     }
 
-    private class Service : Binder() {
-        var failCount = false
-        var failInfo = false
-        var connectCalls = 0
-        private fun transaction(name: String): Int = ICameraService.Stub::class.java
-            .getDeclaredField("TRANSACTION_$name").apply { isAccessible = true }.getInt(null)
-        private val countCode = transaction("getNumberOfCameras")
-        private val infoCode = transaction("getCameraInfo")
-        private val connectCode = transaction("connect")
-
-        override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
-            if (code !in setOf(countCode, infoCode, connectCode)) return super.onTransact(code, data, reply, flags)
-            data.enforceInterface("android.hardware.ICameraService")
-            val out = checkNotNull(reply)
-            when (code) {
-                countCode -> check(data.readInt() == ICameraService.CAMERA_TYPE_BACKWARD_COMPATIBLE)
-                infoCode -> { check(data.readInt() == 1); check(data.readInt() == 0) }
-                connectCode -> {
-                    checkNotNull(data.readStrongBinder())
-                    check(data.readInt() == 1)
-                    check(data.readInt() > 0)
-                    check(data.readInt() == 0)
-                    data.readBoolean()
-                    connectCalls++
-                }
-            }
-            val attribution = checkNotNull(data.readTypedObject(AttributionSourceState.CREATOR))
-            if (code != connectCode) {
-                check(attribution.uid == ICameraService.USE_CALLING_UID)
-                check(attribution.pid == ICameraService.USE_CALLING_PID)
-            }
-            check(data.readInt() == 0)
-            data.enforceNoDataAvail()
-            if ((code == countCode && failCount) || (code == infoCode && failInfo) || code == connectCode) {
-                out.writeException(ServiceSpecificException(ICameraService.ERROR_DISCONNECTED, "fixture disconnected"))
-            } else {
-                out.writeNoException()
-                if (code == countCode) out.writeInt(2)
-                else out.writeTypedObject(android.hardware.CameraInfo().apply {
-                    info.facing = Camera.CameraInfo.CAMERA_FACING_FRONT
-                    info.orientation = 270
-                }, 0)
-            }
-            return true
-        }
-    }
-
     private fun services() {
-        @Suppress("UNCHECKED_CAST")
-        val cache = ServiceManager::class.java.getDeclaredField("sCache")
-            .apply { isAccessible = true }.get(null) as MutableMap<String, IBinder>
-        val previous = cache.remove("media.camera")
+        check(android.os.SystemProperties.getBoolean("config.disable_cameraservice", false))
         val context = ActivityThread.currentApplication().applicationContext
-        try {
-            check(Camera.getNumberOfCameras(context) == 0 && Camera.open() == null)
-            for (id in listOf(-1, 0, Int.MAX_VALUE)) {
-                check(rejects<RuntimeException> { Camera.getCameraInfo(id, context, 0, null) }.message == "Unknown camera ID")
-            }
-            check(rejects<RuntimeException> { Camera.open(0, context, 0) }.message == "Fail to connect to camera service")
-            val service = Service()
-            cache["media.camera"] = service
-            check(Camera.getNumberOfCameras(context) == 2)
-            val info = Camera.CameraInfo()
-            Camera.getCameraInfo(1, context, 0, info)
-            check(info.facing == Camera.CameraInfo.CAMERA_FACING_FRONT && info.orientation == 270)
-            check(rejects<RuntimeException> { Camera.open(1, context, 0) }.message == "Fail to connect to camera service")
-            check(service.connectCalls == 1)
-            service.failInfo = true
-            check(rejects<RuntimeException> { Camera.getCameraInfo(1, context, 0, info) }.message == "Fail to get camera info")
-            service.failCount = true
-            check(Camera.getNumberOfCameras(context) == 0)
-        } finally {
-            if (previous == null) cache.remove("media.camera") else cache["media.camera"] = previous
+        check(Camera.getNumberOfCameras(context) == 0 && Camera.open() == null)
+        for (id in listOf(-1, 0, Int.MAX_VALUE)) {
+            check(rejects<RuntimeException> { Camera.getCameraInfo(id, context, 0, null) }.message == "Unknown camera ID")
         }
+        check(rejects<RuntimeException> { Camera.open(0, context, 0) }.message == "Fail to connect to camera service")
     }
 
     fun run() {
