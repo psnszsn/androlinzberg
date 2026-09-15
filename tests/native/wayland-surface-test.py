@@ -125,15 +125,21 @@ try:
                     record = line(server, timeout=2)
                     if record == expected: break
                     assert record == 'presented 6', record
+                # The server publishes this only after releasing every buffer.
+                # Measure the fence/cleanup deadline here; a failing Debug Zig
+                # process subsequently formats its stack trace before exiting.
+                released_at = time.monotonic()
                 status = server.wait(timeout=2)
-                elapsed = time.monotonic() - shutdown_started
+                elapsed = released_at - shutdown_started
                 if a.scenario == 'fence-shutdown':
                     assert status == 0 and elapsed < .5, (status, elapsed)
                 else:
-                    assert status != 0 and .75 <= time.monotonic() - pending_started < 1.8
+                    pending_elapsed = released_at - pending_started
+                    assert status != 0 and .75 <= pending_elapsed < 1.8, (status, pending_elapsed)
                     assert 'surface queue acquire fence failed: -110' in (out / 'server.log').read_text()
                 result['live_buffers_after_shutdown'] = 0
                 result['fence_retirement'] = dict(exit=status, elapsed_millis=round(elapsed * 1000),
+                                                 process_exit_millis=round((time.monotonic() - shutdown_started) * 1000),
                                                  gpu_still_pending=True)
                 # Release GPU work even on the timeout path; the producer then
                 # verifies the queue's dead owner through its stock proxy.

@@ -54,8 +54,17 @@ public:
     vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, nullptr);
     std::vector<VkQueueFamilyProperties> families(count);
     vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, families.data());
+    // Keep the deliberate device-side wait off the graphics engine. On Mesa,
+    // a graphics VkEvent wait can stall unrelated EGL contexts on that engine.
+    // Timeline waits cannot substitute here: exporting their not-yet-submitted
+    // sync_file may block until the host signals the semaphore.
     uint32_t family = 0;
-    while (family < count && !(families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT)) ++family;
+    while (family < count && (!(families[family].queueFlags & VK_QUEUE_COMPUTE_BIT) ||
+                              (families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT))) ++family;
+    if (family == count) {
+      family = 0;
+      while (family < count && !(families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT)) ++family;
+    }
     assert(family < count);
     float priority = 1;
     VkDeviceQueueCreateInfo queueInfo{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
