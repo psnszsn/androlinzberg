@@ -32,9 +32,13 @@ int azk_codec_receive_audio_work(AzkCodecDecoder *, uint8_t *dst, int capacity,
 // 1 = retry, 2 = EOF; meta = 0/width/height/dataspace. Render consumes the frame
 // only on success and borrows a buffer whose acquire fence the caller waited.
 int azk_codec_use_video_allocator(AzkCodecDecoder *);
-int azk_codec_peek_video_work(AzkCodecDecoder *, int *meta, int64_t *pts_us,
+int azk_codec_peek_video_work(AzkCodecDecoder *, int cpu_yuv, int *meta, int64_t *pts_us,
                              uint64_t *frame_index);
 int azk_codec_render_video_work(AzkCodecDecoder *, const AzkGraphicsBufferInfo *);
+// Explicit ByteBuffer/thumbnail output. Planes have one byte per sample and
+// dimensions width/height, ceil(width/2)/ceil(height/2), respectively.
+int azk_codec_read_video_work(AzkCodecDecoder *, uint8_t *y, int y_stride,
+                              uint8_t *u, uint8_t *v, int c_stride);
 // 1 = one completed input work, 0 = none. All outputs must first be consumed.
 // Flush discards pending completions as well as queued output.
 int azk_codec_poll_completed_work(AzkCodecDecoder *, uint64_t *frame_index);

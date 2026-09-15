@@ -62,6 +62,17 @@ static void video(const std::shared_ptr<Codec2Client> &client, const char *name,
     auto listener = std::make_shared<Listener>();
     std::shared_ptr<Codec2Client::Component> component;
     assert(client->createComponent(name, listener, &component) == C2_OK);
+    // Raw output negotiation must not survive reset into a Surface decoder.
+    C2StreamUsageTuning::output cpuUsage(0u, C2MemoryUsage::CPU_READ);
+    std::vector<std::unique_ptr<C2SettingResult>> usageFailures;
+    assert(component->config({&cpuUsage}, C2_MAY_BLOCK, &usageFailures) == C2_OK && usageFailures.empty());
+    C2StreamPixelFormatInfo::output pixelFormat(0u);
+    std::vector<std::unique_ptr<C2Param>> queried;
+    assert(component->query({&pixelFormat}, {}, C2_MAY_BLOCK, &queried) == C2_OK);
+    assert(pixelFormat.value == HAL_PIXEL_FORMAT_YCBCR_420_888);
+    assert(component->reset() == C2_OK);
+    assert(component->query({&pixelFormat}, {}, C2_MAY_BLOCK, &queried) == C2_OK);
+    assert(pixelFormat.value == HAL_PIXEL_FORMAT_RGBX_8888);
     auto [consumer, surface] = BufferItemConsumer::create(GRALLOC_USAGE_HW_TEXTURE, 2);
     assert(native_window_api_connect(surface.get(), NATIVE_WINDOW_API_MEDIA) == OK);
     assert(surface->setGenerationNumber(37) == OK);

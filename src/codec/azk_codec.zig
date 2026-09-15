@@ -314,7 +314,7 @@ fn receiveAudio(d: *Dec, dst: [*]u8, dst_cap: c_int, out_meta: [*]c_int, out_pts
 
 /// Peek without consuming a decoded surface or its work reference. The caller
 /// allocates the matching C2 block and waits its acquire fence before render.
-pub export fn azk_codec_peek_video_work(d: *Dec, out_meta: [*]c_int, out_pts: *i64, out_work: *u64) c_int {
+pub export fn azk_codec_peek_video_work(d: *Dec, cpu_yuv: c_int, out_meta: [*]c_int, out_pts: *i64, out_work: *u64) c_int {
     if (!d.allocator_output) return -1;
     if (d.vqueue.items.len == 0) d.pushDecoded() catch return -1;
     if (d.vqueue.items.len == 0) return if (d.eof_out) 2 else 1;
@@ -324,7 +324,47 @@ pub export fn azk_codec_peek_video_work(d: *Dec, out_meta: [*]c_int, out_pts: *i
     out_meta[1] = frame.width;
     out_meta[2] = frame.height;
     out_meta[3] = frame.dataspace;
+    if (cpu_yuv != 0) out_meta[3] = (frame.dataspace & ~@as(c_int, 7 << 27)) |
+        (@as(c_int, if (frame.decoded.?.color_range == c.AVCOL_RANGE_JPEG) 1 else 2) << 27);
     out_pts.* = frame.pts;
+    return 0;
+}
+
+/// CPU output is requested explicitly by the original CCodec ByteBuffer path.
+/// Keep hardware decode and its work reference alive until all planes are read.
+pub export fn azk_codec_read_video_work(d: *Dec, y: [*]u8, ys: c_int, u: [*]u8, v: [*]u8, cs: c_int) c_int {
+    if (!d.allocator_output or d.vqueue.items.len == 0) return -1;
+    const queued = d.vqueue.items[0];
+    if (ys < queued.width or cs < @divTrunc(queued.width + 1, 2)) return -1;
+    var frame: ?*c.AVFrame = c.av_frame_alloc() orelse return -1;
+    defer c.av_frame_free(&frame);
+    var result = c.av_hwframe_transfer_data(frame, queued.decoded, 0);
+    if (result < 0) return result;
+    // Transfer does not copy frame properties, including decoder crop metadata.
+    result = c.av_frame_copy_props(frame, queued.decoded);
+    if (result < 0) return result;
+    result = c.av_frame_apply_cropping(frame, c.AV_FRAME_CROP_UNALIGNED);
+    if (result < 0) return result;
+    const f = frame.?;
+    if (f.width != queued.width or f.height != queued.height or
+        (f.format != c.AV_PIX_FMT_NV12 and f.format != c.AV_PIX_FMT_YUV420P)) return -1;
+    const w: usize = @intCast(f.width);
+    const h: usize = @intCast(f.height);
+    for (0..h) |row| @memcpy(y[row * @as(usize, @intCast(ys)) ..][0..w], f.data[0][row * @as(usize, @intCast(f.linesize[0])) ..][0..w]);
+    for (0..(h + 1) / 2) |row| {
+        for (0..(w + 1) / 2) |col| {
+            const dest = row * @as(usize, @intCast(cs)) + col;
+            if (f.format == c.AV_PIX_FMT_NV12) {
+                const source = row * @as(usize, @intCast(f.linesize[1])) + col * 2;
+                u[dest] = f.data[1][source];
+                v[dest] = f.data[1][source + 1];
+            } else {
+                u[dest] = f.data[1][row * @as(usize, @intCast(f.linesize[1])) + col];
+                v[dest] = f.data[2][row * @as(usize, @intCast(f.linesize[2])) + col];
+            }
+        }
+    }
+    d.vqueue.orderedRemove(0).release();
     return 0;
 }
 

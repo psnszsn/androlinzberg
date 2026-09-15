@@ -3,7 +3,8 @@
 // decoder libraries are replaced at the component boundary by system FFmpeg;
 // SimpleC2Component retains queue, listener, state and flush-generation handling.
 // Video follows C2SoftAvcDec's graphic output contract, with system VAAPI
-// converting directly into the supplied pool's RGBX buffer.
+// converting directly into the supplied pool's RGBX buffer for display, or
+// reading YUV planes for explicitly requested CPU output.
 #define LOG_TAG "AzkCodec2"
 #include <log/log.h>
 #include "FfmpegComponent.h"
@@ -105,8 +106,16 @@ public:
                 .withDefault(new C2StreamPictureSizeInfo::output(0u, 320, 240))
                 .withFields({C2F(size, width).inRange(2, 4096), C2F(size, height).inRange(2, 4096)})
                 .withSetter(SizeSetter).build());
+            addParameter(DefineParam(outputUsage, C2_PARAMKEY_OUTPUT_STREAM_USAGE)
+                .withDefault(new C2StreamUsageTuning::output(0u, 0))
+                .withFields({C2F(outputUsage, value).any()})
+                .withSetter(Setter<decltype(*outputUsage)>::StrictValueWithNoDeps).build());
             addParameter(DefineParam(pixelFormat, C2_PARAMKEY_PIXEL_FORMAT)
-                .withConstValue(new C2StreamPixelFormatInfo::output(0u, HAL_PIXEL_FORMAT_RGBX_8888)).build());
+                .withDefault(new C2StreamPixelFormatInfo::output(0u, HAL_PIXEL_FORMAT_RGBX_8888))
+                .withFields({C2F(pixelFormat, value).oneOf({HAL_PIXEL_FORMAT_RGBX_8888,
+                    HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED, HAL_PIXEL_FORMAT_YCBCR_420_888,
+                    HAL_PIXEL_FORMAT_YV12})})
+                .withSetter(PixelFormatSetter, outputUsage).build());
             addParameter(DefineParam(dataspace, C2_PARAMKEY_DATA_SPACE)
                 .withDefault(new C2StreamDataSpaceInfo::output(0u, 0))
                 .withFields({C2F(dataspace, value).any()})
@@ -145,7 +154,21 @@ public:
         auto guard = lock();
         return {size->width, size->height, dataspace->value};
     }
+    bool cpuVideo() const {
+        auto guard = lock();
+        return pixelFormat->value == HAL_PIXEL_FORMAT_YCBCR_420_888 ||
+               pixelFormat->value == HAL_PIXEL_FORMAT_YV12;
+    }
 private:
+    static C2R PixelFormatSetter(bool, C2P<C2StreamPixelFormatInfo::output> &next,
+                                 const C2P<C2StreamUsageTuning::output> &usage) {
+        // CCodecBufferChannel sets CPU_READ for ByteBuffer consumers. Surface
+        // consumers keep the direct RGB DMA-BUF path even if their input format
+        // requests flexible YUV. Report the actual output format in either mode.
+        next.set().value = (usage.v.value & C2MemoryUsage::CPU_READ)
+            ? HAL_PIXEL_FORMAT_YCBCR_420_888 : HAL_PIXEL_FORMAT_RGBX_8888;
+        return C2R::Ok();
+    }
     static C2R ProfileLevelSetter(bool, const C2P<C2StreamProfileLevelInfo::input> &old,
                                   C2P<C2StreamProfileLevelInfo::input> &next) {
         C2R result = C2R::Ok();
@@ -167,7 +190,7 @@ private:
     }
     static C2R ColorSetter(bool, C2P<C2StreamColorAspectsInfo::output> &next,
                            const C2P<C2StreamDataSpaceInfo::output> &dataspace) {
-        // The VAAPI seam emits SDR RGB with BT709/BT601 standards. Those
+        // The VAAPI seam reports SDR RGB/YUV with BT709/BT601 standards. Those
         // dataspace fields share the SDK values consumed by the pinned mapper.
         C2Mapper::map(int32_t((dataspace.v.value >> 27) & 7), &next.set().range);
         C2Mapper::map(int32_t((dataspace.v.value >> 16) & 63), &next.set().primaries, &next.set().matrix);
@@ -191,6 +214,7 @@ private:
     }
     std::shared_ptr<C2StreamPictureSizeInfo::output> size;
     std::shared_ptr<C2StreamPixelFormatInfo::output> pixelFormat;
+    std::shared_ptr<C2StreamUsageTuning::output> outputUsage;
     std::shared_ptr<C2StreamDataSpaceInfo::output> dataspace;
     std::shared_ptr<C2StreamCropRectInfo::output> crop;
     std::shared_ptr<C2StreamColorAspectsInfo::output> color;
@@ -224,6 +248,14 @@ private:
     void onReset() override {
         onRelease(); mCsd.clear(); mOpusHeaders = 0;
         mDelay = mPreRoll = mDiscard = 0;
+        if (mFormat.video()) {
+            // The next start supplies CPU_READ again for a raw consumer. Do not
+            // carry it into a subsequent Surface configuration on this component.
+            C2StreamUsageTuning::output usage(0u, 0);
+            std::vector<std::unique_ptr<C2SettingResult>> failures;
+            if (intf()->config_vb({&usage}, C2_MAY_BLOCK, &failures) != C2_OK ||
+                !failures.empty()) mError = C2_CORRUPTED;
+        }
     }
     void onRelease() override {
         if (mDecoder) azk_codec_close(mDecoder);
@@ -345,7 +377,8 @@ private:
                             const std::unique_ptr<C2Work> &current) {
         for (;;) {
             int meta[4]; int64_t pts; uint64_t index;
-            int result = azk_codec_peek_video_work(mDecoder, meta, &pts, &index);
+            const bool cpu = mParams->cpuVideo();
+            int result = azk_codec_peek_video_work(mDecoder, cpu, meta, &pts, &index);
             if (result == 1 || result == 2) return C2_OK;
             if (result != 0) return C2_CORRUPTED;
             std::vector<std::unique_ptr<C2Param>> updates;
@@ -358,12 +391,37 @@ private:
                 updates.emplace_back(C2Param::Copy(size));
                 updates.emplace_back(C2Param::Copy(dataspace));
                 // Include dependent metadata in the same output work. CCodec's
-                // original mapper exposes the converted RGB color and crop.
+                // original mapper exposes the output color and crop.
                 if (intf()->query_vb({}, {C2StreamCropRectInfo::output::PARAM_TYPE,
-                                        C2StreamColorAspectsInfo::output::PARAM_TYPE},
+                                        C2StreamColorAspectsInfo::output::PARAM_TYPE,
+                                        C2StreamPixelFormatInfo::output::PARAM_TYPE},
                                      C2_MAY_BLOCK, &updates) != C2_OK) return C2_CORRUPTED;
             }
             std::shared_ptr<C2GraphicBlock> block;
+            if (cpu) {
+                // Match C2SoftAvcDec's YV12 block contract for stock raw output.
+                auto status = pool->fetchGraphicBlock((meta[1] + 1) & ~1, (meta[2] + 1) & ~1,
+                        HAL_PIXEL_FORMAT_YV12, C2MemoryUsage(C2MemoryUsage::CPU_READ,
+                        C2MemoryUsage::CPU_WRITE), &block);
+                if (status != C2_OK) return status;
+                {
+                    C2GraphicView view = block->map().get();
+                    if (view.error() != C2_OK) return view.error();
+                    const auto layout = view.layout();
+                    if (layout.type != C2PlanarLayout::TYPE_YUV ||
+                        layout.planes[0].colInc != 1 || layout.planes[1].colInc != 1 ||
+                        layout.planes[2].colInc != 1 ||
+                        layout.planes[1].rowInc != layout.planes[2].rowInc) return C2_CORRUPTED;
+                    result = azk_codec_read_video_work(mDecoder, view.data()[0],
+                        layout.planes[0].rowInc, view.data()[1], view.data()[2],
+                        layout.planes[1].rowInc);
+                    if (result) return C2_CORRUPTED;
+                }
+                auto buffer = createGraphicBuffer(block, C2Rect(meta[1], meta[2]));
+                buffer->setInfo(std::make_shared<C2StreamDataSpaceInfo::output>(0u, meta[3]));
+                emit(index, pts, std::move(buffer), std::move(updates), current);
+                continue;
+            }
             // The original IGBA pool waits both allocation availability and the
             // acquire fence in this overload. Preserve its block and pool data.
             auto status = pool->fetchGraphicBlock(meta[1], meta[2], HAL_PIXEL_FORMAT_RGBX_8888,

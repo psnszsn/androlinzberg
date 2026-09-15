@@ -1,5 +1,5 @@
 //! Linux graphics buffer backend for AOSP GrallocMapper/Allocator adapters.
-//! Wire handles contain owned DMA-BUF or linear BLOB storage and validated metadata.
+//! Wire handles contain owned DMA-BUF or linear BLOB/YV12 storage and validated metadata.
 //! No process-local GBM pointer is transported. OS resource ownership uses std.Io.
 const std = @import("std");
 const Io = std.Io;
@@ -39,9 +39,18 @@ pub const Handle = extern struct {
 pub const Info = @import("graphics_types.zig").Info;
 const Buffer = struct { handle: *Handle, bo: ?*Bo, mapping: ?Io.File.MemoryMap = null, file: Io.File, info: Info, charged_bytes: u64, map_token: ?*anyopaque = null, mapped: bool = false, mapped_address: ?[*]u8 = null, mapped_stride: u32 = 0, cpu_view: ?[]u8 = null, cpu_write: bool = false };
 const Imported = extern struct { width: u32, height: u32, format: u32, num_fds: u32, fds: [4]c_int, strides: [4]c_int, offsets: [4]c_int, modifier: u64 };
+// Android YV12: even dimensions, 16-byte luma/chroma strides, Y then V then U.
+const yv12: u32 = 0x32315659;
+fn cpuStorage(format: u32) bool {
+    return format == 0x21 or format == yv12;
+}
+fn chromaStride(stride: u32) u32 {
+    return (stride / 2 + 15) & ~@as(u32, 15);
+}
 const Format = struct { drm: u32, bpp: u32 };
 fn formatInfo(format: u32) ?Format {
     return switch (format) {
+        yv12 => .{ .drm = 0, .bpp = 1 },
         0x21 => .{ .drm = 0, .bpp = 1 }, // Android BLOB: byte storage, not an EGL image
         1 => .{ .drm = 0x34324241, .bpp = 4 }, // ABGR8888
         2 => .{ .drm = 0x34324258, .bpp = 4 }, // XBGR8888
@@ -53,7 +62,7 @@ fn formatInfo(format: u32) ?Format {
     };
 }
 fn valid(width: u32, height: u32, format: u32, layers: u32, usage: u64) bool {
-    // Single-plane RGB UI buffers and CPU-only BLOB codec allocations. Reject protected,
+    // RGB UI buffers and CPU-only BLOB/YV12 codec allocations. Reject protected,
     // sensor/direct-data and vendor-specific usage instead of guessing a layout.
     const supported_usage: u64 = 0xff | (1 << 8) | (1 << 9) | (1 << 11) | (1 << 12) | (1 << 16) | (1 << 17);
     const cpu_read = usage & 0xf;
@@ -62,6 +71,7 @@ fn valid(width: u32, height: u32, format: u32, layers: u32, usage: u64) bool {
         (cpu_write != 0 and cpu_write != 2 and cpu_write != 3)) return false;
     if (format == 0x21) return width > 0 and width <= Budget.max_buffer_bytes and height == 1 and
         layers == 1 and usage & ~@as(u64, 0xff) == 0;
+    if (format == yv12 and (width % 2 != 0 or height % 2 != 0 or usage & ~@as(u64, 0xff) != 0)) return false;
     return width > 0 and height > 0 and width <= 16384 and height <= 16384 and
         layers == 1 and formatInfo(format) != null and usage & ~supported_usage == 0;
 }
@@ -110,7 +120,8 @@ fn configuredLimit(comptime T: type, name: [*:0]const u8, maximum: T) T {
     return @min(std.fmt.parseInt(T, std.mem.span(value), 10) catch return 0, maximum);
 }
 fn layoutBytes(info: Info) u64 {
-    return @as(u64, info.offset) + @as(u64, info.stride) * info.height;
+    return @as(u64, info.offset) + @as(u64, info.stride) * info.height +
+        (if (info.format == yv12) @as(u64, chromaStride(info.stride)) * info.height else 0);
 }
 fn ensureIo() void {
     if (initialized.load(.acquire) == 2) return;
@@ -161,6 +172,8 @@ fn swappedChannels(info: Info) bool {
 fn validDescription(info: Info) bool {
     if (!valid(info.width, info.height, info.format, info.layers, info.usage) or info.fd < 0 or info.reserved != 0) return false;
     const format = formatInfo(info.format).?;
+    if (info.format == yv12) return info.drm_format == 0 and info.modifier == 0 and info.offset == 0 and
+        info.stride == ((info.width + 15) & ~@as(u32, 15));
     if (info.format == 0x21) return info.drm_format == 0 and info.modifier == 0 and
         info.offset == 0 and info.stride == info.width;
     return (info.drm_format == format.drm or swappedChannels(info)) and info.stride % format.bpp == 0 and
@@ -196,7 +209,7 @@ fn register(bo: *Bo, info_in: Info, output: *?*Handle) i32 {
     return registerStorage(bo, file, info, output);
 }
 
-// Takes ownership of both resources, including on failure. A BLOB has no GBM object.
+// Takes ownership of both resources, including on failure. CPU storage has no GBM object.
 fn registerStorage(bo: ?*Bo, file: Io.File, info_in: Info, output: *?*Handle) i32 {
     var info = info_in;
     info.fd = file.handle;
@@ -237,19 +250,20 @@ pub export fn azk_graphics_allocate(width: u32, height: u32, format: u32, layers
     defer unlock();
     const f = formatInfo(format).?;
     if (!budget.fits(@as(u64, width) * height * f.bpp)) return -12;
-    if (format == 0x21) {
-        // C2AllocatorBlob uses gralloc for compressed/PCM bytes. Keep those bytes
-        // in shared CPU storage; they never enter GBM, EGL or a rendering copy.
-        const raw = std.os.linux.memfd_create("azk-codec-blob", std.os.linux.MFD.CLOEXEC);
+    if (cpuStorage(format)) {
+        const stride = if (format == yv12) (width + 15) & ~@as(u32, 15) else width;
+        var info: Info = .{ .width = width, .height = height, .format = format, .layers = 1, .usage = usage, .drm_format = 0, .stride = stride, .offset = 0, .modifier = 0, .id = 0, .fd = -1 };
+        // C2 uses gralloc for compressed/PCM bytes and CPU-readable video planes.
+        // These allocations never enter GBM, EGL or a rendering copy.
+        const raw = std.os.linux.memfd_create("azk-codec-cpu", std.os.linux.MFD.CLOEXEC);
         if (std.os.linux.errno(raw) != .SUCCESS) return -12;
         const file: Io.File = .{ .handle = @intCast(raw), .flags = .{ .nonblocking = false } };
-        file.setLength(io, width) catch {
+        file.setLength(io, layoutBytes(info)) catch {
             file.close(io);
             return -12;
         };
-        var id: u64 = undefined;
-        io.random(std.mem.asBytes(&id));
-        return registerStorage(null, file, .{ .width = width, .height = 1, .format = format, .layers = 1, .usage = usage, .drm_format = 0, .stride = width, .offset = 0, .modifier = 0, .id = id, .fd = file.handle }, output);
+        io.random(std.mem.asBytes(&info.id));
+        return registerStorage(null, file, info, output);
     }
     const d = getDevice() orelse return -19;
     // Legacy GBM allocation can report INVALID (implicit layout) even with
@@ -275,7 +289,7 @@ pub export fn azk_graphics_import(raw: *const Handle, output: *?*Handle) callcon
 /// Input FDs remain borrowed; registration owns a new descriptor and buffer ID.
 pub export fn azk_graphics_import_external(raw: *const Info, output: *?*Handle) callconv(.c) i32 {
     output.* = null;
-    if (raw.format == 0x21 or !validDescription(raw.*)) return -22;
+    if (cpuStorage(raw.format) or !validDescription(raw.*)) return -22;
     lock();
     defer unlock();
     var info = raw.*;
@@ -292,8 +306,8 @@ fn importBuffer(info: Info, output: *?*Handle) i32 {
         const extent = @as(u64, info.offset) + @as(u64, info.stride) * (info.height - 1) + @as(u64, info.width) * formatInfo(info.format).?.bpp;
         if (extent > stat.size) return -22;
     }
-    if (info.format == 0x21) {
-        if (stat.kind != .file or stat.size != info.width) return -22;
+    if (cpuStorage(info.format)) {
+        if (stat.kind != .file or stat.size != layoutBytes(info)) return -22;
         var path_buffer: [64]u8 = undefined;
         const path = std.fmt.bufPrint(&path_buffer, "/proc/self/fd/{d}", .{info.fd}) catch return -22;
         const file = Io.Dir.cwd().openFile(io, path, .{ .mode = .read_write }) catch return -22;
@@ -333,7 +347,7 @@ pub export fn azk_graphics_supported(w: u32, h: u32, f: u32, layers: u32, usage:
     if (!valid(w, h, f, layers, usage)) return 0;
     lock();
     defer unlock();
-    if (f == 0x21) return 1;
+    if (cpuStorage(f)) return 1;
     const d = getDevice() orelse return -19;
     return @intFromBool(gbm_device_is_format_supported(d, formatInfo(f).?.drm, gbmUsage(usage)) != 0);
 }
@@ -350,8 +364,8 @@ pub export fn azk_graphics_lock(handle: *const Handle, usage: u64, left: i32, to
         (!entire_buffer and (right <= left or bottom <= top)) or
         right > b.info.width or bottom > b.info.height or (usage & 0xf != 0 and b.info.usage & 0xf == 0) or
         (usage & 0xf0 != 0 and b.info.usage & 0xf0 == 0)) return -22;
-    if (b.info.format == 0x21) {
-        var mapping = b.file.createMemoryMap(io, .{ .len = b.info.width, .protection = .{ .read = usage & 0xf != 0, .write = usage & 0xf0 != 0 } }) catch return -12;
+    if (cpuStorage(b.info.format)) {
+        var mapping = b.file.createMemoryMap(io, .{ .len = @intCast(layoutBytes(b.info)), .protection = .{ .read = usage & 0xf != 0, .write = usage & 0xf0 != 0 } }) catch return -12;
         mapping.read(io) catch {
             mapping.destroy(io);
             return -5;
@@ -361,7 +375,7 @@ pub export fn azk_graphics_lock(handle: *const Handle, usage: u64, left: i32, to
         b.mapped = true;
         b.cpu_write = usage & 0xf0 != 0;
         pixel_stride.* = 1;
-        row_stride.* = @intCast(b.info.width);
+        row_stride.* = @intCast(b.info.stride);
         return 0;
     }
     var stride: u32 = 0;
@@ -500,6 +514,20 @@ test "wire metadata rejects malformed and unsupported buffers without a device" 
     encode(&raw.h, info);
     raw.h.num_fds = 2;
     try std.testing.expect(decode(&raw.h) == null);
+}
+
+test "YV12 requires even CPU-only storage and the full aligned chroma extent" {
+    var info: Info = .{ .width = 34, .height = 18, .format = yv12, .layers = 1, .usage = 0x33, .drm_format = 0, .stride = 48, .offset = 0, .modifier = 0, .id = 1, .fd = 7 };
+    try std.testing.expect(validDescription(info));
+    try std.testing.expectEqual(@as(u64, 48 * 18 + 32 * 18), layoutBytes(info));
+    info.stride = 34;
+    try std.testing.expect(!validDescription(info));
+    info.stride = 48;
+    info.width = 33;
+    try std.testing.expect(!validDescription(info));
+    info.width = 34;
+    info.usage |= 1 << 8;
+    try std.testing.expect(!validDescription(info));
 }
 
 // AOSP calls the KHR spellings directly; GLVND exposes these through

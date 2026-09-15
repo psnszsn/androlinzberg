@@ -15,7 +15,7 @@ namespace android::azk {
 namespace {
 // Android BLOB dimensions and stride are byte counts (C2AllocatorBlob).
 uint32_t storageBytesPerPixel(PixelFormat format) {
-  return format == HAL_PIXEL_FORMAT_BLOB ? 1 : bytesPerPixel(format);
+  return format == HAL_PIXEL_FORMAT_BLOB || format == HAL_PIXEL_FORMAT_YV12 ? 1 : bytesPerPixel(format);
 }
 class Mapper final : public GrallocMapper {
 public:
@@ -79,10 +79,28 @@ public:
     }
     return status;
   }
-  status_t lock(buffer_handle_t, uint64_t, const Rect &, int fence,
-                android_ycbcr *) const override {
+  status_t lock(buffer_handle_t handle, uint64_t usage, const Rect &rect, int fence,
+                android_ycbcr *out) const override {
     auto acquire = sp<Fence>::make(fence);
-    return INVALID_OPERATION;
+    auto status = acquire->wait(3000);
+    if (status != OK) return status;
+    AzkGraphicsBufferInfo info{};
+    if (azk_graphics_describe(handle, &info) || info.format != HAL_PIXEL_FORMAT_YV12)
+      return BAD_VALUE;
+    void *address = nullptr;
+    int32_t pixelStride, rowStride;
+    status = azk_graphics_lock(handle, usage, rect.left, rect.top, rect.right,
+                               rect.bottom, &address, &pixelStride, &rowStride);
+    if (status != OK) return status;
+    // system/graphics-base-v1.0.h specifies aligned Y, V, U plane storage.
+    *out = {};
+    out->y = address;
+    out->ystride = rowStride;
+    out->cstride = (rowStride / 2 + 15) & ~15;
+    out->chroma_step = 1;
+    out->cr = static_cast<uint8_t *>(address) + rowStride * info.height;
+    out->cb = static_cast<uint8_t *>(out->cr) + out->cstride * (info.height / 2);
+    return OK;
   }
   int unlock(buffer_handle_t handle) const override {
     auto status = azk_graphics_unlock(handle);
@@ -156,6 +174,21 @@ public:
       value.sizeInBits = bits;
       plane.components.push_back(std::move(value));
     };
+    if (info.format == HAL_PIXEL_FORMAT_YV12) {
+      out->clear();
+      for (auto type : {Component::Y, Component::CR, Component::CB}) {
+        plane.components.clear();
+        component(type, 0, 8);
+        out->push_back(plane);
+        plane.offsetInBytes += plane.totalSizeInBytes;
+        plane.horizontalSubsampling = plane.verticalSubsampling = 2;
+        plane.widthInSamples = info.width / 2;
+        plane.heightInSamples = info.height / 2;
+        plane.strideInBytes = (info.stride / 2 + 15) & ~15;
+        plane.totalSizeInBytes = plane.strideInBytes * plane.heightInSamples;
+      }
+      return OK;
+    }
     switch (info.format) {
     case HAL_PIXEL_FORMAT_BLOB:
       component(Component::RAW, 0, 8);
