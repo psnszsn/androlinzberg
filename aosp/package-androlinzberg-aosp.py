@@ -138,10 +138,6 @@ packager.PATCH_SERIES = framework_patches + (
     ),
     (
         "frameworks/native",
-        patch_root / "frameworks-native" / "0006-surfacetexture-host-egl.patch",
-    ),
-    (
-        "frameworks/native",
         patch_root / "frameworks-native" / "0007-nativewindow-link-stock-parcel-operations.patch",
     ),
     (

@@ -21,16 +21,16 @@ pub const Result = struct {
 };
 
 const island_packages = [_][]const u8{
-    "harfbuzz",   "harfbuzz-icu", "freetype2",  "fontconfig", "icu-uc",          "icu-i18n",
-    "libpng",     "zlib",         "openssl",    "sqlite3",    "egl",             "gl",
-    "gbm",        "libdrm",       "expat",      "libjpeg",    "libwebp",         "libwebpdemux",
-    "libwebpmux", "glesv2",       "libselinux", "glesv1_cm",  "libpipewire-0.3", "vulkan",
+    "harfbuzz",   "harfbuzz-subset", "harfbuzz-icu",    "freetype2", "fontconfig",   "icu-uc",     "icu-i18n",
+    "libpng",     "zlib",            "openssl",         "sqlite3",   "egl",          "gl",         "gbm",
+    "libdrm",     "expat",           "libjpeg",         "libwebp",   "libwebpdemux", "libwebpmux", "glesv2",
+    "libselinux", "glesv1_cm",       "libpipewire-0.3", "vulkan",
 };
 
 pub fn discover(b: *std.Build) Result {
     return .{
         .island = librarySet(b, &island_packages),
-        .skia = includeSet(b, &.{ "fontconfig", "expat", "freetype2", "libpng", "egl", "libjpeg", "glesv2", "libwebp", "libwebpdemux", "libwebpmux" }),
+        .skia = includeSet(b, &.{ "harfbuzz", "harfbuzz-subset", "zlib", "fontconfig", "expat", "freetype2", "libpng", "egl", "libjpeg", "glesv2", "libwebp", "libwebpdemux", "libwebpmux" }),
         .codec = includeSet(b, &.{ "libavcodec", "libavutil", "libva", "libdrm" }),
         .resolver = resolverLibrary(b),
     };

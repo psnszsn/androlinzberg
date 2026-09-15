@@ -5,6 +5,7 @@ const std = @import("std");
 const graphics = @import("graphics_buffer.zig");
 const Display = ?*anyopaque;
 const Image = ?*anyopaque;
+extern "c" fn eglGetDisplay(Display) Display;
 extern "c" fn eglInitialize(Display, *c_int, *c_int) c_uint;
 extern "c" fn eglTerminate(Display) c_uint;
 extern "c" fn eglQueryString(Display, c_int) ?[*:0]const u8;
@@ -71,6 +72,12 @@ export fn azk_graphics_egl_release(display: Display, remaining: ?*u64) c_uint {
     }
     if (remaining) |value| value.* = 0;
     return 0;
+}
+// Android's default display names this backend's GBM device. Other native
+// display handles retain Mesa's validation and error behavior.
+export fn azk_graphics_egl_get_display(native_display: Display) Display {
+    if (native_display != null) return eglGetDisplay(native_display);
+    return azk_graphics_egl_display();
 }
 export fn azk_graphics_egl_display() Display {
     const device = graphics.azk_graphics_gbm_device() orelse return null;

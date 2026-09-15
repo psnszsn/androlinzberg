@@ -696,7 +696,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     // These pinned files rely on Bionic/transitive includes for all_of, ioctl
     // and EXT4_SUPER_MAGIC. Declare those headers explicitly for host libc++.
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "com_android_internal_content_FileSystemUtils.cpp", "com_android_internal_content_NativeLibraryHelper.cpp" }, &.{ zip_inc, o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{ "-include", "algorithm", "-include", "sys/ioctl.h", "-include", "linux/magic.h" });
-    const hwui_includes = &.{
+    const hwui_includes = &[_]std.Build.LazyPath{
         apex_inc,                                                     hw_jni_inc,                                                  extractor_headers.getDirectory(),
         o.aosp.path(b, "frameworks/base/core/jni"),                   o.aosp.path(b, "frameworks/base/core/jni/include"),          o.aosp.path(b, "frameworks/native/opengl/libs/EGL"),
         o.aosp.path(b, "frameworks/native/opengl/libs/EGL/include"),  o.aosp.path(b, "frameworks/native/opengl/include"),          o.aosp.path(b, "frameworks/native/vulkan/include"),
@@ -776,6 +776,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_matrix.cpp"}, hwui_includes, &hwui_flags);
     g.add(o.aosp.path(b, "frameworks/base/services/core/jni"), &.{ "com_android_server_display_DisplayControl.cpp", "com_android_server_wm_TaskFpsCallbackController.cpp" }, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, hwui_includes, &hwui_flags);
+    // Pinned HWUI codecs and PDF writer, with their original Soong dependency closure.
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{ "jni/Movie.cpp", "jni/MovieImpl.cpp", "jni/GIFMovie.cpp", "jni/YuvToJpegEncoder.cpp", "jni/pdf/PdfDocument.cpp" }, hwui_includes ++ &[_]std.Build.LazyPath{ o.aosp.path(b, "external/giflib"), o.aosp.path(b, "external/libultrahdr/lib/include"), o.aosp.path(b, "external/libultrahdr"), o.aosp.path(b, "external/skia/include/docs") }, &hwui_flags);
+    g.add(o.aosp.path(b, "external/giflib"), &.{ "dgif_lib.c", "egif_lib.c", "gifalloc.c", "gif_err.c", "gif_hash.c", "quantize.c" }, &.{}, &.{"-DHAVE_REALLOCARRAY"});
+    g.add(o.aosp.path(b, "external/libultrahdr"), &@import("gen/island_sources.zig").ultrahdr_srcs, &.{ o.aosp.path(b, "external/libultrahdr"), o.aosp.path(b, "external/libultrahdr/lib/include"), o.aosp.path(b, "external/image_io/includes") }, &.{ "-DUHDR_ENABLE_INTRINSICS", "-DUHDR_WRITE_XMP", "-frtti" });
+    g.add(o.aosp.path(b, "external/image_io"), &@import("gen/island_sources.zig").image_io_srcs, &.{ o.aosp.path(b, "external/image_io/includes"), o.aosp.path(b, "external/modp_b64") }, &.{ "-DUNIX_ENV=1", "-frtti" });
+    g.add(o.aosp.path(b, "external/modp_b64"), &.{"modp_b64.cc"}, &.{o.aosp.path(b, "external/modp_b64/modp_b64")}, &.{});
     g.add(o.aosp.path(b, "libnativehelper"), &gen.nativehelper_srcs, &.{}, &.{ "-U_GNU_SOURCE", "-D_POSIX_C_SOURCE=200809L", "-D_DEFAULT_SOURCE" });
     var bridge_includes: std.ArrayList(std.Build.LazyPath) = .empty;
     bridge_includes.appendSlice(b.allocator, extractor_includes) catch @panic("OOM");
@@ -867,7 +873,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     }
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/properties.cpp"}, &.{apex_inc}, &.{});
     const texture_inc = o.aosp.path(b, "frameworks/native/libs/nativedisplay/include");
-    g.add(o.aosp.path(b, "frameworks/native/libs/nativedisplay"), &gen.surface_texture_srcs, &.{ texture_inc, b.path("src/native/graphics/include") }, &.{});
+    g.add(o.aosp.path(b, "frameworks/native/libs/nativedisplay"), &gen.surface_texture_srcs, &.{ texture_inc, b.path("src/native/graphics/include") }, &@import("graphics.zig").egl_consumer_flags);
     for (gen.texture_jni_srcs) |file| {
         const flags: []const []const u8 = if (std.mem.eql(u8, file, "android_view_Surface.cpp")) &android_abi_flags else &.{};
         g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{file}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), extractor_headers.getDirectory(), apex_inc, texture_inc }, flags);

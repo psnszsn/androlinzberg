@@ -42,7 +42,7 @@ extern "C" int azk_register_aaudio_smoke(JNIEnv* env);
 #include "android_os_NativeHandle.h"
 // AOSP C++ ABI bridge: register the framework/HWUI JNI natives with ART,
 // mirroring libs/hwui/apex/jni_runtime.cpp (layoutlib's entry) minus the classes
-// we don't ship yet (Movie and PDF).
+// we don't ship yet (PDF editing).
 #include <GraphicsJNI.h>
 #include <Bitmap.h>
 #include <jni/Bitmap.h>
@@ -115,6 +115,10 @@ extern int register_android_graphics_BitmapFactory(JNIEnv*);
 extern int register_android_graphics_BitmapRegionDecoder(JNIEnv*);
 extern int register_android_graphics_RuntimeXfermode(JNIEnv*);
 extern int register_android_graphics_Camera(JNIEnv*);
+extern int register_android_graphics_ByteBufferStreamAdaptor(JNIEnv*);
+extern int register_android_graphics_Movie(JNIEnv*);
+extern int register_android_graphics_YuvImage(JNIEnv*);
+namespace android { int register_android_graphics_pdf_PdfDocument(JNIEnv*); }
 extern int register_android_hardware_camera2_CameraMetadata(JNIEnv*);
 extern int register_android_hardware_Camera(JNIEnv*);
 extern int register_android_hardware_SensorManager(JNIEnv*);
@@ -788,7 +792,11 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_android_graphics_BitmapFactory),
             E(register_android_graphics_BitmapRegionDecoder),
             E(register_android_graphics_RuntimeXfermode),
+            E(register_android_graphics_ByteBufferStreamAdaptor),
             E(register_android_graphics_Camera),
+            E(register_android_graphics_Movie),
+            E(register_android_graphics_YuvImage),
+            E(android::register_android_graphics_pdf_PdfDocument),
             E(android::register_android_os_PerformanceHintManager),
             E(register_android_hardware_SensorManager),
             E(azk_register_sensor_smoke),

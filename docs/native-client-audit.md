@@ -6,7 +6,7 @@ implementations, runtime libraries and process placement still contain substanti
 host adaptations.
 
 The complete `acceptance-test` target passed on 2026-09-15 for the original
-startup and native-heap JNI checkpoint. All 28 APK cases passed, with 94 recorded
+image-codec and buffer-consumer checkpoint. All 28 APK cases passed, with 93 recorded
 actions, zero structured runtime issues and no failure artifacts. Native, JVM,
 system, desktop, video, source-provenance and build checks passed. Source
 packages, pins and installed outputs are current.
@@ -22,7 +22,7 @@ behavior; they do not establish native provenance or stock process boundaries.
 
 [`aosp-source-identity.py`](../tools/aosp-source-identity.py) compares the root
 framework build's static Java/Kotlin/annotation inputs against its explicitly
-supplied AOSP package and checkout. Its last acceptance report found 7,086
+supplied AOSP package and checkout. Its last acceptance report found 7,087
 unchanged inputs and 64 modified server inputs, with no modified or
 repository-owned `android.*` / `com.android.internal.*` client replacements in
 that selection.
@@ -37,12 +37,12 @@ also does not mean zero unsupported native operations.
 
 ## Compiled native and Skia check
 
-`native-client-source-test` consumes the actual 1,993 native-island and linked Skia compiler
+`native-client-source-test` consumes the actual 2,071 native-island and linked Skia compiler
 commands and verifies the linked object files. The current selection contains
-1,672 unchanged AOSP units, 24 modified units, 20 owned units and 277 generated
-units. Its 81 required client sources must remain original and present. Thirty
+1,751 unchanged AOSP units, 23 modified units, 20 owned units and 277 generated
+units. Its 89 required client sources must remain original and present. Thirty-four
 sensitive client/service boundaries are preprocessed again with those commands;
-the report records effective macros and the 2,345 headers actually consumed.
+the report records effective macros and the 2,380 headers actually consumed.
 This catches disabled Android branches and incompatible Binder header selection.
 
 The check also verifies unique JNI registrar ownership and rejects FFmpeg/VAAPI
@@ -79,7 +79,9 @@ reference revisions, modified native paths and delegated registration modules.
 Both archives were read directly. The framework archive was rechecked during
 the Binder, utility and media/graphics JNI migrations. The latest refresh includes
 original HWUI and Skia buffer clients and adds the pinned Bionic allocator
-declarations used by original Activity, ActivityThread and DDM native-heap JNI. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
+declarations used by original Activity, ActivityThread and DDM native-heap JNI.
+The image follow-up adds pinned GIF/JPEG-R dependencies and restores original
+GLConsumer, SyncFeatures, BufferQueueCore and SurfaceTexture EGLConsumer. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
 `.h`, `.hpp`, `.hxx`, `.S`, `.s` and `.inl` member was compared byte-for-byte
 with the corresponding pinned checkout path. Both current archives contain
 multiple top-level directories; their paths were retained. Tracked reference
@@ -87,7 +89,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 14,232 | 64 | 0 |
+| Framework | 14,373 | 60 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -352,9 +354,11 @@ commands and generated reports.
   is used inside clients as well as services. Stock allocator/mapper loading
   could retain a host implementation behind its HAL; allocation is not
   inherently all server-side on Android.
-- libgui/SurfaceComposerClient, GLConsumer, native SurfaceTexture and several
-  native Surface/Image wrappers retain packaged patches. See the exact file inventory; some are portability fixes, others
-  change transport, imports, lifetime or failure behavior.
+- GLConsumer, SyncFeatures, BufferQueueCore and SurfaceTexture EGLConsumer now
+  use original sources. Android EGL native-buffer imports and balanced display
+  ownership use the shared Mesa driver below these clients. SurfaceComposerClient
+  and some native Surface/Image wrappers still retain patches for transport,
+  lifetime, portability or failure behavior. See the exact file inventory.
 - The original WebView APK is unchanged, but it loads these adapted native
   graphics/media/runtime dependencies. APK provenance is not provenance of
   the full process it runs in.
@@ -610,3 +614,22 @@ structured runtime issues. It is now required by `acceptance-test`; this
 dedicated run follows the complete startup-JNI acceptance checkpoint above.
 The audio backend is unchanged. Artifacts, including PCM, process ownership,
 graph links and diagnostics, are in `zig-out/test-results/stock-audio-delivery/`.
+
+## Image codecs and buffer-consumer follow-up
+
+Original HWUI Movie/GIF and YuvImage JPEG/JPEG-R JNI now register alongside
+ByteBuffer stream initialization. GIF decoding uses pinned giflib; JPEG/R uses
+pinned libultrahdr, image_io and modp_b64. Original PdfDocument Java/JNI uses the
+real Skia PDF backend with HarfBuzz font subsetting. PDF editing/rendering and
+additional unselected image codec backends are not established by this batch.
+
+StockImageCodecSmoke verifies read-only heap and direct ByteBuffer decoding with
+offsets, animated GIF pixels and rewind, padded NV21/YUY2 crop encoding, JPEG/R
+gain maps, and PDF state errors, pages, embedded font resources and cross-reference
+output. Framework compatibility, native BufferQueue and SurfaceTexture tests
+passed, including real GPU pixels, fences, resizing and zero retained buffers.
+The NewPipe launch passed with zero structured issues. Native provenance and
+build audits and full acceptance passed. All 28 APK cases completed with 93 recorded
+actions, zero structured runtime issues and no failure artifacts. Fresh SurfaceView,
+TextureView and resized-video screenshots were inspected. Source packages, pins
+and installed outputs are current.

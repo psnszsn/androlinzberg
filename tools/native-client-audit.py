@@ -42,6 +42,8 @@ REQUIRED = {CORE + name for name in (
     "sqlite3_android.cpp", "PhoneNumberUtils.cpp", "OldPhoneNumberUtils.cpp",
 )} | {"frameworks/base/libs/hwui/jni/" + name for name in (
     "Path.cpp", "PathIterator.cpp", "HardwareBufferHelpers.cpp",
+    "ByteBufferStreamAdaptor.cpp", "Movie.cpp", "MovieImpl.cpp", "GIFMovie.cpp",
+    "YuvToJpegEncoder.cpp", "pdf/PdfDocument.cpp",
 )}
 REQUIRED.update({
     'frameworks/base/native/android/hardware_buffer_jni.cpp',
@@ -68,6 +70,12 @@ HEADER_PROBES = ANDROID_BRANCHES | {CORE + name for name in (
     "android_util_Binder.cpp", "android_os_Parcel.cpp", "android_hardware_Camera.cpp",
     "android_os_PerformanceHintManager.cpp",
 )}
+HEADER_PROBES.update({"frameworks/base/libs/hwui/jni/" + name for name in (
+    "Movie.cpp", "YuvToJpegEncoder.cpp", "pdf/PdfDocument.cpp",
+)})
+REQUIRED.add("external/skia/src/pdf/SkPDFDocument.cpp")
+REQUIRED.add("frameworks/native/libs/nativedisplay/surfacetexture/EGLConsumer.cpp")
+HEADER_PROBES.add("frameworks/native/libs/nativedisplay/surfacetexture/EGLConsumer.cpp")
 SKIA_ANDROID_BUFFER = "external/skia/src/gpu/ganesh/vk/AHardwareBufferVk.cpp"
 SKIA_ANDROID_SOURCES = {SKIA_ANDROID_BUFFER,
     "external/skia/src/gpu/vk/VulkanInterface.cpp",
@@ -123,6 +131,8 @@ REGISTRARS = (
     "register_android_hardware_SensorManager(", "register_android_hardware_Camera(",
     "android::register_android_os_VintfObject(", "android::register_android_os_VintfRuntimeInfo(",
     "android::register_android_os_PerformanceHintManager(",
+    "register_android_graphics_ByteBufferStreamAdaptor(", "register_android_graphics_Movie(",
+    "register_android_graphics_YuvImage(", "android::register_android_graphics_pdf_PdfDocument(",
     "register_android_media_MediaCodec(", "register_android_media_MediaCodecList(",
 )
 

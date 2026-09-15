@@ -10399,3 +10399,32 @@ F aosp frameworks/native/opengl/libs/EGL/BlobCache.h
 
 # Original startup/heap JNI allocator ABI.
 F aosp bionic/libc/platform/bionic/malloc.h
+
+# Original HWUI GIF and YUV/JPEG-R dependencies.
+F aosp external/giflib/Android.bp
+F aosp external/giflib/NOTICE
+F aosp external/giflib/gif_lib.h
+F aosp external/giflib/gif_lib_private.h
+F aosp external/giflib/gif_hash.h
+F aosp external/giflib/dgif_lib.c
+F aosp external/giflib/egif_lib.c
+F aosp external/giflib/gifalloc.c
+F aosp external/giflib/gif_err.c
+F aosp external/giflib/gif_hash.c
+F aosp external/giflib/quantize.c
+D aosp external/libultrahdr/lib/include
+D aosp external/libultrahdr/lib/src
+F aosp external/libultrahdr/Android.bp
+F aosp external/libultrahdr/LICENSE
+F aosp external/libultrahdr/ultrahdr_api.h
+D aosp external/image_io/includes
+D aosp external/image_io/src
+F aosp external/image_io/Android.bp
+F aosp external/image_io/LICENSE
+F aosp external/modp_b64/Android.bp
+F aosp external/modp_b64/modp_b64/modp_b64.h
+F aosp external/modp_b64/modp_b64.cc
+F aosp external/modp_b64/modp_b64_data.h
+F aosp external/modp_b64/LICENSE
+F aosp external/libultrahdr/adobe-hdr-gain-map-license/NOTICE
+F aosp external/libultrahdr/adobe-hdr-gain-map-license/Android.bp

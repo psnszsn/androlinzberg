@@ -133,7 +133,7 @@ pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     const mod = b.createModule(.{ .root_source_file = b.path("src/platform/graphics_egl.zig"), .target = target, .optimize = optimize, .link_libc = true, .link_libcpp = true, .pic = true });
     const ui = b.addLibrary(.{ .name = "ui_host", .root_module = mod });
     configure(b, mod, aosp, generated);
-    const flags = &.{ "-std=c++23", "-fno-exceptions", "-fno-rtti", "-fno-sanitize=undefined", "-D_GNU_SOURCE", "-D__ANDROID_HOST__", "-DARTZIG_HOST_THREAD_PRIORITY", "-DANDROID_UTILS_CALLSTACK_ENABLED=0", "-DDEBUG_ONLY_CODE=0", "-Wno-invalid-specialization", "-Wno-inconsistent-missing-override", "-Wno-deprecated-declarations", "-Wno-deprecated-enum-compare", "-Wno-deprecated-anon-enum-enum-conversion", "-Wno-deprecated-literal-operator", "-include", b.pathResolve(&.{"src/native/azk_prelude.h"}), "-include", b.pathResolve(&.{"src/native/graphics/include/azk/graphics_compat.h"}), "-D__INTRODUCED_IN(x)=", "-D__INTRODUCED_IN_64(x)=", "-D__INTRODUCED_IN_32(x)=" };
+    const flags = &[_][]const u8{ "-std=c++23", "-fno-exceptions", "-fno-rtti", "-fno-sanitize=undefined", "-D_GNU_SOURCE", "-D__ANDROID_HOST__", "-DARTZIG_HOST_THREAD_PRIORITY", "-DANDROID_UTILS_CALLSTACK_ENABLED=0", "-DDEBUG_ONLY_CODE=0", "-Wno-invalid-specialization", "-Wno-inconsistent-missing-override", "-Wno-deprecated-declarations", "-Wno-deprecated-enum-compare", "-Wno-deprecated-anon-enum-enum-conversion", "-Wno-deprecated-literal-operator", "-include", b.pathResolve(&.{"src/native/azk_prelude.h"}), "-include", b.pathResolve(&.{"src/native/graphics/include/azk/graphics_compat.h"}), "-D__INTRODUCED_IN(x)=", "-D__INTRODUCED_IN_64(x)=", "-D__INTRODUCED_IN_32(x)=" };
     mod.addCSourceFiles(.{ .root = aosp.path(b, "frameworks/native/libs/ui"), .files = &ui_sources, .flags = flags });
     mod.addCSourceFile(.{ .file = b.path("src/native/graphics/HostGralloc.cpp"), .flags = flags });
     mod.addCSourceFile(.{ .file = aosp.path(b, "frameworks/native/libs/nativewindow/AHardwareBuffer.cpp"), .flags = flags });
@@ -144,7 +144,10 @@ pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     const gui_mod = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true, .link_libcpp = true, .pic = true });
     configure(b, gui_mod, aosp, generated);
     gui_mod.linkLibrary(hidl);
-    gui_mod.addCSourceFiles(.{ .root = aosp.path(b, "frameworks/native/libs/gui"), .files = &gui_sources, .flags = flags });
+    for (gui_sources) |source| {
+        const consumer = std.mem.eql(u8, source, "GLConsumer.cpp") or std.mem.eql(u8, source, "SyncFeatures.cpp");
+        gui_mod.addCSourceFile(.{ .file = aosp.path(b, "frameworks/native/libs/gui").path(b, source), .flags = if (consumer) flags ++ &egl_consumer_flags else flags });
+    }
     gui_mod.addCSourceFiles(.{ .root = aosp.path(b, "frameworks/native/libs/gui/bufferqueue"), .files = &.{ "1.0/B2HProducerListener.cpp", "1.0/WProducerListener.cpp", "1.0/H2BGraphicBufferProducer.cpp", "1.0/H2BProducerListener.cpp", "1.0/Conversion.cpp", "2.0/B2HGraphicBufferProducer.cpp", "2.0/B2HProducerListener.cpp", "2.0/H2BGraphicBufferProducer.cpp", "2.0/H2BProducerListener.cpp", "2.0/types.cpp" }, .flags = flags });
     gui_mod.addCSourceFile(.{ .file = aosp.path(b, "frameworks/native/libs/nativewindow/ANativeWindow.cpp"), .flags = flags });
     gui_mod.addCSourceFile(.{ .file = b.path("src/native/graphics/SurfaceQueue.cpp"), .flags = flags });
@@ -171,4 +174,12 @@ pub const egl_image_flags = [_][]const u8{
     "-DeglDestroyImageKHR=azk_graphics_egl_destroy_image",
     "-DeglDestroyImage=azk_graphics_egl_destroy_image",
     "-DeglGetError=azk_graphics_egl_get_error",
+};
+
+// Buffer consumers retain original Android EGL calls and ownership; the driver
+// translates native buffers to the shared Mesa DMA-BUF and balances displays.
+pub const egl_consumer_flags = egl_image_flags ++ [_][]const u8{
+    "-DeglGetDisplay=azk_graphics_egl_get_display",
+    "-DeglInitialize=azk_graphics_egl_initialize",
+    "-DeglTerminate=azk_graphics_egl_terminate",
 };

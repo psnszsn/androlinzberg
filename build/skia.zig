@@ -19,11 +19,11 @@ pub const Options = struct {
 /// pkg-config names for the system libs skia's GN "libs" refer to.
 fn pkgConfigName(lib: []const u8) ?[]const u8 {
     const map = .{
-        .{ "fontconfig", "fontconfig" },  .{ "expat", "expat" },
-        .{ "freetype", "freetype2" },     .{ "png", "libpng" },
-        .{ "EGL", "egl" },                .{ "jpeg", "libjpeg" },
-        .{ "GLESv2", "glesv2" },          .{ "webp", "libwebp" },
-        .{ "webpdemux", "libwebpdemux" }, .{ "webpmux", "libwebpmux" },
+        .{ "harfbuzz", "harfbuzz" },     .{ "harfbuzz-subset", "harfbuzz-subset" }, .{ "z", "zlib" },
+        .{ "fontconfig", "fontconfig" }, .{ "expat", "expat" },                     .{ "freetype", "freetype2" },
+        .{ "png", "libpng" },            .{ "EGL", "egl" },                         .{ "jpeg", "libjpeg" },
+        .{ "GLESv2", "glesv2" },         .{ "webp", "libwebp" },                    .{ "webpdemux", "libwebpdemux" },
+        .{ "webpmux", "libwebpmux" },
     };
     inline for (map) |m| {
         if (std.mem.eql(u8, lib, m[0])) return m[1];

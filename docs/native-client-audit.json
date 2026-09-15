@@ -4,7 +4,7 @@
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 14232,
+      "unchanged": 14373,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -30,12 +30,8 @@
         "frameworks/native/libs/binder/ndk/include_cpp/android/binder_auto_utils.h",
         "frameworks/native/libs/binder/ndk/include_cpp/android/binder_interface_utils.h",
         "frameworks/native/libs/binder/ndk/include_ndk/android/binder_status.h",
-        "frameworks/native/libs/gui/BufferQueueCore.cpp",
         "frameworks/native/libs/gui/BufferQueueThreadState.cpp",
-        "frameworks/native/libs/gui/GLConsumer.cpp",
         "frameworks/native/libs/gui/SurfaceComposerClient.cpp",
-        "frameworks/native/libs/gui/SyncFeatures.cpp",
-        "frameworks/native/libs/nativedisplay/surfacetexture/EGLConsumer.cpp",
         "frameworks/native/libs/nativewindow/ANativeWindow.cpp",
         "frameworks/native/libs/renderengine/RenderEngine.cpp",
         "frameworks/native/libs/renderengine/skia/SkiaGLRenderEngine.cpp",
@@ -72,7 +68,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "751b47b4c62179fdf0e4a3d7548384f903394a1dccff58e0e2e3b4a3917767cd"
+      "archive_sha256": "d721da95900ad71e8d3bd5e42ac8820378412c41076205f77809ab0092bae3ed"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -188,6 +184,22 @@
     "system/tools/hidl": {
       "revision": "9118bce274377031a1425919678094ededf240d9",
       "tracked_clean": true
+    },
+    "external/giflib": {
+      "revision": "ad011248e266cc1bad1489704cc214942231cf09",
+      "tracked_clean": true
+    },
+    "external/image_io": {
+      "revision": "ed236bb2d9a3a65a78ea4abca94a2c7c5dbec1b8",
+      "tracked_clean": true
+    },
+    "external/libultrahdr": {
+      "revision": "8ca5f9daff887eb2fd412bb66e00f850f582a3f5",
+      "tracked_clean": true
+    },
+    "external/modp_b64": {
+      "revision": "576d46f65ee032ef584bd9f56a9cd68eb22f2cb9",
+      "tracked_clean": true
     }
   },
   "date": "2026-09-15",
@@ -236,7 +248,7 @@
       ]
     }
   },
-  "framework_package_refresh": "2026-09-15: original HWUI and Skia buffer clients; original Activity, ActivityThread and DDM native-heap JNI with the pinned Bionic allocator declarations",
+  "framework_package_refresh": "2026-09-15: original image codec/PDF creation JNI and GLConsumer/SurfaceTexture buffer clients, with pinned GIF/JPEG-R dependencies",
   "binder_jni_followup": {
     "runtime_revision": "b7d78a39",
     "verified_date": "2026-09-13",
@@ -665,18 +677,18 @@
   "compiled_island_followup": {
     "target": "native-client-source-test",
     "report": "zig-out/test-results/native-client-source.json",
-    "inputs": 1993,
+    "inputs": 2071,
     "source_counts": {
-      "unchanged": 1672,
-      "modified": 24,
+      "unchanged": 1751,
+      "modified": 23,
       "owned": 20,
       "generated": 277
     },
-    "required_original_clients": 81,
-    "preprocessed_boundaries": 30,
-    "consumed_headers": 2345,
+    "required_original_clients": 89,
+    "preprocessed_boundaries": 34,
+    "consumed_headers": 2380,
     "scope": "Native island and linked Skia Step.Run translation units; effective macros and consumed headers for selected restored boundaries; platform/NDK ELF owners. Other static linked libraries, ART and runtime loader resolution are outside this check.",
-    "validation": "Passed in full acceptance: 81 original-source guards, 30 header/macro probes and six audit failure regressions."
+    "validation": "Passed full acceptance292: 89 original-source guards, 34 header/macro probes and audit failure regressions."
   },
   "graphics_helpers_followup": {
     "sources": [
@@ -712,14 +724,14 @@
     "target": "acceptance-test",
     "passed": true,
     "verified_date": "2026-09-15",
-    "log": "/tmp/azk-stock-startup-acceptance273.log",
+    "log": "/tmp/azk-stock-image-acceptance292.log",
     "apk_cases": 28,
-    "recorded_actions": 94,
+    "recorded_actions": 93,
     "structured_runtime_issues": 0,
     "failure_artifacts": 0,
     "unsuccessful_actions": 0,
     "video": "All three fresh stock-video screenshots inspected; SurfaceView, TextureView, resize and pixel checks passed",
-    "installed_outputs": "refreshed",
+    "installed_outputs": "refreshed; platform SHA-256 matches the native provenance report",
     "known_optional_exclusions": [
       "performance-hint TestSessionCreationWithNullLayers remains a pinned null-SurfaceControl failure outside aggregate acceptance",
       "codec2-params-test retains two known host-compiler parameter comparisons outside aggregate acceptance"
@@ -748,7 +760,7 @@
     "remaining": "Hosted HWUI and Skia GL import adaptations removed by hwui_renderer_followup. Android Vulkan driver support remains unverified."
   },
   "hwui_renderer_followup": {
-    "implementation": "Original HWUI EglManager, RenderThread, CacheManager, HintSessionWrapper, CanvasContext, GL/Vulkan pipelines, Bitmap/upload/readback, WebView functors and complete JNI. Original Skia hardware-buffer factories, GL/Vulkan imports and surface factory. Original native HardwareBuffer Java conversions and FileBlobCache.",
+    "implementation": "Original HWUI EglManager, RenderThread, CacheManager, HintSessionWrapper, CanvasContext, GL/Vulkan pipelines, Bitmap/upload/readback, WebView functors and selected JNI. Original Skia hardware-buffer factories, GL/Vulkan imports and surface factory. Original native HardwareBuffer Java conversions and FileBlobCache.",
     "removed": "Hosted GPU pipeline, hardware-buffer rendering helper, host headers and 21 obsolete patch files; remaining mixed patch files retain only unrelated changes.",
     "driver_boundary": "System Mesa through existing Android EGL/GBM window driver; shared display/EGLImage ownership retains original Android buffers. Damage swaps use supported Mesa KHR/EXT entry points or ordinary swap of the same DMA-BUF. Stock FileBlobCache uses Mesa blob callbacks; no extra presentation copy.",
     "source_provenance": {
@@ -854,7 +866,34 @@
       "corrupted PCM"
     ],
     "production_backend_changes": false,
-    "validation_note": "Dedicated test after the full startup-JNI acceptance checkpoint; existing production audio code unchanged",
+    "validation_note": "Also passed in full image-codec acceptance292; 98,304 verified frames with unity gain and zero RMS error in both channels.",
     "build_validation": "install, graph-audit, cpp-audit and source-identity-test passed (/tmp/azk-stock-audio-checks279.log)"
+  },
+  "image_codec_followup": {
+    "implementation": "Original HWUI Movie/GIF, YuvImage JPEG/JPEG-R and ByteBuffer stream initialization; original PdfDocument Java/JNI with Skia PDF and HarfBuzz font subsetting. Pinned giflib, libultrahdr, image_io and modp_b64 dependency closure.",
+    "validation": {
+      "focused": "framework-compat-test, surface-buffer-jvm-test and gui-test passed (build289)",
+      "launch": "NewPipe home launch passed, one action, zero structured runtime issues (launch291)",
+      "audit": "native-client-source-test, graph-audit and cpp-audit passed (audit291)",
+      "acceptance": {
+        "target": "acceptance-test",
+        "passed": true,
+        "verified_date": "2026-09-15",
+        "log": "/tmp/azk-stock-image-acceptance292.log",
+        "apk_cases": 28,
+        "recorded_actions": 93,
+        "structured_runtime_issues": 0,
+        "failure_artifacts": 0,
+        "unsuccessful_actions": 0,
+        "video": "All three fresh stock-video screenshots inspected; SurfaceView, TextureView, resize and pixel checks passed",
+        "installed_outputs": "refreshed; platform SHA-256 matches the native provenance report",
+        "known_optional_exclusions": [
+          "performance-hint TestSessionCreationWithNullLayers remains a pinned null-SurfaceControl failure outside aggregate acceptance",
+          "codec2-params-test retains two known host-compiler parameter comparisons outside aggregate acceptance"
+        ]
+      }
+    },
+    "remaining": "PDF editing/renderer closure and additional unselected image codec backends are not established by this batch.",
+    "buffer_consumers": "Original GLConsumer, SyncFeatures, BufferQueueCore and SurfaceTexture EGLConsumer. Shared EGL driver owns Android buffer conversion and Mesa display/image lifetime; no extra presentation copy."
   }
 }

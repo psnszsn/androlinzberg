@@ -36,6 +36,7 @@ platform/external/fdlibm
 platform/external/fec
 platform/external/flac
 platform/external/fmtlib
+platform/external/giflib
 platform/external/go-cmp
 platform/external/golang-protobuf
 platform/external/google-java-format
@@ -46,6 +47,7 @@ platform/external/gson
 platform/external/guava
 platform/external/guice
 platform/external/hamcrest
+platform/external/image_io
 platform/external/jacoco
 platform/external/jakarta.inject
 platform/external/jarjar
@@ -70,6 +72,7 @@ platform/external/libffi
 platform/external/libogg
 platform/external/libphonenumber
 platform/external/libpng
+platform/external/libultrahdr
 platform/external/libwebm
 platform/external/libxml2
 platform/external/libyuv
@@ -77,6 +80,7 @@ platform/external/lz4
 platform/external/lzma
 platform/external/mime-support
 platform/external/mockito
+platform/external/modp_b64
 platform/external/musl
 platform/external/objenesis
 platform/external/oj-libjdwp
