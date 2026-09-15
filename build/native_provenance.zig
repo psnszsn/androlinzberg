@@ -1,4 +1,4 @@
-//! Serialize the actual native island compiler commands, without reconstructing
+//! Serialize the actual native island and linked Skia compiler commands, without reconstructing
 //! source lists or compiler settings in a second build declaration.
 const std = @import("std");
 const LazyPath = std.Build.LazyPath;

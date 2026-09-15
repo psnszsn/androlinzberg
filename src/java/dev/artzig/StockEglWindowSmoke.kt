@@ -14,6 +14,7 @@ import javax.microedition.khronos.egl.EGLContext as LegacyContext
 internal object StockEglWindowSmoke {
     private external fun nativeSameBuffer(library: String, surface: Long,
         buffer: android.hardware.HardwareBuffer): Boolean
+    private external fun nativeDamageSwap(library: String, display: Long, surface: Long): Boolean
     private fun verifyStorage(image: android.media.Image, surface: Long) {
         val path = checkNotNull(System.getenv("ARTZIG_INSTALL_ROOT")) + "/lib/libandroid_platform.so"
         checkNotNull(image.hardwareBuffer).use { check(nativeSameBuffer(path, surface, it)) {
@@ -36,7 +37,7 @@ internal object StockEglWindowSmoke {
             EGL14.EGL_GREEN_SIZE, 8, EGL14.EGL_BLUE_SIZE, 8, EGL14.EGL_ALPHA_SIZE, 8,
             EGL14.EGL_NONE), 0, configs, 0, 1, count, 0) && count[0] == 1)
         val context = EGL14.eglCreateContext(display, configs[0], EGL14.EGL_NO_CONTEXT,
-            intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE), 0)
+            intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, 0x3570, 1, EGL14.EGL_NONE), 0)
         check(context != EGL14.EGL_NO_CONTEXT)
         var window = EGL14.EGL_NO_SURFACE
         val reader = ImageReader.newInstance(16, 8, PixelFormat.RGBA_8888, 2)
@@ -48,7 +49,10 @@ internal object StockEglWindowSmoke {
                 paint(16, 8)
                 val timestamp = 123_456_789L + frame
                 check(EGLExt.eglPresentationTimeANDROID(display, window, timestamp))
-                check(EGL14.eglSwapBuffers(display, window)) { "swap: ${EGL14.eglGetError().toString(16)}" }
+                val swapped = if (frame % 2 == 0) EGL14.eglSwapBuffers(display, window) else
+                    nativeDamageSwap(checkNotNull(System.getenv("ARTZIG_INSTALL_ROOT")) + "/lib/libandroid_platform.so",
+                        display.nativeHandle, window.nativeHandle)
+                check(swapped) { "swap: ${EGL14.eglGetError().toString(16)}" }
                 check(EGL14.eglGetCurrentContext() == context)
                 check(EGL14.eglGetCurrentSurface(EGL14.EGL_DRAW) == window)
                 check(GLES20.glIsEnabled(GLES20.GL_SCISSOR_TEST))

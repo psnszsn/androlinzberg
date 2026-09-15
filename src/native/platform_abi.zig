@@ -14,7 +14,45 @@ pub export fn getprogname() callconv(.c) [*:0]const u8 {
 extern "c" fn azk_hwui_default_egl_display() ?*anyopaque;
 extern "EGL" fn eglGetDisplay(?*anyopaque) ?*anyopaque;
 extern "EGL" fn eglGetProcAddress([*:0]const u8) ?*const anyopaque;
-pub export fn azk_host_egl_get_proc_address(name: [*:0]const u8) callconv(.c) ?*const anyopaque {
+// One Android EGL dispatch table serves native Skia/HWUI and app-loaded libEGL.
+// Unknown entry points fall through to the system Mesa driver dispatcher.
+pub export fn azk_egl_getProcAddress(name: [*:0]const u8) callconv(.c) ?*const anyopaque {
+    const adapted = .{
+        .{ "eglGetDisplay", &bionic_eglGetDisplay },
+        .{ "eglGetError", &azk_egl_getError },
+        .{ "eglQueryString", &azk_egl_queryString },
+        .{ "eglGetNativeClientBufferANDROID", &azk_egl_getNativeClientBuffer },
+        .{ "eglCreateImageKHR", &azk_egl_createImageKHR },
+        .{ "eglCreateImage", &azk_egl_createImage },
+        .{ "eglDestroyImageKHR", &azk_egl_destroyImage },
+        .{ "eglDestroyImage", &azk_egl_destroyImage },
+        .{ "eglChooseConfig", &azk_egl_chooseConfig },
+        .{ "eglGetConfigAttrib", &azk_egl_getConfigAttrib },
+        .{ "eglCreatePbufferSurface", &azk_egl_createPbuffer },
+        .{ "eglQuerySurface", &azk_egl_querySurface },
+        .{ "eglSurfaceAttrib", &azk_egl_surfaceAttrib },
+        .{ "eglSwapBuffers", &azk_egl_swapBuffers },
+        .{ "eglDestroySurface", &azk_egl_destroySurface },
+        .{ "eglMakeCurrent", &azk_egl_makeCurrent },
+        .{ "eglReleaseThread", &azk_egl_releaseThread },
+        .{ "eglInitialize", &azk_egl_initialize },
+        .{ "eglTerminate", &azk_egl_terminate },
+        .{ "eglPresentationTimeANDROID", &azk_egl_presentationTime },
+        .{ "eglDupNativeFenceFDANDROID", &azk_egl_dupNativeFenceFD },
+        .{ "eglCreateWindowSurface", &azk_egl_createWindow },
+        .{ "eglGetCurrentSurface", &azk_egl_currentSurface },
+        .{ "eglBindTexImage", &azk_egl_bindTexImage },
+        .{ "eglReleaseTexImage", &azk_egl_releaseTexImage },
+        .{ "eglGetProcAddress", &azk_egl_getProcAddress },
+        .{ "eglCreateContext", &azk_egl_createContext },
+        .{ "eglBeginFrame", &azk_egl_beginFrame },
+        .{ "eglSwapBuffersWithDamageKHR", &azk_egl_swapBuffersWithDamage },
+        .{ "eglSwapBuffersWithDamageEXT", &azk_egl_swapBuffersWithDamage },
+        .{ "eglSetDamageRegionKHR", &azk_egl_setDamageRegion },
+    };
+    inline for (adapted) |entry| {
+        if (std.mem.eql(u8, std.mem.span(name), entry[0])) return @ptrCast(entry[1]);
+    }
     return eglGetProcAddress(name);
 }
 pub export fn bionic_eglGetDisplay(display: ?*anyopaque) callconv(.c) ?*anyopaque {
@@ -173,4 +211,17 @@ pub export fn azk_egl_releaseTexImage(display: Handle, surface: Handle, buffer: 
 // dev.artzig EGL regression observation; no Android framework test hooks.
 pub export fn azk_egl_last_buffer_inode(surface: Handle) callconv(.c) u64 {
     return egl_backend.lastBufferInode(g_io, surface);
+}
+
+pub export fn azk_egl_createContext(display: Handle, config: Handle, share: Handle, attributes: ?[*]const i32) callconv(.c) Handle {
+    return egl_backend.createContext(display, config, share, attributes);
+}
+pub export fn azk_egl_beginFrame(display: Handle, surface: Handle) callconv(.c) void {
+    egl_backend.beginFrame(g_io, display, surface);
+}
+pub export fn azk_egl_swapBuffersWithDamage(display: Handle, surface: Handle, rects: ?[*]const i32, count: i32) callconv(.c) u32 {
+    return egl_backend.swapBuffersWithDamage(g_io, display, surface, rects, count);
+}
+pub export fn azk_egl_setDamageRegion(display: Handle, surface: Handle, rects: ?[*]const i32, count: i32) callconv(.c) u32 {
+    return egl_backend.setDamageRegion(g_io, display, surface, rects, count);
 }

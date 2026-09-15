@@ -150,6 +150,10 @@ pub fn build(b: *std.Build, o: Options) Result {
         cxx.append(b.allocator, b.fmt("-D{s}", .{d})) catch @panic("oom");
         cc.append(b.allocator, b.fmt("-D{s}", .{d})) catch @panic("oom");
     }
+    // HWUI and its JNI must see the same Skia feature-dependent declarations
+    // and layouts as the library, including the Vulkan backend closure.
+    for (@import("gen/skia_sources.zig").defines) |define|
+        cxx.append(b.allocator, b.fmt("-D{s}", .{define})) catch @panic("oom");
 
     const binder_inc = o.aosp.path(b, "frameworks/native/libs/binder/include");
     const binder_ndk_includes = [_]std.Build.LazyPath{
@@ -177,6 +181,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     // other hostgraphics headers while overriding only ui/Fence.h.
     _ = ashmem_headers.addCopyFile(o.aosp.path(b, "frameworks/native/libs/ui/include/ui/Fence.h"), "ui/Fence.h");
     var common_includes: std.ArrayList(std.Build.LazyPath) = .empty;
+    common_includes.append(b.allocator, @import("skia.zig").config(b, o.aosp.path(b, "external/skia"))) catch @panic("oom");
     common_includes.appendSlice(b.allocator, &.{
         o.hwui_stats.headers,                                     o.surfaceflinger_generated.headers,
         o.aosp.path(b, "frameworks/native/libs/shaders/include"), o.aosp.path(b, "frameworks/native/libs/tonemap/include"),
@@ -531,6 +536,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         "src/gpu/android/AHardwareBufferUtils.cpp",
         "src/gpu/ganesh/GrAHardwareBufferUtils.cpp",
         "src/gpu/ganesh/gl/AHardwareBufferGL.cpp",
+        "src/gpu/ganesh/vk/AHardwareBufferVk.cpp",
         "src/gpu/ganesh/GrAHardwareBufferImageGenerator.cpp",
         "src/image/SkImage_AndroidFactories.cpp",
     }, &.{b.path("src/native/graphics/include")}, &.{ "-DARTZIG_HOST_GRAPHICS", "-DSK_GANESH", "-DSK_GL" });
@@ -601,6 +607,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         "-DeglQueryString=azk_egl_queryString",
         "-DeglChooseConfig=azk_egl_chooseConfig",
         "-DeglGetConfigAttrib=azk_egl_getConfigAttrib",
+        "-DeglCreateContext=azk_egl_createContext",
         "-DeglCreatePbufferSurface=azk_egl_createPbuffer",
         "-DeglCreateWindowSurface=azk_egl_createWindow",
         "-DeglQuerySurface=azk_egl_querySurface",

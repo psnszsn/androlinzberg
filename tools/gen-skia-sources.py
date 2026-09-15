@@ -28,13 +28,17 @@ DROP_DEFINES = {
     "SK_DISABLE_TRACING",        # framework mode traces via cutils ATrace
     "SK_R32_SHIFT=16",           # Android's bitmap ABI uses RGBA on Linux too
 }
-ADD_DEFINES = ["SK_BUILD_FOR_ANDROID_FRAMEWORK", "SK_SUPPORT_LEGACY_EMBOSSMASKFILTER",
+ADD_DEFINES = ["SK_BUILD_FOR_ANDROID", "__ANDROID_API__=36", "SK_GAMMA_CONTRAST=0.0",
+               "SK_GAMMA_EXPONENT=1.4", "SK_BUILD_FOR_ANDROID_FRAMEWORK", "SK_SUPPORT_LEGACY_EMBOSSMASKFILTER",
                "SK_R32_SHIFT=0"]
 
 defines, libs, groups = set(), [], []
 for n in sorted(seen):
     x = t[n]
     srcs = [s[2:] for s in x.get("sources", []) if s.endswith(SRC_EXT)]
+    # Match BUILD.gn's Android logging port for SK_BUILD_FOR_ANDROID.
+    srcs = ["src/ports/SkDebug_android.cpp" if s == "src/ports/SkDebug_stdio.cpp" else s
+            for s in srcs]
     for d in x.get("defines", []):
         if d not in DROP_DEFINES:
             defines.add(d)

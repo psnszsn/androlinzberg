@@ -7,7 +7,7 @@ implementations, runtime libraries and process placement still contain substanti
 host adaptations.
 
 The complete `acceptance-test` target passed on 2026-09-15 for the current
-hardware-buffer and path JNI checkpoint. All 28 APK cases passed, with 92
+Skia/EGL dependency checkpoint. All 28 APK cases passed, with 89
 recorded actions, zero structured runtime issues and no failure artifacts.
 The native, JVM, system, desktop, video, source-provenance and build checks passed.
 The source archive, dependency pin and installed outputs are current.
@@ -36,23 +36,41 @@ inside the app. An unchanged Java declaration of a native method therefore
 says nothing about whether its implementation is stock. Zero framework stubs
 also does not mean zero unsupported native operations.
 
-## Compiled native island check
+## Compiled native and Skia check
 
-`native-client-source-test` consumes the actual 1,108 native-island compiler
+`native-client-source-test` consumes the actual 1,973 native-island and linked Skia compiler
 commands and verifies the linked object files. The current selection contains
-767 unchanged AOSP units, 42 modified units, 22 owned units and 277 generated
-units. Its 39 required client sources must remain original and present. Fifteen
+1,632 unchanged AOSP units, 42 modified units, 22 owned units and 277 generated
+units. Its 43 required client sources must remain original and present. Nineteen
 sensitive client/service boundaries are preprocessed again with those commands;
-the report records effective macros and the 1,904 headers actually consumed.
+the report records effective macros and the 2,082 headers actually consumed.
 This catches disabled Android branches and incompatible Binder header selection.
 
 The check also verifies unique JNI registrar ownership and rejects FFmpeg/VAAPI
 dependencies in the platform client ELF. It runs in `acceptance-test` and writes
-`zig-out/test-results/native-client-source.json`. The check and its five failure
+`zig-out/test-results/native-client-source.json`. The check and its six failure
 regressions passed, along with the build-tool, C++ and graph audits. It does not
-yet inspect the translation units inside linked static libraries, ART, or runtime
+yet inspect translation units inside other linked static libraries, ART, or runtime
 loader resolution. Those remain necessary before claiming complete native
 provenance. These counts are compilation inputs, not a stock-client percentage.
+
+## Skia and EGL dependency follow-up
+
+Skia now uses its original Soong configuration writer with the selected GN
+features, Android hardware-buffer support, Vulkan dependencies and JPEG gainmaps.
+The native audit checks the Android buffer implementation and matching Vulkan
+library configuration. Native and app EGL share one dispatch table for context
+creation, frame validation, damage swaps and damage-region translation. All
+actual rendering still uses system Mesa. The window regression alternates normal
+and damage swaps and verifies pixels, timestamps, GL state and the same DMA-BUF
+inode at the consumer, without another presentation copy.
+
+The handwritten input/HWUI flag headers were deleted. The original input flag
+generator uses production mode with read-only defaults, preserving exported flags
+that force-read-only mode omits. Full acceptance passed. The hosted HWUI renderer
+and GL import adaptations remain; a separate compile probe passed for 165 original
+HWUI units, but their production linking and runtime validation are pending.
+Android Vulkan driver support is not established by compiling that source.
 
 ## Evidence and counting rules
 
@@ -410,8 +428,8 @@ tests (90 recorded actions, zero structured runtime issues in the final run).
    implementations at their appropriate boundaries. Then close device,
    networking, loader and runtime gaps against the declared scope.
 
-The native acceptance check must expand from the island compilation commands
-to the linked library and runtime closure, with the adaptation inventory and
+The native acceptance check must expand from the island and Skia compilation commands
+to the remaining linked library and runtime closure, with the adaptation inventory and
 ELF/soname resolution checks. Process tests must prove backend placement and
 service death/reconnection. Merely adding servers, retaining the replacement
 JNI, and passing the existing UI suite would not complete this work.

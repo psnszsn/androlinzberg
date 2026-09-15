@@ -66,6 +66,9 @@ zig build -j10 cpp-audit
 - `src/platform/egl_support.zig` supplies the Android EGL library's display
   boundary. Both direct and dynamic `eglGetDisplay` lookup select HWUI's existing
   GBM EGL display. Native, EGL14 and legacy clients share extension reporting.
+  Native and app procedure lookup use the same platform dispatch table. Context
+  telemetry, begin-frame validation and damage operations are translated below
+  callers; normal and damage swaps retain the direct GBM buffer delivery path.
   `eglGetNativeClientBufferANDROID` uses the original AHardwareBuffer conversion;
   core and KHR image creation import its existing DMA-BUF through Mesa. The EGL
   owner retains the Android buffer until its images are destroyed or the final

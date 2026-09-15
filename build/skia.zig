@@ -31,7 +31,21 @@ fn pkgConfigName(lib: []const u8) ?[]const u8 {
     return null; // pthread/dl come with libc
 }
 
-pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
+// Use the original Soong writer with our GN dependency selection. AOSP's
+// Linux config explicitly disables Android AHardwareBuffer support; its full
+// Android config enables unrelated codecs not present in this GN graph.
+pub fn config(b: *std.Build, root: std.Build.LazyPath) std.Build.LazyPath {
+    const run = b.addSystemCommand(&.{"python3"});
+    run.addFileArg(b.path("tools/skia-config.py"));
+    run.addFileArg(root.path(b, "gn/gn_to_bp_utils.py"));
+    const output = run.addOutputDirectoryArg("skia-config");
+    run.addArgs(&gen.defines);
+    return output;
+}
+
+pub const Result = struct { library: *std.Build.Step.Compile, compiles: []const *std.Build.Step.Run };
+
+pub fn build(b: *std.Build, o: Options) Result {
     const mod = b.createModule(.{
         .target = o.target,
         // never build skia unoptimized: -O0 rasterization is unusable
@@ -41,12 +55,13 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
         .pic = true,
     });
     const lib = b.addLibrary(.{ .name = "skia", .linkage = .static, .root_module = mod });
+    const user_config = config(b, o.root);
+    mod.addIncludePath(user_config);
     mod.addIncludePath(o.root);
-    // AOSP keeps platform SkUserConfig.h files outside the public include
-    // tree. This is a Linux host build with Android-framework extensions.
-    mod.addIncludePath(o.root.path(b, "linux"));
-    mod.addIncludePath(o.root.path(b, "linux/include/config"));
+
     mod.addIncludePath(o.root.path(b, "include/config"));
+    mod.addIncludePath(o.root.path(b, "vma_android/include"));
+    mod.addIncludePath(o.root.path(b, "include/third_party/vulkan"));
     for (o.include_dirs) |d| mod.addIncludePath(d);
 
     var base_flags = std.ArrayList([]const u8).empty;
@@ -55,8 +70,10 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
         "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-fstrict-aliasing", "-ffunction-sections",
         "-fdata-sections",     "-Wno-attributes",             "-Wno-psabi",        "-w",
     }) catch @panic("oom");
+    base_flags.appendSlice(b.allocator, &.{ "-D__BIONIC_AVAILABILITY_GUARD(x)=1", "-D__INTRODUCED_IN(x)=" }) catch @panic("oom");
     for (gen.defines) |d| base_flags.append(b.allocator, b.fmt("-D{s}", .{d})) catch @panic("oom");
 
+    var compiles: std.ArrayList(*std.Build.Step.Run) = .empty;
     var object_index: usize = 0;
     for (gen.groups) |g| {
         var flags = std.ArrayList([]const u8).empty;
@@ -86,10 +103,14 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
             });
             compile.step.name = b.fmt("compile Skia {s}", .{file});
             compile.addArgs(if (is_c) cflags.items else flags.items);
+            if (std.mem.eql(u8, file, "src/gpu/ganesh/vk/GrVkCaps.cpp") or
+                std.mem.eql(u8, file, "src/gpu/ganesh/gl/GrGLContext.cpp"))
+                compile.addArg("-D__unused=__attribute__((unused))");
+            compile.addPrefixedDirectoryArg("-I", user_config);
             compile.addPrefixedDirectoryArg("-I", o.root);
-            compile.addPrefixedDirectoryArg("-I", o.root.path(b, "linux"));
-            compile.addPrefixedDirectoryArg("-I", o.root.path(b, "linux/include/config"));
             compile.addPrefixedDirectoryArg("-I", o.root.path(b, "include/config"));
+            compile.addPrefixedDirectoryArg("-I", o.root.path(b, "vma_android/include"));
+            compile.addPrefixedDirectoryArg("-I", o.root.path(b, "include/third_party/vulkan"));
             for (o.include_dirs) |include| compile.addPrefixedDirectoryArg("-I", include);
             for (o.host_include_roots) |include| compile.addPrefixedDirectoryArg("-isystem", include);
             compile.addFileArg(o.root.path(b, file));
@@ -97,10 +118,11 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
             const object = compile.addOutputFileArg(b.fmt("skia-tu-{d}.o", .{object_index}));
             object_index += 1;
             mod.addObjectFile(object);
+            compiles.append(b.allocator, compile) catch @panic("oom");
         }
     }
     for (gen.system_libs) |l| {
         if (pkgConfigName(l)) |pc| lib.root_module.linkSystemLibrary(pc, .{ .needed = true });
     }
-    return lib;
+    return .{ .library = lib, .compiles = compiles.items };
 }

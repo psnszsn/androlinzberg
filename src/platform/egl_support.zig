@@ -1,9 +1,8 @@
 //! Android EGL dispatch. All adapted entry points share the native platform's
 //! display and pbuffer ownership with Java EGL, including dynamic proc lookup.
-const std = @import("std");
 const Handle = ?*anyopaque;
 extern fn bionic_eglGetDisplay(Handle) callconv(.c) Handle;
-extern fn azk_host_egl_get_proc_address([*:0]const u8) callconv(.c) ?*const anyopaque;
+extern fn azk_egl_getProcAddress([*:0]const u8) callconv(.c) ?*const anyopaque;
 export fn eglGetDisplay(display: Handle) callconv(.c) Handle {
     return bionic_eglGetDisplay(display);
 }
@@ -80,33 +79,7 @@ export fn eglTerminate(display: Handle) callconv(.c) u32 {
 }
 
 export fn eglGetProcAddress(name: [*:0]const u8) callconv(.c) ?*const anyopaque {
-    if (std.mem.eql(u8, std.mem.span(name), "eglGetDisplay")) return @ptrCast(&eglGetDisplay);
-    if (std.mem.eql(u8, std.mem.span(name), "eglGetProcAddress")) return @ptrCast(&eglGetProcAddress);
-    if (std.mem.eql(u8, std.mem.span(name), "eglGetError")) return @ptrCast(&eglGetError);
-    if (std.mem.eql(u8, std.mem.span(name), "eglQueryString")) return @ptrCast(&eglQueryString);
-    if (std.mem.eql(u8, std.mem.span(name), "eglGetNativeClientBufferANDROID")) return @ptrCast(&eglGetNativeClientBufferANDROID);
-    if (std.mem.eql(u8, std.mem.span(name), "eglCreateImageKHR")) return @ptrCast(&eglCreateImageKHR);
-    if (std.mem.eql(u8, std.mem.span(name), "eglCreateImage")) return @ptrCast(&eglCreateImage);
-    if (std.mem.eql(u8, std.mem.span(name), "eglDestroyImageKHR")) return @ptrCast(&eglDestroyImageKHR);
-    if (std.mem.eql(u8, std.mem.span(name), "eglDestroyImage")) return @ptrCast(&eglDestroyImage);
-    if (std.mem.eql(u8, std.mem.span(name), "eglChooseConfig")) return @ptrCast(&eglChooseConfig);
-    if (std.mem.eql(u8, std.mem.span(name), "eglGetConfigAttrib")) return @ptrCast(&eglGetConfigAttrib);
-    if (std.mem.eql(u8, std.mem.span(name), "eglCreatePbufferSurface")) return @ptrCast(&eglCreatePbufferSurface);
-    if (std.mem.eql(u8, std.mem.span(name), "eglQuerySurface")) return @ptrCast(&eglQuerySurface);
-    if (std.mem.eql(u8, std.mem.span(name), "eglSurfaceAttrib")) return @ptrCast(&eglSurfaceAttrib);
-    if (std.mem.eql(u8, std.mem.span(name), "eglSwapBuffers")) return @ptrCast(&eglSwapBuffers);
-    if (std.mem.eql(u8, std.mem.span(name), "eglDestroySurface")) return @ptrCast(&eglDestroySurface);
-    if (std.mem.eql(u8, std.mem.span(name), "eglMakeCurrent")) return @ptrCast(&eglMakeCurrent);
-    if (std.mem.eql(u8, std.mem.span(name), "eglReleaseThread")) return @ptrCast(&eglReleaseThread);
-    if (std.mem.eql(u8, std.mem.span(name), "eglInitialize")) return @ptrCast(&eglInitialize);
-    if (std.mem.eql(u8, std.mem.span(name), "eglTerminate")) return @ptrCast(&eglTerminate);
-    if (std.mem.eql(u8, std.mem.span(name), "eglPresentationTimeANDROID")) return @ptrCast(&eglPresentationTimeANDROID);
-    if (std.mem.eql(u8, std.mem.span(name), "eglDupNativeFenceFDANDROID")) return @ptrCast(&eglDupNativeFenceFDANDROID);
-    if (std.mem.eql(u8, std.mem.span(name), "eglCreateWindowSurface")) return @ptrCast(&eglCreateWindowSurface);
-    if (std.mem.eql(u8, std.mem.span(name), "eglGetCurrentSurface")) return @ptrCast(&eglGetCurrentSurface);
-    if (std.mem.eql(u8, std.mem.span(name), "eglBindTexImage")) return @ptrCast(&eglBindTexImage);
-    if (std.mem.eql(u8, std.mem.span(name), "eglReleaseTexImage")) return @ptrCast(&eglReleaseTexImage);
-    return azk_host_egl_get_proc_address(name);
+    return azk_egl_getProcAddress(name);
 }
 
 extern fn azk_egl_presentationTime(Handle, Handle, i64) callconv(.c) u32;
@@ -133,4 +106,24 @@ export fn eglBindTexImage(display: Handle, surface: Handle, buffer: i32) callcon
 extern fn azk_egl_releaseTexImage(Handle, Handle, i32) callconv(.c) u32;
 export fn eglReleaseTexImage(display: Handle, surface: Handle, buffer: i32) callconv(.c) u32 {
     return azk_egl_releaseTexImage(display, surface, buffer);
+}
+
+extern fn azk_egl_createContext(Handle, Handle, Handle, ?[*]const i32) callconv(.c) Handle;
+export fn eglCreateContext(display: Handle, config: Handle, share: Handle, attributes: ?[*]const i32) callconv(.c) Handle {
+    return azk_egl_createContext(display, config, share, attributes);
+}
+extern fn azk_egl_beginFrame(Handle, Handle) callconv(.c) void;
+export fn eglBeginFrame(display: Handle, surface: Handle) callconv(.c) void {
+    azk_egl_beginFrame(display, surface);
+}
+extern fn azk_egl_swapBuffersWithDamage(Handle, Handle, ?[*]const i32, i32) callconv(.c) u32;
+export fn eglSwapBuffersWithDamageKHR(display: Handle, surface: Handle, rects: ?[*]const i32, count: i32) callconv(.c) u32 {
+    return azk_egl_swapBuffersWithDamage(display, surface, rects, count);
+}
+export fn eglSwapBuffersWithDamageEXT(display: Handle, surface: Handle, rects: ?[*]const i32, count: i32) callconv(.c) u32 {
+    return azk_egl_swapBuffersWithDamage(display, surface, rects, count);
+}
+extern fn azk_egl_setDamageRegion(Handle, Handle, ?[*]const i32, i32) callconv(.c) u32;
+export fn eglSetDamageRegionKHR(display: Handle, surface: Handle, rects: ?[*]const i32, count: i32) callconv(.c) u32 {
+    return azk_egl_setDamageRegion(display, surface, rects, count);
 }

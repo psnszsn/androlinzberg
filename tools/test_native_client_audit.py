@@ -32,6 +32,16 @@ class NativeAuditTest(unittest.TestCase):
         probe["headers"] = [repo / "src/native/binder/include/binder" / path.name for path in wrong]
         self.assertFalse(audit.boundary_errors(name, probe, repo))
 
+    def test_skia_buffer_source_cannot_silently_compile_an_empty_unix_branch(self):
+        probe = {"macros": {"SK_BUILD_FOR_UNIX": "", "SK_VULKAN": "",
+                            "__ANDROID_API__": "36"}, "headers": []}
+        name = audit.SKIA_ANDROID_BUFFER
+        self.assertTrue(audit.boundary_errors(name, probe, Path("/repo")))
+        probe["macros"]["SK_BUILD_FOR_ANDROID"] = ""
+        self.assertTrue(audit.boundary_errors(name, probe, Path("/repo")))
+        del probe["macros"]["SK_BUILD_FOR_UNIX"]
+        self.assertFalse(audit.boundary_errors(name, probe, Path("/repo")))
+
     def test_sources_headers_and_generated_inputs_have_distinct_provenance(self):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)

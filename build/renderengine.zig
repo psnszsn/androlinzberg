@@ -73,6 +73,7 @@ pub const includes = [_][]const u8{
     "frameworks/native/services/surfaceflinger/common/include", "frameworks/native/libs/tracing_perfetto/include", "system/server_configurable_flags/libflags/include",
 };
 pub fn configure(b: *std.Build, mod: *std.Build.Module, aosp: std.Build.LazyPath, gui: Generated, generated: Generated) void {
+    mod.addIncludePath(@import("skia.zig").config(b, aosp.path(b, "external/skia")));
     graphics.configure(b, mod, aosp, gui);
     mod.addIncludePath(generated.headers);
     for (includes) |path| mod.addIncludePath(aosp.path(b, path));
@@ -112,6 +113,7 @@ pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, aosp: std.Build.La
         "external/skia/src/gpu/android/AHardwareBufferUtils.cpp",
         "external/skia/src/gpu/ganesh/GrAHardwareBufferUtils.cpp",
         "external/skia/src/gpu/ganesh/gl/AHardwareBufferGL.cpp",
+        "external/skia/src/gpu/ganesh/vk/AHardwareBufferVk.cpp",
         "external/skia/tools/SkSharingProc.cpp",
     }) |file| mod.addCSourceFile(.{ .file = aosp.path(b, file), .flags = flags });
     mod.addCSourceFile(.{ .file = b.path("src/native/graphics/HostTrace.cpp"), .flags = flags });

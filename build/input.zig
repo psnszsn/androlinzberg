@@ -30,7 +30,7 @@ pub fn generate(b: *std.Build, aosp: std.Build.LazyPath, runner: *std.Build.Step
     } else unreachable;
     const cache = b.addRunArtifact(runner);
     cache.addFileArg(aosp.path(b, "prebuilts/build-tools/linux-x86/bin/aconfig"));
-    cache.addArgs(&.{ "create-cache", "--package", entry.package, "--container", entry.container });
+    cache.addArgs(&.{ "create-cache", "--package", entry.package, "--container", entry.container, "--default-permission", "READ_ONLY", "--allow-read-write", "false" });
     for (entry.declarations) |file| {
         cache.addArg("--declarations");
         cache.addFileArg(aosp.path(b, file));
@@ -41,7 +41,7 @@ pub fn generate(b: *std.Build, aosp: std.Build.LazyPath, runner: *std.Build.Step
     flags.addFileArg(aosp.path(b, "prebuilts/build-tools/linux-x86/bin/aconfig"));
     flags.addArgs(&.{ "create-cpp-lib", "--cache" });
     flags.addFileArg(flags_cache);
-    flags.addArgs(&.{ "--mode", "force-read-only", "--out" });
+    flags.addArgs(&.{ "--mode", "production", "--out" });
     const directory = flags.addOutputDirectoryArg("flags");
     _ = headers.addCopyDirectory(directory.path(b, "include"), "", .{});
     _ = sources.addCopyFile(directory.path(b, "com_android_input_flags.cc"), "com_android_input_flags.cc");

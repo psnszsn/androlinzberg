@@ -31,6 +31,7 @@ extern "EGL" fn eglGetPlatformDisplay(u32, Handle, ?[*]const isize) Handle;
 extern "EGL" fn eglGetError() i32;
 extern "EGL" fn eglChooseConfig(Handle, ?[*]const i32, ?[*]Handle, i32, *i32) u32;
 extern "EGL" fn eglGetConfigAttrib(Handle, Handle, i32, *i32) u32;
+extern "EGL" fn eglCreateContext(Handle, Handle, Handle, ?[*]const i32) Handle;
 extern "EGL" fn eglCreatePbufferSurface(Handle, Handle, ?[*]const i32) Handle;
 extern "EGL" fn eglCreateWindowSurface(Handle, Handle, Handle, ?[*]const i32) Handle;
 extern "EGL" fn eglDestroySurface(Handle, Handle) u32;
@@ -504,9 +505,38 @@ pub fn surfaceAttrib(io: Io, display: Handle, surface: Handle, attribute: i32, v
     return eglSurfaceAttrib(display, surface, attribute, value);
 }
 pub fn swapBuffers(io: Io, display: Handle, surface: Handle) u32 {
+    return swapBuffersWithDamage(io, display, surface, null, 0);
+}
+
+// Follow eglSwapBuffersWithDamageKHRImpl: damage is a presentation hint, with
+// ordinary swap as the driver's fallback. Both paths deliver the same GBM BO.
+fn driverSwap(display: Handle, surface: Handle, rects: ?[*]const i32, count: i32) u32 {
+    if (count > 0) {
+        const Swap = *const fn (Handle, Handle, ?[*]const i32, i32) callconv(.c) u32;
+        if (eglGetProcAddress("eglSwapBuffersWithDamageKHR")) |address| {
+            const swap: Swap = @ptrCast(address);
+            return swap(display, surface, rects, count);
+        }
+    }
+    return eglSwapBuffers(display, surface);
+}
+
+pub fn swapBuffersWithDamage(io: Io, display: Handle, surface: Handle, rects: ?[*]const i32, count: i32) u32 {
     mutex.lockUncancelable(io);
     defer mutex.unlock(io);
-    const owned = surfaces.getPtr(@intFromPtr(surface)) orelse return eglSwapBuffers(display, surface);
+    // Validate handles before rectangle arguments, as the pinned EGL client does.
+    var ignored: i32 = 0;
+    if (eglQuerySurface(display, driverSurface(surface), width_key, &ignored) == 0) return 0;
+    const owner = surfaces.getPtr(@intFromPtr(surface));
+    if (owner) |owned| if (owned.destroyed) {
+        fail(bad_surface);
+        return 0;
+    };
+    if (count < 0 or (count > 0 and rects == null)) {
+        fail(bad_parameter);
+        return 0;
+    }
+    const owned = owner orelse return driverSwap(display, surface, rects, count);
     if (owned.window) |window| {
         if (owned.presenting != 0) {
             fail(0x3002);
@@ -525,7 +555,7 @@ pub fn swapBuffers(io: Io, display: Handle, surface: Handle) u32 {
         var width = owned.width;
         var height = owned.height;
         mutex.unlock(io);
-        const swapped = eglSwapBuffers(display, driver);
+        const swapped = driverSwap(display, driver, rects, count);
         const status = if (swapped != 0) delivery.present(io, window, buffer, &width, &height) else success;
         mutex.lockUncancelable(io);
         const live = surfaces.getPtr(@intFromPtr(surface)).?;
@@ -539,10 +569,52 @@ pub fn swapBuffers(io: Io, display: Handle, surface: Handle) u32 {
         if (!live.destroyed and (width != live.width or height != live.height) and !resizeWindow(io, live, width, height)) return 0;
         return 1;
     }
-    var ignored: i32 = 0;
     // EGL defines swapping a pbuffer as having no effect. Do not rotate GBM's
     // window queue, which would both lose pbuffer contents and require a consumer.
     return eglQuerySurface(display, surface, width_key, &ignored);
+}
+
+// Pinned eglBeginFrameImpl validates the display and surface; it issues no GPU
+// work. The driver validates its handle after translating our owned windows.
+pub fn beginFrame(io: Io, display: Handle, surface: Handle) void {
+    var ignored: i32 = 0;
+    _ = querySurface(io, display, surface, width_key, &ignored);
+}
+
+pub fn setDamageRegion(io: Io, display: Handle, surface: Handle, rects: ?[*]const i32, count: i32) u32 {
+    mutex.lockUncancelable(io);
+    defer mutex.unlock(io);
+    var ignored: i32 = 0;
+    const driver = driverSurface(surface);
+    if (eglQuerySurface(display, driver, width_key, &ignored) == 0) return 0;
+    if (surfaces.get(@intFromPtr(surface))) |owned| if (owned.destroyed) {
+        fail(bad_surface);
+        return 0;
+    };
+    const SetDamage = *const fn (Handle, Handle, ?[*]const i32, i32) callconv(.c) u32;
+    const set: SetDamage = @ptrCast(eglGetProcAddress("eglSetDamageRegionKHR") orelse return 0);
+    return set(display, driver, rects, count);
+}
+
+// eglCreateContextImpl strips Android's telemetry hint before calling the
+// driver. Mesa owns every actual context attribute, validation and allocation.
+pub fn createContext(display: Handle, config: Handle, share: Handle, attributes: ?[*]const i32) Handle {
+    const input = attributes orelse return eglCreateContext(display, config, share, null);
+    var filtered: std.ArrayList(i32) = .empty;
+    defer filtered.deinit(alloc);
+    var index: usize = 0;
+    while (input[index] != none) : (index += 2) {
+        if (input[index] == 0x3570) continue; // EGL_TELEMETRY_HINT_ANDROID
+        filtered.appendSlice(alloc, input[index..][0..2]) catch {
+            fail(bad_alloc);
+            return null;
+        };
+    }
+    filtered.append(alloc, none) catch {
+        fail(bad_alloc);
+        return null;
+    };
+    return eglCreateContext(display, config, share, filtered.items.ptr);
 }
 fn collect(io: Io, handle: Handle) void {
     if (surfaces.get(@intFromPtr(handle))) |owned| if (owned.destroyed and owned.bindings == 0 and owned.presenting == 0) {
@@ -711,7 +783,6 @@ test "GBM pbuffers render, preserve pixels across swaps, and survive deferred de
         extern "gbm" fn gbm_create_device(c_int) Handle;
         extern "gbm" fn gbm_device_destroy(Handle) void;
         extern "EGL" fn eglBindAPI(u32) u32;
-        extern "EGL" fn eglCreateContext(Handle, Handle, Handle, ?[*]const i32) Handle;
         extern "EGL" fn eglDestroyContext(Handle, Handle) u32;
         extern "GLESv2" fn glClearColor(f32, f32, f32, f32) void;
         extern "GLESv2" fn glClear(u32) void;
@@ -743,7 +814,7 @@ test "GBM pbuffers render, preserve pixels across swaps, and survive deferred de
     try std.testing.expectEqual(@as(u32, 1), getConfigAttrib(display, config, surface_type, &value));
     try std.testing.expectEqual(window_bit | pbuffer_bit, value & (window_bit | pbuffer_bit));
     try std.testing.expectEqual(@as(u32, 1), api.eglBindAPI(0x30a0)); // EGL_OPENGL_ES_API
-    const context = api.eglCreateContext(display, config, null, &.{ 0x3098, 2, none });
+    const context = createContext(display, config, null, &.{ 0x3098, 2, 0x3570, 1, none });
     try std.testing.expect(context != null);
     defer _ = api.eglDestroyContext(display, context);
     const surface = createPbuffer(io, display, config, &.{ width_key, 16, height_key, 8, none });
@@ -755,6 +826,12 @@ test "GBM pbuffers render, preserve pixels across swaps, and survive deferred de
     try std.testing.expectEqual(@as(i32, 8), value);
     try std.testing.expectEqual(@as(u32, 1), makeCurrent(io, display, surface, surface, context));
     defer _ = releaseThread(io);
+    beginFrame(io, display, surface);
+    try std.testing.expectEqual(success, getError());
+    try std.testing.expectEqual(@as(u32, 0), swapBuffersWithDamage(io, display, surface, null, 1));
+    try std.testing.expectEqual(bad_parameter, getError());
+    try std.testing.expectEqual(@as(u32, 0), swapBuffersWithDamage(io, display, surface, null, -1));
+    try std.testing.expectEqual(bad_parameter, getError());
     api.glClearColor(1, 0, 0, 1);
     api.glClear(0x4000);
     var pixel: [4]u8 = undefined;
@@ -762,6 +839,7 @@ test "GBM pbuffers render, preserve pixels across swaps, and survive deferred de
     try std.testing.expectEqual(@as(u32, 0), api.glGetError());
     try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, &pixel);
     for (0..5) |_| try std.testing.expectEqual(@as(u32, 1), swapBuffers(io, display, surface));
+    try std.testing.expectEqual(@as(u32, 1), swapBuffersWithDamage(io, display, surface, &.{ 0, 0, 16, 8 }, 1));
     api.glReadPixels(8, 4, 1, 1, 0x1908, 0x1401, &pixel);
     try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, &pixel);
     try std.testing.expectEqual(@as(u32, 1), destroySurface(io, display, surface));

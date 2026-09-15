@@ -22,7 +22,9 @@ fn nativePbufferInterop(env: Env, _: jni.jobject, path: jni.jstring, raw_display
     const term = library.lookup(*const fn (Handle) callconv(.c) u32, "eglTerminate") orelse return jni.JNI_FALSE;
     const query = library.lookup(*const fn (Handle, Handle, i32, *i32) callconv(.c) u32, "eglQuerySurface") orelse return jni.JNI_FALSE;
     const swap = library.lookup(*const fn (Handle, Handle) callconv(.c) u32, "eglSwapBuffers") orelse return jni.JNI_FALSE;
-    if (get_proc("eglQuerySurface") != @as(?*const anyopaque, @ptrCast(query))) return jni.JNI_FALSE;
+    // Static exports and native proc lookup share the same surface owner even
+    // when the app-side export is a trampoline to the platform implementation.
+    const proc_query: *const fn (Handle, Handle, i32, *i32) callconv(.c) u32 = @ptrCast(get_proc("eglQuerySurface") orelse return jni.JNI_FALSE);
     const display = pointer(raw_display);
     const surface = pointer(raw_surface);
     if (init(display, null, null) == 0) return jni.JNI_FALSE;
@@ -30,7 +32,8 @@ fn nativePbufferInterop(env: Env, _: jni.jobject, path: jni.jstring, raw_display
     var width: i32 = -1;
     var height: i32 = -1;
     return boolean(@intFromBool(query(display, surface, 0x3057, &width) != 0 and width == 0 and
-        query(display, surface, 0x3056, &height) != 0 and height == 0 and swap(display, surface) != 0 and
+        query(display, surface, 0x3056, &height) != 0 and height == 0 and
+        proc_query(display, surface, 0x3057, &width) != 0 and width == 0 and swap(display, surface) != 0 and
         nativeBufferInterop(&library, get_proc, display)));
 }
 
@@ -154,6 +157,25 @@ fn nativeSameBuffer(env: Env, _: jni.jobject, path: jni.jstring, raw_surface: jn
     return boolean(@intFromBool(expected != 0 and stat.inode == expected));
 }
 
+fn nativeDamageSwap(env: Env, _: jni.jobject, path: jni.jstring, raw_display: jni.jlong, raw_surface: jni.jlong) callconv(.c) jni.jboolean {
+    const name = env.*.*.GetStringUTFChars.?(env, path, null) orelse return jni.JNI_FALSE;
+    defer env.*.*.ReleaseStringUTFChars.?(env, path, name);
+    var library = std.DynLib.open(std.mem.span(name)) catch return jni.JNI_FALSE;
+    defer library.close();
+    const get_proc = library.lookup(*const fn ([*:0]const u8) callconv(.c) ?*const anyopaque, "azk_egl_getProcAddress") orelse return jni.JNI_FALSE;
+    const begin: *const fn (Handle, Handle) callconv(.c) void = @ptrCast(get_proc("eglBeginFrame") orelse return jni.JNI_FALSE);
+    const swap: *const fn (Handle, Handle, ?[*]const i32, i32) callconv(.c) u32 = @ptrCast(get_proc("eglSwapBuffersWithDamageKHR") orelse return jni.JNI_FALSE);
+    const query: *const fn (Handle, Handle, i32, *i32) callconv(.c) u32 = @ptrCast(get_proc("eglQuerySurface") orelse return jni.JNI_FALSE);
+    const get_error: *const fn () callconv(.c) i32 = @ptrCast(get_proc("eglGetError") orelse return jni.JNI_FALSE);
+    const display = pointer(raw_display);
+    const surface = pointer(raw_surface);
+    begin(display, surface);
+    if (get_error() != 0x3000) return jni.JNI_FALSE;
+    var rect = [_]i32{ 0, 0, 0, 0 };
+    if (query(display, surface, 0x3057, &rect[2]) == 0 or query(display, surface, 0x3056, &rect[3]) == 0) return jni.JNI_FALSE;
+    return boolean(swap(display, surface, &rect, 1));
+}
+
 fn nativeMethod(name: [*:0]const u8, signature: [*:0]const u8, function: anytype) jni.JNINativeMethod {
     return .{ .name = @constCast(name), .signature = @constCast(signature), .fnPtr = @ptrCast(@constCast(function)) };
 }
@@ -169,6 +191,7 @@ pub fn register(env: Env) !void {
     defer env.*.*.DeleteLocalRef.?(env, window_cls);
     const window_methods = [_]jni.JNINativeMethod{
         nativeMethod("nativeSameBuffer", "(Ljava/lang/String;JLandroid/hardware/HardwareBuffer;)Z", &nativeSameBuffer),
+        nativeMethod("nativeDamageSwap", "(Ljava/lang/String;JJ)Z", &nativeDamageSwap),
     };
     if (env.*.*.RegisterNatives.?(env, window_cls, &window_methods, window_methods.len) != 0) return error.RegisterFailed;
 }

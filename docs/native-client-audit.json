@@ -247,7 +247,7 @@
   "registration_scope_note": "9 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
-      "sha256": "acc12bcbd152a739f01f733f358ffda4816ced520474bcdf3ea77dbcd0ac8471",
+      "sha256": "b27546e94213c84ef8c87179ea8ab6c4e31213f69e65c8b96a1e973a23827684",
       "defined_symbols": [
         "register_localized_collators",
         "register_android_functions",
@@ -260,7 +260,7 @@
       ]
     },
     "lib/art/libbinder_ndk.so": {
-      "sha256": "41b0fabad0332c286b4614710ae96a713c4e35bda50e065b085828c781670692",
+      "sha256": "00c337be21fa869f33164dd820fca8fa398a05ff12bd5ecf120a81bf1658819c",
       "defined_symbols": [
         "azk_register_binder_jni"
       ]
@@ -695,18 +695,18 @@
   "compiled_island_followup": {
     "target": "native-client-source-test",
     "report": "zig-out/test-results/native-client-source.json",
-    "inputs": 1108,
+    "inputs": 1973,
     "source_counts": {
-      "unchanged": 767,
+      "unchanged": 1632,
       "modified": 42,
       "owned": 22,
       "generated": 277
     },
-    "required_original_clients": 39,
-    "preprocessed_boundaries": 15,
-    "consumed_headers": 1904,
-    "scope": "Actual native island Step.Run compiler commands, linked objects, selected client headers/macros and platform/NDK ELF owners. Static archive translation units, ART and runtime loader resolution remain outside the check.",
-    "validation": "Passed in the complete acceptance target, including 39 original-source guards, 15 header/macro probes and five audit failure regressions."
+    "required_original_clients": 43,
+    "preprocessed_boundaries": 19,
+    "consumed_headers": 2082,
+    "scope": "Native island and linked Skia Step.Run translation units; effective macros and consumed headers for selected restored boundaries; platform/NDK ELF owners. Other static linked libraries, ART and runtime loader resolution are outside this check.",
+    "validation": "Passed in complete acceptance, including 43 original-source guards, 19 header/macro probes and six audit failure regressions."
   },
   "graphics_helpers_followup": {
     "sources": [
@@ -742,9 +742,9 @@
     "target": "acceptance-test",
     "passed": true,
     "verified_date": "2026-09-15",
-    "log": "/tmp/azk-graphics-acceptance224.log",
+    "log": "/tmp/azk-skia-egl-acceptance238.log",
     "apk_cases": 28,
-    "recorded_actions": 92,
+    "recorded_actions": 89,
     "structured_runtime_issues": 0,
     "failure_artifacts": 0,
     "unsuccessful_actions": 0,
@@ -754,5 +754,27 @@
       "performance-hint TestSessionCreationWithNullLayers remains a pinned null-SurfaceControl failure outside aggregate acceptance",
       "codec2-params-test retains two known host-compiler parameter comparisons outside aggregate acceptance"
     ]
+  },
+  "skia_egl_followup": {
+    "implementation": "Original Soong SkUserConfig generator uses selected GN Android features, Vulkan and JPEG gainmaps. Original Android logging and Vulkan AHardwareBuffer implementation are compiled. Native and app EGL share context telemetry filtering, begin-frame validation, damage swaps and damage-region translation through system Mesa. Handwritten input/HWUI flags deleted in favor of original generators.",
+    "graphics_contract": "StockEglWindowSmoke alternates normal and damage swaps and checks pixels, timestamps, GL state and identical DMA-BUF inode at the consumer; no additional presentation copy.",
+    "validation": {
+      "target": "acceptance-test",
+      "passed": true,
+      "verified_date": "2026-09-15",
+      "log": "/tmp/azk-skia-egl-acceptance238.log",
+      "apk_cases": 28,
+      "recorded_actions": 89,
+      "structured_runtime_issues": 0,
+      "failure_artifacts": 0,
+      "unsuccessful_actions": 0,
+      "video": "All three fresh stock-video screenshots inspected; SurfaceView, TextureView, resize and pixel checks passed",
+      "installed_outputs": "refreshed",
+      "known_optional_exclusions": [
+        "performance-hint TestSessionCreationWithNullLayers remains a pinned null-SurfaceControl failure outside aggregate acceptance",
+        "codec2-params-test retains two known host-compiler parameter comparisons outside aggregate acceptance"
+      ]
+    },
+    "remaining": "The hosted HWUI pipeline and Skia GL buffer import adaptations remain. Original full HWUI compile probe passed for 165 units, but production linking and runtime validation are pending. Vulkan Android hardware-buffer driver support is not claimed."
   }
 }

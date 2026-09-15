@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Audit actual native-island compiler inputs and preprocessed client boundaries.
+"""Audit actual native-island and linked Skia compiler inputs and preprocessed client boundaries.
 
 The command graph comes from Step.Run.argv, not a second source manifest. Linked
-archives, ART and the hosted loader require separate provenance checks; this
+archives other than Skia, ART and the hosted loader require separate provenance checks; this
 report deliberately does not assign a stock-client percentage.
 """
 from __future__ import annotations
@@ -57,6 +57,14 @@ HEADER_PROBES = ANDROID_BRANCHES | {CORE + name for name in (
     "android_util_Binder.cpp", "android_os_Parcel.cpp", "android_hardware_Camera.cpp",
     "android_os_PerformanceHintManager.cpp",
 )}
+SKIA_ANDROID_BUFFER = "external/skia/src/gpu/ganesh/vk/AHardwareBufferVk.cpp"
+SKIA_ANDROID_SOURCES = {SKIA_ANDROID_BUFFER,
+    "external/skia/src/gpu/vk/VulkanInterface.cpp",
+    "external/skia/src/gpu/vk/VulkanUtilsPriv.cpp",
+    "external/skia/src/gpu/ganesh/vk/GrVkCaps.cpp",
+}
+REQUIRED.update(SKIA_ANDROID_SOURCES)
+HEADER_PROBES.update(SKIA_ANDROID_SOURCES)
 REGISTRARS = (
     "register_android_os_Binder(", "android::register_android_os_Parcel(",
     "android::register_android_os_ServiceManager(", "android::register_android_os_ServiceManagerNative(",
@@ -138,6 +146,12 @@ def preprocess(command: list[str]) -> dict:
 
 def boundary_errors(source: str, probe: dict, repo: Path) -> list[str]:
     errors = []
+    if source in SKIA_ANDROID_SOURCES:
+        macros = probe["macros"]
+        if (not {"SK_BUILD_FOR_ANDROID", "SK_VULKAN"}.issubset(macros)
+                or "SK_BUILD_FOR_UNIX" in macros
+                or macros.get("__ANDROID_API__") != "36"):
+            errors.append(f"Skia Android hardware-buffer implementation disabled or mixed with Unix ABI: {source}")
     if source in ANDROID_BRANCHES and "__ANDROID__" not in probe["macros"]:
         errors.append(f"Android implementation branch disabled: {source}")
     if source in (CORE + "android_util_Binder.cpp", CORE + "android_os_Parcel.cpp"):
@@ -189,7 +203,7 @@ def main() -> int:
         if "source" in record:
             name = record["source"]
             if name in selected:
-                errors.append(f"source compiled more than once in native island: {name}")
+                errors.append(f"source compiled more than once in audited native inputs: {name}")
             selected[name] = record
             if record["kind"] == "missing_reference" or record["kind"] == "modified" and name not in allowed:
                 errors.append(f"unlisted native source adaptation: {name}")
@@ -218,7 +232,7 @@ def main() -> int:
         if name.startswith(("libavcodec.", "libavformat.", "libavutil.", "libswscale.", "libva.")):
             errors.append(f"media decode backend linked into client platform: {name}")
     del platform["symbols"], ndk["symbols"]
-    report = {"passed": not errors, "scope": "Native island Step.Run translation units; effective macros and consumed headers for selected restored boundaries; platform/NDK ELF owners. Static linked libraries, ART and runtime loader resolution are outside this check.",
+    report = {"passed": not errors, "scope": "Native island and linked Skia Step.Run translation units; effective macros and consumed headers for selected restored boundaries; platform/NDK ELF owners. Other static linked libraries, ART and runtime loader resolution are outside this check.",
               "reference": reference_state, "source_counts": dict(Counter(record["kind"] for record in sources)),
               "required_original_clients": len(REQUIRED), "header_probe_count": len(probes),
               "sources": sources, "headers": list(headers.values()), "platform": platform, "ndk": ndk,
