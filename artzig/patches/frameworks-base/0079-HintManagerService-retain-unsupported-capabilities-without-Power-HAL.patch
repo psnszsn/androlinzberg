@@ -1,0 +1,30 @@
+--- a/services/core/java/com/android/server/power/hint/HintManagerService.java
++++ b/services/core/java/com/android/server/power/hint/HintManagerService.java
+@@ -329,12 +329,12 @@
+         mPowerHal = injector.createIPower();
+         mPowerHalVersion = 0;
+         mUsesFmq = false;
+-        if (mPowerHal != null) {
+-            try {
+-                mSupportInfo = getSupportInfo();
+-            } catch (RemoteException e) {
+-                throw new IllegalStateException("Could not contact PowerHAL!", e);
+-            }
++        // Hosted constructor: reuse getSupportInfo's pre-V6 capability fallback
++        // when no Android Power HAL is declared. Sessions remain unsupported.
++        try {
++            mSupportInfo = getSupportInfo();
++        } catch (RemoteException e) {
++            throw new IllegalStateException("Could not contact PowerHAL!", e);
+         }
+         mDefaultCpuHeadroomCalculationWindowMillis =
+                 new CpuHeadroomParamsInternal().calculationWindowMillis;
+@@ -372,7 +372,7 @@
+ 
+     SupportInfo getSupportInfo() throws RemoteException {
+         try {
+-            mPowerHalVersion = mPowerHal.getInterfaceVersion();
++            mPowerHalVersion = mPowerHal == null ? 0 : mPowerHal.getInterfaceVersion();
+             if (mPowerHalVersion >= 6) {
+                 return mPowerHal.getSupportInfo();
+             }

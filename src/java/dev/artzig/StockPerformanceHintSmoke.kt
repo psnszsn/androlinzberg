@@ -7,7 +7,7 @@ import android.os.ServiceManager
 import android.os.WorkDuration
 import java.lang.reflect.InvocationTargetException
 
-/** Stock validation and the documented absent native performance-hint service. */
+/** Original JNI/NDK client reads real system-service capabilities without a Power HAL. */
 internal object StockPerformanceHintSmoke {
     private fun failure(action: () -> Any?): Throwable? =
         runCatching(action).exceptionOrNull().let {
@@ -17,25 +17,30 @@ internal object StockPerformanceHintSmoke {
     fun run() {
         check(SystemServiceRegistry.getSystemServiceName(PerformanceHintManager::class.java) ==
             Context.PERFORMANCE_HINT_SERVICE)
-        repeat(2) {
-            val error = failure { PerformanceHintManager.create() }
-            check(error is ServiceManager.ServiceNotFoundException &&
-                error.message?.contains(Context.PERFORMANCE_HINT_SERVICE) == true) { error.toString() }
-        }
+        val manager = PerformanceHintManager.create()
+        check(manager.preferredUpdateRateNanos == -1L)
+        check(PerformanceHintManager.create().preferredUpdateRateNanos == -1L)
+        val context: Context = android.app.ActivityThread.currentActivityThread().systemContext
+        check(context.getSystemService(PerformanceHintManager::class.java) != null)
+        val service = android.os.IHintManager.Stub.asInterface(checkNotNull(
+            ServiceManager.getService(Context.PERFORMANCE_HINT_SERVICE)))
+        val data = service.clientData
+        check(data.preferredRateNanos == -1L && data.powerHalVersion == 0)
+        check(!data.supportInfo.usesSessions && !data.supportInfo.headroom.isCpuSupported &&
+            !data.supportInfo.headroom.isGpuSupported)
+        check(failure { service.getCpuHeadroom(android.os.CpuHeadroomParamsInternal()) }
+            is UnsupportedOperationException)
+        check(failure { service.getGpuHeadroom(android.os.GpuHeadroomParamsInternal()) }
+            is UnsupportedOperationException)
 
-        // Exercise Java argument checks without claiming a native manager was acquired.
-        val constructor = PerformanceHintManager::class.java.getDeclaredConstructor(
-            java.lang.Long.TYPE).apply { isAccessible = true }
-        val unacquired = constructor.newInstance(0L)
         val create = PerformanceHintManager::class.java.getMethod("createHintSession",
             IntArray::class.java, java.lang.Long.TYPE)
-        check(failure { create.invoke(unacquired, null, 1L) } is NullPointerException)
-        check(failure { unacquired.createHintSession(intArrayOf(), 1) } is IllegalArgumentException)
+        check(failure { create.invoke(manager, null, 1L) } is NullPointerException)
+        check(failure { manager.createHintSession(intArrayOf(), 1) } is IllegalArgumentException)
         for (invalid in listOf(-1L, 0L)) {
-            check(failure { unacquired.createHintSession(intArrayOf(1), invalid) } is IllegalArgumentException)
+            check(failure { manager.createHintSession(intArrayOf(1), invalid) } is IllegalArgumentException)
         }
-        check(failure { unacquired.createHintSession(intArrayOf(1), 1) } is IllegalStateException)
-        check(failure { unacquired.preferredUpdateRateNanos } is IllegalStateException)
+        check(manager.createHintSession(intArrayOf(android.os.Process.myTid()), 1) == null)
 
         val duration = WorkDuration()
         check(duration.actualTotalDurationNanos == 0L && duration.actualCpuDurationNanos == 0L &&
@@ -75,18 +80,6 @@ internal object StockPerformanceHintSmoke {
             check(failure { closed.reportActualWorkDuration(invalid) } is IllegalArgumentException)
         }
 
-        // No legal manager/session can reach JNI operations when acquisition failed.
-        // Reject hidden invalid-handle calls explicitly instead of accepting fake hints.
-        for (action in listOf<() -> Any?>(
-                { closed.updateTargetWorkDuration(1) },
-                { closed.reportActualWorkDuration(1L) },
-                { closed.reportActualWorkDuration(equal) },
-                { closed.sendHint(PerformanceHintManager.Session.CPU_LOAD_UP) },
-                { closed.setPreferPowerEfficiency(true) },
-                { closed.threadIds })) {
-            val error = failure(action)
-            check(error is IllegalStateException && error.message?.contains("performance_hint") == true)
-        }
-        System.err.println("stock-performance-hint: service absence, duration values/validation and closed-session contracts passed")
+        System.err.println("stock-performance-hint: original native client, Binder capabilities, absent Power HAL and Java value contracts passed")
     }
 }

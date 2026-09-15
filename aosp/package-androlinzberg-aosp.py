@@ -83,6 +83,7 @@ framework_patches = tuple(
         (76, "-HWUI-use-stock-hardware-bitmap-snapshot.patch"),
         (77, "-HWUI-map-both-native-8888-layouts-to-bitmap-config.patch"),
         (78, "-UID-observers-use-host-process-authority.patch"),
+        (79, "-HintManagerService-retain-unsupported-capabilities-without-Power-HAL.patch"),
     )
 )
 

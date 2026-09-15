@@ -274,11 +274,15 @@ zig build -j10 cpp-audit
   writable existing mappings while preventing later writes through transferred
   descriptors. Original JNI owns mapping, initialization, atomics and cleanup.
 
-- `src/binder/vintf_jni.zig` implements VintfRuntimeInfo's independently cached
-  runtime-info groups. Uname reuses libcore Posix JNI; CPU and SELinux policy
-  files use `std.Io`, and AVB versions come from stock system properties. The
-  full libvintf build still needs Android HAL metadata and kernel-config
-  generators. Null and zero query failures match the pinned target behavior.
+- VintfObject and VintfRuntimeInfo use original JNI, libvintf, libkver and
+  generated XSD parsers. Runtime queries read host uname, procfs, properties and
+  SELinux state; missing Android manifests retain the original compatibility
+  failure. `libvintf_jni.so` maps to the platform library.
+- PerformanceHintManager uses original JNI and the native performance-hint
+  client over IHintManager to AOSP HintManagerService in the system process.
+  A constructor adaptation initializes unsupported capabilities when no Power
+  HAL is declared. The native PowerHalController uses its existing host seam
+  and original EmptyHalWrapper; no CPU/GPU hint session is fabricated.
 
 - `src/native/legacy_gles.zig` supplies the C ABI expected by pinned GLImpl
   JNI: GLVND extension dispatch and Android client-buffer Bounds entry points.

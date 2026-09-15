@@ -103,3 +103,12 @@ tests using the production native object files. `framework-module-test` also
 checks the original JNI with an instrumentation shell fixture and real host
 runtime information. Missing Android manifests must produce the original
 compatibility failure.
+
+`performance-hint-test` runs the original native session, work-duration, FMQ and
+capability tests using the production client object. The default selection has
+16 tests. The pinned seventeenth test, `TestSessionCreationWithNullLayers`,
+crashes in the unchanged client's null-SurfaceControl handling; reproduce it with
+`zig build -j10 performance-hint-test -Dperformance-hint-all-tests=true`.
+This target is separate from aggregate acceptance while that failure remains.
+Framework-module tests also exercise the real system HintManagerService without
+a Power HAL.

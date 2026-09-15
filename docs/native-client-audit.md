@@ -18,7 +18,7 @@ behavior; they do not establish native provenance or stock process boundaries.
 [`aosp-source-identity.py`](../tools/aosp-source-identity.py) compares the root
 framework build's static Java/Kotlin/annotation inputs against its explicitly
 supplied AOSP package and checkout. Its last acceptance report found 7,086
-unchanged inputs and 63 modified server inputs, with no modified or
+unchanged inputs and 64 modified server inputs, with no modified or
 repository-owned `android.*` / `com.android.internal.*` client replacements in
 that selection.
 
@@ -36,7 +36,7 @@ also does not mean zero unsupported native operations.
 reference revisions, modified native paths and delegated registration modules.
 Both archives were read directly. The framework archive was rechecked during
 the Binder, utility and media/graphics JNI migrations. The latest refresh adds
-original VINTF JNI, runtime/XML/compatibility clients and their parser dependencies. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
+original VINTF clients and the performance-hint JNI/native client. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
 `.h`, `.hpp`, `.hxx`, `.S`, `.s` and `.inl` member was compared byte-for-byte
 with the corresponding pinned checkout path. Both current archives contain
 multiple top-level directories; their paths were retained. Tracked reference
@@ -44,7 +44,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 13,995 | 99 | 0 |
+| Framework | 13,996 | 99 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -64,7 +64,7 @@ the build selection; it is not a complete dynamic-symbol resolution audit.
 
 [`main.zig`](../src/main.zig) calls the Binder and graphics registrars and then
 [`host_natives.zig`](../src/platform/host_natives.zig) when booting APK ART.
-[`framework_jni.zig`](../src/binder/framework_jni.zig) has 11 delegated
+[`framework_jni.zig`](../src/binder/framework_jni.zig) has 10 delegated
 registration modules, plus its own registrations and the Binder registrar.
 That number is not a replaced-class count: it includes host-only cursor helpers
 and dev.artzig EGL/NDK regression helpers. Registering a helper does not prove
@@ -192,7 +192,6 @@ path.
 | Client | Current implementation and behavior | Stock boundary to restore |
 |---|---|---|
 | SystemSensorManager | [`sensor_manager_jni.zig`](../src/binder/sensor_manager_jni.zig) returns empty discovery and unavailable queues/channels | Original JNI/libsensor to `sensorservice` |
-| PerformanceHintManager | [`performance_hint_jni.zig`](../src/binder/performance_hint_jni.zig) returns no manager and rejects sessions | Original JNI/native hint client, IHintManager and associated power-service boundary |
 
 Matching a missing-service result is still a replacement implementation. Adding
 a server later will not automatically make these clients use it. Restoring stock
@@ -374,8 +373,7 @@ in `1823bb1e`. See the JSON validation record for this limitation.
 3. Verify actual PipeWire delivery of a known PCM sequence against a
    controlled sink in addition to track position, callbacks and
    service-death tests.
-4. Restore SensorManager and PerformanceHint native clients and their
-   required service discovery. Codec2 owns FFmpeg decoding in the separate media
+4. Restore SensorManager native clients and required service discovery. Codec2 owns FFmpeg decoding in the separate media
    service; MediaPlayer and metadata retrieval now use original service clients.
 5. Restore app graphics clients while retaining host EGL/gralloc/compositor
    implementations at their appropriate boundaries. Then close device,
@@ -495,3 +493,32 @@ System tests, build-tool checks, source/Binder provenance, native ABI and build
 audits passed. All 28 APK cases passed with 88 recorded actions and zero
 structured runtime issues. Installed outputs and the framework source archive
 were refreshed; the aggregate acceptance target was not run.
+
+## Performance-hint native follow-up
+
+Original PerformanceHintManager JNI and `performance_hint.cpp` now call the
+original IHintManager protocol and AOSP HintManagerService in the system process.
+The old hosted JNI replacement is deleted. A server constructor adaptation
+initializes the stock pre-V6 unsupported-capability result without a Power HAL;
+the existing native PowerHalController host seam selects EmptyHalWrapper.
+A manager can be acquired and inspected; creating a supported hint session still
+returns null. CPU/GPU headroom remains explicitly unsupported.
+
+The native test target links the production client object and original upstream
+tests. Its default selection excludes `TestSessionCreationWithNullLayers`:
+the pinned client dereferences null SurfaceControls in `layersFromNativeSurfaces`,
+although its test expects those entries to be ignored. Enable
+`-Dperformance-hint-all-tests=true` to reproduce this known failure. No client
+source change conceals it. Framework tests use the actual Binder service and
+validate its capabilities, session results and Java argument/value contracts.
+Native JNI uses the existing private system-library projection for bare
+`libandroid.so` lookup through the hosted loader seam. The test executable also
+uses Soong's default zero initialization of locals: its upstream support test
+compares a one-byte bitfield through a four-byte union. The production native
+client uses that same default, which also initializes its session out-pointer
+when the service rejects creation.
+
+Native and framework module tests passed, followed by system tests, source/Binder
+provenance checks, build/ABI audits and the complete APK suite: 28 cases,
+88 recorded actions and zero structured runtime issues. Installed outputs and
+the source archive were refreshed. No aggregate acceptance run is claimed.

@@ -178,6 +178,7 @@ internal object SystemServices {
             Class.forName("android.os.HostedPowerManagerInternal")
                 .getConstructor(HostedPowerManagerService::class.java)
                 .newInstance(power) as android.os.PowerManagerInternal)
+        manager.startService(com.android.server.power.hint.HintManagerService::class.java)
         android.os.ServiceManager.addService(Context.THERMAL_SERVICE, HostedThermalService())
         android.os.ServiceManager.addService(Context.VIBRATOR_MANAGER_SERVICE, HostedVibratorManagerService())
         val battery = HostedBatteryService(activityManager)

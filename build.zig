@@ -721,6 +721,7 @@ pub fn build(b: *std.Build) void {
     };
     const island = @import("build/island.zig").build(b, island_options);
     @import("build/vintf.zig").testSuite(b, island_options, island, binder_broker);
+    @import("build/performance_hint.zig").testSuite(b, island_options, island, binder_broker);
     const media_service_probe = @import("build/codec2.zig").serviceProbe(b, codec2, island.file, binder_cpp, binder_ndk);
     b.step("island", "Build libandroid_platform.so").dependOn(island.step);
     @import("build/codec2.zig").cameraTest(b, codec2, island.file, binder_cpp, binder_ndk, binder_broker);

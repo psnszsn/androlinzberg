@@ -329,6 +329,8 @@ pub const CppAidl = struct {
     backend: enum { cpp, ndk } = .cpp,
     vintf_stable: bool = false,
     version: ?u32 = null,
+    min_sdk_version: ?u32 = null,
+    include_roots: []const []const u8 = &.{},
     hash: ?[]const u8 = null,
     root: []const u8,
     input: []const u8,
@@ -336,6 +338,13 @@ pub const CppAidl = struct {
 };
 
 pub const cpp_aidl = [_]CppAidl{
+    // Original NDK performance-hint client to IHintManager.
+    .{ .backend = .ndk, .min_sdk_version = 35, .include_roots = &.{"hardware/interfaces/power/aidl"}, .root = "frameworks/base/core/java", .input = "android/os/IHintManager.aidl", .output = "android/os/IHintManager.cpp" },
+    .{ .backend = .ndk, .min_sdk_version = 35, .include_roots = &.{"hardware/interfaces/power/aidl"}, .root = "frameworks/base/core/java", .input = "android/os/IHintSession.aidl", .output = "android/os/IHintSession.cpp" },
+    .{ .backend = .ndk, .min_sdk_version = 35, .include_roots = &.{"hardware/interfaces/power/aidl"}, .root = "frameworks/base/core/java", .input = "android/os/SessionCreationConfig.aidl", .output = "android/os/SessionCreationConfig.cpp" },
+    .{ .backend = .ndk, .min_sdk_version = 35, .include_roots = &.{"hardware/interfaces/power/aidl"}, .root = "frameworks/base/core/java", .input = "android/os/CpuHeadroomParamsInternal.aidl", .output = "android/os/CpuHeadroomParamsInternal.cpp" },
+    .{ .backend = .ndk, .min_sdk_version = 35, .include_roots = &.{"hardware/interfaces/power/aidl"}, .root = "frameworks/base/core/java", .input = "android/os/GpuHeadroomParamsInternal.aidl", .output = "android/os/GpuHeadroomParamsInternal.cpp" },
+
     // Stock playback service power, permission and camera clients.
     .{ .root = "frameworks/native/libs/permission/aidl", .input = "com/android/internal/app/IAppOpsCallback.aidl", .output = "com/android/internal/app/IAppOpsCallback.cpp" },
     .{ .root = "frameworks/base/native/android/aidl", .input = "com/android/internal/compat/IPlatformCompatNative.aidl", .output = "com/android/internal/compat/IPlatformCompatNative.cpp" },
@@ -1001,6 +1010,7 @@ pub const device_state_aidl = .{
 
 pub const VersionedAidl = struct { prefix: []const u8, version: []const u8, hash: []const u8 };
 pub const versioned_aidl = [_]VersionedAidl{
+    .{ .prefix = "hardware/interfaces/power/aidl/", .version = "6", .hash = "13171cf98a48de298baf85167633376ea3db4ea0" },
     // hardware/interfaces/cas/aidl/Android.bp: frozen V1 and its original API hash.
     .{ .prefix = "hardware/interfaces/cas/aidl/android/hardware/cas/", .version = "1", .hash = "bc51d8d70a55ec4723d3f73d0acf7003306bf69f" },
     .{ .prefix = device_state_aidl.root, .version = device_state_aidl.version, .hash = device_state_aidl.hash },
@@ -1009,6 +1019,15 @@ pub const versioned_aidl = [_]VersionedAidl{
 };
 
 pub const aidl = [_]SourcePath{
+    .{ .source = .aosp, .path = "frameworks/native/services/surfaceflinger/PowerAdvisor/aidl/android/adpf/ISessionManager.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/power/aidl/android/hardware/power/CompositionData.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/power/aidl/android/hardware/power/CompositionUpdate.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/power/aidl/android/hardware/power/FrameProducer.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/power/aidl/android/hardware/power/FrameProducerUpdate.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/power/aidl/android/hardware/power/IPower.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/power/aidl/android/hardware/power/IPowerHintSession.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/power/aidl/android/hardware/power/LatchedFrameData.aidl" },
+
     .{ .source = .aosp, .path = "packages/modules/Virtualization/android/virtualizationservice/aidl/android/system/virtualizationcommon/DeathReason.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Virtualization/android/virtualizationservice/aidl/android/system/virtualizationcommon/ErrorCode.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Virtualization/android/virtualizationservice/aidl/android/system/virtualizationservice/AssignableDevice.aidl" },
@@ -2648,6 +2667,7 @@ pub const logtags = [_]Logtags{
 };
 
 pub const aconfig = [_]Aconfig{
+    .{ .package = "com.android.server.power.hint", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/services/core/java/com/android/server/power/hint/flags.aconfig"} },
     .{ .package = "com.android.system.virtualmachine.flags", .container = "com.android.virt", .source = .aosp, .declarations = &.{"packages/modules/Virtualization/build/avf_flags.aconfig"} },
     .{ .package = "android.chre.flags", .container = "system", .source = .aosp, .declarations = &.{"system/chre/chre_flags.aconfig"} },
     .{ .package = "com.android.adservices.ondevicepersonalization.flags", .container = "com.android.ondevicepersonalization", .source = .aosp, .declarations = &.{"packages/modules/OnDevicePersonalization/flags/ondevicepersonalization_flags.aconfig"} },
@@ -2718,7 +2738,7 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.multiuser", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/content/pm/multiuser.aconfig"} },
     // PerfettoTrace initializes from Message before SystemServer publishes activity/Settings.
     // Use stock read-only defaults: keep exported accessors, avoid DeviceConfig at bootstrap.
-    .{ .package = "android.os", .default_permission = .read_only, .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/os/flags.aconfig"} },
+    .{ .package = "android.os", .cpp_source = true, .default_permission = .read_only, .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/os/flags.aconfig"} },
     .{ .package = "android.os.vibrator", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/os/vibrator/flags.aconfig"} },
     .{ .package = "android.provider", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/provider/flags.aconfig"} },
     .{ .package = "android.view.accessibility", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/view/accessibility/flags/accessibility_flags.aconfig"} },

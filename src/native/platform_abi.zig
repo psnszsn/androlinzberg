@@ -45,6 +45,28 @@ extern "c" fn __errno_location() *c_int;
 // Android namespace/FD/RELRO extensions have no host equivalent and fail explicitly.
 // No descriptor is borrowed or consumed when rejecting an extension.
 extern "c" fn dlopen(filename: ?[*:0]const u8, flags: c_int) ?*anyopaque;
+extern "c" fn azk_host_path(original: [*:0]const u8) ?[*:0]const u8;
+extern "c" fn azk_host_path_release(original: [*:0]const u8, mapped: ?[*:0]const u8) void;
+
+// Follow ART's hosted NativeLoader search order for native Android callers too.
+// System sonames resolve through the same private /system/lib64 aliases; loading
+// the existing ELF by its real path avoids a duplicate platform C++ runtime.
+pub export fn azk_android_dlopen(filename: ?[*:0]const u8, flags: c_int) callconv(.c) ?*anyopaque {
+    const original = filename orelse return dlopen(null, flags);
+    const mapped = azk_host_path(original) orelse return null;
+    defer azk_host_path_release(original, mapped);
+    if (dlopen(mapped, flags)) |handle| return handle;
+    if (std.mem.indexOfScalar(u8, std.mem.span(original), '/') != null) return null;
+    var buffer: [4096]u8 = undefined;
+    const system_path = std.fmt.bufPrintSentinel(&buffer, "/system/lib64/{s}", .{std.mem.span(original)}, 0) catch {
+        __errno_location().* = @backingInt(std.os.linux.E.NAMETOOLONG);
+        return null;
+    };
+    const system_mapped = azk_host_path(system_path) orelse return null;
+    defer azk_host_path_release(system_path, system_mapped);
+    return dlopen(system_mapped, flags);
+}
+
 const AndroidDlextInfo = extern struct {
     flags: u64,
     reserved_addr: ?*anyopaque,
@@ -61,7 +83,7 @@ pub export fn android_dlopen_ext(filename: ?[*:0]const u8, flags: c_int, info: ?
             return null;
         }
     }
-    return dlopen(filename, flags);
+    return azk_android_dlopen(filename, flags);
 }
 
 // Shared EGL state serves Java EGL and dynamically loaded Android clients.

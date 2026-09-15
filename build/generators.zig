@@ -185,6 +185,7 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "system/vold/binder/",
         "hardware/interfaces/graphics/common/aidl/",
         "hardware/interfaces/health/aidl/",
+        "frameworks/native/services/surfaceflinger/PowerAdvisor/aidl/",
         "hardware/interfaces/radio/aidl/",
         "hardware/interfaces/thermal/aidl/",
         "hardware/interfaces/usb/aidl/",
@@ -314,6 +315,7 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "system/vold/binder",
         "hardware/interfaces/graphics/common/aidl",
         "hardware/interfaces/health/aidl",
+        "frameworks/native/services/surfaceflinger/PowerAdvisor/aidl",
         "hardware/interfaces/radio/aidl",
         "hardware/interfaces/thermal/aidl",
         "hardware/interfaces/usb/aidl",
@@ -515,6 +517,9 @@ fn aidlCpp(
             run.addPrefixedDirectoryArg("-I", aosp.path("hardware/interfaces/common/aidl"));
             run.addPrefixedDirectoryArg("-I", aosp.path("hardware/interfaces/drm/common/aidl"));
         }
+        for (entry.include_roots) |include| run.addPrefixedDirectoryArg("-I", aosp.path(include));
+        if (entry.backend == .ndk and !entry.vintf_stable) run.addArg("--structured");
+        if (entry.min_sdk_version) |version| run.addArg(b.fmt("--min_sdk_version={d}", .{version}));
         if (entry.version) |version| run.addArg(b.fmt("--version={d}", .{version}));
         if (entry.hash) |hash| run.addArg(b.fmt("--hash={s}", .{hash}));
         run.addPrefixedDirectoryArg("-I", aosp.path("hardware/interfaces/common/aidl"));

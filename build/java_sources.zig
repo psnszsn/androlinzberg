@@ -1477,6 +1477,7 @@ fn collectStatic(c: *StaticCollector) !void {
     // Stock StatsD-module client over the host's no-statsd JNI sink.
     try c.file("$SD/framework/java/android/util/StatsEvent.java");
     try c.file("$SD/framework/java/android/util/StatsLog.java");
+    try c.file("$FB/services/core/java/com/android/server/power/hint/HintManagerService.java");
     // AOSP system-server skeleton reused by the hosted system process (src/java/dev/artzig/system).
     try c.file("$FB/services/core/java/com/android/server/SystemService.java");
     try c.file("$FB/services/core/java/com/android/server/SystemServiceManager.java");

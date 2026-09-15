@@ -1,10 +1,10 @@
 {
-  "revision": "f4eada30 + VINTF native client migration",
+  "revision": "92b1adc7 + performance-hint native client migration",
   "reference": "Pinned checkout described by aosp/README.md; project revisions below",
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 13995,
+      "unchanged": 13996,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -107,7 +107,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "2dba11095ad18cc21ae68d7f3d33d61e34594effe6856699e680985277eee5a9"
+      "archive_sha256": "7a85f9e281763e862a4c46fe720c58aa975ac38c054bb46f21f2df42783c0e11"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -243,7 +243,6 @@
     "src/binder/debug_jni.zig",
     "src/binder/pointer_icon_jni.zig",
     "src/binder/egl_interop_test.zig",
-    "src/binder/performance_hint_jni.zig",
     "src/binder/traffic_stats_jni.zig",
     "src/binder/sensor_manager_jni.zig",
     "src/binder/activity_jni.zig",
@@ -251,7 +250,7 @@
     "src/binder/ndk_codec_test.zig",
     "src/binder/runtime_init_jni.zig"
   ],
-  "registration_scope_note": "11 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
+  "registration_scope_note": "10 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
       "sha256": "4df79b295285df444525c327aea20cd2db62dad49e3153d9c395f9329b772646",
@@ -626,5 +625,34 @@
       "aggregate_acceptance": "not run"
     },
     "test_linkage": "Native conformance executable reuses the production object files in one ELF to keep C++ stream construction/move/destruction within one runtime; framework tests separately exercise the platform shared library through original JNI."
+  },
+  "performance_hint_followup": {
+    "client": "Original PerformanceHintManager JNI and performance_hint.cpp; generated IHintManager/IHintSession NDK protocol",
+    "service": "Original HintManagerService with absent-Power-HAL constructor adaptation; original JNI and PowerHalController EmptyHalWrapper via existing host seam",
+    "upstream_test_limit": "TestSessionCreationWithNullLayers dereferences a null SurfaceControl in pinned layersFromNativeSurfaces; default native target explicitly excludes it, -Dperformance-hint-all-tests=true reproduces it",
+    "validation": {
+      "native": "16 original selected tests passed; pinned null-layer crash remains explicitly excluded",
+      "framework": "framework-module-test passed including real JNI/Binder unsupported-capability contracts",
+      "system": "system-test passed, all peers exited cleanly",
+      "apk_cases": 28,
+      "recorded_actions": 88,
+      "structured_runtime_issues": 0,
+      "failure_artifacts": 0,
+      "other_checks": [
+        "source-identity-test: 7086 unchanged clients, zero modified/owned clients, 64 server adaptations",
+        "binder-jni-source-test: four original production inputs",
+        "ndk-abi: 135 reference Binder NDK A* symbols present",
+        "cpp-audit",
+        "graph-audit",
+        "build-tools-test",
+        "testkit: 23 tests"
+      ],
+      "installed_outputs": "refreshed",
+      "native_framework_log": "/tmp/azk-hint-tests147.log",
+      "system_apk_log": "/tmp/azk-hint-acceptance148.log",
+      "aggregate_acceptance": "not run"
+    },
+    "loader": "JNI dlopen binds to azk_android_dlopen, which reuses host path mapping and the private system/lib64 soname aliases; no copied platform ELF or second runtime",
+    "test_compiler": "Production client and original tests match Soong CommonGlobalCflags -ftrivial-auto-var-init=zero; required for the client session failure out-pointer and the test bitfield/union comparison"
   }
 }

@@ -48,6 +48,7 @@ pub const Options = struct {
 
 pub const Result = struct {
     vintf_objects: []const std.Build.LazyPath,
+    hint_client: std.Build.LazyPath,
     binder_jni_sources: []const std.Build.LazyPath,
     binder_jni_includes: []const std.Build.LazyPath,
     file: std.Build.LazyPath,
@@ -529,6 +530,26 @@ pub fn build(b: *std.Build, o: Options) Result {
 
     g.add(o.aosp.path(b, "frameworks/native/libs/tonemap"), &.{"tonemap.cpp"}, &.{}, &.{});
 
+    const hint_includes = &.{
+        o.aosp.path(b, "frameworks/native/include/private"),
+        o.aosp.path(b, "frameworks/base/core/jni"),
+        o.aosp.path(b, "frameworks/base/core/jni/include"),
+        o.aosp.path(b, "frameworks/native/services/powermanager/include"),
+        o.aosp.path(b, "system/libfmq/include"),
+        o.aosp.path(b, "system/libfmq/base"),
+    };
+    const hint_start = objects.items.len;
+    // Soong CommonGlobalCflags zero-initializes the session out-pointer on failure.
+    g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{"performance_hint.cpp"}, hint_includes, &.{"-ftrivial-auto-var-init=zero"});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_os_PerformanceHintManager.cpp"}, hint_includes, &.{"-Ddlopen=azk_android_dlopen"});
+    g.add(o.aosp.path(b, "frameworks/base/services/core/jni"), &.{"com_android_server_hint_HintManagerService.cpp"}, hint_includes, &.{});
+    // Original EmptyHalWrapper reports unavailable host power hints below IHintManager.
+    g.add(o.aosp.path(b, "frameworks/native/services/powermanager"), &.{ "PowerHalController.cpp", "PowerHalWrapper.cpp", "PowerHintSessionWrapper.cpp" }, hint_includes, &.{"-DARTZIG_HOST_GRAPHICS"});
+    for (@import("generator_sources.zig").surfaceflinger_ndk_aidl) |file| {
+        const prefix = "hardware/interfaces/power/aidl/";
+        if (std.mem.startsWith(u8, file, prefix)) g.add(o.surfaceflinger_generated.sources, &.{b.fmt("{s}.cpp", .{file[prefix.len .. file.len - 5]})}, hint_includes, &.{});
+    }
+
     // Original VINTF XML/runtime clients. Keep their C++ runtime in this ELF;
     // a separately linked runtime would duplicate libc++ locale state.
     const vintf = @import("vintf_sources.zig");
@@ -849,5 +870,5 @@ pub fn build(b: *std.Build, o: Options) Result {
     link.addArgs(o.host_link_flags);
     link.addArgs(&.{ "-ldl", "-lpthread", "-lm", "-lcrypto", "-o" });
     const output = link.addOutputFileArg("libandroid_platform.so");
-    return .{ .file = output, .step = &link.step, .binder_jni_sources = binder_jni_sources.items, .binder_jni_includes = common_includes.items, .vintf_objects = objects.items[vintf_start..vintf_end] };
+    return .{ .hint_client = objects.items[hint_start], .file = output, .step = &link.step, .binder_jni_sources = binder_jni_sources.items, .binder_jni_includes = common_includes.items, .vintf_objects = objects.items[vintf_start..vintf_end] };
 }
