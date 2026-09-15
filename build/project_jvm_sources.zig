@@ -153,6 +153,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/StockProcessLaunchSmoke.kt",
     "src/java/dev/artzig/system/HostedNsdService.kt",
     "src/java/dev/artzig/StockLegacyCameraSmoke.kt",
+    "src/java/dev/artzig/StockVintfSmoke.kt",
     "src/java/dev/artzig/StockIpSecProposalSmoke.kt",
     "src/java/dev/artzig/StockImageSmoke.kt",
     "src/java/dev/artzig/StockConfigurationSmoke.kt",

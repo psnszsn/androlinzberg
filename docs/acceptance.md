@@ -97,3 +97,9 @@ The acceptance target does not remove caches or create worktrees automatically.
 Binder queries, attribution, connection failures and typed service lookup. The
 framework module checks public Camera and metadata contracts; `system-test`
 checks vendor descriptor/cache discovery using a privileged fixture.
+
+`vintf-test` runs 252 original libvintf parser, manifest, matrix and compatibility
+tests using the production native object files. `framework-module-test` also
+checks the original JNI with an instrumentation shell fixture and real host
+runtime information. Missing Android manifests must produce the original
+compatibility failure.

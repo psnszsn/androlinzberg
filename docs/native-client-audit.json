@@ -1,10 +1,10 @@
 {
-  "revision": "8f4a934a + Camera client migration",
+  "revision": "f4eada30 + VINTF native client migration",
   "reference": "Pinned checkout described by aosp/README.md; project revisions below",
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 13905,
+      "unchanged": 13995,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -107,7 +107,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "beaf0ecf38caee90650f85552e583ca979ec9650356497c87e370c4068804f1d"
+      "archive_sha256": "2dba11095ad18cc21ae68d7f3d33d61e34594effe6856699e680985277eee5a9"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -215,6 +215,14 @@
     "external/tremolo": {
       "revision": "bda690e46497e1f65c5077173b9c548e6e0cd5a1",
       "tracked_clean": true
+    },
+    "packages/modules/Gki": {
+      "revision": "132cba8d2b2768d739378fca96c5eb5f777e228d",
+      "tracked_clean": true
+    },
+    "system/tools/hidl": {
+      "revision": "9118bce274377031a1425919678094ededf240d9",
+      "tracked_clean": true
     }
   },
   "date": "2026-09-15",
@@ -235,7 +243,6 @@
     "src/binder/debug_jni.zig",
     "src/binder/pointer_icon_jni.zig",
     "src/binder/egl_interop_test.zig",
-    "src/binder/vintf_jni.zig",
     "src/binder/performance_hint_jni.zig",
     "src/binder/traffic_stats_jni.zig",
     "src/binder/sensor_manager_jni.zig",
@@ -244,27 +251,29 @@
     "src/binder/ndk_codec_test.zig",
     "src/binder/runtime_init_jni.zig"
   ],
-  "registration_scope_note": "12 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
+  "registration_scope_note": "11 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
-      "sha256": "91191267f5e000db2c194fa832c7d3418640f93fabb1d6f2eb3087c3441c75ab",
+      "sha256": "4df79b295285df444525c327aea20cd2db62dad49e3153d9c395f9329b772646",
       "defined_symbols": [
         "register_localized_collators",
         "register_android_functions",
         "AMediaCodec_createDecoderByType",
         "AAudio_createStreamBuilder",
         "_Z33register_android_media_MediaCodecP7_JNIEnv",
-        "_Z37register_android_media_MediaCodecListP7_JNIEnv"
+        "_Z37register_android_media_MediaCodecListP7_JNIEnv",
+        "_ZN7android31register_android_os_VintfObjectEP7_JNIEnv",
+        "_ZN7android36register_android_os_VintfRuntimeInfoEP7_JNIEnv"
       ]
     },
     "lib/art/libbinder_ndk.so": {
-      "sha256": "ce238ead27064e357c621b76b74104d19a2c72e8d4cc814442326ba3fbdb586e",
+      "sha256": "d919a27040412a4f3a1ca9146d9e1fe77988d1bb545ec1255b81d3d994b3ce62",
       "defined_symbols": [
         "azk_register_binder_jni"
       ]
     }
   },
-  "framework_package_refresh": "2026-09-15: original MediaPlayer/retriever JNI, native clients, MediaPlayerService/NuPlayer and nine extractor plugins. Rechecked against the clean pinned reference.",
+  "framework_package_refresh": "2026-09-15: original VINTF JNI/libvintf, libkver, tinyxml2 and original parser conformance tests. Rechecked against the clean pinned reference.",
   "binder_jni_followup": {
     "runtime_revision": "b7d78a39",
     "verified_date": "2026-09-13",
@@ -593,5 +602,29 @@
       ]
     },
     "test_scope": "Platform vendor fixtures run in the existing system-test process; ordinary applications retain the broker namespace restriction. No production camera service or capture HAL is fabricated."
+  },
+  "vintf_followup": {
+    "date": "2026-09-15",
+    "source_sha256": {
+      "android_os_VintfObject.cpp": "e933be750aba1592a8f995a250a1d53e0e65bbdbd414f65a3e1e820bc1ebef8b",
+      "android_os_VintfRuntimeInfo.cpp": "382222c9c035e2248aedef97113745076b69f830bfa033ed203fbc12661e7ed8"
+    },
+    "native": "Original libvintf runtime, manifest/matrix/XML/compatibility clients, libkver, tinyxml2 and xsdc C++ apex-info-list parser",
+    "removed": "src/binder/vintf_jni.zig (232 lines)",
+    "boundary": "Original TestApi JNI reads instrumentation shell output; original boot compatibility and runtime information use host files/properties. No Android manifest, matrix or HAL is fabricated.",
+    "validation": {
+      "original_native_tests": 252,
+      "native_log": "/tmp/azk-vintf-native113.log",
+      "framework_module": "passed: shell XML parsing and absence, compatibility failure, uname, procfs, AVB and SELinux queries",
+      "framework_log": "/tmp/azk-vintf-tests111.log",
+      "system_and_apk": "passed",
+      "apk_cases": 28,
+      "apk_recorded_actions": 88,
+      "apk_structured_runtime_issues": 0,
+      "system_source_binder_ndk_abi_cpp_graph_build_tools": "passed",
+      "acceptance_log": "/tmp/azk-vintf-acceptance116.log",
+      "aggregate_acceptance": "not run"
+    },
+    "test_linkage": "Native conformance executable reuses the production object files in one ELF to keep C++ stream construction/move/destruction within one runtime; framework tests separately exercise the platform shared library through original JNI."
   }
 }

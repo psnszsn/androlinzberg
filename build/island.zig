@@ -7,6 +7,7 @@ const std = @import("std");
 const gen = @import("gen/island_sources.zig");
 
 pub const Options = struct {
+    xsd: []const @import("generators.zig").CppXsd,
     media_generated: @import("graphics.zig").Generated,
     hwui_stats: @import("graphics.zig").Generated,
     surfaceflinger_generated: @import("graphics.zig").Generated,
@@ -46,6 +47,7 @@ pub const Options = struct {
 };
 
 pub const Result = struct {
+    vintf_objects: []const std.Build.LazyPath,
     binder_jni_sources: []const std.Build.LazyPath,
     binder_jni_includes: []const std.Build.LazyPath,
     file: std.Build.LazyPath,
@@ -527,6 +529,21 @@ pub fn build(b: *std.Build, o: Options) Result {
 
     g.add(o.aosp.path(b, "frameworks/native/libs/tonemap"), &.{"tonemap.cpp"}, &.{}, &.{});
 
+    // Original VINTF XML/runtime clients. Keep their C++ runtime in this ELF;
+    // a separately linked runtime would duplicate libc++ locale state.
+    const vintf = @import("vintf_sources.zig");
+    var vintf_includes: std.ArrayList(std.Build.LazyPath) = .empty;
+    for (vintf.includes) |path| vintf_includes.append(b.allocator, o.aosp.path(b, path)) catch @panic("OOM");
+    vintf_includes.appendSlice(b.allocator, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include") }) catch @panic("OOM");
+    for (o.xsd) |native| vintf_includes.append(b.allocator, native.headers) catch @panic("OOM");
+    const vintf_start = objects.items.len;
+    // The host libc++ no longer includes algorithm transitively for libvintf.
+    for (vintf.groups) |group| g.add(o.aosp.path(b, group.root), group.files, vintf_includes.items, &.{ "-DLIBVINTF_TARGET", "-include", "algorithm" });
+    for (o.xsd) |native| g.add(native.source_root, native.sources, vintf_includes.items, &.{});
+    const vintf_end = objects.items.len;
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_os_VintfObject.cpp"}, vintf_includes.items, &.{ "-DLIBVINTF_TARGET", "-DJNI_OnLoad=azk_vintf_JNI_OnLoad" });
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_os_VintfRuntimeInfo.cpp"}, vintf_includes.items, &.{"-DLIBVINTF_TARGET"});
+
     // Original JNI over the native Android-window / Mesa platform ABI.
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "android_opengl_EGL14.cpp", "com_google_android_gles_jni_EGLImpl.cpp" }, &.{
         o.aosp.path(b, "frameworks/base/core/jni/include"),
@@ -832,5 +849,5 @@ pub fn build(b: *std.Build, o: Options) Result {
     link.addArgs(o.host_link_flags);
     link.addArgs(&.{ "-ldl", "-lpthread", "-lm", "-lcrypto", "-o" });
     const output = link.addOutputFileArg("libandroid_platform.so");
-    return .{ .file = output, .step = &link.step, .binder_jni_sources = binder_jni_sources.items, .binder_jni_includes = common_includes.items };
+    return .{ .file = output, .step = &link.step, .binder_jni_sources = binder_jni_sources.items, .binder_jni_includes = common_includes.items, .vintf_objects = objects.items[vintf_start..vintf_end] };
 }

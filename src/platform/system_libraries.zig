@@ -16,6 +16,7 @@ pub fn resolve(a: std.mem.Allocator, io: std.Io, tree: []const u8) ![]const art.
         .{ "libaaudio.so", "lib/libandroid_platform.so" },
         .{ "libandroid.so", "lib/libandroid_platform.so" },
         .{ "libmediandk.so", "lib/libandroid_platform.so" },
+        .{ "libvintf_jni.so", "lib/libandroid_platform.so" },
         .{ "libjnigraphics.so", "lib/libandroid_platform.so" },
         .{ "liblog.so", "lib/libandroid_platform.so" },
     }) |entry| {

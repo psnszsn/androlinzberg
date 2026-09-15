@@ -75,6 +75,7 @@ fn generatedClasses(io: Io, allocator: std.mem.Allocator, aosp_root: []const u8)
         for (entry.outputs) |output| try putForbidden(&result, allocator, output);
     }
     for (generator_sources.xsd) |entry| {
+        if (entry.backend != .java) continue;
         for (entry.outputs) |output| try putForbidden(&result, allocator, output);
     }
     for (generator_sources.cronet.enum_outputs) |output| try putForbidden(&result, allocator, output);

@@ -114,6 +114,10 @@ extern int register_android_graphics_RuntimeXfermode(JNIEnv*);
 extern int register_android_graphics_Camera(JNIEnv*);
 extern int register_android_hardware_camera2_CameraMetadata(JNIEnv*);
 extern int register_android_hardware_Camera(JNIEnv*);
+namespace android {
+int register_android_os_VintfObject(JNIEnv*);
+int register_android_os_VintfRuntimeInfo(JNIEnv*);
+}
 extern int register_android_media_MediaHTTPConnection(JNIEnv*);
 extern int register_android_media_MediaExtractor(JNIEnv*);
 extern int register_android_media_Descrambler(JNIEnv*);
@@ -770,6 +774,8 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_android_graphics_BitmapRegionDecoder),
             E(register_android_graphics_RuntimeXfermode),
             E(register_android_graphics_Camera),
+            E(android::register_android_os_VintfObject),
+            E(android::register_android_os_VintfRuntimeInfo),
             E(register_android_hardware_Camera),
             E(register_android_hardware_camera2_CameraMetadata),
             E(register_android_media_MediaHTTPConnection),

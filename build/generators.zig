@@ -36,7 +36,14 @@ pub const GeneratedJvm = struct {
     system_features_processor_dependencies: LazyPath,
 };
 
+pub const CppXsd = struct {
+    headers: LazyPath,
+    source_root: LazyPath,
+    sources: []const []const u8,
+};
+
 pub const GeneratedNative = struct {
+    xsd: []const CppXsd,
     media: @import("graphics.zig").Generated,
     hwui_stats: @import("graphics.zig").Generated,
     media_stats: @import("graphics.zig").Generated,
@@ -893,7 +900,9 @@ fn expressMetricIdsJava(b: *std.Build, aosp: *std.Build.Dependency) LazyPath {
     return output;
 }
 
-fn xsdJava(b: *std.Build, aosp: *std.Build.Dependency) []const LazyPath {
+const GeneratedXsd = struct { java: []const LazyPath, cpp: []const CppXsd };
+
+fn xsdSources(b: *std.Build, aosp: *std.Build.Dependency) GeneratedXsd {
     var sources = SourceFiles.Collector.init(b);
     const root = SourceFiles.Root.dependency(b, aosp, "system/tools/xsdc/src/main/java");
     sources.addTree(root, .{});
@@ -908,24 +917,34 @@ fn xsdJava(b: *std.Build, aosp: *std.Build.Dependency) []const LazyPath {
     const rsp = java_sources.responseFile(b, "xsdc-sources.rsp");
     compile.addPrefixedFileArg("@", rsp);
     java_sources.addInputs(compile.run);
-    compile.run.setName("compile AOSP XSD Java generator");
+    compile.run.setName("compile AOSP XSD generator");
 
     var files: std.ArrayList(LazyPath) = .empty;
+    var native: std.ArrayList(CppXsd) = .empty;
     for (declarations.xsd) |entry| {
         const run = command.create(b);
         run.addArgs(&.{ "java", "-cp" });
         run.addJoinedPathInputs(":", &.{ .{ .directory = classes }, .{ .file = commons_cli } });
-        run.addArgs(&.{ "com.android.xsdc.Main", "-j", "-p", entry.package, "-o" });
-        const output = run.addOutputDirectoryArg(b.fmt("{s}-java", .{entry.name}));
+        const backend = if (entry.backend == .java) "Java" else "C++";
+        run.addArgs(&.{ "com.android.xsdc.Main", if (entry.backend == .java) "-j" else "-c", "-p", entry.package, "-o" });
+        const output = run.addOutputDirectoryArg(b.fmt("{s}-{s}", .{ entry.name, @tagName(entry.backend) }));
         run.addArgs(entry.arguments);
         run.addFileArg(sourcePath(b, aosp, entry.input));
-        run.run.setName(b.fmt("generate {s} Java", .{entry.name}));
+        run.run.setName(b.fmt("generate {s} {s}", .{ entry.name, backend }));
         const result = b.allocator.alloc(LazyPath, entry.outputs.len) catch @panic("OOM");
         for (entry.outputs, 0..) |path, index| result[index] = output.path(b, path);
-        _ = exposePaths(b, b.fmt("gen-{s}", .{entry.name}), b.fmt("Generate {s} Java sources", .{entry.name}), result);
-        files.appendSlice(b.allocator, result) catch @panic("OOM");
+        _ = exposePaths(b, b.fmt("gen-{s}", .{entry.name}), b.fmt("Generate {s} {s} sources", .{ entry.name, backend }), result);
+        if (entry.backend == .java) {
+            files.appendSlice(b.allocator, result) catch @panic("OOM");
+        } else {
+            var cpp: std.ArrayList([]const u8) = .empty;
+            for (entry.outputs) |path| {
+                if (std.mem.endsWith(u8, path, ".cpp")) cpp.append(b.allocator, path) catch @panic("OOM");
+            }
+            native.append(b.allocator, .{ .headers = output.path(b, "include"), .source_root = output, .sources = cpp.toOwnedSlice(b.allocator) catch @panic("OOM") }) catch @panic("OOM");
+        }
     }
-    return files.toOwnedSlice(b.allocator) catch @panic("OOM");
+    return .{ .java = files.toOwnedSlice(b.allocator) catch @panic("OOM"), .cpp = native.toOwnedSlice(b.allocator) catch @panic("OOM") };
 }
 
 pub fn signApk(
@@ -1300,12 +1319,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     const system_features_java = systemFeaturesJava(b, o.aosp);
     const aconfig_device_paths_java = aconfigDevicePathsJava(b, o.aosp);
     const template_java = javaTemplates(b, o.aosp);
-    const xsd_java = xsdJava(b, o.aosp);
+    const xsd = xsdSources(b, o.aosp);
     const res = resources(b, o.aosp, filter);
     const fixtures = fixtureApks(b, o.aosp, res.apk);
     const mime_resources = mimeResources(b, o.aosp);
     var java_files: std.ArrayList(LazyPath) = .empty;
-    inline for (.{ template_java, cronet_java, aidl_java, hidl_java, logtags_java, aconfig_java.java, sysprop_java, nano_java.java, proto_java, stats_java, xsd_java, res.java_sources }) |generated_set| {
+    inline for (.{ template_java, cronet_java, aidl_java, hidl_java, logtags_java, aconfig_java.java, sysprop_java, nano_java.java, proto_java, stats_java, xsd.java, res.java_sources }) |generated_set| {
         java_files.appendSlice(b.allocator, generated_set) catch @panic("OOM");
     }
     java_files.append(b.allocator, express_metric_ids_java) catch @panic("OOM");
@@ -1319,6 +1338,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     for (hidl_cpp.sources) |path| path.addStepDependencies(aggregate);
     for (aconfig_java.cpp_headers) |path| path.addStepDependencies(aggregate);
     for (aconfig_java.cpp_sources) |path| path.addStepDependencies(aggregate);
+    for (xsd.cpp) |native| native.source_root.addStepDependencies(aggregate);
     inline for (.{ gui, renderengine, perfetto, surfaceflinger, input, input_dispatcher, media }) |native| {
         native.headers.addStepDependencies(aggregate);
         native.sources.addStepDependencies(aggregate);
@@ -1342,6 +1362,7 @@ pub fn build(b: *std.Build, o: Options) Result {
             .system_features_processor_dependencies = system_features_java.dependencies,
         },
         .native = .{
+            .xsd = xsd.cpp,
             .media = media,
             .media_stats = .{ .headers = media_stats_headers.getDirectory(), .sources = media_stats_sources.getDirectory() },
             .hwui_stats = .{ .headers = hwui_stats_headers.getDirectory(), .sources = hwui_stats_sources.getDirectory() },

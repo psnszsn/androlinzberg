@@ -229,6 +229,7 @@ pub const compat_config = .{
 };
 
 pub const Xsd = struct {
+    backend: enum { java, cpp } = .java,
     name: []const u8,
     package: []const u8,
     input: SourcePath,
@@ -236,8 +237,16 @@ pub const Xsd = struct {
     outputs: []const []const u8,
 };
 
-/// Match the pinned xsd_config Java backends; all sources come from AOSP xsdc.
+/// Match pinned xsd_config Java/C++ backends; all sources come from AOSP xsdc.
 pub const xsd = [_]Xsd{
+    .{
+        .backend = .cpp,
+        .name = "apex-info-list-native",
+        .package = "com.android.apex",
+        .input = .{ .source = .aosp, .path = "system/apex/apexd/ApexInfoList.xsd" },
+        .arguments = &.{ "--tinyxml", "-r", "apex-info-list" },
+        .outputs = &.{ "include/com_android_apex.h", "include/com_android_apex_enums.h", "com_android_apex.cpp", "com_android_apex_enums.cpp" },
+    },
     .{
         .name = "platform-compat-config",
         .package = "com.android.server.compat.config",

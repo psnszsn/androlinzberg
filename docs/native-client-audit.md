@@ -36,7 +36,7 @@ also does not mean zero unsupported native operations.
 reference revisions, modified native paths and delegated registration modules.
 Both archives were read directly. The framework archive was rechecked during
 the Binder, utility and media/graphics JNI migrations. The latest refresh adds
-original MediaPlayer/retriever JNI, MediaPlayerService/NuPlayer, and nine extractor plugins with their dependencies. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
+original VINTF JNI, runtime/XML/compatibility clients and their parser dependencies. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
 `.h`, `.hpp`, `.hxx`, `.S`, `.s` and `.inl` member was compared byte-for-byte
 with the corresponding pinned checkout path. Both current archives contain
 multiple top-level directories; their paths were retained. Tracked reference
@@ -44,7 +44,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 13,905 | 99 | 0 |
+| Framework | 13,995 | 99 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -64,7 +64,7 @@ the build selection; it is not a complete dynamic-symbol resolution audit.
 
 [`main.zig`](../src/main.zig) calls the Binder and graphics registrars and then
 [`host_natives.zig`](../src/platform/host_natives.zig) when booting APK ART.
-[`framework_jni.zig`](../src/binder/framework_jni.zig) has 12 delegated
+[`framework_jni.zig`](../src/binder/framework_jni.zig) has 11 delegated
 registration modules, plus its own registrations and the Binder registrar.
 That number is not a replaced-class count: it includes host-only cursor helpers
 and dev.artzig EGL/NDK regression helpers. Registering a helper does not prove
@@ -331,7 +331,8 @@ wholesale into system_server.
 | NetworkUtils / process networking / TrafficStats | Central JNI, [`network_utils_internal_jni.zig`](../src/binder/network_utils_internal_jni.zig), [`traffic_stats_jni.zig`](../src/binder/traffic_stats_jni.zig) | Owned socket/fallback behavior. VPN/netd policy and Android per-UID tagging are not implemented by successful ordinary Linux networking |
 | Trace and Java Perfetto data sources | Original JNI and Perfetto SDK | In-process packet capture works; no system traced daemon is installed |
 | Log / EventLog / SecurityLog | Original JNI and liblog; diagnostics observe Java-originated liblog output | Original host log reader returns no historical events; Android logd is absent |
-| Debug / VINTF | [`debug_jni.zig`](../src/binder/debug_jni.zig), [`vintf_jni.zig`](../src/binder/vintf_jni.zig) | Host procfs/allocator/runtime-info implementations and unavailable Android facilities replace original clients |
+| Debug | [`debug_jni.zig`](../src/binder/debug_jni.zig) | Host procfs/allocator implementations and unavailable Android facilities replace original clients |
+| VINTF | Original VintfObject/VintfRuntimeInfo JNI, libvintf, libkver and generated XSD parser | Original manifest/matrix compatibility and runtime queries; this host supplies no Android manifests or matrices |
 | ClassLoaderFactory / CharsetUtils / OverlayConfig | Original JNI | Native loader namespaces remain a host seam; charset conversion is original, and OverlayConfig retains the original idmap2 executable probe |
 | SELinux | [`selinux_backend.zig`](../src/native/selinux_backend.zig) | Host policy adapter beneath reused JNI; Android seapp policy is not supplied |
 | SQLite | Original `external/sqlite/android` extension over host SQLite/ICU | ICU collation and Android phone-number/file SQL functions are restored; the underlying SQLite library is still a host dependency |
@@ -364,7 +365,7 @@ in `1823bb1e`. See the JSON validation record for this limitation.
 
 ## Remaining work and acceptance criteria
 
-1. Close remaining Process, Debug, VINTF and networking JNI adaptations against
+1. Close remaining Process, Debug and networking JNI adaptations against
    their native dependencies and host policy. Preserve explicit missing-service
    behavior where Android infrastructure is absent.
 2. Decide whether libbinder and AZKB remain explicit native adaptations or
@@ -475,3 +476,22 @@ FFmpeg/VAAPI dependencies are in the media executable, while the launcher and
 platform DSO have none. The aggregate acceptance target has not been rerun.
 The optional original `codec2-params-test` retains its two previous host-compiler
 parameter equality/implicit-bool mismatches (12/14); it is outside acceptance.
+
+## VINTF native follow-up
+
+Original VintfObject and VintfRuntimeInfo JNI now use the pinned libvintf
+implementation. The existing xsdc generator emits its C++ apex-info-list parser
+from a typed build declaration. The 232-line hosted JNI replacement is deleted;
+`libvintf_jni.so` resolves to the existing platform ELF.
+
+All 252 original parser/compatibility tests passed using the production native
+object files. Framework tests exercise the actual JNI with valid and missing
+manifest/matrix XML through an instrumentation shell fixture, plus real uname,
+procfs, AVB-property and SELinux queries. Boot verification correctly reports
+the absent Android manifests. The fixture does not provide a production shell
+service or claim device compatibility.
+
+System tests, build-tool checks, source/Binder provenance, native ABI and build
+audits passed. All 28 APK cases passed with 88 recorded actions and zero
+structured runtime issues. Installed outputs and the framework source archive
+were refreshed; the aggregate acceptance target was not run.

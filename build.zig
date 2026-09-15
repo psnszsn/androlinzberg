@@ -686,6 +686,7 @@ pub fn build(b: *std.Build) void {
     const island_options: @import("build/island.zig").Options = .{
         .host_paths_library = artzig_dep.namedLazyPath("host-paths-library"),
         .host_paths_headers = artzig_dep.namedLazyPath("host-paths-headers"),
+        .xsd = generated.native.xsd,
         .media_generated = generated.native.media,
         .hwui_stats = generated.native.hwui_stats,
         .surfaceflinger_generated = generated.native.surfaceflinger,
@@ -719,6 +720,7 @@ pub fn build(b: *std.Build) void {
         .codec2 = codec2,
     };
     const island = @import("build/island.zig").build(b, island_options);
+    @import("build/vintf.zig").testSuite(b, island_options, island, binder_broker);
     const media_service_probe = @import("build/codec2.zig").serviceProbe(b, codec2, island.file, binder_cpp, binder_ndk);
     b.step("island", "Build libandroid_platform.so").dependOn(island.step);
     @import("build/codec2.zig").cameraTest(b, codec2, island.file, binder_cpp, binder_ndk, binder_broker);
@@ -1750,6 +1752,7 @@ pub fn build(b: *std.Build) void {
         "binder-jni-source-test",
         "codec2-client-test",
         "camera-client-test",
+        "vintf-test",
         "codec2-transport-test",
         "codec2-allocator-test",
         "codec2-bufferpool-test",

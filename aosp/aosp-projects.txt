@@ -125,6 +125,7 @@ platform/packages/modules/ConfigInfrastructure
 platform/packages/modules/Connectivity
 platform/packages/modules/DeviceLock
 platform/packages/modules/DnsResolver
+platform/packages/modules/Gki
 platform/packages/modules/HealthFitness
 platform/packages/modules/IPsec
 platform/packages/modules/Media
@@ -187,6 +188,7 @@ platform/system/sepolicy
 platform/system/server_configurable_flags
 platform/system/testing/gtest_extras
 platform/system/tools/aidl
+platform/system/tools/hidl
 platform/system/tools/sysprop
 platform/system/tools/xsdc
 platform/system/unwinding
