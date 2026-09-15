@@ -278,17 +278,6 @@ fn throwSchedulerError(env: JNIEnvPtr, err: linux.E) void {
         else => throwNamed(env, "java/lang/RuntimeException", "Unknown thread scheduler error"),
     }
 }
-fn procSetArgV0Native(env: JNIEnvPtr, _: jni.jclass, text: jni.jstring) callconv(.c) void {
-    if (text == null) return;
-    const chars = env.*.*.GetStringUTFChars.?(env, text, null) orelse return;
-    defer env.*.*.ReleaseStringUTFChars.?(env, text, chars);
-    // set_process_name: the comm of the calling thread, truncated to 15 bytes.
-    var name: [16]u8 = @splat(0);
-    const span = std.mem.span(chars);
-    const n = @min(span.len, 15);
-    @memcpy(name[0..n], span[0..n]);
-    _ = linux.prctl(@backingInt(linux.PR.SET_NAME), @intFromPtr(&name), 0, 0, 0);
-}
 fn procSetUid(_: JNIEnvPtr, _: jni.jclass, uid: jni.jint) callconv(.c) jni.jint {
     // Process.setUid: immutable authenticated identity in a trusted hosted
     // VM; actual user-namespace children use the original kernel operation.
@@ -701,7 +690,6 @@ fn registerProcess(env: JNIEnvPtr) !void {
         method("getThreadPriority", "(I)I", &procGetThreadPriority),
         method("getThreadScheduler", "(I)I", &procGetThreadScheduler),
         method("setThreadScheduler", "(III)V", &procSetThreadScheduler),
-        method("setArgV0Native", "(Ljava/lang/String;)V", &procSetArgV0Native),
         method("setUid", "(I)I", &procSetUid),
         method("setGid", "(I)I", &procSetGid),
         method("sendSignal", "(II)V", &procSendSignal),
@@ -769,7 +757,11 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     @import("zygote_tagging_jni.zig").register(env) catch return -1;
     @import("audio_system_jni.zig").register(env, &g_platform_library) catch return -1;
     @import("ndk_codec_test.zig").register(env, &g_platform_library) catch return -1;
-    @import("runtime_init_jni.zig").register(env) catch return -1;
+    const register_runtime_init = g_platform_library.lookup(
+        *const fn (JNIEnvPtr) callconv(.c) c_int,
+        "azk_register_runtime_init",
+    ) orelse return -1;
+    if (register_runtime_init(env) != 0) return -1;
     return 0;
 }
 

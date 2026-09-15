@@ -1,0 +1,18 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] AndroidRuntime: allow the host to bind its existing ART VM
+
+Keep the original runtime implementation. The embedding subclass supplies the
+VM and installs the original Java-capable thread callback; it does not own a
+second VM or reproduce the runtime lifecycle.
+
+--- a/core/jni/include/android_runtime/AndroidRuntime.h
++++ b/core/jni/include/android_runtime/AndroidRuntime.h
+@@ -115,6 +115,8 @@
+     static jstring NewStringLatin1(JNIEnv* env, const char* bytes);
+ 
+ private:
++    // The host embeds an existing ART VM instead of invoking startVm.
++    friend class HostedAndroidRuntime;
+     static int startReg(JNIEnv* env);
+     bool parseRuntimeOption(const char* property,
+                             char* buffer,

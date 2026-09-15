@@ -6,7 +6,7 @@ implementations, runtime libraries and process placement still contain substanti
 host adaptations.
 
 The complete `acceptance-test` target passed on 2026-09-15 for the original
-PDF editing and graphics registration checkpoint. All 28 APK cases passed, with 88 recorded
+embedded runtime and process naming checkpoint. All 28 APK cases passed, with 88 recorded
 actions, zero structured runtime issues and no failure artifacts. Native, JVM,
 system, desktop, video, source-provenance and build checks passed. Source
 packages, pins and installed outputs are current.
@@ -37,12 +37,12 @@ also does not mean zero unsupported native operations.
 
 ## Compiled native and Skia check
 
-`native-client-source-test` consumes the actual 2,553 native-island and linked Skia compiler
+`native-client-source-test` consumes the actual 2,557 native-island and linked Skia compiler
 commands and verifies the linked object files. The current selection contains
-2,233 unchanged AOSP units, 23 modified units, 20 owned units and 277 generated
-units. Its 94 required client sources must remain original and present. Thirty-seven
+2,237 unchanged AOSP units, 22 modified units, 21 owned units and 277 generated
+units. Its 97 required client sources must remain original and present. Forty
 sensitive client/service boundaries are preprocessed again with those commands;
-the report records effective macros and the 2,465 headers actually consumed.
+the report records effective macros and the 2,528 headers actually consumed.
 This catches disabled Android branches and incompatible Binder header selection.
 
 The check also verifies unique JNI registrar ownership and rejects FFmpeg/VAAPI
@@ -89,7 +89,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 15,983 | 60 | 0 |
+| Framework | 15,991 | 60 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -109,7 +109,7 @@ the build selection; it is not a complete dynamic-symbol resolution audit.
 
 [`main.zig`](../src/main.zig) calls the Binder and graphics registrars and then
 [`host_natives.zig`](../src/platform/host_natives.zig) when booting APK ART.
-[`framework_jni.zig`](../src/binder/framework_jni.zig) has 9 delegated
+[`framework_jni.zig`](../src/binder/framework_jni.zig) has 8 delegated
 registration modules, plus its own registrations and the Binder registrar.
 That number is not a replaced-class count: it includes host-only cursor helpers
 and dev.artzig EGL/NDK regression helpers. Registering a helper does not prove
@@ -380,7 +380,7 @@ process, while the separate presenter and SurfaceFlinger own presentation.
 
 | Area | Current deviation and source | Required boundary / consequence |
 |---|---|---|
-| ART and process bootstrap | [ART patches](../artzig/patches/art/), [`runtime_init_jni.zig`](../src/binder/runtime_init_jni.zig), [`zygote_tagging_jni.zig`](../src/binder/zygote_tagging_jni.zig); hosted class-loader projection, native-loader callbacks, stack/exit behavior and exec startup | Runtime changes are outside the JVM source identity result. Hosted zygote speaks stock requests but starts a fresh VM, not forked preloaded ART |
+| ART and process bootstrap | [ART patches](../artzig/patches/art/), [`HostedAndroidRuntime.cpp`](../src/native/HostedAndroidRuntime.cpp), [`zygote_tagging_jni.zig`](../src/binder/zygote_tagging_jni.zig); hosted class-loader projection, native-loader callbacks, stack/exit behavior and exec startup | Runtime changes are outside the JVM source identity result. Hosted zygote speaks stock requests but starts a fresh VM, not forked preloaded ART |
 | libc and dynamic loading | [`bionic_translation.cfg`](../src/bionic_translation.cfg), `artzig/src/art.zig`, [`GraphicsEnvironmentBackend.cpp`](../src/native/GraphicsEnvironmentBackend.cpp) | Android sonames map to host or owned implementations; Android linker namespaces are absent and extension requests fail. Restoring native clients is distinct from using full stock bionic/linker |
 | Libcore and files | [libcore patches](../artzig/patches/libcore/), [`host_paths.zig`](../artzig/src/host_paths.zig), AssetsProvider patch | Native path and authenticated-identity translation runs in the process. Move fixed filesystem/identity differences below libcore or document an explicit runtime exception |
 | SystemProperties / SystemClock / Process | Original properties and clock JNI; [`native_properties.zig`](../src/binder/native_properties.zig) supplies broker-backed Bionic hooks | Properties retain hosted state and authorization. Process JNI still adapts Linux process operations and authenticated identities |
@@ -596,8 +596,8 @@ pinned AOSP sources. The allocator boundary maps `M_PURGE` to glibc
 `malloc_trim`; Bionic profiling and leak-record operations return false with
 `ENOTSUP`. Original DDM JNI therefore reports failure instead of producing a
 fabricated heap dump. The hosted loader has no deferred compatibility-warning
-journal. RuntimeInit and architecture-specific zygote probes remain explicit
-runtime adaptations. Full acceptance passed, including the DDM failure-response
+journal. RuntimeInit now uses the original embedded AndroidRuntime implementation.
+Architecture-specific zygote probes remain explicit runtime adaptations. Full acceptance passed, including the DDM failure-response
 protocol regression.
 
 ## Audio delivery acceptance
@@ -653,3 +653,26 @@ acknowledged by the injector before Android had published the input device. The
 harness now waits for that publication before pressing; the dedicated test passes.
 Full aggregate acceptance then passed, including all 28 APK cases, 88 recorded
 actions with zero runtime issues, and inspected SurfaceView/TextureView video frames.
+
+## Embedded runtime and process naming
+
+Original `AndroidRuntime.cpp` now owns RuntimeInit registration, Java-capable
+thread attachment and process exit. `HostedAndroidRuntime` supplies the existing
+ART VM and hosted Java entry; a private friend declaration is the only header
+adaptation. The launcher copies its arguments before giving AndroidRuntime the
+real writable exec argument block.
+
+Original Process `setArgV0` and Bionic `setprogname` replace the thread-name-only
+implementation. The regression checks real procfs argument and thread names,
+UTF-8, suffix truncation, empty and null names. Other Process operations remain
+adapted. The session-loss harness recognizes the resulting `system_server`
+process name, while retaining its early-start exec-flag lookup.
+
+NdkImageReader is also original again. Its deprecated HIDL-token API retains
+AOSP's failure result when the token service is absent; normal window/buffer
+ownership remains covered by the native suite.
+
+Full aggregate acceptance passed, including all six session-loss cases, both
+framework suites, native provenance, and 28 APK cases with 88 actions and no
+structured runtime issues. The source archive, dependency pin and installed
+platform ELF match this checkpoint.

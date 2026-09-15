@@ -75,13 +75,6 @@ static void installLibcExitTrap(JNIEnv*, jclass) {
     if (std::atexit([] { ::_exit(99); }) != 0) ::_exit(98);
 }
 
-// Pinned AndroidRuntime::registerNativeMethods. GLES JNI uses this C++ entry;
-// the full AndroidRuntime owns a separate VM and cannot be linked into this host.
-int android::AndroidRuntime::registerNativeMethods(JNIEnv* env, const char* className,
-        const JNINativeMethod* gMethods, int numMethods) {
-    return jniRegisterNativeMethods(env, className, gMethods, numMethods);
-}
-
 namespace android {
 int register_android_app_Activity(JNIEnv*);
 int register_android_app_ActivityThread(JNIEnv*);
@@ -453,12 +446,9 @@ static int azk_register_dev_artzig_window_HostedInputDevices(JNIEnv* env) {
     return env->RegisterNatives(dispatcher_class, methods, 2);
 }
 
-// Minimal android::AndroidRuntime backing for core/jni code (getJNIEnv in
-// ApkAssets callbacks). The VM is stored at registration time.
 #include "TestStackCapture.h"
-#include <utils/AndroidThreads.h>
+#include "RuntimeEmbedding.h"
 
-static JavaVM* g_azk_vm = nullptr;
 static jobject g_vm_runtime = nullptr;
 static jmethodID g_get_target_sdk = nullptr;
 // Pinned VMRuntime.setTargetSdkVersionNative forwards the app target to bionic's
@@ -469,69 +459,25 @@ extern "C" int android_get_application_target_sdk_version() {
     constexpr int platformTarget = 10000;
     if (!g_vm_runtime) return platformTarget;
     JNIEnv* env = nullptr;
-    const jint state = g_azk_vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    const jint state = android::AndroidRuntime::getJavaVM()->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
     const bool attached = state == JNI_EDETACHED;
     if (attached) {
-        LOG_ALWAYS_FATAL_IF(g_azk_vm->AttachCurrentThread(&env, nullptr) != JNI_OK,
+        LOG_ALWAYS_FATAL_IF(android::AndroidRuntime::getJavaVM()->AttachCurrentThread(&env, nullptr) != JNI_OK,
                             "Cannot attach native target-SDK query");
     } else {
         LOG_ALWAYS_FATAL_IF(state != JNI_OK, "Cannot access native target-SDK query");
     }
     const jint target = env->CallIntMethod(g_vm_runtime, g_get_target_sdk);
     LOG_ALWAYS_FATAL_IF(env->ExceptionCheck(), "VMRuntime target-SDK query failed");
-    if (attached) g_azk_vm->DetachCurrentThread();
+    if (attached) android::AndroidRuntime::getJavaVM()->DetachCurrentThread();
     return target > 0 ? target : platformTarget;
-}
-// Source: pinned AndroidRuntime::startReg/javaCreateThreadEtc/javaThreadShell.
-// ART is embedded by the host, so AndroidRuntime's zygote bootstrap is not used.
-// libutils threads marked canCallJava must stay attached through their entire
-// entry function, including native queues releasing their last JavaBBinder.
-namespace {
-struct AttachedThread {
-    android_thread_func_t entry;
-    void* data;
-    std::string name;
-};
-int attachedThreadMain(void* data) {
-    std::unique_ptr<AttachedThread> thread(static_cast<AttachedThread*>(data));
-    JavaVMAttachArgs args{JNI_VERSION_1_6, thread->name.data(), nullptr};
-    JNIEnv* env = nullptr;
-    if (g_azk_vm->AttachCurrentThread(&env, &args) != JNI_OK) return -1;
-    const int result = thread->entry(thread->data);
-    g_azk_vm->DetachCurrentThread();
-    return result;
-}
-int createAttachedThread(android_thread_func_t entry, void* data, const char* name,
-                         int32_t priority, size_t stackSize, android_thread_id_t* id) {
-    LOG_ALWAYS_FATAL_IF(!name, "Java-capable native thread requires a name");
-    auto* thread = new AttachedThread{entry, data, name};
-    const int result = androidCreateRawThreadEtc(attachedThreadMain, thread, name,
-                                                priority, stackSize, id);
-    if (!result) delete thread;
-    return result;
-}
 }
 extern int register_android_hardware_display_DisplayManagerGlobal(JNIEnv*);
 namespace android {
 extern int register_com_android_server_display_DisplayControl(JNIEnv*);
-/*static*/ JavaVM* AndroidRuntime::getJavaVM() {
-    return g_azk_vm;
-}
-/*static*/ JNIEnv* AndroidRuntime::getJNIEnv() {
-    if (!g_azk_vm) return nullptr;
-    JNIEnv* env = nullptr;
-    if (g_azk_vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) return nullptr;
-    return env;
-}
 }  // namespace android
 
 extern "C" {
-
-// Pinned AndroidRuntime::exit, non-zygote/non-coverage path. The host owns ART;
-// libc cleanup can destroy native globals while its worker threads still run.
-[[noreturn]] void azk_android_runtime_exit(int status) {
-    ::_exit(status);
-}
 
 // Memory factories must precede the Binder-side memfd overrides. Surface JNI
 // must follow Binder registration because its class initialization uses Binder.
@@ -539,8 +485,7 @@ void azk_install_stock_binder_jni_bridge();
 int azk_register_runtime_jni(JNIEnv* env) {
     azk_install_stock_binder_jni_bridge();
     if (!allowTestStackCapture()) return -1;
-    env->GetJavaVM(&g_azk_vm);
-    androidSetCreateThreadFunc(createAttachedThread);
+    if (azk_android_runtime_bind(env) != 0) return -1;
     if (android::register_com_android_internal_os_ApplicationSharedMemory(env) != 0) return -1;
     return android::register_android_util_MemoryIntArray(env);
 }
@@ -623,7 +568,6 @@ int azk_register_startup_jni(JNIEnv* env) {
 }
 
 int azk_register_graphics_jni(JNIEnv* env) {
-    env->GetJavaVM(&g_azk_vm);
     if (!g_vm_runtime) {
         ScopedLocalRef<jclass> runtimeClass(env, env->FindClass("dalvik/system/VMRuntime"));
         if (!runtimeClass.get()) return -1;
@@ -642,7 +586,6 @@ int azk_register_graphics_jni(JNIEnv* env) {
     if (jniRegisterNativeMethods(env, "dev/artzig/JvmExitSmoke", exitSmokeMethods, 1) != 0) {
         return -1;
     }
-    init_android_graphics();
     android::uirenderer::Properties::overrideRenderPipelineType(
             android::uirenderer::RenderPipelineType::SkiaGL);
     using Reg = int (*)(JNIEnv*);
@@ -982,10 +925,10 @@ static jint nativeApplicationTargetSdk(JNIEnv*, jclass, jboolean worker) {
     jint target = -1;
     std::thread thread([&] {
         JNIEnv* env = nullptr;
-        LOG_ALWAYS_FATAL_IF(g_azk_vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_EDETACHED,
+        LOG_ALWAYS_FATAL_IF(android::AndroidRuntime::getJavaVM()->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_EDETACHED,
                             "Target-SDK test worker should start detached");
         target = android_get_application_target_sdk_version();
-        LOG_ALWAYS_FATAL_IF(g_azk_vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_EDETACHED,
+        LOG_ALWAYS_FATAL_IF(android::AndroidRuntime::getJavaVM()->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_EDETACHED,
                             "Target-SDK query leaked a worker attachment");
     });
     thread.join();

@@ -20,7 +20,7 @@ import tempfile
 
 CORE = "frameworks/base/core/jni/"
 REQUIRED = {CORE + name for name in (
-    "android_app_Activity.cpp", "android_app_ActivityThread.cpp", "android_ddm_DdmHandleNativeHeap.cpp",
+    "AndroidRuntime.cpp", "android_util_Process.cpp", "android_app_Activity.cpp", "android_app_ActivityThread.cpp", "android_ddm_DdmHandleNativeHeap.cpp",
     "android_util_Binder.cpp", "android_os_Parcel.cpp", "android_os_ServiceManager.cpp",
     "android_os_ServiceManagerNative.cpp", "android_os_SystemProperties.cpp",
     "android_os_SystemClock.cpp", "android_os_SharedMemory.cpp", "android_os_MemoryFile.cpp",
@@ -58,6 +58,7 @@ REQUIRED.update({
 # when compiled as host variants. Inspect the compiler's effective macros and
 # complete header dependency output, not just the presence of a -D argument.
 ANDROID_BRANCHES = {CORE + name for name in (
+    "AndroidRuntime.cpp", "android_util_Process.cpp",
     "android_hardware_SensorManager.cpp", "android_view_Surface.cpp",
     "android_media_ImageReader.cpp", "android_media_Utils.cpp",
 )} | {"frameworks/base/native/android/sensor.cpp", "frameworks/native/services/sensorservice/SensorService.cpp",
@@ -66,7 +67,7 @@ ANDROID_BRANCHES |= {"frameworks/base/libs/hwui/jni/" + name for name in (
     "Path.cpp", "PathIterator.cpp", "HardwareBufferHelpers.cpp",
 )}
 HEADER_PROBES = ANDROID_BRANCHES | {CORE + name for name in (
-    "android_app_Activity.cpp", "android_app_ActivityThread.cpp", "android_ddm_DdmHandleNativeHeap.cpp",
+    "AndroidRuntime.cpp", "android_util_Process.cpp", "android_app_Activity.cpp", "android_app_ActivityThread.cpp", "android_ddm_DdmHandleNativeHeap.cpp",
     "android_util_Binder.cpp", "android_os_Parcel.cpp", "android_hardware_Camera.cpp",
     "android_os_PerformanceHintManager.cpp",
 )}
@@ -74,6 +75,8 @@ HEADER_PROBES.update({"frameworks/base/libs/hwui/jni/" + name for name in (
     "Movie.cpp", "YuvToJpegEncoder.cpp", "pdf/PdfDocument.cpp",
 )})
 REQUIRED.add("external/skia/src/pdf/SkPDFDocument.cpp")
+REQUIRED.add("frameworks/av/media/ndk/NdkImageReader.cpp")
+HEADER_PROBES.add("frameworks/av/media/ndk/NdkImageReader.cpp")
 REQUIRED.add("frameworks/native/libs/nativedisplay/surfacetexture/EGLConsumer.cpp")
 HEADER_PROBES.add("frameworks/native/libs/nativedisplay/surfacetexture/EGLConsumer.cpp")
 REQUIRED.update({
@@ -136,6 +139,7 @@ SKIA_ANDROID_SOURCES.add("external/skia/src/gpu/ganesh/gl/AHardwareBufferGL.cpp"
 REQUIRED.update(SKIA_ANDROID_SOURCES)
 HEADER_PROBES.update(SKIA_ANDROID_SOURCES)
 REGISTRARS = (
+    "android::register_com_android_internal_os_RuntimeInit(",
     "register_android_graphics_classes", "android::register_android_graphics_pdf_PdfEditor(",
     "android::register_android_app_Activity(", "android::register_android_app_ActivityThread(",
     "android::register_android_ddm_DdmHandleNativeHeap(",
@@ -247,7 +251,7 @@ def boundary_errors(source: str, probe: dict, repo: Path) -> list[str]:
 
 def elf(path: Path) -> dict:
     dynamic = subprocess.check_output(["readelf", "-d", str(path)], text=True)
-    symbols = subprocess.check_output(["nm", "-D", "--defined-only", "--demangle", str(path)], text=True)
+    symbols = subprocess.check_output(["nm", "--defined-only", "--demangle", str(path)], text=True)
     return {"path": str(path), "sha256": digest(path),
             "needed": re.findall(r"\(NEEDED\).*\[(.*?)\]", dynamic),
             "search_paths": re.findall(r"\((?:RUNPATH|RPATH)\).*\[(.*?)\]", dynamic),

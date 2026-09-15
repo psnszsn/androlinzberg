@@ -4,12 +4,11 @@
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 15983,
+      "unchanged": 15991,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
         "frameworks/av/media/libstagefright/MediaExtractorFactory.cpp",
-        "frameworks/av/media/ndk/NdkImageReader.cpp",
         "frameworks/base/core/jni/android_hardware_OverlayProperties.cpp",
         "frameworks/base/core/jni/android_net_LocalSocketImpl.cpp",
         "frameworks/base/core/jni/android_opengl_GLES20.cpp",
@@ -19,6 +18,7 @@
         "frameworks/base/core/jni/android_view_TunnelModeEnabledListener.cpp",
         "frameworks/base/core/jni/com_google_android_gles_jni_GLImpl.cpp",
         "frameworks/base/core/jni/core_jni_helpers.h",
+        "frameworks/base/core/jni/include/android_runtime/AndroidRuntime.h",
         "frameworks/base/libs/androidfw/AssetManager2.cpp",
         "frameworks/base/libs/androidfw/AssetsProvider.cpp",
         "frameworks/base/libs/androidfw/CursorWindow.cpp",
@@ -68,7 +68,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "39e83777abf3897b526f201eba60c87ff095b27fd382911ad572d99b8e72180b"
+      "archive_sha256": "bcbc7fb4f4e77b15eb8fe9a231aa595449f2c6aa8ba07c6817bc30d883731b96"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -227,10 +227,9 @@
     "src/binder/traffic_stats_jni.zig",
     "src/binder/zygote_tagging_jni.zig",
     "src/binder/audio_system_jni.zig",
-    "src/binder/ndk_codec_test.zig",
-    "src/binder/runtime_init_jni.zig"
+    "src/binder/ndk_codec_test.zig"
   ],
-  "registration_scope_note": "9 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
+  "registration_scope_note": "8 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
       "sha256": "72e2ccd4a07ecabab21193965f22be156730853296a8114eaecbd0950f335972",
@@ -681,18 +680,18 @@
   "compiled_island_followup": {
     "target": "native-client-source-test",
     "report": "zig-out/test-results/native-client-source.json",
-    "inputs": 2553,
+    "inputs": 2557,
     "source_counts": {
-      "unchanged": 2233,
-      "modified": 23,
-      "owned": 20,
+      "unchanged": 2237,
+      "modified": 22,
+      "owned": 21,
       "generated": 277
     },
-    "required_original_clients": 94,
-    "preprocessed_boundaries": 37,
-    "consumed_headers": 2465,
+    "required_original_clients": 97,
+    "preprocessed_boundaries": 40,
+    "consumed_headers": 2528,
     "scope": "Native island and linked Skia Step.Run translation units; effective macros and consumed headers for selected restored boundaries; platform/NDK ELF owners. Other static linked libraries, ART and runtime loader resolution are outside this check.",
-    "validation": "Passed full acceptance311: 94 original-source guards, 37 header/macro probes and seven audit failure regressions."
+    "validation": "Passed full acceptance329: 97 original-source guards, 40 header/macro probes and seven audit failure regressions."
   },
   "graphics_helpers_followup": {
     "sources": [
@@ -728,7 +727,7 @@
     "target": "acceptance-test",
     "passed": true,
     "verified_date": "2026-09-15",
-    "log": "/tmp/azk-stock-pdf-acceptance311.log",
+    "log": "/tmp/azk-stock-runtime-acceptance329.log",
     "apk_cases": 28,
     "recorded_actions": 88,
     "structured_runtime_issues": 0,
@@ -739,7 +738,8 @@
     "known_optional_exclusions": [
       "performance-hint TestSessionCreationWithNullLayers remains a pinned null-SurfaceControl failure outside aggregate acceptance",
       "codec2-params-test retains two known host-compiler parameter comparisons outside aggregate acceptance"
-    ]
+    ],
+    "checkpoint": "Original embedded AndroidRuntime and Process naming"
   },
   "skia_egl_followup": {
     "implementation": "Original Soong SkUserConfig generator uses selected GN Android features, Vulkan and JPEG gainmaps. Original Android logging and Vulkan AHardwareBuffer implementation are compiled. Native and app EGL share context telemetry filtering, begin-frame validation, damage swaps and damage-region translation through system Mesa. Handwritten input/HWUI flags deleted in favor of original generators.",
@@ -912,5 +912,16 @@
     },
     "font_boundary": "Content-addressed fontconfig-selected symlink directory and XML; original native callers use file/FreeType path relocation. Atomic std.Io publication.",
     "remaining": "PdfRenderer/libpdfclient and additional unselected image codec backends are not established."
+  },
+  "embedded_runtime_followup": {
+    "implementation": "Original AndroidRuntime.cpp embedded in the existing ART VM, including RuntimeInit registration, Java-capable thread attachment and process exit; original Process setArgV0 entry and Bionic setprogname. Original NdkImageReader restored without a host branch.",
+    "host_boundary": "One private friend declaration lets HostedAndroidRuntime bind the existing VM and thread factory; its onStarted dispatches the existing hosted entry. Main retains the actual writable exec argv block and copies launcher arguments before process naming can overwrite it.",
+    "scope": "Other Process JNI operations remain adapted; ART bootstrap and architecture-specific zygote probes remain runtime exceptions.",
+    "validation": {
+      "module_and_exit": "passed /tmp/azk-stock-runtime-build321.log; process argv/comm, UTF-8, empty/null names and descriptor/buffer ownership checked",
+      "native_provenance": "passed /tmp/azk-stock-runtime-audit322.log; C++ boundary allowlist updated separately",
+      "apk_launch": "passed /tmp/azk-stock-runtime-launch323.log; no structured runtime issues",
+      "aggregate_acceptance": "passed /tmp/azk-stock-runtime-acceptance329.log; 28 APK cases, 88 actions, no runtime issues or failed actions; all six service-loss cases passed"
+    }
   }
 }

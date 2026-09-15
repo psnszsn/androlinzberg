@@ -10440,3 +10440,10 @@ F aosp external/pdfium/Android.bp
 F aosp external/pdfium/LICENSE
 F aosp external/pdfium/AUTHORS
 D aosp external/pdfium/fxjs
+
+# Original runtime embedded in the launcher-owned ART VM.
+F aosp frameworks/base/core/jni/AndroidRuntime.cpp
+F aosp bionic/libc/upstream-openbsd/lib/libc/gen/setprogname.c
+F aosp frameworks/base/core/jni/android_util_Process.cpp
+D aosp system/memory/libmeminfo/include
+D aosp system/memory/libmeminfo/libdmabufinfo/include

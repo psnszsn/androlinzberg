@@ -213,7 +213,11 @@ fn run(init: std.process.Init) !void {
         if (count != 1 or released[0] != 1) return error.LaunchAuthorizationLost;
     }
 
-    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    // AndroidRuntime owns the writable exec argument block for setArgv0.
+    // Retain independent strings for launcher dispatch and Java arguments.
+    const raw_args = try init.minimal.args.toSlice(init.arena.allocator());
+    const args = try init.arena.allocator().alloc([:0]const u8, raw_args.len);
+    for (raw_args, args) |argument, *copy| copy.* = try init.arena.allocator().dupeSentinel(u8, argument, 0);
     // Session supervisor trampoline: establish child ownership before executing
     // a service. exec failure becomes EOF on the child's readiness pipe.
     if (args.len >= 3 and std.mem.eql(u8, args[1], "--service-exec"))
@@ -527,6 +531,7 @@ fn bootHeadless(init: std.process.Init, role: runtime_identity.Role) !Headless {
     const island_path = try std.fs.path.join(arena, &.{ tree, "lib", "libandroid_platform.so" });
     var lib = try std.DynLib.open(island_path);
     try bindPlatformIo(&lib, init.io);
+    try initializeAndroidRuntime(&lib, init);
     const identity = try runtime_identity.prepare(init, &lib, role, null);
     const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
     const looper_poll = lib.lookup(host_natives.LooperPollStateFn, "azk_looper_poll_state") orelse return error.SymbolNotFound;
@@ -589,6 +594,7 @@ fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8, role: runtime_id
     if (dlopen(island_path_z, 2 | 0x100) == null) return error.PlatformLoadFailed; // RTLD_NOW|RTLD_GLOBAL
     var lib = try std.DynLib.open(island_path);
     try bindPlatformIo(&lib, init.io);
+    try initializeAndroidRuntime(&lib, init);
     const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
     const looper_poll = lib.lookup(host_natives.LooperPollStateFn, "azk_looper_poll_state") orelse return error.SymbolNotFound;
 
@@ -630,6 +636,16 @@ const BindPlatformIoFn = *const fn (
     userdata: ?*anyopaque,
     vtable: *const std.Io.VTable,
 ) callconv(.c) void;
+fn initializeAndroidRuntime(lib: *std.DynLib, init: std.process.Init) !void {
+    const arguments = init.minimal.args.vector;
+    if (arguments.len == 0) return error.MissingProcessArguments;
+    const start = arguments[0];
+    const last = arguments[arguments.len - 1];
+    const length = @intFromPtr(last) + std.mem.len(last) + 1 - @intFromPtr(start);
+    const initialize = lib.lookup(*const fn ([*]u8, usize) callconv(.c) c_int, "azk_android_runtime_initialize") orelse return error.SymbolNotFound;
+    if (initialize(@constCast(start), length) != 0) return error.RuntimeInitializationFailed;
+}
+
 fn bindPlatformIo(lib: *std.DynLib, io: std.Io) !void {
     const bind = lib.lookup(BindPlatformIoFn, "azk_platform_bind_io") orelse
         return error.SymbolNotFound;

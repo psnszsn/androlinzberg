@@ -313,6 +313,8 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
         "src/native/GraphicsEnvironmentBackend.cpp",
         "src/native/HostInputDispatcher.cpp",
         "src/native/HostLooper.cpp",
+        // Genuine AndroidRuntime subclass binds the launcher's existing ART VM.
+        "src/native/HostedAndroidRuntime.cpp",
         "src/native/MediaPlayerJniBridge.cpp",
         "src/native/PlatformFiles.cpp",
         // Original sensor service construction and public NDK contract checks.

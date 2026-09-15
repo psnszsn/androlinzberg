@@ -98,7 +98,8 @@ zig build -j10 cpp-audit
   API over the stock BufferQueue and hosted gralloc stack. CPU/GPU pixels,
   real sync-file fences, callback delivery, maxImages and independent buffer
   ownership are tested. The retired HIDL native-handle operation returns
-  AOSP's `AMEDIA_ERROR_UNKNOWN` for an absent token manager; public native-window
+  AOSP's `AMEDIA_ERROR_UNKNOWN` through its original service lookup for an absent
+  token manager; the former host branch is removed. Public native-window
   access works. All 29 pinned public image functions are exported.
 - Original NDK `surface_control.cpp` and `display_luts.cpp` expose all 52 pinned
   public SurfaceControl, JNI interoperability and LUT functions. Transactions
@@ -300,9 +301,9 @@ zig build -j10 cpp-audit
 - Stock GLES20–3.2 Java calls use AOSP's generated C++ JNI bindings and the
   existing Mesa GLES library. Frameworks-base patch 28 releases the original
   acquired JNI array pointer for positioned heap buffers and converts byte
-  counts to typed elements before bounds checks. `AospJniBridge.cpp` supplies
-  the pinned `AndroidRuntime::registerNativeMethods` body without constructing
-  a second VM. These bindings do not change Wayland presentation.
+  counts to typed elements before bounds checks. Original AndroidRuntime owns
+  `registerNativeMethods` while the embedding adapter binds the existing VM.
+  These bindings do not change Wayland presentation.
 - USB device-name/ID conversion uses pinned UsbDevice JNI and the
   host-supported libusbhost C implementation. No new USB syscall wrappers
   or USB service are introduced.
@@ -335,15 +336,18 @@ zig build -j10 cpp-audit
   nullable parcelable arrays and packed enum arrays without an alternate codec.
 - PixelCopy compiles the original HWUI JNI and Readback implementation. Stock
   Surfaces provide real ANativeWindow instances to its buffer/readback path.
-- `src/binder/runtime_init_jni.zig` connects stock RuntimeInit to the launcher's
-  Kotlin entry dispatcher. Common initialization precedes target class
+- Original `AndroidRuntime.cpp` registers RuntimeInit and owns Java-capable
+  native thread attachment. `HostedAndroidRuntime.cpp` is a genuine C++ subclass
+  that binds the existing ART VM and connects `onStarted` to the Kotlin entry
+  dispatcher. A private friend declaration is the runtime embedding seam; the
+  implementation source is unchanged. Common initialization precedes target class
   initialization. Supervised APKs enter a Linux user namespace with their granted
   Android UID/GID before ART starts; the broker authenticates the real child and
   its one-use grant. Immutable libcore identity is installed before ART workers
   start, including the logical system identity used by framework tool processes.
   Socket control authorization checks active broker role and peer process lifetime,
   rather than trusting UID metadata alone. The VM invocation exit hook and Binder disconnect path use the
-  native `AndroidRuntime::exit` boundary in `AospJniBridge.cpp`, terminating
+  original `AndroidRuntime::exit` boundary, terminating
   with `_exit` without libc teardown. `std.Io` has no immediate self-termination
   operation; this Zig version's libc-linked `std.process.exit` runs destructors
   under live ART workers. `jvm-exit-test` installs an atexit trap to verify the

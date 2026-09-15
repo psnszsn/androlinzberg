@@ -581,6 +581,24 @@ pub fn build(b: *std.Build, o: Options) Result {
     sensor_includes.appendSlice(b.allocator, &.{ sensor_headers.getDirectory(), o.cppstream_headers, o.input_dispatcher_headers, extractor_headers.getDirectory() }) catch @panic("OOM");
     for (sensors.includes) |path| sensor_includes.append(b.allocator, o.aosp.path(b, path)) catch @panic("OOM");
     const android_abi_flags = [_][]const u8{ "-D__unused=__attribute__((unused))", "-D__ANDROID__", "-D__ANDROID_API__=36", "-D__BIONIC_AVAILABILITY_GUARD(x)=1", "-include", "android/api-level.h", "-ftrivial-auto-var-init=zero" };
+    const runtime_includes = &[_]std.Build.LazyPath{
+        o.aosp.path(b, "frameworks/base/core/jni"),                          o.aosp.path(b, "frameworks/base/core/jni/include"),
+        o.aosp.path(b, "system/server_configurable_flags/libflags/include"), apex_inc,
+        hw_jni_inc,                                                          o.aosp.path(b, "frameworks/base/libs/hwui"),
+        o.aosp.path(b, "frameworks/native/libs/nativewindow/include"),       o.aosp.path(b, "art/libnativebridge/include"),
+        o.aosp.path(b, "system/memory/libmemunreachable/include"),           o.aosp.path(b, "frameworks/native/libs/binder/include_activity_manager"),
+        o.aosp.path(b, "bionic/libc/platform"),                              o.aosp.path(b, "system/core/libprocessgroup/include"),
+        extractor_headers.getDirectory(),                                    zygote_headers.getDirectory(),
+    };
+    // Keep the original embedded lifecycle; unused VM creation/zygote registration
+    // sections are discarded because the launcher creates the existing ART VM.
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"AndroidRuntime.cpp"}, runtime_includes, &(android_abi_flags ++ .{ "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections", "-include", "sys/system_properties.h", "-include", b.pathResolve(&.{"src/native/RuntimeEmbedding.h"}) }));
+    g.add(b.path("src/native"), &.{"HostedAndroidRuntime.cpp"}, runtime_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_util_Process.cpp"}, runtime_includes ++ &[_]std.Build.LazyPath{
+        o.aosp.path(b, "system/memory/libmeminfo/include"),
+        o.aosp.path(b, "system/memory/libmeminfo/libdmabufinfo/include"),
+    }, &(android_abi_flags ++ .{ "-D__CPU_BITTYPE=unsigned long int", "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections" }));
+    g.add(o.aosp.path(b, "bionic/libc/upstream-openbsd/lib/libc/gen"), &.{"setprogname.c"}, &.{}, &.{ "-D__progname=program_invocation_short_name", "-include", "errno.h" });
     for (sensors.groups) |group| g.add(o.aosp.path(b, group.root), group.files, sensor_includes.items, &android_abi_flags);
     g.add(b.path("src/native"), &.{ "SensorServiceBootstrap.cpp", "SensorClientTest.cpp" }, sensor_includes.items, &android_abi_flags);
     g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{"sensor.cpp"}, sensor_includes.items, &android_abi_flags);
@@ -686,7 +704,7 @@ pub fn build(b: *std.Build, o: Options) Result {
             g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{file}, &.{ o.aosp.path(b, "frameworks/av/camera/include/camera"), o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{});
             continue;
         }
-        // The host AndroidRuntime header omits the platform's transitive trace include.
+        // InputEventReceiver relies on an explicit trace include with host libc++.
         const extra: []const []const u8 = if (std.mem.eql(u8, file, "android_view_InputEventReceiver.cpp"))
             &.{ aidl_inc, "-include", "utils/Trace.h" }
         else
@@ -908,7 +926,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         o.aosp.path(b, "frameworks/base/core/jni"),
         o.aosp.path(b, "frameworks/native/libs/nativewindow/include-private"),
     };
-    g.add(o.aosp.path(b, "frameworks/av/media/ndk"), &.{ "NdkImageReader.cpp", "NdkImage.cpp" }, image_reader_includes, &.{ "-DARTZIG_HOST_GRAPHICS", "-DEXPORT=__attribute__((visibility(\"default\")))" });
+    g.add(o.aosp.path(b, "frameworks/av/media/ndk"), &.{ "NdkImageReader.cpp", "NdkImage.cpp" }, image_reader_includes, &.{"-DEXPORT=__attribute__((visibility(\"default\")))"});
     const legacy_drm_includes = &.{
         o.aosp.path(b, "frameworks/av/include"),
         o.aosp.path(b, "frameworks/av/drm/common/include"),

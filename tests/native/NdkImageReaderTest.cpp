@@ -2,7 +2,9 @@
 #include <jni.h>
 #include <android/hardware_buffer.h>
 #include <android/native_window.h>
+#define __ANDROID_VNDK__
 #include <media/NdkImageReader.h>
+#undef __ANDROID_VNDK__
 #include <sync/sync.h>
 #include <cassert>
 #include <chrono>
@@ -131,6 +133,14 @@ extern "C" JNIEXPORT void JNICALL Java_dev_artzig_BufferJniSmoke_ndkImageQueues(
     assert(AImageReader_getHeight(raw, &value) == AMEDIA_OK && value == 12);
     assert(AImageReader_getMaxImages(raw, &value) == AMEDIA_OK && value == 2);
     assert(AImageReader_getFormat(raw, &value) == AMEDIA_OK && value == AIMAGE_FORMAT_RGBA_8888);
+    // The deprecated HIDL token service is absent on this host. The original
+    // implementation must report that failure, while the normal window/queue
+    // operations below keep working and retain their ownership contracts.
+    native_handle_t* legacyHandle = nullptr;
+    assert(AImageReader_getWindowNativeHandle(nullptr, &legacyHandle) == AMEDIA_ERROR_INVALID_PARAMETER);
+    assert(AImageReader_getWindowNativeHandle(raw, nullptr) == AMEDIA_ERROR_INVALID_PARAMETER);
+    assert(AImageReader_getWindowNativeHandle(raw, &legacyHandle) == AMEDIA_ERROR_UNKNOWN);
+    assert(legacyHandle == nullptr);
     assert(AImageReader_getWidth(nullptr, &value) == AMEDIA_ERROR_INVALID_PARAMETER);
     AImageReader_ImageListener listener{&callbacks, Callbacks::available};
     assert(AImageReader_setImageListener(raw, &listener) == AMEDIA_OK);

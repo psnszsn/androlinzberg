@@ -307,6 +307,7 @@ public final class FrameworkCompatSmoke {
             StockSqliteSmoke.run()
             StockUtilityJniSmoke.run()
             StockImageCodecSmoke.run()
+            StockRuntimeMetadataSmoke.run()
             testLocalContentProvider()
             testStockStrictModeRegistration()
             testAospPackageParser(args.firstOrNull())
