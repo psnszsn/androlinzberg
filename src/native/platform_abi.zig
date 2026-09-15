@@ -75,6 +75,20 @@ pub export fn azk_platform_bind_io(
 }
 
 extern "c" fn __errno_location() *c_int;
+// Pinned linker get_dlwarning consumes a deferred compatibility-warning journal.
+// The hosted loader reports load errors immediately and has no such journal.
+pub export fn android_dlwarning(context: ?*anyopaque, callback: *const fn (?*anyopaque, ?[*:0]const u8) callconv(.c) void) callconv(.c) void {
+    callback(context, null);
+}
+
+// Bionic allocator control has no counterpart for glibc profiling, leak records,
+// or zygote state. Match its documented failure contract without inventing heap
+// records or reporting that profiling was initialized. M_PURGE uses the separate
+// mallopt ABI below and does release unused heap pages.
+pub export fn android_mallopt(_: c_int, _: ?*anyopaque, _: usize) callconv(.c) bool {
+    __errno_location().* = @backingInt(std.os.linux.E.OPNOTSUPP);
+    return false;
+}
 // bionic android_dlopen_ext: ordinary shared objects use the host ELF loader.
 // Android namespace/FD/RELRO extensions have no host equivalent and fail explicitly.
 // No descriptor is borrowed or consumed when rejecting an extension.

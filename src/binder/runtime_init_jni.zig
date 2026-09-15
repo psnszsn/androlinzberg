@@ -22,12 +22,6 @@ fn setExitWithoutCleanup(_: Env, _: jni.jclass, _: jni.jboolean) callconv(.c) vo
     // process-exit action. The launcher's VM exit hook avoids libc teardown.
 }
 
-fn getLeakInfo(_: Env, _: jni.jclass) callconv(.c) jni.jbyteArray {
-    // Pinned DdmHandleNativeHeap_getLeakInfo returns null when
-    // android_mallopt(M_GET_MALLOC_LEAK_INFO) fails. The host has no malloc_debug.
-    return null;
-}
-
 fn method(comptime name: [:0]const u8, comptime signature: [:0]const u8, function: anytype) jni.JNINativeMethod {
     return .{ .name = @constCast(name), .signature = @constCast(signature), .fnPtr = @ptrCast(@constCast(function)) };
 }
@@ -40,10 +34,6 @@ pub fn register(env: Env) !void {
         method("nativeSetExitWithoutCleanup", "(Z)V", &setExitWithoutCleanup),
     };
     if (env.*.*.RegisterNatives.?(env, runtime, &methods, methods.len) != 0) return error.RegisterFailed;
-    const heap = env.*.*.FindClass.?(env, "android/ddm/DdmHandleNativeHeap") orelse return error.NoClass;
-    defer env.*.*.DeleteLocalRef.?(env, heap);
-    const heap_methods = [_]jni.JNINativeMethod{method("getLeakInfo", "()[B", &getLeakInfo)};
-    if (env.*.*.RegisterNatives.?(env, heap, &heap_methods, heap_methods.len) != 0) return error.RegisterFailed;
     bootstrap = ndk.findGlobalClass(env, "dev/artzig/RuntimeBootstrap") orelse return error.NoClass;
     on_started = env.*.*.GetStaticMethodID.?(env, bootstrap, "onStarted", "()V") orelse return error.NoMethod;
 }

@@ -1,10 +1,10 @@
 {
-  "revision": "48976040 + original hardware-buffer helper and path JNI",
+  "revision": "Original startup and native-heap JNI checkpoint (2026-09-15)",
   "reference": "Pinned checkout described by aosp/README.md; project revisions below",
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 14231,
+      "unchanged": 14232,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -72,7 +72,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "30e2eaf6623389a5eef31161b7ee3d7c41dd7d8ad480a225de1bc019a92c6b4b"
+      "archive_sha256": "751b47b4c62179fdf0e4a3d7548384f903394a1dccff58e0e2e3b4a3917767cd"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -209,7 +209,7 @@
     "src/binder/pointer_icon_jni.zig",
     "src/binder/egl_interop_test.zig",
     "src/binder/traffic_stats_jni.zig",
-    "src/binder/activity_jni.zig",
+    "src/binder/zygote_tagging_jni.zig",
     "src/binder/audio_system_jni.zig",
     "src/binder/ndk_codec_test.zig",
     "src/binder/runtime_init_jni.zig"
@@ -217,7 +217,7 @@
   "registration_scope_note": "9 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
-      "sha256": "e55b161753b26478db32431314e3587fce7d8760dbdb59a09c4222f7999ad715",
+      "sha256": "b1bf229c7f47976d9e8a3681e2761d896c5dfea417e5e7cca1f4fd655d9d5887",
       "defined_symbols": [
         "register_localized_collators",
         "register_android_functions",
@@ -230,13 +230,13 @@
       ]
     },
     "lib/art/libbinder_ndk.so": {
-      "sha256": "00c337be21fa869f33164dd820fca8fa398a05ff12bd5ecf120a81bf1658819c",
+      "sha256": "d86edfbbe609bbbd6bf5dafe26121c3316fc983dceb080faa248c6bdb1de21db",
       "defined_symbols": [
         "azk_register_binder_jni"
       ]
     }
   },
-  "framework_package_refresh": "2026-09-15: original VINTF, performance-hint and sensor clients; Surface/ImageReader/image utility JNI; original hardware-buffer helpers and Path/PathIterator JNI",
+  "framework_package_refresh": "2026-09-15: original HWUI and Skia buffer clients; original Activity, ActivityThread and DDM native-heap JNI with the pinned Bionic allocator declarations",
   "binder_jni_followup": {
     "runtime_revision": "b7d78a39",
     "verified_date": "2026-09-13",
@@ -665,18 +665,18 @@
   "compiled_island_followup": {
     "target": "native-client-source-test",
     "report": "zig-out/test-results/native-client-source.json",
-    "inputs": 1990,
+    "inputs": 1993,
     "source_counts": {
-      "unchanged": 1669,
+      "unchanged": 1672,
       "modified": 24,
       "owned": 20,
       "generated": 277
     },
-    "required_original_clients": 78,
-    "preprocessed_boundaries": 27,
-    "consumed_headers": 2341,
+    "required_original_clients": 81,
+    "preprocessed_boundaries": 30,
+    "consumed_headers": 2345,
     "scope": "Native island and linked Skia Step.Run translation units; effective macros and consumed headers for selected restored boundaries; platform/NDK ELF owners. Other static linked libraries, ART and runtime loader resolution are outside this check.",
-    "validation": "Passed in full acceptance: 78 original-source guards, 27 header/macro probes and six audit failure regressions."
+    "validation": "Passed in full acceptance: 81 original-source guards, 30 header/macro probes and six audit failure regressions."
   },
   "graphics_helpers_followup": {
     "sources": [
@@ -712,7 +712,7 @@
     "target": "acceptance-test",
     "passed": true,
     "verified_date": "2026-09-15",
-    "log": "/tmp/azk-stock-hwui-acceptance263.log",
+    "log": "/tmp/azk-stock-startup-acceptance273.log",
     "apk_cases": 28,
     "recorded_actions": 94,
     "structured_runtime_issues": 0,
@@ -793,5 +793,31 @@
       ]
     },
     "remaining": "Process/Debug/network JNI and remaining libgui/OpenGL/native wrapper adaptations; host driver, allocator, Binder/AZKB and runtime exceptions remain explicit. Android Vulkan hardware-buffer driver support is not claimed."
+  },
+  "startup_heap_followup": {
+    "original_sources": [
+      "android_app_Activity.cpp",
+      "android_app_ActivityThread.cpp",
+      "android_ddm_DdmHandleNativeHeap.cpp"
+    ],
+    "host_boundary": "glibc malloc_trim for M_PURGE; android_mallopt returns false/ENOTSUP for unavailable Bionic profiling and leak records; hosted loader has no deferred compatibility-warning journal",
+    "runtime_exception": "RuntimeInit bootstrap and x86 zygote tagging probes remain hosted",
+    "validation": {
+      "target": "acceptance-test",
+      "passed": true,
+      "verified_date": "2026-09-15",
+      "log": "/tmp/azk-stock-startup-acceptance273.log",
+      "apk_cases": 28,
+      "recorded_actions": 94,
+      "structured_runtime_issues": 0,
+      "failure_artifacts": 0,
+      "unsuccessful_actions": 0,
+      "video": "All three fresh stock-video screenshots inspected; SurfaceView, TextureView, resize and pixel checks passed",
+      "installed_outputs": "refreshed",
+      "known_optional_exclusions": [
+        "performance-hint TestSessionCreationWithNullLayers remains a pinned null-SurfaceControl failure outside aggregate acceptance",
+        "codec2-params-test retains two known host-compiler parameter comparisons outside aggregate acceptance"
+      ]
+    }
   }
 }

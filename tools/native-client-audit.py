@@ -20,6 +20,7 @@ import tempfile
 
 CORE = "frameworks/base/core/jni/"
 REQUIRED = {CORE + name for name in (
+    "android_app_Activity.cpp", "android_app_ActivityThread.cpp", "android_ddm_DdmHandleNativeHeap.cpp",
     "android_util_Binder.cpp", "android_os_Parcel.cpp", "android_os_ServiceManager.cpp",
     "android_os_ServiceManagerNative.cpp", "android_os_SystemProperties.cpp",
     "android_os_SystemClock.cpp", "android_os_SharedMemory.cpp", "android_os_MemoryFile.cpp",
@@ -63,6 +64,7 @@ ANDROID_BRANCHES |= {"frameworks/base/libs/hwui/jni/" + name for name in (
     "Path.cpp", "PathIterator.cpp", "HardwareBufferHelpers.cpp",
 )}
 HEADER_PROBES = ANDROID_BRANCHES | {CORE + name for name in (
+    "android_app_Activity.cpp", "android_app_ActivityThread.cpp", "android_ddm_DdmHandleNativeHeap.cpp",
     "android_util_Binder.cpp", "android_os_Parcel.cpp", "android_hardware_Camera.cpp",
     "android_os_PerformanceHintManager.cpp",
 )}
@@ -114,6 +116,8 @@ SKIA_ANDROID_SOURCES.add("external/skia/src/gpu/ganesh/gl/AHardwareBufferGL.cpp"
 REQUIRED.update(SKIA_ANDROID_SOURCES)
 HEADER_PROBES.update(SKIA_ANDROID_SOURCES)
 REGISTRARS = (
+    "android::register_android_app_Activity(", "android::register_android_app_ActivityThread(",
+    "android::register_android_ddm_DdmHandleNativeHeap(",
     "register_android_os_Binder(", "android::register_android_os_Parcel(",
     "android::register_android_os_ServiceManager(", "android::register_android_os_ServiceManagerNative(",
     "register_android_hardware_SensorManager(", "register_android_hardware_Camera(",

@@ -85,6 +85,9 @@ int android::AndroidRuntime::registerNativeMethods(JNIEnv* env, const char* clas
 }
 
 namespace android {
+int register_android_app_Activity(JNIEnv*);
+int register_android_app_ActivityThread(JNIEnv*);
+int register_android_ddm_DdmHandleNativeHeap(JNIEnv*);
 int register_android_os_HidlSupport(JNIEnv*);
 int register_android_os_HwBinder(JNIEnv*);
 int register_android_os_HwRemoteBinder(JNIEnv*);
@@ -666,6 +669,12 @@ int azk_register_utility_jni(JNIEnv* env) {
     if (android::register_android_tracing_PerfettoDataSourceInstance(env) != 0) return -1;
     if (android::register_android_tracing_PerfettoProducer(env) != 0) return -1;
     return 0;
+}
+
+int azk_register_startup_jni(JNIEnv* env) {
+    if (android::register_android_app_Activity(env) != 0) return -1;
+    if (android::register_android_app_ActivityThread(env) != 0) return -1;
+    return android::register_android_ddm_DdmHandleNativeHeap(env);
 }
 
 int azk_register_graphics_jni(JNIEnv* env) {

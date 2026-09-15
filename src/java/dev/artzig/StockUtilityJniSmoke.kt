@@ -26,6 +26,19 @@ internal object StockUtilityJniSmoke {
     }
 
     fun run() {
+        // Exercise the real DDM protocol response when allocator leak tracking
+        // is unavailable; an empty successful heap dump would be misleading.
+        val heapClass = android.ddm.DdmHandleNativeHeap::class.java
+        val heap = heapClass.getDeclaredField("mInstance").apply { isAccessible = true }.get(null)
+            as android.ddm.DdmHandleNativeHeap
+        val response = heap.handleChunk(org.apache.harmony.dalvik.ddmc.Chunk(
+            android.ddm.DdmHandleNativeHeap.CHUNK_NHGT, ByteArray(0), 0, 0))
+        check(response.type == org.apache.harmony.dalvik.ddmc.ChunkHandler.type("FAIL"))
+        val failure = java.nio.ByteBuffer.wrap(response.data, response.offset, response.length)
+        check(failure.int == 1)
+        val message = CharArray(failure.int) { failure.char }.concatToString()
+        check(message == "Something went wrong" && !failure.hasRemaining())
+
         val runtime = VMRuntime.getRuntime()
         val bytes = runtime.newNonMovableArray(Byte::class.javaPrimitiveType, 128) as ByteArray
         val pointer = runtime.addressOf(bytes)
@@ -93,7 +106,7 @@ internal object StockUtilityJniSmoke {
         }
         check(emitted == 8)
         source.trace { error("Stopped data source must not trace") }
-        println("StockUtilityJniSmoke: PASS charset boundaries and Perfetto packets, lifecycle, TLS and exception recovery")
+        println("StockUtilityJniSmoke: PASS native heap failure protocol, charset boundaries and Perfetto packets, lifecycle, TLS and exception recovery")
     }
 
     private fun config(name: String): ByteArray {

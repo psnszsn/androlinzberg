@@ -1,16 +1,15 @@
 # Native client audit
 
-Baseline audited 2026-09-13 at `31ac159f`; Binder JNI and package evidence
-updated through `b7d78a39`; SQLite and utility JNI through `d42afccd`; media/graphics JNI follow-up recorded below. **The complete client stack is not stock AOSP.**
+Audit updated 2026-09-15. **The complete client stack is not stock AOSP.**
 The JVM source check covers selected framework source files. Android-native
 implementations, runtime libraries and process placement still contain substantial
 host adaptations.
 
-The complete `acceptance-test` target passed on 2026-09-15 for the original-HWUI
-checkpoint. All 28 APK cases passed, with 94 recorded actions, zero structured
-runtime issues and no failure artifacts. Native, JVM, system, desktop, video,
-source-provenance and build checks passed. Source packages, pins and installed
-outputs are current.
+The complete `acceptance-test` target passed on 2026-09-15 for the original
+startup and native-heap JNI checkpoint. All 28 APK cases passed, with 94 recorded
+actions, zero structured runtime issues and no failure artifacts. Native, JVM,
+system, desktop, video, source-provenance and build checks passed. Source
+packages, pins and installed outputs are current.
 
 This is a source and architecture audit, not an exhaustive per-method
 compatibility certification. The follow-up validation record distinguishes
@@ -38,12 +37,12 @@ also does not mean zero unsupported native operations.
 
 ## Compiled native and Skia check
 
-`native-client-source-test` consumes the actual 1,990 native-island and linked Skia compiler
+`native-client-source-test` consumes the actual 1,993 native-island and linked Skia compiler
 commands and verifies the linked object files. The current selection contains
-1,669 unchanged AOSP units, 24 modified units, 20 owned units and 277 generated
-units. Its 78 required client sources must remain original and present. Twenty-seven
+1,672 unchanged AOSP units, 24 modified units, 20 owned units and 277 generated
+units. Its 81 required client sources must remain original and present. Thirty
 sensitive client/service boundaries are preprocessed again with those commands;
-the report records effective macros and the 2,341 headers actually consumed.
+the report records effective macros and the 2,345 headers actually consumed.
 This catches disabled Android branches and incompatible Binder header selection.
 
 The check also verifies unique JNI registrar ownership and rejects FFmpeg/VAAPI
@@ -78,10 +77,9 @@ Android Vulkan driver support is not established by compiling that source.
 [`native-client-audit.json`](native-client-audit.json) records archive checksums,
 reference revisions, modified native paths and delegated registration modules.
 Both archives were read directly. The framework archive was rechecked during
-the Binder, utility and media/graphics JNI migrations. The latest refresh adds
-original VINTF, performance-hint and sensor clients, plus unchanged Surface,
-ImageReader and image utility JNI, plus original hardware-buffer helpers and
-Path/PathIterator JNI. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
+the Binder, utility and media/graphics JNI migrations. The latest refresh includes
+original HWUI and Skia buffer clients and adds the pinned Bionic allocator
+declarations used by original Activity, ActivityThread and DDM native-heap JNI. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
 `.h`, `.hpp`, `.hxx`, `.S`, `.s` and `.inl` member was compared byte-for-byte
 with the corresponding pinned checkout path. Both current archives contain
 multiple top-level directories; their paths were retained. Tracked reference
@@ -89,7 +87,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 14,231 | 64 | 0 |
+| Framework | 14,232 | 64 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -378,7 +376,7 @@ process, while the separate presenter and SurfaceFlinger own presentation.
 
 | Area | Current deviation and source | Required boundary / consequence |
 |---|---|---|
-| ART and process bootstrap | [ART patches](../artzig/patches/art/), [`runtime_init_jni.zig`](../src/binder/runtime_init_jni.zig), [`activity_jni.zig`](../src/binder/activity_jni.zig); hosted class-loader projection, native-loader callbacks, stack/exit behavior and exec startup | Runtime changes are outside the JVM source identity result. Hosted zygote speaks stock requests but starts a fresh VM, not forked preloaded ART |
+| ART and process bootstrap | [ART patches](../artzig/patches/art/), [`runtime_init_jni.zig`](../src/binder/runtime_init_jni.zig), [`zygote_tagging_jni.zig`](../src/binder/zygote_tagging_jni.zig); hosted class-loader projection, native-loader callbacks, stack/exit behavior and exec startup | Runtime changes are outside the JVM source identity result. Hosted zygote speaks stock requests but starts a fresh VM, not forked preloaded ART |
 | libc and dynamic loading | [`bionic_translation.cfg`](../src/bionic_translation.cfg), `artzig/src/art.zig`, [`GraphicsEnvironmentBackend.cpp`](../src/native/GraphicsEnvironmentBackend.cpp) | Android sonames map to host or owned implementations; Android linker namespaces are absent and extension requests fail. Restoring native clients is distinct from using full stock bionic/linker |
 | Libcore and files | [libcore patches](../artzig/patches/libcore/), [`host_paths.zig`](../artzig/src/host_paths.zig), AssetsProvider patch | Native path and authenticated-identity translation runs in the process. Move fixed filesystem/identity differences below libcore or document an explicit runtime exception |
 | SystemProperties / SystemClock / Process | Original properties and clock JNI; [`native_properties.zig`](../src/binder/native_properties.zig) supplies broker-backed Bionic hooks | Properties retain hosted state and authorization. Process JNI still adapts Linux process operations and authenticated identities |
@@ -589,3 +587,14 @@ input-policy mismatch. Delayed GPU events now prefer a separate compute queue;
 the cleanup deadline excludes failure-stack formatting. The standalone platform
 ABI check imports its graphics types. AOSP's null drop target on cancelled drags
 now passes through the Kotlin policy and is covered through the real dispatcher.
+
+## Startup and native heap JNI
+
+Activity, ActivityThread and DDM native-heap JNI now compile unchanged from the
+pinned AOSP sources. The allocator boundary maps `M_PURGE` to glibc
+`malloc_trim`; Bionic profiling and leak-record operations return false with
+`ENOTSUP`. Original DDM JNI therefore reports failure instead of producing a
+fabricated heap dump. The hosted loader has no deferred compatibility-warning
+journal. RuntimeInit and architecture-specific zygote probes remain explicit
+runtime adaptations. Full acceptance passed, including the DDM failure-response
+protocol regression.

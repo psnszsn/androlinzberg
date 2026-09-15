@@ -10396,3 +10396,6 @@ F aosp packages/modules/StatsD/lib/libstatssocket/include/stats_event.h
 F aosp packages/modules/StatsD/lib/libstatssocket/include/stats_socket.h
 F aosp frameworks/native/opengl/libs/EGL/BlobCache.cpp
 F aosp frameworks/native/opengl/libs/EGL/BlobCache.h
+
+# Original startup/heap JNI allocator ABI.
+F aosp bionic/libc/platform/bionic/malloc.h
