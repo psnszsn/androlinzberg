@@ -41,6 +41,10 @@ pub fn build(b: *std.Build) void {
     source_identity_tests.addFileArg(b.path("tools/test_aosp_source_identity.py"));
     source_identity_tests.addFileInput(b.path("tools/aosp-source-identity.py"));
     build_tools_test.dependOn(&source_identity_tests.step);
+    const native_provenance_tests = b.addSystemCommand(&.{ "python3", "-B" });
+    native_provenance_tests.addFileArg(b.path("tools/test_native_client_audit.py"));
+    native_provenance_tests.addFileInput(b.path("tools/native-client-audit.py"));
+    build_tools_test.dependOn(&native_provenance_tests.step);
     const doc_header_tests = b.addSystemCommand(&.{ "python3", "-B", "tools/test_javadoc_headers.py" });
     build_tools_test.dependOn(&doc_header_tests.step);
     const native_runner_tests = b.addSystemCommand(&.{ "python3", "-B" });
@@ -1644,6 +1648,7 @@ pub fn build(b: *std.Build) void {
     b.step("run", "Run the launcher: zig build run -- <app.apk>").dependOn(&run.run.step);
 
     const binder_jni_audit = b.step("binder-jni-source-test", "Verify compiled stock Binder JNI inputs, headers and ELF owners");
+    const native_client_audit = b.step("native-client-source-test", "Audit compiled native island sources, flags, restored client headers and ELF owners");
     const source_identity = b.step("source-identity-test", "Compare exact compiled static sources with a clean pinned AOSP checkout");
     if (b.option([]const u8, "aosp-reference", "Absolute path to the clean pinned AOSP reference checkout")) |reference| {
         const compare = b.addSystemCommand(&.{ "python3", "-B" });
@@ -1653,6 +1658,7 @@ pub fn build(b: *std.Build) void {
         // The comparison always runs so changes in this checkout are observed.
         if (!std.fs.path.isAbsolute(reference))
             std.debug.panic("aosp-reference must be an absolute checkout path", .{});
+        native_client_audit.dependOn(@import("build/native_provenance.zig").add(b, island.native_compiles, reference, aosp, island.file, binder_ndk.getEmittedBin()));
         compare.addArg(reference);
         compare.addArg("--package");
         compare.addDirectoryArg(aosp);
@@ -1692,6 +1698,7 @@ pub fn build(b: *std.Build) void {
     } else {
         source_identity.dependOn(&b.addFail("source-identity-test requires -Daosp-reference=/absolute/path/to/clean/android-16.0.0_r1").step);
         binder_jni_audit.dependOn(&b.addFail("binder-jni-source-test requires -Daosp-reference=/absolute/path/to/clean/android-16.0.0_r1").step);
+        native_client_audit.dependOn(&b.addFail("native-client-source-test requires -Daosp-reference=/absolute/path/to/clean/android-16.0.0_r1").step);
     }
 
     const acceptance = b.step("acceptance-test", "Run the complete stock-client acceptance suite and source comparison");
@@ -1762,6 +1769,7 @@ pub fn build(b: *std.Build) void {
         "framework-module-test",
         "source-identity-test",
         "binder-jni-source-test",
+        "native-client-source-test",
         "codec2-client-test",
         "camera-client-test",
         "vintf-test",

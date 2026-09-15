@@ -1,5 +1,5 @@
 {
-  "revision": "f446bdd7 + sensor clients and graphics JNI source restoration",
+  "revision": "a4c8346b + compiled native island provenance gate",
   "reference": "Pinned checkout described by aosp/README.md; project revisions below",
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
@@ -694,5 +694,21 @@
       "system_apk_graphics_log": "/tmp/azk-sensor-acceptance191.log",
       "aggregate_acceptance": "not run"
     }
+  },
+  "compiled_island_followup": {
+    "target": "native-client-source-test",
+    "report": "zig-out/test-results/native-client-source.json",
+    "inputs": 1108,
+    "source_counts": {
+      "unchanged": 764,
+      "modified": 45,
+      "owned": 22,
+      "generated": 277
+    },
+    "required_original_clients": 36,
+    "preprocessed_boundaries": 12,
+    "consumed_headers": 1624,
+    "scope": "Actual native island Step.Run compiler commands, linked objects, selected client headers/macros and platform/NDK ELF owners. Static archive translation units, ART and runtime loader resolution remain outside the check.",
+    "validation": "Provenance gate, five failure regressions, build-tools-test, cpp-audit and graph-audit passed; production compilation commands and installed libraries unchanged."
   }
 }

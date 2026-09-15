@@ -70,6 +70,17 @@ The report at `zig-out/test-results/binder-jni-source.json` records source and
 library hashes. This target and `ndk-abi` also run in `acceptance-test`.
 `binder-jni-test` runs the existing Java/NDK conversion and lifetime checks alone.
 
+## Native client provenance
+
+`native-client-source-test -Daosp-reference=/absolute/path/to/clean/aosp` records
+native-island sources, objects and exact compiler arguments. It guards restored
+client source identity, preprocesses sensitive boundaries to inspect their
+actual macros and headers, and verifies platform/NDK JNI registrar ownership.
+It also rejects FFmpeg/VAAPI dependencies in the client platform ELF. The report
+is installed at `zig-out/test-results/native-client-source.json`; the target is
+part of `acceptance-test`. Linked static library inputs, ART and runtime loader
+resolution are outside its current scope.
+
 ## Native codec service
 
 The acceptance target includes original Codec2 transport, client, allocator,

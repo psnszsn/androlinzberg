@@ -49,6 +49,7 @@ pub const Options = struct {
 };
 
 pub const Result = struct {
+    native_compiles: []const *std.Build.Step.Run,
     vintf_objects: []const std.Build.LazyPath,
     hint_client: std.Build.LazyPath,
     binder_jni_sources: []const std.Build.LazyPath,
@@ -221,11 +222,13 @@ pub fn build(b: *std.Build, o: Options) Result {
     }) catch @panic("oom");
 
     var objects: std.ArrayList(std.Build.LazyPath) = .empty;
+    var native_compiles: std.ArrayList(*std.Build.Step.Run) = .empty;
 
     const G = struct {
         b: *std.Build,
         objects: *std.ArrayList(std.Build.LazyPath),
         binder_jni_sources: *std.ArrayList(std.Build.LazyPath),
+        native_compiles: *std.ArrayList(*std.Build.Step.Run),
         target: std.Build.ResolvedTarget,
         optimize: std.builtin.OptimizeMode,
         common_includes: []const std.Build.LazyPath,
@@ -270,6 +273,7 @@ pub fn build(b: *std.Build, o: Options) Result {
                 }
                 compile.addArg("-o");
                 const object = compile.addOutputFileArg(self.b.fmt("{s}.o", .{name}));
+                self.native_compiles.append(self.b.allocator, compile) catch @panic("oom");
                 self.objects.append(self.b.allocator, object) catch @panic("oom");
             }
         }
@@ -305,6 +309,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         .b = b,
         .objects = &objects,
         .binder_jni_sources = &binder_jni_sources,
+        .native_compiles = &native_compiles,
         .target = o.target,
         .optimize = o.optimize,
         .common_includes = common_includes.items,
@@ -903,5 +908,5 @@ pub fn build(b: *std.Build, o: Options) Result {
     link.addArgs(o.host_link_flags);
     link.addArgs(&.{ "-ldl", "-lpthread", "-lm", "-lcrypto", "-o" });
     const output = link.addOutputFileArg("libandroid_platform.so");
-    return .{ .hint_client = objects.items[hint_start], .file = output, .step = &link.step, .binder_jni_sources = binder_jni_sources.items, .binder_jni_includes = common_includes.items, .vintf_objects = objects.items[vintf_start..vintf_end] };
+    return .{ .native_compiles = native_compiles.items, .hint_client = objects.items[hint_start], .file = output, .step = &link.step, .binder_jni_sources = binder_jni_sources.items, .binder_jni_includes = common_includes.items, .vintf_objects = objects.items[vintf_start..vintf_end] };
 }

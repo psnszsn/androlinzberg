@@ -30,6 +30,24 @@ inside the app. An unchanged Java declaration of a native method therefore
 says nothing about whether its implementation is stock. Zero framework stubs
 also does not mean zero unsupported native operations.
 
+## Compiled native island check
+
+`native-client-source-test` consumes the actual 1,108 native-island compiler
+commands and verifies the linked object files. The current selection contains
+764 unchanged AOSP units, 45 modified units, 22 owned units and 277 generated
+units. Its 36 required client sources must remain original and present. Twelve
+sensitive client/service boundaries are preprocessed again with those commands;
+the report records effective macros and the 1,624 headers actually consumed.
+This catches disabled Android branches and incompatible Binder header selection.
+
+The check also verifies unique JNI registrar ownership and rejects FFmpeg/VAAPI
+dependencies in the platform client ELF. It runs in `acceptance-test` and writes
+`zig-out/test-results/native-client-source.json`. The check and its five failure
+regressions passed, along with the build-tool, C++ and graph audits. It does not
+yet inspect the translation units inside linked static libraries, ART, or runtime
+loader resolution. Those remain necessary before claiming complete native
+provenance. These counts are compilation inputs, not a stock-client percentage.
+
 ## Evidence and counting rules
 
 [`native-client-audit.json`](native-client-audit.json) records archive checksums,
@@ -391,8 +409,8 @@ in `1823bb1e`. See the JSON validation record for this limitation.
    implementations at their appropriate boundaries. Then close device,
    networking, loader and runtime gaps against the declared scope.
 
-A future native acceptance check needs the actual compiled source/flags/header
-closure, an explicit adaptation inventory, JNI-registration provenance, and
+The native acceptance check must expand from the island compilation commands
+to the linked library and runtime closure, with the adaptation inventory and
 ELF/soname resolution checks. Process tests must prove backend placement and
 service death/reconnection. Merely adding servers, retaining the replacement
 JNI, and passing the existing UI suite would not complete this work.
