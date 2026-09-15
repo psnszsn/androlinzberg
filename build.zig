@@ -858,7 +858,7 @@ pub fn build(b: *std.Build) void {
     }) });
     b.step("codec-work-test", "Verify FFmpeg output and Codec2 work lifetimes").dependOn(&b.addRunArtifact(codec_work_tests).step);
     @import("build/codec2.zig").ffmpegTest(b, codec2, island.file, codec_mod, binder_cpp, binder_ndk, binder_broker, sf_service);
-    const media_service = @import("build/codec2.zig").service(b, codec2, island.file, codec_mod, binder_cpp, binder_ndk);
+    const media_service = @import("build/codec2.zig").service(b, codec2, island.file, codec_mod, binder_cpp, binder_ndk, host_toolchain.resolver);
     const event_fd_mod = b.createModule(.{
         .root_source_file = b.path("src/platform/event_fd.zig"),
         .target = target,
@@ -1468,6 +1468,9 @@ pub fn build(b: *std.Build) void {
         "AZK_TEST_CLASS",
         "dev.artzig.FrameworkModuleSmoke",
     );
+    for ([_][]const u8{ "thumbnail.mp4", "thumbnail.webm", "tone.flac", "tone.ogg", "tone.opus", "tone.ts", "tone.mpg", "silence.amr" }) |fixture|
+        framework_module_smoke.run.addFileInput(b.path(b.fmt("testdata/media/{s}", .{fixture})));
+    framework_module_smoke.setEnvironment("AZK_TEST_THUMBNAIL", b.pathResolve(&.{"testdata/media/thumbnail.mp4"}));
     framework_module_smoke.setEnvironment("AZK_BINDER_PACKAGE", "org.example.permissions");
     framework_module_smoke.setEnvironment("AZK_WINDOW_BACKEND", "stock");
     // Fixture APKs (installed server-side by the permission-grant test).

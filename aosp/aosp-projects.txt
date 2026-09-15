@@ -1,4 +1,5 @@
 device/generic/art
+external/icu
 platform/art
 platform/build
 platform/build/bazel
@@ -33,6 +34,7 @@ platform/external/expat
 platform/external/f2fs-tools
 platform/external/fdlibm
 platform/external/fec
+platform/external/flac
 platform/external/fmtlib
 platform/external/go-cmp
 platform/external/golang-protobuf
@@ -65,8 +67,10 @@ platform/external/ksp
 platform/external/libcxx
 platform/external/libcxxabi
 platform/external/libffi
+platform/external/libogg
 platform/external/libphonenumber
 platform/external/libpng
+platform/external/libwebm
 platform/external/libxml2
 platform/external/libyuv
 platform/external/lz4
@@ -97,6 +101,7 @@ platform/external/starlark-go
 platform/external/tagsoup
 platform/external/testng
 platform/external/tinyxml2
+platform/external/tremolo
 platform/external/turbine
 platform/external/zlib
 platform/external/zopfli
@@ -119,6 +124,7 @@ platform/packages/modules/Bluetooth
 platform/packages/modules/ConfigInfrastructure
 platform/packages/modules/Connectivity
 platform/packages/modules/DeviceLock
+platform/packages/modules/DnsResolver
 platform/packages/modules/HealthFitness
 platform/packages/modules/IPsec
 platform/packages/modules/Media
@@ -174,6 +180,7 @@ platform/system/logging
 platform/system/memory/libdmabufheap
 platform/system/memory/libion
 platform/system/memory/libmeminfo
+platform/system/memory/libmemunreachable
 platform/system/netd
 platform/system/security
 platform/system/sepolicy
@@ -189,7 +196,6 @@ platform/tools/apksig
 platform/tools/dexter
 platform/tools/metalava
 platform/tools/tradefederation
+system/timezone
 toolchain/pgo-profiles
 tools/platform-compat
-external/icu
-system/timezone

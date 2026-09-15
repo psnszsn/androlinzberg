@@ -1,18 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Vlad Panazan <git@praznet.com>
-Date: Mon, 24 Aug 2026 05:08:34 +0200
-Subject: [PATCH 06/14] androidfw: replace CombinedIterator merge in
- Theme::ApplyStyle; hwui: accept both 8888 color orders in ImageDecoder
+From: Androlinzberg maintainers
+Subject: [PATCH] androidfw: merge parallel theme arrays explicitly
 
-- AssetManager2 Theme::ApplyStyle: index-based merge instead of
-  std::inplace_merge/remove_if over CombinedIterator (libstdc++ iterator
-  requirements)
-- ImageDecoder::setOutColorType (hwui): accept the other 8888 order, since
-  nixpkgs libskia's internal kN32 may differ from ours
----
- libs/androidfw/AssetManager2.cpp | 31 +++++++++++++++++++------------
- libs/hwui/hwui/ImageDecoder.cpp  |  5 +++++
- 2 files changed, 24 insertions(+), 12 deletions(-)
+Keep the hosted CombinedIterator workaround isolated to Theme::ApplyStyle.
 
 diff --git a/libs/androidfw/AssetManager2.cpp b/libs/androidfw/AssetManager2.cpp
 index 508750720..7399e5235 100644
@@ -56,19 +45,3 @@ index 508750720..7399e5235 100644
    }
    if (android::base::kEnableDChecks && !std::is_sorted(keys_.begin(), keys_.end())) {
      ALOGW("Bag %u was unsorted in the apk?", unsigned(resid));
-diff --git a/libs/hwui/hwui/ImageDecoder.cpp b/libs/hwui/hwui/ImageDecoder.cpp
-index 9aca5bc01..882df1c8f 100644
---- a/libs/hwui/hwui/ImageDecoder.cpp
-+++ b/libs/hwui/hwui/ImageDecoder.cpp
-@@ -176,6 +176,11 @@ bool ImageDecoder::setOutColorType(SkColorType colorType) {
-             break;
-         case kN32_SkColorType:
-             break;
-+        // artzig: nixpkgs libskia computes its own kN32, which may be the other
-+        // 8888 order than the one this file was compiled with. Accept both.
-+        case (kN32_SkColorType == kRGBA_8888_SkColorType ? kBGRA_8888_SkColorType
-+                                                         : kRGBA_8888_SkColorType):
-+            break;
-         case kRGBA_F16_SkColorType:
-             break;
-         case kRGBA_1010102_SkColorType:

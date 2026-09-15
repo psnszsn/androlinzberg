@@ -414,7 +414,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/av/media/libstagefright"), &.{ "NuMediaExtractor.cpp", "InterfaceUtils.cpp", "CallbackDataSource.cpp", "CallbackMediaSource.cpp", "RemoteMediaExtractor.cpp", "RemoteMediaSource.cpp", "MediaSource.cpp", "MediaTrack.cpp", "MediaExtractor.cpp", "MediaExtractorFactory.cpp", "HevcUtils.cpp" }, extractor_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/av/media/libstagefright"), &.{"Utils.cpp"}, extractor_includes, &.{ "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections" });
     g.add(o.aosp.path(b, "frameworks/av/media/module/foundation"), &.{ "MetaData.cpp", "MetaDataBase.cpp" }, extractor_includes, &.{"-D__ANDROID__"});
-    g.add(o.aosp.path(b, "frameworks/av/media/module/foundation"), &.{ "MediaBuffer.cpp", "MediaBufferBase.cpp", "MediaBufferGroup.cpp", "MediaDefs.cpp", "AudioPresentationInfo.cpp", "FoundationUtils.cpp", "avc_utils.cpp", "OpusHeader.cpp", "base64.cpp", "ByteUtils.cpp", "ABitReader.cpp", "ColorUtils.cpp", "ColorUtils_fill.cpp" }, extractor_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/av/media/module/foundation"), &.{ "MediaBuffer.cpp", "MediaBufferBase.cpp", "MediaBufferGroup.cpp", "MediaDefs.cpp", "AudioPresentationInfo.cpp", "FoundationUtils.cpp", "avc_utils.cpp", "OpusHeader.cpp", "base64.cpp", "ByteUtils.cpp", "ABitReader.cpp", "ColorUtils.cpp", "ColorUtils_fill.cpp", "ColorUtils_ndk.cpp" }, extractor_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/av/media/module/metadatautils"), &.{"MetaDataUtils.cpp"}, extractor_includes, &.{});
     const drm_includes = extractor_includes ++ &[_]std.Build.LazyPath{
         o.aosp.path(b, "frameworks/av/drm/libmediadrm/include"),
@@ -430,12 +430,19 @@ pub fn build(b: *std.Build, o: Options) Result {
     codec_includes.append(b.allocator, o.aosp.path(b, "libnativehelper/header_only_include")) catch @panic("OOM");
     for ([_][]const u8{ "frameworks/av/media/codec2/core/include", "frameworks/av/media/codec2/vndk/include", "frameworks/native/libs/nativewindow/include-private", "frameworks/av/media/ndk/include_platform", "frameworks/av/media/ndk/include/private", "system/libhidl/transport/memory/1.0/default" }) |path| codec_includes.append(b.allocator, o.aosp.path(b, path)) catch @panic("OOM");
     g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{ "android_media_MediaCodec.cpp", "android_media_MediaCodecList.cpp" }, codec_includes.items, &.{ "-D__ANDROID__", "-D__ANDROID_API__=36", "-Dbetoh64=be64toh", "-D__unused=__attribute__((unused))", "-Wno-invalid-specialization" });
+    codec_includes.append(b.allocator, o.aosp.path(b, "frameworks/base/libs/hwui/apex/include")) catch @panic("OOM");
+    g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{ "android_media_MediaMetadataRetriever.cpp", "android_media_SyncParams.cpp" }, codec_includes.items, &.{ "-D__ANDROID__", "-D__ANDROID_API__=36", "-D__unused=__attribute__((unused))", "-D__packed=__attribute__((packed))" });
+    g.add(b.path("src/native"), &.{"MediaPlayerJniBridge.cpp"}, codec_includes.items, &.{ "-D__ANDROID__", "-D__ANDROID_API__=36", "-D__unused=__attribute__((unused))", "-D__packed=__attribute__((packed))", "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections" });
     g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{ "android_media_MediaCrypto.cpp", "android_media_MediaDrm.cpp" }, drm_includes, &.{"-Dbetoh64=be64toh"});
     g.add(o.aosp.path(b, "frameworks/av/drm/libmediadrm"), &.{
-        "CryptoHal.cpp",        "CryptoHalAidl.cpp", "CryptoHalHidl.cpp",      "DrmUtils.cpp",               "DrmStatus.cpp",
-        "DrmHal.cpp",           "DrmHalAidl.cpp",    "DrmHalHidl.cpp",         "DrmHalListener.cpp",         "DrmSessionManager.cpp",
-        "DrmMetricsLogger.cpp", "DrmMetrics.cpp",    "DrmMetricsConsumer.cpp", "PluginMetricsReporting.cpp",
+        "CryptoHal.cpp",              "CryptoHalAidl.cpp",    "CryptoHalHidl.cpp", "DrmStatus.cpp",
+        "DrmHal.cpp",                 "DrmHalAidl.cpp",       "DrmHalHidl.cpp",    "DrmHalListener.cpp",
+        "DrmSessionManager.cpp",      "DrmMetricsLogger.cpp", "DrmMetrics.cpp",    "DrmMetricsConsumer.cpp",
+        "PluginMetricsReporting.cpp",
     }, drm_includes, &.{ "-Dbetoh64=be64toh", "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections" });
+    // NuPlayer's original DRM factory clients share the platform's HAL objects.
+    g.add(o.aosp.path(b, "frameworks/av/drm/libmediadrm"), &.{"DrmUtils.cpp"}, drm_includes, &.{"-Dbetoh64=be64toh"});
+    g.add(o.aosp.path(b, "frameworks/av/media/libmedia"), &.{ "MediaProfiles.cpp", "Metadata.cpp" }, codec_includes.items, &.{"-D__unused=__attribute__((unused))"});
     for (@import("generator_sources.zig").media_native_protos) |file|
         g.add(o.media_generated.sources, &.{b.fmt("{s}.pb.cc", .{file[0 .. file.len - 6]})}, drm_includes, &.{});
     g.add(o.surfaceflinger_generated.sources, &.{"android/hardware/drm/HdcpLevels.cpp"}, drm_includes, &.{});
@@ -443,9 +450,15 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "external/jsoncpp/src/lib_json"), &.{ "json_reader.cpp", "json_value.cpp", "json_writer.cpp" }, drm_includes, &.{ "-DJSON_USE_EXCEPTION=0", "-DJSONCPP_NO_LOCALE_SUPPORT" });
     g.add(o.aosp.path(b, "frameworks/av/services/mediaextractor"), &.{"MediaExtractorService.cpp"}, extractor_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/av/media/module/esds"), &.{"ESDS.cpp"}, extractor_includes, &.{});
-    g.add(o.aosp.path(b, "frameworks/av/media/module/extractors/wav"), &.{"WAVExtractor.cpp"}, extractor_includes, &.{"-DGETEXTRACTORDEF=azk_wav_extractor_def"});
-    g.add(o.aosp.path(b, "frameworks/av/media/module/extractors/mp3"), &.{ "MP3Extractor.cpp", "VBRISeeker.cpp", "XINGSeeker.cpp" }, extractor_includes, &.{"-DGETEXTRACTORDEF=azk_mp3_extractor_def"});
-    g.add(o.aosp.path(b, "frameworks/av/media/module/extractors/aac"), &.{"AACExtractor.cpp"}, extractor_includes, &.{"-DGETEXTRACTORDEF=azk_aac_extractor_def"});
+    const extractors = @import("media_extractor_sources.zig");
+    var plugin_includes: std.ArrayList(std.Build.LazyPath) = .empty;
+    plugin_includes.appendSlice(b.allocator, codec_includes.items) catch @panic("OOM");
+    for (extractors.includes) |path| plugin_includes.append(b.allocator, o.aosp.path(b, path)) catch @panic("OOM");
+    for (extractors.plugins) |plugin| plugin_includes.append(b.allocator, o.aosp.path(b, b.fmt("{s}/{s}/include", .{ extractors.root, plugin.name }))) catch @panic("OOM");
+    for (extractors.plugins) |plugin| g.add(o.aosp.path(b, b.fmt("{s}/{s}", .{ extractors.root, plugin.name })), plugin.files, plugin_includes.items, &.{ b.fmt("-DGETEXTRACTORDEF=azk_{s}_extractor_def", .{plugin.name}), "-fvisibility=hidden", "-Dbetoh64=be64toh", "-include", "algorithm" });
+    for (extractors.support) |group| g.add(o.aosp.path(b, group.root), group.files, plugin_includes.items, std.mem.concat(b.allocator, []const u8, &.{ &.{"-fvisibility=hidden"}, group.flags }) catch @panic("OOM"));
+    g.add(o.aosp.path(b, "frameworks/av/media/module/mpeg2ts"), &extractors.mpeg2, plugin_includes.items, &.{ "-D__ANDROID__", "-D__ANDROID_API__=36", "-DENABLE_CRYPTO" });
+    g.add(o.aosp.path(b, "frameworks/av/media/module/foundation"), &.{"MediaKeys.cpp"}, plugin_includes.items, &.{});
     g.add(o.aosp.path(b, "frameworks/av/media/module/id3"), &.{"ID3.cpp"}, extractor_includes, &.{});
     g.add(o.aosp.path(b, "system/media/audio_utils"), &.{"primitives.c"}, extractor_includes, &.{});
     // Android's host-capable camera metadata library and C++ value containers.
@@ -558,7 +571,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.incremental_sysprop_source.dirname(), &.{"IncrementalProperties.sysprop.cpp"}, &.{}, &.{});
     for (o.aidl_source_roots, @import("generator_sources.zig").cpp_aidl) |root, entry| {
         // Codec2's native library owns its work and bufferpool protocols.
-        if (@import("codec2.zig").isProtocol(entry) or @import("codec2.zig").isClientProtocol(entry) or @import("codec2.zig").isResourceProtocol(entry)) continue;
+        if (@import("codec2.zig").isProtocol(entry) or @import("codec2.zig").isClientProtocol(entry) or @import("codec2.zig").isResourceProtocol(entry) or @import("codec2.zig").isPlayerProtocol(entry)) continue;
         if (entry.output) |output| g.add(root, &.{output}, extractor_includes, &.{});
     }
     g.add(o.aosp.path(b, "frameworks/native/libs/input"), &gen.input_srcs, &.{ fn_inc, o.aosp.path(b, "frameworks/native/libs/input"), input_compat_inc, binder_inc }, &.{aidl_inc});
@@ -793,7 +806,11 @@ pub fn build(b: *std.Build, o: Options) Result {
         link.addFileArg(codec2.client.getEmittedBin());
         link.addFileArg(codec2.transport.getEmittedBin());
     }
+    // NuPlayer renderfright uses the original UI dataspace diagnostic.
+    link.addArg("-Wl,-u,_Z16dataspaceDetails19android_dataspace_t");
     link.addFileArg(o.gui.getEmittedBin());
+    // Original MPEG-TS playback discovers CAS through this shared HIDL client.
+    link.addArg("-Wl,-u,_ZN7android8hardware3cas4V1_016IMediaCasService10getServiceERKNSt3__112basic_stringIcNS4_11char_traitsIcEENS4_9allocatorIcEEEEb");
     link.addFileArg(o.hidl.getEmittedBin());
     link.addFileArg(o.ui.getEmittedBin());
     for (o.host_library_roots) |root| {

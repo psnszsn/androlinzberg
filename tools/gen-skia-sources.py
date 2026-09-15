@@ -23,9 +23,13 @@ while stack:
     stack.extend(t[n].get("deps", []))
 
 SRC_EXT = (".cpp", ".cc", ".c")
-DROP_DEFINES = {"SK_HIDE_PATH_EDIT_METHODS",   # legacy SkPath layout (matches hwui)
-                "SK_DISABLE_TRACING"}          # framework mode traces via cutils ATrace
-ADD_DEFINES = ["SK_BUILD_FOR_ANDROID_FRAMEWORK", "SK_SUPPORT_LEGACY_EMBOSSMASKFILTER"]
+DROP_DEFINES = {
+    "SK_HIDE_PATH_EDIT_METHODS",  # legacy SkPath layout (matches hwui)
+    "SK_DISABLE_TRACING",        # framework mode traces via cutils ATrace
+    "SK_R32_SHIFT=16",           # Android's bitmap ABI uses RGBA on Linux too
+}
+ADD_DEFINES = ["SK_BUILD_FOR_ANDROID_FRAMEWORK", "SK_SUPPORT_LEGACY_EMBOSSMASKFILTER",
+               "SK_R32_SHIFT=0"]
 
 defines, libs, groups = set(), [], []
 for n in sorted(seen):

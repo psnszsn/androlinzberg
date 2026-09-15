@@ -193,6 +193,7 @@ internal object FrameworkModuleSmoke {
         StockNetworkPolicySmoke.run()
         StockUsbSmoke.run()
         StockMediaCryptoSmoke.run()
+        StockMediaContainerSmoke.run()
         StockMediaMetadataRetrieverSmoke.run()
         StockFileObserverSmoke.run()
         StockLegacyDrmSmoke.run()

@@ -1,105 +1,82 @@
 package dev.artzig
 
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.media.MediaDataSource
 import android.media.MediaMetadataRetriever
-import android.os.IBinder
 import android.os.ServiceManager
-import java.io.FileDescriptor
 import java.io.FileInputStream
-import java.lang.reflect.InvocationTargetException
-import java.lang.reflect.Modifier
+import java.nio.file.Files
+import java.util.concurrent.atomic.AtomicInteger
 
-/** Stock client contracts when the host has no media.player metadata service. */
+/** Public metadata and thumbnail APIs through the original remote retriever. */
 internal object StockMediaMetadataRetrieverSmoke {
-    private inline fun <reified T : Throwable> rejects(action: () -> Any?): T {
-        var error = runCatching(action).exceptionOrNull()
-        if (error is InvocationTargetException) error = error.cause
-        check(error is T) { "Expected ${T::class.java.name}, got $error" }
-        return error
+    private inline fun <reified T : Throwable> rejects(action: () -> Any?) {
+        val failure = runCatching(action).exceptionOrNull()
+        check(failure is T) { "Expected ${T::class.java.name}, got $failure" }
     }
 
     fun run() {
-        check(ServiceManager.checkService("media.player") == null)
+        checkNotNull(ServiceManager.checkService("media.player"))
+        val bytes = StockMediaPlayerSmoke.mp3()
+        val file = Files.createTempFile("stock-retriever-", ".mp3").toFile()
+        // An explicit FD slice must hide bytes before and after the media.
+        file.writeBytes(ByteArray(17) + bytes + ByteArray(13))
         val retriever = MediaMetadataRetriever()
-        val klass = MediaMetadataRetriever::class.java
-        val params = MediaMetadataRetriever.BitmapParams()
-        check(params.preferredConfig == Bitmap.Config.ARGB_8888)
-        check(params.actualConfig == Bitmap.Config.ARGB_8888)
-        val setPreferred = MediaMetadataRetriever.BitmapParams::class.java.getMethod("setPreferredConfig", Bitmap.Config::class.java)
-        rejects<IllegalArgumentException> { setPreferred.invoke(params, null) }
-        params.preferredConfig = Bitmap.Config.RGB_565
-        check(params.actualConfig == Bitmap.Config.ARGB_8888)
-        check(retriever.getFrameAtTime() == null)
-        check(retriever.getFrameAtTime(42, MediaMetadataRetriever.OPTION_CLOSEST, params) == null)
-        check(params.actualConfig == Bitmap.Config.ARGB_8888) // Failed single-frame reads do not mutate it.
-        check(retriever.embeddedPicture == null)
-        for (key in -1..43) check(retriever.extractMetadata(key) == null)
-        rejects<IllegalArgumentException> { retriever.getFrameAtTime(0, -1) }
-        rejects<IllegalArgumentException> { retriever.getFrameAtTime(0, 4) }
-        rejects<IllegalArgumentException> { retriever.getScaledFrameAtTime(0, 0, 0, 20) }
-        rejects<IllegalArgumentException> { retriever.getScaledFrameAtTime(0, 0, 20, -1) }
-        rejects<IllegalStateException> { retriever.getFramesAtIndex(0, 1) }
-        rejects<IllegalStateException> { retriever.getPrimaryImage() }
-        rejects<IllegalArgumentException> { retriever.setDataSource(null as String?) }
-        rejects<IllegalArgumentException> { retriever.setDataSource("mem://123", emptyMap()) }
-        rejects<IllegalStateException> { retriever.setDataSource("https://example.invalid/video", mapOf("X-Test" to "value")) }
-        rejects<NullPointerException> { retriever.setDataSource("https://example.invalid/video", null) }
+        fun audioMetadata() {
+            check(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE) == "audio/mpeg")
+            check(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO) == "yes")
+            check(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toInt() in 1800..2300)
+            check(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO) == null)
+            check(retriever.getFrameAtTime() == null)
+        }
+        try {
+            rejects<IllegalArgumentException> { retriever.setDataSource(null as String?) }
+            rejects<IllegalArgumentException> { retriever.getFrameAtTime(0, -1) }
+            rejects<IllegalArgumentException> { retriever.getScaledFrameAtTime(0, 0, 0, 20) }
+            FileInputStream(file).use { input ->
+                retriever.setDataSource(input.fd, 17, bytes.size.toLong())
+                audioMetadata()
+                check(input.fd.valid())
+            }
+            val reads = AtomicInteger()
+            val source = object : MediaDataSource() {
+                override fun getSize() = bytes.size.toLong()
+                override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
+                    reads.incrementAndGet()
+                    if (position >= bytes.size) return -1
+                    val count = minOf(size, bytes.size - position.toInt())
+                    bytes.copyInto(buffer, offset, position.toInt(), position.toInt() + count)
+                    return count
+                }
+                override fun close() = Unit
+            }
+            retriever.setDataSource(source)
+            audioMetadata()
+            check(reads.get() > 0) { "Remote retriever did not read the callback source" }
 
-        val fdSetter = klass.getDeclaredMethod("_setDataSource", FileDescriptor::class.java,
-            java.lang.Long.TYPE, java.lang.Long.TYPE).apply { isAccessible = true }
-        rejects<IllegalArgumentException> { fdSetter.invoke(retriever, null, 0L, 1L) }
-        rejects<IllegalArgumentException> { fdSetter.invoke(retriever, FileDescriptor(), 0L, 1L) }
-        FileInputStream("/dev/null").use { input ->
-            rejects<IllegalArgumentException> { fdSetter.invoke(retriever, input.fd, -1L, 1L) }
-            rejects<IllegalArgumentException> { fdSetter.invoke(retriever, input.fd, 0L, -1L) }
-            rejects<IllegalStateException> { fdSetter.invoke(retriever, input.fd, 0L, 1L) }
-            check(input.fd.valid() && input.read() == -1) // Borrowed descriptor remains usable.
+            retriever.setDataSource(checkNotNull(System.getenv("AZK_TEST_THUMBNAIL")))
+            check(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH) == "128")
+            check(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT) == "96")
+            check(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO) == "yes")
+            check(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) == "Stock thumbnail")
+            val params = MediaMetadataRetriever.BitmapParams().apply { preferredConfig = Bitmap.Config.ARGB_8888 }
+            val bitmap = checkNotNull(retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, params))
+            try {
+                check(bitmap.width == 128 && bitmap.height == 96 && params.actualConfig == Bitmap.Config.ARGB_8888)
+                val pixel = bitmap.getPixel(64, 48)
+                check(Color.red(pixel) > 230 && Color.green(pixel) < 25 && Color.blue(pixel) < 25) {
+                    "Unexpected thumbnail pixel: ${Integer.toHexString(pixel)}"
+                }
+            } finally { bitmap.recycle() }
+            val scaled = checkNotNull(retriever.getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 64, 48))
+            try { check(scaled.width == 64 && scaled.height == 48) } finally { scaled.recycle() }
+        } finally {
+            retriever.release()
+            retriever.close()
+            check(file.delete())
         }
-        var sourceCalls = 0
-        val source = object : MediaDataSource() {
-            override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int { sourceCalls++; return -1 }
-            override fun getSize(): Long { sourceCalls++; return 0 }
-            override fun close() { sourceCalls++ }
-        }
-        rejects<IllegalStateException> { retriever.setDataSource(source) }
-        rejects<IllegalArgumentException> { retriever.setDataSource(null as MediaDataSource?) }
-        check(sourceCalls == 0)
-        val uriSetter = klass.getDeclaredMethod("_setDataSource", IBinder::class.java,
-            String::class.java, Array<String>::class.java, Array<String>::class.java).apply { isAccessible = true }
-        rejects<IllegalArgumentException> { uriSetter.invoke(retriever, null, null, null, null) }
-        rejects<IllegalArgumentException> { uriSetter.invoke(retriever, null, "file:/unused", arrayOf("X"), null) }
-        rejects<IllegalArgumentException> { uriSetter.invoke(retriever, null, "file:/unused", arrayOf("X"), emptyArray<String>()) }
-        rejects<IllegalStateException> { uriSetter.invoke(retriever, null, "file:/unused", null, null) }
-        val frameList = klass.getDeclaredMethod("_getFrameAtIndex", Integer.TYPE, Integer.TYPE,
-            MediaMetadataRetriever.BitmapParams::class.java).apply { isAccessible = true }
-        check(rejects<IllegalStateException> { frameList.invoke(retriever, 0, 1, params) }.message == "No frames from retriever")
-        check(params.actualConfig == Bitmap.Config.RGB_565)
-        params.preferredConfig = Bitmap.Config.RGBA_F16
-        rejects<IllegalStateException> { frameList.invoke(retriever, 0, 1, params) }
-        check(params.actualConfig == Bitmap.Config.ARGB_8888)
-        val genre = klass.getDeclaredMethod("convertGenreTag", String::class.java).apply { isAccessible = true }
-        check(genre.invoke(retriever, "17") == "Rock")
-        check(genre.invoke(retriever, "(RX)(CR)Custom") == "Remix, Cover, Custom")
-        check(genre.invoke(retriever, "99999") == null)
-        check(genre.invoke(retriever, "(invalid)") == null)
-        repeat(2) { retriever.release(); retriever.close() }
-        check(sourceCalls == 0)
-        var checked = 0
-        for (method in klass.declaredMethods) {
-            if (!Modifier.isNative(method.modifiers) || method.name in setOf("native_init", "native_setup", "release", "native_finalize")) continue
-            method.isAccessible = true
-            val arguments = method.parameterTypes.map {
-                when (it) { Integer.TYPE -> (-1 as Any); java.lang.Long.TYPE -> -1L; else -> null }
-            }.toTypedArray()
-            val failure = rejects<IllegalStateException> { method.invoke(retriever, *arguments) }
-            check(failure.message == "No retriever available") { "${method.name}: ${failure.message}" }
-            checked++
-        }
-        check(checked == 9)
-        val finalize = klass.getDeclaredMethod("native_finalize").apply { isAccessible = true }
-        repeat(2) { finalize.invoke(retriever) }
-        MediaMetadataRetriever().use { check(it.extractMetadata(0) == null) }
-        System.err.println("stock-metadata-retriever: PASS validation, absent-service failures, borrowed sources, genre parsing and release")
+        rejects<IllegalStateException> { retriever.extractMetadata(0) }
+        println("stock-metadata-retriever: PASS remote FD slices, callback reads, metadata, decoded/scaled thumbnails and release")
     }
 }

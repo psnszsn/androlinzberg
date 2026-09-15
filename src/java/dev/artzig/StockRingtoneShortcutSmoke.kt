@@ -12,90 +12,19 @@ import android.provider.MediaStore
 import android.provider.Settings
 import com.android.internal.accessibility.AccessibilityShortcutController
 import java.io.FileNotFoundException
-import java.io.IOException
-import java.nio.file.Files
 
 internal object StockRingtoneShortcutSmoke {
     fun run(drain: () -> Unit) {
         val context = ActivityThread.currentApplication() ?: ActivityThread.currentActivityThread().systemContext
-        player(drain)
+        StockMediaPlayerSmoke.run(drain)
         playbackReports()
         ringtoneUris(context)
         shortcutSettings(context)
-        println("stock-ringtone-shortcut: PASS media client errors, cleanup, URI restore and shortcut settings")
+        println("stock-ringtone-shortcut: PASS playback reports, URI restore and shortcut settings")
     }
     private inline fun <reified T : Throwable> rejects(block: () -> Unit) {
         val failure = runCatching(block).exceptionOrNull()
         check(failure is T) { "Expected ${T::class.java.name}, got $failure" }
-    }
-    private fun player(drain: () -> Unit) {
-        val service = IAudioService.Stub.asInterface(ServiceManager.getService(Context.AUDIO_SERVICE))
-        val first = MediaPlayer()
-        val second = MediaPlayer()
-        try {
-            check(first.audioSessionId > 0 && first.audioSessionId and 7 == 1)
-            check(first.audioSessionId != second.audioSessionId)
-            val ids = (1..32).map { AudioSystem.newAudioPlayerId() } + (1..32).map { AudioSystem.newAudioRecorderId() }
-            check(ids.toSet().size == ids.size && ids.all { it > 0 && it and 7 == 7 })
-            check(!first.isPlaying && first.videoWidth == 0 && first.videoHeight == 0)
-            first.isLooping = true
-            check(!first.isLooping) // No remote player: the cached request is not active looping.
-            first.setVolume(0.25f, 0.75f)
-            first.setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build())
-            first.setAudioSessionId(second.audioSessionId)
-            check(first.audioSessionId == second.audioSessionId)
-            check(first.metrics == null && first.routedDevices.isEmpty())
-            val prepareDrm = MediaPlayer::class.java.getDeclaredMethod("_prepareDrm",
-                ByteArray::class.java, ByteArray::class.java).apply { isAccessible = true }
-            val releaseDrm = MediaPlayer::class.java.getDeclaredMethod("_releaseDrm").apply { isAccessible = true }
-            val drmFailure = runCatching { prepareDrm.invoke(first, ByteArray(16), byteArrayOf(1)) }
-                .exceptionOrNull() as java.lang.reflect.InvocationTargetException
-            check((drmFailure.cause as MediaDrm.MediaDrmStateException).errorCode == -19)
-            releaseDrm.invoke(first)
-            check(!AudioManager.isHapticPlaybackSupported())
-            rejects<IllegalStateException> { first.prepareAsync() }
-            rejects<IllegalStateException> { first.playbackParams }
-            rejects<IllegalStateException> { first.setSyncParams(SyncParams().allowDefaults()) }
-            rejects<IllegalArgumentException> { first.setNextMediaPlayer(first) }
-            rejects<IllegalArgumentException> { first.setNextMediaPlayer(second) }
-            rejects<IllegalArgumentException> { first.setDataSource("https://media.invalid/absent") }
-            val file = Files.createTempFile("stock-media-player-", ".bin").toFile()
-            try {
-                file.writeBytes(byteArrayOf(1, 2, 3))
-                ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
-                    val nativeSource = MediaPlayer::class.java.getDeclaredMethod("_setDataSource",
-                        java.io.FileDescriptor::class.java, Long::class.javaPrimitiveType,
-                        Long::class.javaPrimitiveType).apply { isAccessible = true }
-                    check((runCatching { nativeSource.invoke(first, fd.fileDescriptor, 0L, 3L) }
-                        .exceptionOrNull() as java.lang.reflect.InvocationTargetException).cause is IOException)
-                    // Pinned public overload catches and logs the native IOException.
-                    first.setDataSource(fd.fileDescriptor, 0, 3)
-                    check(fd.statSize == 3L) // The failed service request did not consume the fd.
-                }
-            } finally { check(file.delete()) }
-            val errors = ArrayList<Pair<Int, Int>>()
-            first.setOnErrorListener { _, what, extra -> errors.add(what to extra); true }
-            first.pause()
-            check(errors.isEmpty())
-            drain()
-            check(errors == listOf(-38 to 0))
-            first.pause()
-            drain()
-            check(errors.size == 1) // Disconnected ERROR state suppresses subsequent callbacks.
-            second.setOnErrorListener { _, _, _ -> error("Callback after release") }
-            second.pause()
-            second.release()
-            drain()
-            check((runCatching { releaseDrm.invoke(second) }.exceptionOrNull()
-                as java.lang.reflect.InvocationTargetException).cause is IllegalStateException)
-            rejects<IllegalStateException> { second.isPlaying }
-            rejects<IllegalStateException> { second.audioSessionId }
-            check(service.ringtonePlayer == null)
-        } finally {
-            first.release()
-            second.release()
-            drain()
-        }
     }
     private fun playbackReports() {
         var granted = true

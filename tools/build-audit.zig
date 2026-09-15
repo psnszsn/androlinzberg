@@ -314,6 +314,7 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
         "src/native/HardwareBufferRender.cpp",
         "src/native/HostInputDispatcher.cpp",
         "src/native/HostLooper.cpp",
+        "src/native/MediaPlayerJniBridge.cpp",
         "src/native/PlatformFiles.cpp",
         // Host audio services behind the pinned libaudioclient AIDL (src/native/audio).
         "src/native/audio/AAudioSmoke.cpp",

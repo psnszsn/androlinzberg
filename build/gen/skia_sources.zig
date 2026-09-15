@@ -27,11 +27,11 @@ pub const defines = [_][]const u8{
     "SK_GANESH",
     "SK_GL",
     "SK_PDF_USE_HARFBUZZ_SUBSET",
-    "SK_R32_SHIFT=16",
     "SK_TYPEFACE_FACTORY_FREETYPE",
     "SK_XML",
     "SK_BUILD_FOR_ANDROID_FRAMEWORK",
     "SK_SUPPORT_LEGACY_EMBOSSMASKFILTER",
+    "SK_R32_SHIFT=0",
 };
 
 pub const system_libs = [_][]const u8{

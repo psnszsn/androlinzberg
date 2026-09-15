@@ -51,8 +51,9 @@ Full Android SELinux/device sandbox equivalence is not provided.
 Wayland presentation runs in the separate task presenter. The PipeWire audio
 sink runs in the system process behind the native AudioFlinger adapter and
 connects to the desktop's external audio daemon (a real-time null sink stands
-in when none is reachable). The FFmpeg codec backend still runs inside app
-processes and is not a native Android codec service client. Specific
+in when none is reachable). Stock MediaCodec JNI and native CCodec clients
+reach the separately supervised Codec2 media service over Binder. FFmpeg and
+VAAPI decoding run in that service; system Mesa supplies GPU presentation. Specific
 unsupported desktop operations and recovery behavior are documented in
 [desktop behavior and limits](desktop.md).
 

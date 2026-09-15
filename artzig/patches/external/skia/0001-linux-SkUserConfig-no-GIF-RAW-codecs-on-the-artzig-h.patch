@@ -1,56 +1,46 @@
-From 5a8bd0bf230e55eb7e65a6e9f4d759a0c3c0ee1e Mon Sep 17 00:00:00 2001
-From: Vlad Panazan <git@praznet.com>
-Date: Wed, 2 Sep 2026 10:43:55 +0200
-Subject: [PATCH] linux SkUserConfig: no GIF/RAW codecs on the artzig host
+From: Androlinzberg maintainers
+Subject: [PATCH] Linux Skia: Android bitmap byte order and available codecs
 
-The host build has neither wuffs (SkWuffsCodec) nor dng_sdk/piex (SkRawCodec)
-vendored, so SkCodec's legacy decoder list must not reference them; the
-island otherwise fails to load with undefined SkGifDecoder/SkRawDecoder.
+Stock framework and NDK bitmap callers require RGBA bytes. Match Android
+Skia's R32 shift in the library and all consumers; Mesa storage is described
+separately by gralloc formats. Exclude unavailable GIF/RAW dependencies.
 
-Change-Id: I27e3aa945209d8f44343952248a4cc69ec747469
----
- linux/include/config/SkUserConfig.h | 14 +++++---------
- 1 file changed, 5 insertions(+), 9 deletions(-)
-
-diff --git a/linux/include/config/SkUserConfig.h b/linux/include/config/SkUserConfig.h
-index d4e8714..6169fbd 100644
 --- a/linux/include/config/SkUserConfig.h
 +++ b/linux/include/config/SkUserConfig.h
-@@ -7,9 +7,8 @@
+@@ -7,9 +7,7 @@
  #define SK_CODEC_DECODES_BMP
  #endif
  
 -#ifndef SK_CODEC_DECODES_GIF
 -#define SK_CODEC_DECODES_GIF
 -#endif
-+// artzig host: SK_CODEC_DECODES_GIF needs a decoder library (wuffs)
-+// that is not vendored; the stock host build never had it either.
++// artzig host: GIF decoding requires unvendored wuffs.
  
  #ifndef SK_CODEC_DECODES_ICO
  #define SK_CODEC_DECODES_ICO
-@@ -27,9 +26,8 @@
+@@ -27,9 +25,7 @@
  #define SK_CODEC_DECODES_PNG_WITH_LIBPNG
  #endif
  
 -#ifndef SK_CODEC_DECODES_RAW
 -#define SK_CODEC_DECODES_RAW
 -#endif
-+// artzig host: SK_CODEC_DECODES_RAW needs a decoder library (dng_sdk/piex)
-+// that is not vendored; the stock host build never had it either.
++// artzig host: RAW decoding requires unvendored dng_sdk/piex.
  
  #ifndef SK_CODEC_DECODES_WBMP
  #define SK_CODEC_DECODES_WBMP
-@@ -83,9 +81,7 @@
+@@ -83,12 +79,10 @@
  #define SK_GAMMA_EXPONENT 1.4
  #endif
  
 -#ifndef SK_HAS_WUFFS_LIBRARY
 -#define SK_HAS_WUFFS_LIBRARY
 -#endif
-+// artzig host: SK_HAS_WUFFS_LIBRARY dropped with SK_CODEC_DECODES_GIF (no wuffs).
++// artzig host: wuffs is not in the curated source closure.
  
  #ifndef SK_R32_SHIFT
- #define SK_R32_SHIFT 16
--- 
-2.55.0
-
+-#define SK_R32_SHIFT 16
++#define SK_R32_SHIFT 0
+ #endif
+ 
+ #ifndef SK_SUPPORT_PDF

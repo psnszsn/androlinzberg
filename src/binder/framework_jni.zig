@@ -763,8 +763,6 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     @import("vintf_jni.zig").register(env) catch return -1;
     @import("performance_hint_jni.zig").register(env) catch return -1;
     @import("traffic_stats_jni.zig").register(env) catch return -1;
-    @import("media_metadata_retriever_jni.zig").register(env) catch return -1;
-    @import("media_player_jni.zig").register(env) catch return -1;
     @import("sensor_manager_jni.zig").register(env) catch return -1;
     @import("legacy_camera_jni.zig").register(env) catch return -1;
     @import("activity_jni.zig").register(env) catch return -1;

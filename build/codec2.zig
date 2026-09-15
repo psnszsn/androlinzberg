@@ -28,6 +28,17 @@ pub fn isResourceProtocol(entry: declarations.CppAidl) bool {
         std.mem.eql(u8, entry.input, "android/app/ProcessStateEnum.aidl");
 }
 
+pub fn isPlayerProtocol(entry: declarations.CppAidl) bool {
+    return std.mem.eql(u8, entry.input, "com/android/internal/app/IAppOpsCallback.aidl") or
+        std.mem.eql(u8, entry.input, "com/android/internal/compat/IPlatformCompatNative.aidl") or
+        std.mem.eql(u8, entry.root, "frameworks/av/camera/aidl") or
+        std.mem.startsWith(u8, entry.root, "hardware/interfaces/common/") or
+        std.mem.eql(u8, entry.input, "android/permission/IPermissionChecker.aidl") or
+        std.mem.eql(u8, entry.input, "android/os/IPowerManager.aidl") or
+        std.mem.eql(u8, entry.input, "android/os/IWakeLockCallback.aidl") or
+        std.mem.eql(u8, entry.input, "android/os/IScreenTimeoutPolicyListener.aidl");
+}
+
 pub const Options = struct {
     target: std.Build.ResolvedTarget,
     aosp: std.Build.LazyPath,
@@ -68,6 +79,7 @@ pub const Libraries = struct {
     transport: *std.Build.Step.Compile,
     client: *std.Build.Step.Compile,
     resources: *std.Build.Step.Compile,
+    player: *std.Build.Step.Compile,
     aosp: std.Build.LazyPath,
     flags: []const []const u8,
 };
@@ -128,7 +140,42 @@ pub fn build(b: *std.Build, o: Options) Libraries {
     b.step("codec2-params-test", "Run original Codec2 parameter and scalar contract tests").dependOn(&run.step);
     const client_flags = clientFlags(b, flags);
     const resources = buildResources(b, o, client, client_flags);
-    return .{ .transport = library, .client = client, .resources = resources, .aosp = o.aosp, .flags = client_flags };
+    const player = buildPlayer(b, o, client, client_flags);
+    return .{ .transport = library, .client = client, .resources = resources, .player = player, .aosp = o.aosp, .flags = client_flags };
+}
+
+fn buildPlayer(b: *std.Build, o: Options, client: *std.Build.Step.Compile, flags: []const []const u8) *std.Build.Step.Compile {
+    const selected = @import("media_player_sources.zig");
+    const mod = b.createModule(.{ .target = o.target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true, .pic = true });
+    mod.include_dirs = client.root_module.include_dirs.clone(b.allocator) catch @panic("OOM");
+    for (selected.includes) |path| mod.addIncludePath(o.aosp.path(b, path));
+    const headers = b.addWriteFiles();
+    _ = headers.addCopyFile(o.aosp.path(b, "bionic/libc/include/sys/system_properties.h"), "sys/system_properties.h");
+    _ = headers.add("sys/limits.h", "#include <limits.h>\n");
+    _ = headers.addCopyFile(o.aosp.path(b, "bionic/libc/dns/include/resolv_netid.h"), "resolv_netid.h");
+    _ = headers.addCopyFile(o.aosp.path(b, "bionic/libc/dns/include/resolv_params.h"), "resolv_params.h");
+    mod.addIncludePath(headers.getDirectory());
+    // Bionic exposes these libc constants and trace macros transitively.
+    const player_flags = std.mem.concat(b.allocator, []const u8, &.{ flags, &.{ "-Dbetoh64=be64toh", "-D__packed=__attribute__((packed))", "-DIN_LOOPBACK(a)=(((a)&0xff000000)==0x7f000000)", "-DENABLE_CRYPTO", "-DGL_GLEXT_PROTOTYPES", "-DEGL_EGLEXT_PROTOTYPES", "-D__BIONIC_AVAILABILITY_GUARD(x)=1", "-include", b.pathResolve(&.{"src/native/codec2/MediaCompat.h"}) } }) catch @panic("OOM");
+    for (selected.groups) |group| {
+        const source_flags: []const []const u8 = if (std.mem.eql(u8, group.root, "external/libogg/src")) &.{"-std=gnu11"} else if (std.mem.eql(u8, group.root, "frameworks/base/native/android")) &.{ "-std=gnu11", "-D__LIBC_HIDDEN__=__attribute__((visibility(\"hidden\")))", "-include", b.pathResolve(&.{"src/native/codec2/CompatC.h"}), "-D__INTRODUCED_IN(x)=", "-D__BIONIC_AVAILABILITY_GUARD(x)=1", "-ffunction-sections", "-fdata-sections", "-fvisibility=hidden" } else player_flags;
+        mod.addCSourceFiles(.{ .root = o.aosp.path(b, group.root), .files = group.files, .flags = source_flags });
+    }
+    for (declarations.cpp_aidl, o.sources) |entry, root| {
+        if (isPlayerProtocol(entry)) if (entry.output) |source|
+            mod.addCSourceFile(.{ .file = root.path(b, source), .flags = player_flags });
+    }
+    var flag_index: usize = 0;
+    for (declarations.aconfig) |entry| {
+        if (!entry.cpp_source) continue;
+        if (std.mem.eql(u8, entry.package, "com.android.internal.camera.flags") or
+            std.mem.eql(u8, entry.package, "com.android.media.editing.flags"))
+            mod.addCSourceFile(.{ .file = o.flag_sources[flag_index], .flags = player_flags });
+        flag_index += 1;
+    }
+    const library = b.addLibrary(.{ .name = "media_player_service", .root_module = mod });
+    b.step("media-player-service", "Compile original MediaPlayerService, NuPlayer and native dependencies").dependOn(&library.step);
+    return library;
 }
 
 fn clientFlags(b: *std.Build, flags: []const []const u8) []const []const u8 {
@@ -248,7 +295,15 @@ pub fn ffmpegTest(b: *std.Build, libraries: Libraries, platform: std.Build.LazyP
     service_run.addFileArg(surfaceflinger.getEmittedBin());
 }
 
-fn buildResources(b: *std.Build, o: Options, client: *std.Build.Step.Compile, flags: []const []const u8) *std.Build.Step.Compile {
+fn resourceFlags(b: *std.Build, flags: []const []const u8) []const []const u8 {
+    // Soong places the two incompatible android::DeathNotifier helpers in
+    // separate libraries. Give the resource-service helper a private name in
+    // this statically assembled server; public protocols and clients are unchanged.
+    return std.mem.concat(b.allocator, []const u8, &.{ flags, &.{"-DDeathNotifier=AzkResourceDeathNotifier"} }) catch @panic("OOM");
+}
+
+fn buildResources(b: *std.Build, o: Options, client: *std.Build.Step.Compile, base_flags: []const []const u8) *std.Build.Step.Compile {
+    const flags = resourceFlags(b, base_flags);
     const mod = b.createModule(.{ .target = o.target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true, .pic = true });
     mod.include_dirs = client.root_module.include_dirs.clone(b.allocator) catch @panic("OOM");
     mod.addIncludePath(o.media_stats.headers);
@@ -266,14 +321,15 @@ fn buildResources(b: *std.Build, o: Options, client: *std.Build.Step.Compile, fl
 
 pub fn resourceTests(b: *std.Build, libraries: Libraries, platform: std.Build.LazyPath, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile, broker: *std.Build.Step.Compile) void {
     const all = b.step("media-resource-test", "Run original resource manager, observer and service log tests");
+    const flags = resourceFlags(b, libraries.flags);
     // Soong builds these separately: their shared fixture defines non-inline symbols.
     inline for (.{ "ResourceManagerService", "ResourceObserverService", "ServiceLog" }, .{ "media-resource-manager", "media-resource-observer", "media-service-log" }) |source, name| {
         const mod = b.createModule(.{ .target = libraries.client.root_module.resolved_target.?, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
         mod.include_dirs = libraries.resources.root_module.include_dirs.clone(b.allocator) catch @panic("OOM");
         mod.addIncludePath(libraries.aosp.path(b, "external/googletest/googletest"));
         mod.addIncludePath(libraries.aosp.path(b, "external/googletest/googletest/include"));
-        mod.addCSourceFile(.{ .file = libraries.aosp.path(b, "frameworks/av/services/mediaresourcemanager/test/" ++ source ++ "_test.cpp"), .flags = libraries.flags });
-        mod.addCSourceFiles(.{ .root = libraries.aosp.path(b, "external/googletest/googletest"), .files = &.{ "src/gtest-all.cc", "src/gtest_main.cc" }, .flags = libraries.flags });
+        mod.addCSourceFile(.{ .file = libraries.aosp.path(b, "frameworks/av/services/mediaresourcemanager/test/" ++ source ++ "_test.cpp"), .flags = flags });
+        mod.addCSourceFiles(.{ .root = libraries.aosp.path(b, "external/googletest/googletest"), .files = &.{ "src/gtest-all.cc", "src/gtest_main.cc" }, .flags = flags });
         mod.linkLibrary(libraries.resources);
         mod.addObjectFile(platform);
         mod.linkLibrary(binder);
@@ -284,7 +340,7 @@ pub fn resourceTests(b: *std.Build, libraries: Libraries, platform: std.Build.La
     }
 }
 
-pub fn service(b: *std.Build, libraries: Libraries, platform: std.Build.LazyPath, codec: *std.Build.Module, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile) *std.Build.Step.Compile {
+pub fn service(b: *std.Build, libraries: Libraries, platform: std.Build.LazyPath, codec: *std.Build.Module, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile, resolver: std.Build.LazyPath) *std.Build.Step.Compile {
     const mod = b.createModule(.{
         .root_source_file = b.path("src/media_service_main.zig"),
         .target = libraries.client.root_module.resolved_target.?,
@@ -292,13 +348,18 @@ pub fn service(b: *std.Build, libraries: Libraries, platform: std.Build.LazyPath
         .link_libc = true,
         .link_libcpp = true,
     });
-    mod.include_dirs = libraries.resources.root_module.include_dirs.clone(b.allocator) catch @panic("OOM");
+    mod.include_dirs = libraries.player.root_module.include_dirs.clone(b.allocator) catch @panic("OOM");
+    mod.include_dirs.appendSlice(b.allocator, libraries.resources.root_module.include_dirs.items) catch @panic("OOM");
     mod.addCSourceFiles(.{ .root = b.path("src/native/codec2"), .files = &.{ "MediaServiceHost.cpp", "FfmpegComponent.cpp", "FfmpegStore.cpp" }, .flags = libraries.flags });
     mod.addIncludePath(b.path("src/native/codec2"));
     mod.linkLibrary(b.addLibrary(.{ .name = "media_service_ffmpeg", .root_module = codec }));
     inline for (.{ "libavcodec", "libavutil", "libva" }) |lib| mod.linkSystemLibrary(lib, .{ .needed = true, .use_pkg_config = .force });
+    inline for (.{ "egl", "glesv2", "icu-i18n", "icu-uc", "libcrypto" }) |lib| mod.linkSystemLibrary(lib, .{ .needed = true, .use_pkg_config = .force });
     mod.addCSourceFiles(.{ .root = libraries.aosp.path(b, "frameworks/av/media/libmedia"), .files = &.{ "MediaResource.cpp", "MediaResourcePolicy.cpp" }, .flags = libraries.flags });
     mod.linkLibrary(libraries.resources);
+    mod.linkLibrary(libraries.player);
+    mod.addObjectFile(resolver);
+    mod.addRPath(resolver.dirname());
     // GUI/foundation globals have one owner in the existing runtime DSO.
     mod.addObjectFile(platform);
     mod.addObjectFile(binder.getEmittedBin());

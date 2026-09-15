@@ -1,10 +1,10 @@
 {
-  "revision": "9ce02c7b + production codec migration",
+  "revision": "4076231e + MediaPlayer and RGBA migration",
   "reference": "Pinned checkout described by aosp/README.md; project revisions below",
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 13420,
+      "unchanged": 13903,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -18,7 +18,6 @@
         "external/skia/src/image/SkImage_AndroidFactories.cpp",
         "frameworks/av/media/libstagefright/MediaExtractorFactory.cpp",
         "frameworks/av/media/ndk/NdkImageReader.cpp",
-        "frameworks/base/core/jni/android/opengl/util.cpp",
         "frameworks/base/core/jni/android_hardware_OverlayProperties.cpp",
         "frameworks/base/core/jni/android_hardware_camera2_CameraMetadata.cpp",
         "frameworks/base/core/jni/android_hardware_camera2_utils_SurfaceUtils.cpp",
@@ -44,7 +43,6 @@
         "frameworks/base/libs/hwui/apex/android_bitmap.cpp",
         "frameworks/base/libs/hwui/hwui/Bitmap.cpp",
         "frameworks/base/libs/hwui/hwui/Bitmap.h",
-        "frameworks/base/libs/hwui/hwui/ImageDecoder.cpp",
         "frameworks/base/libs/hwui/jni/Bitmap.cpp",
         "frameworks/base/libs/hwui/jni/Graphics.cpp",
         "frameworks/base/libs/hwui/jni/HardwareBufferHelpers.cpp",
@@ -63,7 +61,6 @@
         "frameworks/base/libs/hwui/renderthread/RenderProxy.cpp",
         "frameworks/base/libs/hwui/renderthread/RenderProxy.h",
         "frameworks/base/libs/hwui/renderthread/RenderThread.h",
-        "frameworks/base/libs/hwui/utils/Color.cpp",
         "frameworks/base/media/jni/android_media_MediaMetricsJNI.cpp",
         "frameworks/base/native/android/surface_control.cpp",
         "frameworks/base/services/core/jni/com_android_server_wm_TaskFpsCallbackController.cpp",
@@ -112,7 +109,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "9ec423296770e7ba564b6abf2f1ae3223a8dd5e6f721e92838f4bd10b8a26b27"
+      "archive_sha256": "7918ec4a1a279b6e0041316b41632211d3d976cf9c9975faf8a43c678bbddb0e"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -208,9 +205,21 @@
     "external/libyuv": {
       "revision": "741c38751c436f60c583110f617340b7f3322d94",
       "tracked_clean": true
+    },
+    "external/libwebm": {
+      "revision": "103e46e4cd4b6efcf6001f23fa8665fb110abf8d",
+      "tracked_clean": true
+    },
+    "external/flac": {
+      "revision": "600f14f40d737144c998e2ec7a483122d3776fbc",
+      "tracked_clean": true
+    },
+    "external/tremolo": {
+      "revision": "bda690e46497e1f65c5077173b9c548e6e0cd5a1",
+      "tracked_clean": true
     }
   },
-  "date": "2026-09-13",
+  "date": "2026-09-15",
   "native_extensions": [
     ".c",
     ".cc",
@@ -231,8 +240,6 @@
     "src/binder/vintf_jni.zig",
     "src/binder/performance_hint_jni.zig",
     "src/binder/traffic_stats_jni.zig",
-    "src/binder/media_metadata_retriever_jni.zig",
-    "src/binder/media_player_jni.zig",
     "src/binder/sensor_manager_jni.zig",
     "src/binder/legacy_camera_jni.zig",
     "src/binder/activity_jni.zig",
@@ -240,10 +247,10 @@
     "src/binder/ndk_codec_test.zig",
     "src/binder/runtime_init_jni.zig"
   ],
-  "registration_scope_note": "15 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
+  "registration_scope_note": "13 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
-      "sha256": "89e2f2f36e14507e283dd941ac35c84bbdedf9074d3aca52e624385dce958406",
+      "sha256": "16089d3be3b3132f5d9085a65758f171265061ac5d81377a30f63691057ff0dc",
       "defined_symbols": [
         "register_localized_collators",
         "register_android_functions",
@@ -254,13 +261,13 @@
       ]
     },
     "lib/art/libbinder_ndk.so": {
-      "sha256": "9d40253157ac461b417d4291e0ebc8e121694150b911a8a9052cbb2a20e4d370",
+      "sha256": "f6f28ab485133b048c73b427b45e43b106b7c95ec88e2d5654c46484a4140c6c",
       "defined_symbols": [
         "azk_register_binder_jni"
       ]
     }
   },
-  "framework_package_refresh": "2026-09-13 media/graphics JNI: original DRM JNI, native clients, protocols and JsonCpp; native snapshot enablement and bitmap color mapping. Rechecked against the clean pinned reference.",
+  "framework_package_refresh": "2026-09-15: original MediaPlayer/retriever JNI, native clients, MediaPlayerService/NuPlayer and nine extractor plugins. Rechecked against the clean pinned reference.",
   "binder_jni_followup": {
     "runtime_revision": "b7d78a39",
     "verified_date": "2026-09-13",
@@ -427,7 +434,7 @@
     "shutdown": "Launcher unwinds session cleanup, then uses the existing AndroidRuntime immediate-exit hook; original bufferpool detached threads retain process lifetime.",
     "installed_binaries": {
       "bin/androlinzberg": {
-        "sha256": "1245bfed32371c8bdc57793aafc57690b6090b74750fb41f55a762a63b5ab9b7",
+        "sha256": "a1de5d78e87b238d04d8c72dd8aa3aef2f12b5340f36d202b33f4af533ceca76",
         "needed": [
           "libm.so.6",
           "libc.so.6",
@@ -437,20 +444,27 @@
         ]
       },
       "bin/azk-media-service": {
-        "sha256": "c420c62e3aa71cccbde8b0522d49be40b5da9328a3b9c584c25e4fa229f5debd",
+        "sha256": "6b972ac256e288da8835232ad1ebec8af6318a76a7febd28f55650ea689397d8",
         "needed": [
           "libavcodec.so.63",
           "libavutil.so.61",
           "libva.so.2",
+          "libEGL.so.1",
+          "libGLESv2.so.2",
+          "libicui18n.so.78",
+          "libicuuc.so.78",
+          "libcrypto.so.3",
+          "libresolv.so.2",
           "libandroid_platform.so",
           "libbinder.so",
           "libbinder_ndk.so",
+          "libm.so.6",
           "libc.so.6",
           "ld-linux-x86-64.so.2"
         ]
       },
       "lib/libandroid_platform.so": {
-        "sha256": "89e2f2f36e14507e283dd941ac35c84bbdedf9074d3aca52e624385dce958406",
+        "sha256": "16089d3be3b3132f5d9085a65758f171265061ac5d81377a30f63691057ff0dc",
         "needed": [
           "libbinder_ndk.so",
           "libbinder.so",
@@ -495,5 +509,60 @@
       "aggregate_acceptance": "not run"
     },
     "regressions": "Empty work before CSD completes without opening FFmpeg; native NDK AAC decode and all five audio families cover this ordering. Normal launcher return avoids detached bufferpool destructor races."
+  },
+  "media_player_service": {
+    "status": "Production migration validated",
+    "jni": [
+      "frameworks/base/media/jni/android_media_MediaPlayer.cpp",
+      "frameworks/base/media/jni/android_media_MediaMetadataRetriever.cpp"
+    ],
+    "service": "Original MediaPlayerService, NuPlayer and StagefrightMetadataRetriever in azk-media-service; original Codec2 and AudioTrack clients reach their supervised backends",
+    "host_scope": "Build registration wrapper, libc declaration compatibility, resource-library private DeathNotifier symbol scope, explicit unavailable Bionic heap diagnostics",
+    "extractor_plugins": [
+      "wav",
+      "mp3",
+      "aac",
+      "mp4",
+      "mkv",
+      "ogg",
+      "flac",
+      "amr",
+      "mpeg2"
+    ],
+    "cpu_video": "Explicit CCodec CPU_READ negotiation uses shared YV12 planes with independent aligned strides; display retains direct RGB DMA-BUF conversion",
+    "validation": {
+      "system_test": "passed, including explicit media configuration root",
+      "media_resource_test": "54 passed",
+      "codec2_allocator_test": "passed",
+      "codec_video_allocator_test": "passed",
+      "codec2_service_test": "passed",
+      "framework_module_test": "passed: containers, FD slices, callback data source, metadata, thumbnail pixels/scaling, public MediaPlayer lifecycle",
+      "apk_integration": "28 passed, 90 recorded actions, zero structured runtime issues",
+      "extractor_containers": "passed 8 fixtures: MP4, WebM, FLAC PCM, Ogg Vorbis/Opus, MPEG-2 TS/PS, AMR",
+      "session_configuration": "passed",
+      "graphics_regressions": "renderengine, buffer-jvm, surface-buffer-jvm, surface-client-jvm, stock-video passed",
+      "provenance": "source identity, Binder JNI, C++ and graph audits, NDK ABI passed",
+      "aggregate_acceptance": "not run",
+      "validation_logs": [
+        "/tmp/azk-player-tests67.log",
+        "/tmp/azk-player-acceptance69.log",
+        "/tmp/azk-player-provenance70.log"
+      ]
+    }
+  },
+  "bitmap_layout_followup": {
+    "status": "Production migration validated",
+    "configuration": "Android RGBA N32 in the pinned Linux Skia config and regenerated GN source defines; system Mesa and explicit gralloc buffer formats retained",
+    "removed": [
+      "GLUtils upload-copy helper and JNI patch",
+      "ImageDecoder acceptance of mismatched N32 layouts",
+      "HWUI Color.cpp explicit-RGBA workaround"
+    ],
+    "source_sha256": {
+      "frameworks/base/core/jni/android/opengl/util.cpp": "dceb8ad203ed5f99dbccb3afc419959dd0c94daf1deccc6a84caedcc718cbf37",
+      "frameworks/base/libs/hwui/hwui/ImageDecoder.cpp": "55f9a0ec463d518b7124705aec674ba75c1208b5f0e543414691ae06ac482797",
+      "frameworks/base/libs/hwui/utils/Color.cpp": "1c4c684f00f0e52fd5fb844fb91983fd372fb7c1d1ed8cffb2cd66dfdb7c4594"
+    },
+    "validation": "Framework module suite passed, including distinct NDK RGBA bytes, GL utility behavior and remote thumbnail pixels. RenderEngine, buffer/Surface client tests, stock-video pixel assertions and all 28 APK cases passed. Fullscreen playback screenshot inspected."
   }
 }

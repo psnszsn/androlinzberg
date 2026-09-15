@@ -19,7 +19,7 @@ internal object StockNdkGraphicsSmoke {
         try {
             bitmap.eraseColor(android.graphics.Color.BLACK)
             check(bitmapAndWindow(bitmap, surface)) { "NDK bitmap/window contracts failed" }
-            check(bitmap.getPixel(0, 0) == android.graphics.Color.WHITE) { "NDK pixels did not update Java bitmap" }
+            check(bitmap.getPixel(0, 0) == 0xff123456.toInt()) { "NDK RGBA bytes did not match Java bitmap colors" }
         } finally {
             bitmap.recycle()
             surface.release()

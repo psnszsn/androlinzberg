@@ -1,6 +1,6 @@
 Subject: [PATCH] HWUI: map both native 8888 layouts to the Android bitmap config
 
-Android hardware buffers use RGBA and host Skia uses BGRA for N32. Both
+Imported Mesa hardware buffers may retain BGRA storage. Both
 layouts represent Bitmap.Config.ARGB_8888. Normalize the native color-type
 mapping so the original Bitmap JNI can be registered without an override.
 

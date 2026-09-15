@@ -1,7 +1,12 @@
 // Host process bootstrap follows main_mediaserver.cpp. The pinned resource
 // services retain their Binder clients and policy; the session replaces init.
+#include <MediaPlayerService.h>
+// Match build/codec2.zig: these Soong libraries have incompatible private
+// android::DeathNotifier helpers and share one hosted server ELF here.
+#define DeathNotifier AzkResourceDeathNotifier
 #include <ResourceManagerService.h>
 #include <ResourceObserverService.h>
+#undef DeathNotifier
 #include <android/binder_manager.h>
 #include <android/binder_process.h>
 #include <cstdlib>
@@ -37,8 +42,9 @@ extern "C" int azk_media_service_start() {
         if (AServiceManager_addService(store->asBinder().get(), name.c_str()) != STATUS_OK) return -1;
     }
     android::ResourceManagerService::instantiate();
+    android::MediaPlayerService::instantiate();
     for (const char *name : {android::ResourceManagerService::getServiceName(),
-                            android::ResourceObserverService::getServiceName()}) {
+                            android::ResourceObserverService::getServiceName(), "media.player"}) {
         AIBinder *service = AServiceManager_checkService(name);
         if (!service) return -1;
         AIBinder_decStrong(service);
@@ -49,3 +55,15 @@ extern "C" int azk_media_service_start() {
 // Android init stops the service with process lifetime. Binder worker threads
 // remain live, so shutdown cannot run C++ static destructors beneath them.
 extern "C" [[noreturn]] void azk_media_service_exit(int status) { std::_Exit(status); }
+
+namespace android {
+// MediaPlayerService::dump calls Bionic allocation tracing. Host libc does not
+// expose allocation enumeration or Bionic's malloc_debug records. Report this
+// unavailable diagnostic explicitly; it is unrelated to playback allocation.
+std::string dumpMemoryAddresses(size_t) {
+    return "Allocation backtraces are unavailable with the host allocator.\n";
+}
+std::string GetUnreachableMemoryString(bool, size_t) {
+    return "Unreachable-memory scanning is unavailable with the host allocator.\n";
+}
+} // namespace android

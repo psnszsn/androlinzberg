@@ -126,6 +126,12 @@ zig build -j10 cpp-audit
   drive stock capability discovery. VAAPI converts directly into the original
   C2/IGBA allocator's DMA-BUF; stock buffer queues and SurfaceFlinger present it.
   There is no extra GPU copy. The launcher no longer links the FFmpeg decoder.
+- MediaPlayer and MediaMetadataRetriever use original JNI and native clients
+  across Binder to the original MediaPlayerService/NuPlayer in the same media
+  process. The service uses original Codec2 and AudioTrack clients. Explicit
+  CPU_READ video requests use shared YV12 storage and hardware-frame readback
+  for stock thumbnail conversion; Surface playback keeps the direct DMA-BUF
+  path. The registration wrapper exposes AOSP's static MediaPlayer registrar.
 - `libaaudio.so` is the stock library, compiled whole into the native island
   (public C ABI, `AudioStreamTrack`/`AudioStreamRecord` legacy path, flow graph,
   and the MMAP client with its service protocol). The builder never selects
@@ -139,7 +145,8 @@ zig build -j10 cpp-audit
   smoke binds those public symbols without interposing or replacing them.
 - MediaExtractor uses original AOSP Java/JNI, NuMediaExtractor, the native
   MediaExtractorService and its Binder protocols, data sources, metadata, and
-  WAV/MP3/AAC parsers. The hosted system process publishes `media.extractor`.
+  WAV/MP3/AAC/MP4/Matroska/Ogg/FLAC/AMR/MPEG-2 parsers. The hosted system
+  process publishes `media.extractor`.
   A factory patch registers linked original plugin entry points and recognizes
   factory ownership without requiring Android's dedicated extractor daemon UID.
   JNI Binder conversions retain shared object ownership in both directions.
@@ -306,8 +313,8 @@ zig build -j10 cpp-audit
   and import. Binder transports the native-handle DMA-BUF descriptors; imported
   allocations preserve IDs and survive sender closure. Canvas locking uses
   pinned ACanvas functions with the actual mapping stride and full-buffer origin.
-  Patch 29 selects RGBA explicitly for Android RGBA buffers on the BGRA-native
-  Skia build. The mapper supports the documented host formats and feeds both
+  Skia uses Android RGBA for its default software bitmap layout. The mapper
+  describes Mesa buffer storage explicitly and feeds both
   stock BufferQueue and the hosted SurfaceFlinger service.
 - OverlayProperties reuses pinned JNI with generated GUI AIDL C++ parcelables.
   Its virtual-display defaults and parcel encoding are stock. Patch 30 marshals
@@ -402,11 +409,10 @@ AudioFlinger tracks. It contains the C macros and callback code around
 - `HwuiRenderProxyBridge.cpp` supplies two C calls for HWUI `RenderProxy`.
 - `AospJniBridge.cpp` registers AOSP JNI code and manages Skia bitmap access.
   Stock GLUtils/Visibility/ETC1 use pinned OpenGL utility JNI and ETC1 encoding.
-  `HostBitmapUpload.h` exposes the bitmap upload boundary: host BGRA software
-  pixels are copied to RGBA for GLUtils, retaining alpha/color-space metadata
-  and leaving the original Java bitmap unchanged. Other layouts retain their
-  stock pixel representation. This conversion is confined to bitmap uploads;
-  SurfaceFlinger task presentation continues through GPU buffer queues.
+  The default Skia bitmap layout matches Android RGBA, so original GLUtils
+  uploads bitmap bytes directly. The former upload-copy helper and host
+  ImageDecoder color-order workaround have been removed. Mesa hardware
+  buffer formats and SurfaceFlinger presentation retain their own metadata.
   BackupDataInput, BackupDataOutput, and FullBackup reuse their pinned JNI
   implementations and androidfw's BackupData/BackupHelpers directly. The one
   fixed read-only backup flag they consume comes from an aconfig-generated C++

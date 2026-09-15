@@ -36,7 +36,7 @@ also does not mean zero unsupported native operations.
 reference revisions, modified native paths and delegated registration modules.
 Both archives were read directly. The framework archive was rechecked during
 the Binder, utility and media/graphics JNI migrations. The latest refresh adds
-original Codec2, bufferpool2 and media resource service protocols, implementations and tests. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
+original MediaPlayer/retriever JNI, MediaPlayerService/NuPlayer, and nine extractor plugins with their dependencies. Every regular `.c`, `.cc`, `.cpp`, `.cxx`,
 `.h`, `.hpp`, `.hxx`, `.S`, `.s` and `.inl` member was compared byte-for-byte
 with the corresponding pinned checkout path. Both current archives contain
 multiple top-level directories; their paths were retained. Tracked reference
@@ -44,7 +44,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 13,420 | 104 | 0 |
+| Framework | 13,903 | 101 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -64,7 +64,7 @@ the build selection; it is not a complete dynamic-symbol resolution audit.
 
 [`main.zig`](../src/main.zig) calls the Binder and graphics registrars and then
 [`host_natives.zig`](../src/platform/host_natives.zig) when booting APK ART.
-[`framework_jni.zig`](../src/binder/framework_jni.zig) has 15 delegated
+[`framework_jni.zig`](../src/binder/framework_jni.zig) has 13 delegated
 registration modules, plus its own registrations and the Binder registrar.
 That number is not a replaced-class count: it includes host-only cursor helpers
 and dev.artzig EGL/NDK regression helpers. Registering a helper does not prove
@@ -147,12 +147,36 @@ restores client provenance, not protected playback. The resource-manager client
 is linked for session bookkeeping. The production session now also publishes
 the original resource-manager service in its native media process.
 
+### MediaPlayer and metadata retrieval
+
+Original MediaPlayer and MediaMetadataRetriever JNI and native clients now
+reach the original `MediaPlayerService` in `azk-media-service`. NuPlayer uses
+the same stock Codec2 and AudioTrack clients as other applications. The former
+local-state JNI adapters and `HostedMediaPlayer` have been removed. A small
+registration wrapper exposes the original static MediaPlayer JNI registrar.
+
+The stock extractor service now links WAV, MP3, AAC, MP4, Matroska/WebM, Ogg,
+FLAC, AMR and MPEG-2 plugins. Their implementation sources are unchanged; a
+factory patch registers these linked plugins instead of discovering Android
+APEX shared objects. Plugin-private support symbols remain hidden.
+
+Raw video consumers explicitly request CPU_READ through CCodec. The hosted
+codec then reads decoded YUV into shared YV12 planes for original thumbnail
+conversion. Surface consumers retain direct RGB DMA-BUF output and system
+Mesa presentation without an extra GPU copy.
+
+The framework module suite passes: eight container fixtures, remote FD slices
+and callback sources, decoded/scaled thumbnail pixels, and the public player
+prepare/play/pause/seek/completion/reset/release lifecycle. Native allocator,
+codec and resource tests also pass. RenderEngine, buffer/Surface clients, stock-video
+pixel assertions, system services and all 28 APK cases passed (90 recorded
+actions, zero structured runtime issues). Source identity, Binder JNI, C++/graph
+audits and NDK ABI checks passed. No full aggregate acceptance run is claimed.
+
 ### Missing-service clients are also non-stock
 
 | Client | Current implementation and behavior | Stock boundary to restore |
 |---|---|---|
-| MediaPlayer | [`media_player_jni.zig`](../src/binder/media_player_jni.zig) and `HostedMediaPlayer` model client state and absent-service errors locally; this is not the FFmpeg playback path | Original JNI and native MediaPlayer to `IMediaPlayerService` / `media.player` |
-| MediaMetadataRetriever | [`media_metadata_retriever_jni.zig`](../src/binder/media_metadata_retriever_jni.zig) models a null remote retriever; setters fail and retrieval returns no data | Original JNI/libmedia retriever and media-player service |
 | Legacy Camera | [`legacy_camera_jni.zig`](../src/binder/legacy_camera_jni.zig) and `HostedLegacyCamera` implement absent-camera failures | Original Camera JNI/CameraBase to `media.camera` |
 | SystemSensorManager | [`sensor_manager_jni.zig`](../src/binder/sensor_manager_jni.zig) returns empty discovery and unavailable queues/channels | Original JNI/libsensor to `sensorservice` |
 | PerformanceHintManager | [`performance_hint_jni.zig`](../src/binder/performance_hint_jni.zig) returns no manager and rejects sessions | Original JNI/native hint client, IHintManager and associated power-service boundary |
@@ -238,11 +262,15 @@ commands and generated reports.
   requested format differs from Mesa's storage. GPU presentation remains in
   the existing compositor backend.
   Generated GLES bindings remain reused with native fixes for JNI array
-  bases/bounds and host pixel ordering.
+  bases and buffer bounds.
 - HardwareRenderer snapshots use AOSP's AImageReader / RenderProxy algorithm.
   A build guard enables it on the host; Bitmap's native buffer factory delegates
   GPU import to the existing render-thread owner. The Kotlin snapshot and its
   JNI/RenderNode ownership bridges have been deleted.
+- Software Bitmap storage now uses Android RGBA consistently across Skia and
+  its consumers. Original GLUtils uploads those bytes directly; the host upload
+  copy and ImageDecoder layout workaround are removed. NDK raw-pixel and
+  MediaMetadataRetriever thumbnail tests exercise the byte order.
 - Bitmap uses its original JNI registration. The native GraphicsJNI color-type
   mapper recognizes both RGBA and BGRA as ARGB_8888; the JNI override is gone.
 - ADisplay compiles original `libs/nativedisplay/ADisplay.cpp` and queries
@@ -332,8 +360,9 @@ in `1823bb1e`. See the JSON validation record for this limitation.
 3. Verify actual PipeWire delivery of a known PCM sequence against a
    controlled sink in addition to track position, callbacks and
    service-death tests.
-4. Restore MediaPlayer and retriever clients and their service. Codec2 now owns
-   FFmpeg decoding in the separate media service.
+4. Restore Camera, SensorManager and PerformanceHint native clients and their
+   required service discovery. Codec2 owns FFmpeg decoding in the separate media
+   service; MediaPlayer and metadata retrieval now use original service clients.
 5. Restore app graphics clients while retaining host EGL/gralloc/compositor
    implementations at their appropriate boundaries. Then close device,
    networking, loader and runtime gaps against the declared scope.

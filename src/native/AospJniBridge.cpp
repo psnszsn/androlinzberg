@@ -61,7 +61,6 @@ extern "C" int azk_register_aaudio_smoke(JNIEnv* env);
 #include <binder/Status.h>
 #include <camera/VendorTagDescriptor.h>
 #include <nativehelper/ScopedLocalRef.h>
-#include "HostBitmapUpload.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -319,6 +318,8 @@ extern int register_dev_artzig_StockFenceSmoke(JNIEnv*);
 extern int register_dev_artzig_StockReadbackSmoke(JNIEnv*);
 extern int register_android_media_MediaCodec(JNIEnv*);
 extern int register_android_media_MediaCodecList(JNIEnv*);
+extern int azk_register_media_player(JNIEnv*);
+extern int register_android_media_MediaMetadataRetriever(JNIEnv*);
 namespace android { int register_android_os_GraphicsEnvironment(JNIEnv*); }
 namespace android { int register_com_android_server_wm_TaskFpsCallbackController(JNIEnv*); }
 namespace android { int register_android_view_TunnelModeEnabledListener(JNIEnv*); }
@@ -347,21 +348,7 @@ static int registerPerfettoTrace(JNIEnv* env) {
 extern int register_android_hardware_HardwareBuffer(JNIEnv*);
 extern int register_android_graphics_GraphicBuffer(JNIEnv*);
 
-bool artzig::getGlBitmapPixels(JNIEnv* env, jobject bitmap, SkBitmap* upload) {
-    android::Bitmap* native = GraphicsJNI::getNativeBitmap(env, bitmap);
-    if (!native || native->isHardware()) return false;
-    SkBitmap source;
-    native->getSkBitmap(&source);
-    if (source.colorType() != kBGRA_8888_SkColorType) {
-        *upload = source;
-        return upload->getPixels() != nullptr;
-    }
-    // Preserve alpha type and color space. Conversion must not mutate the Java
-    // bitmap, whose pixels may also be in use by Canvas or another upload.
-    return upload->tryAllocPixels(source.info().makeColorType(kRGBA_8888_SkColorType),
-                                  source.rowBytes()) &&
-            source.readPixels(upload->info(), upload->getPixels(), upload->rowBytes(), 0, 0);
-}
+static_assert(kN32_SkColorType == kRGBA_8888_SkColorType, "Android bitmap ABI requires RGBA N32");
 
 // Test the original JNI value conversion without requiring a hardware service.
 static jobject roundTripHidlMemory(JNIEnv* env, jclass, jobject memory) {
@@ -760,6 +747,8 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_dev_artzig_StockReadbackSmoke),
             E(register_android_media_MediaCodec),
             E(register_android_media_MediaCodecList),
+            E(azk_register_media_player),
+            E(register_android_media_MediaMetadataRetriever),
             E(android::register_android_os_GraphicsEnvironment),
             E(android::register_com_android_server_wm_TaskFpsCallbackController),
             E(android::register_android_view_TunnelModeEnabledListener),
@@ -1058,8 +1047,9 @@ static jboolean testNdkBitmapAndWindow(JNIEnv* env, jclass, jobject bitmap, jobj
         info.stride < 12 || info.format != ANDROID_BITMAP_FORMAT_RGBA_8888) return JNI_FALSE;
     void* pixels = nullptr;
     if (AndroidBitmap_lockPixels(env, bitmap, &pixels) != 0 || !pixels) return JNI_FALSE;
-    // White is independent of the host Skia channel order.
-    memset(pixels, 0xff, 4);
+    // Android promises RGBA byte order for the reported format.
+    const uint8_t rgba[] = {0x12, 0x34, 0x56, 0xff};
+    memcpy(pixels, rgba, sizeof(rgba));
     if (AndroidBitmap_unlockPixels(env, bitmap) != 0) return JNI_FALSE;
     ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
     if (window) { ANativeWindow_release(window); return JNI_FALSE; }

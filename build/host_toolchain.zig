@@ -17,12 +17,13 @@ pub const Result = struct {
     island: LibrarySet,
     skia: IncludeSet,
     codec: IncludeSet,
+    resolver: std.Build.LazyPath,
 };
 
 const island_packages = [_][]const u8{
-    "harfbuzz",   "harfbuzz-icu", "freetype2",  "fontconfig", "icu-uc",  "icu-i18n",
-    "libpng",     "zlib",         "openssl",    "sqlite3",    "egl",     "gl",
-    "gbm",        "libdrm",       "expat",      "libjpeg",    "libwebp", "libwebpdemux",
+    "harfbuzz",   "harfbuzz-icu", "freetype2",  "fontconfig", "icu-uc",          "icu-i18n",
+    "libpng",     "zlib",         "openssl",    "sqlite3",    "egl",             "gl",
+    "gbm",        "libdrm",       "expat",      "libjpeg",    "libwebp",         "libwebpdemux",
     "libwebpmux", "glesv2",       "libselinux", "glesv1_cm",  "libpipewire-0.3",
 };
 
@@ -31,7 +32,18 @@ pub fn discover(b: *std.Build) Result {
         .island = librarySet(b, &island_packages),
         .skia = includeSet(b, &.{ "fontconfig", "expat", "freetype2", "libpng", "egl", "libjpeg", "glesv2", "libwebp", "libwebpdemux", "libwebpmux" }),
         .codec = includeSet(b, &.{ "libavcodec", "libavutil", "libva", "libdrm" }),
+        .resolver = resolverLibrary(b),
     };
+}
+
+fn resolverLibrary(b: *std.Build) std.Build.LazyPath {
+    // Zig folds -lresolv into its libc link, which omits glibc's separate
+    // __b64_ntop implementation used by the original NetdClient. Resolve the
+    // host compiler's actual library and retain it as an explicit graph input.
+    const output = b.run(&.{ "cc", "-print-file-name=libresolv.so" });
+    const path = std.mem.trim(u8, output, " \r\n\t");
+    if (!std.fs.path.isAbsolute(path)) @panic("host compiler could not locate libresolv.so");
+    return b.graph.cwdRelativePath(path);
 }
 
 fn librarySet(b: *std.Build, packages: []const []const u8) LibrarySet {
