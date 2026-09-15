@@ -34,7 +34,8 @@ class HostInputDispatcher(callbacks: Callbacks) : AutoCloseable {
         fun onPointerDownOutsideFocus(token: IBinder)
         /** The Wayland backend must acknowledge this sequence after capture changes. */
         fun setPointerCapture(windowToken: IBinder?, sequence: Int)
-        fun notifyDropWindow(token: IBinder, x: Float, y: Float)
+        /** AOSP InputDispatcher sends null on drag cancellation or window loss. */
+        fun notifyDropWindow(token: IBinder?, x: Float, y: Float)
         fun notifyDeviceInteraction(deviceId: Int, timestampNanos: Long, uids: IntArray)
         fun notifyUnsupportedHardwareEvent(kind: String)
     }

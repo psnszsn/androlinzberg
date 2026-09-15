@@ -58,7 +58,9 @@ object HostInputDispatcherSmoke {
             }
             override fun interceptUnhandledKey(event: KeyEvent, token: IBinder?): Boolean = false
             override fun onPointerDownOutsideFocus(token: IBinder) { observed.add("outside") }
-            override fun notifyDropWindow(token: IBinder, x: Float, y: Float) { unexpected.add("drop") }
+            override fun notifyDropWindow(token: IBinder?, x: Float, y: Float) {
+                if (token == null) observed.add("drop:cancel") else unexpected.add("drop")
+            }
             override fun notifyConfigurationChanged() { observed.add("configuration") }
             override fun notifyPointerLocationChanged(pointerLocationEnabled: Boolean) { observed.add("pointer-location") }
             override fun notifyLidSwitchChanged(whenNanos: Long, lidOpen: Boolean) { unexpected.add("lid") }
@@ -378,6 +380,20 @@ object HostInputDispatcherSmoke {
                 }
                 await("restored dispatcher fixture geometry") { restored.count == 0L }
             }
+            // InputDispatcher cancels a drag by reporting a null target token;
+            // it must cross both JNI and the Kotlin policy before reaching WM.
+            val dragStart = SystemClock.uptimeMillis()
+            for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_CANCEL)) {
+                val event = MotionEvent.obtain(dragStart, SystemClock.uptimeMillis(), action, 120f, 120f, 0)
+                event.source = InputDevice.SOURCE_TOUCHSCREEN
+                event.displayId = 0
+                try { dispatcher.dispatchDesktopEvent(event) } finally { event.recycle() }
+                if (action == MotionEvent.ACTION_DOWN) {
+                    await("drag source touch") { "motion:0:0:20:20" in observed && dispatcher.waitForIdle() }
+                    check(dispatcher.startDragAndDrop(channels[0].token, channels[1].token))
+                }
+            }
+            await("cancelled drag reports no target") { "drop:cancel" in observed }
             val secondDown = MotionEvent.obtain(SystemClock.uptimeMillis(), SystemClock.uptimeMillis(), MotionEvent.ACTION_DOWN, 120f, 120f, 0)
             secondDown.source = InputDevice.SOURCE_TOUCHSCREEN
             secondDown.displayId = 0

@@ -67,7 +67,7 @@ class HostInputManagerBridge(private val context: Context, private val desktop: 
         fun getPointerDisplayId(): Int
         fun onPointerDownOutsideFocus(touchedToken: IBinder)
         fun notifyFocusChanged(oldToken: IBinder?, newToken: IBinder?)
-        fun notifyDropWindow(token: IBinder, x: Float, y: Float)
+        fun notifyDropWindow(token: IBinder?, x: Float, y: Float)
         fun getParentSurfaceForPointers(displayId: Int): SurfaceControl?
         fun createSurfaceForGestureMonitor(name: String, displayId: Int): SurfaceControl?
         fun isKeyguardLocked(displayId: Int): Boolean
@@ -186,7 +186,7 @@ class HostInputManagerBridge(private val context: Context, private val desktop: 
         override fun notifyFocusChanged(oldToken: IBinder?, newToken: IBinder?) = wm.notifyFocusChanged(oldToken, newToken)
         override fun notifyFocusedDisplayChanged(displayId: Int) = desktop.notifyFocusedDisplayChanged(displayId)
         override fun onPointerDownOutsideFocus(token: IBinder) = wm.onPointerDownOutsideFocus(token)
-        override fun notifyDropWindow(token: IBinder, x: Float, y: Float) = wm.notifyDropWindow(token, x, y)
+        override fun notifyDropWindow(token: IBinder?, x: Float, y: Float) = wm.notifyDropWindow(token, x, y)
         override fun pokeUserActivity(eventTimeNanos: Long, eventType: Int, displayId: Int) = desktop.pokeUserActivity(eventTimeNanos, eventType, displayId)
         override fun setPointerCapture(windowToken: IBinder?, sequence: Int) = desktop.setPointerCapture(windowToken, sequence)
         override fun notifyDeviceInteraction(deviceId: Int, timestampNanos: Long, uids: IntArray) = desktop.notifyDeviceInteraction(deviceId, timestampNanos, uids)
