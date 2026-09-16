@@ -28,6 +28,9 @@ p.add_argument('--standalone', action='store_true', help='Run one native test wi
 p.add_argument('--system-client', action='store_true', help='Authenticate a host service client using the session system cookie')
 p.add_argument('--probe-arg', action='append', default=[], help='Explicit client argv (default: client)')
 p.add_argument('--probe-file-arg', action='append', dest='probe_arg', type=lambda value: str(Path(value).resolve()), help='Client argv path resolved before changing directory')
+death_mode = p.add_mutually_exclusive_group()
+death_mode.add_argument('--restart-service', action='store_true', help='Replace the service while retaining the live broker')
+death_mode.add_argument('--retire-broker', action='store_true', help='Retire the complete session after service death')
 a = p.parse_args()
 r = a.output.resolve()
 d = r / 'run'
@@ -110,6 +113,7 @@ try:
         )
         children.append(s)
         assert line(s).startswith('ready')
+        server_env = env.copy()
         env['AZK_BINDER_PACKAGE'] = 'dev.artzig.facade.v2.client'
         if not a.system_client:
             env.pop('AZK_BINDER_SYSTEM_COOKIE', None)  # Ordinary native clients have an app UID.
@@ -172,6 +176,23 @@ try:
         result['server_exit'] = s.returncode
         if s.returncode != 0:
             raise RuntimeError(f'service exited unexpectedly: {s.returncode}')
+        if a.restart_service:
+            log = (d / 'replacement-server.log').open('w')
+            logs.append(log)
+            replacement = subprocess.Popen(
+                [str(a.server.resolve())] if a.server else [str(a.probe.resolve()), 'server'],
+                env=server_env, cwd=r, stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=log, text=True,
+            )
+            children.append(replacement)
+            assert line(replacement).startswith('ready')
+            result['service_restarted'] = True
+        elif a.retire_broker:
+            b.stdin.close()
+            b.wait(timeout=5)
+            result['broker_retired_exit'] = b.returncode
+            if b.returncode != 0:
+                raise RuntimeError(f'broker exited unexpectedly: {b.returncode}')
         tail = c.communicate(timeout=10)[0].decode()
         lines.append(tail)
         result['client_exit'] = c.returncode

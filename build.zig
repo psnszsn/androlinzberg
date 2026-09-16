@@ -476,7 +476,12 @@ pub fn build(b: *std.Build) void {
     sf_service_test.linkLibrary(gui_host);
     sf_service_test.linkLibrary(binder_cpp);
     sf_service_test.linkLibrary(binder_ndk);
-    sf.runTest(b, sf_service_test, binder_cpp, binder_ndk, binder_broker, "surfaceflinger-service", "Verify hosted SF publication, committed transactions, permissions and service death", .application, sf_service);
+    const sf_service_probe = b.addExecutable(.{ .name = "surfaceflinger-service-test", .root_module = sf_service_test });
+    const sf_retire = sf.runBinaryTest(b, sf_service_probe.getEmittedBin(), binder_cpp, binder_ndk, binder_broker, "surfaceflinger-service", "Verify hosted SF transactions, permissions and session retirement", .application, sf_service, &.{}, &.{});
+    sf_retire.addArgs(&.{ "--retire-broker", "--probe-arg=retire" });
+    const sf_restart = sf.runBinaryTest(b, sf_service_probe.getEmittedBin(), binder_cpp, binder_ndk, binder_broker, "surfaceflinger-restart", "Verify original composer clients reconnect to a replacement SF service", .application, sf_service, &.{}, &.{});
+    sf_restart.addArgs(&.{ "--restart-service", "--probe-arg=restart" });
+    b.top_level_steps.get("surfaceflinger-service-test").?.step.dependOn(&b.top_level_steps.get("surfaceflinger-restart-test").?.step);
 
     const sf_output_test = b.createModule(.{ .target = target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
     sf.configure(b, sf_output_test, aosp, generated.native.gui, generated.native.renderengine, generated.native.surfaceflinger);
@@ -742,6 +747,7 @@ pub fn build(b: *std.Build) void {
         .host_include_roots = host_toolchain.island.include_roots,
         .host_library_roots = host_toolchain.island.library_roots,
         .host_libraries = host_toolchain.island.libraries,
+        .resolver = host_toolchain.resolver,
         .host_link_flags = host_toolchain.island.link_flags,
         .aosp = aosp,
         .codec2 = codec2,
@@ -1285,7 +1291,7 @@ pub fn build(b: *std.Build) void {
     setApplicationEnvironment(task_output, application_tree);
     task_output.addArg("python3");
     task_output.addFileArg(b.path("tools/binder-facade-test.py"));
-    task_output.addArgs(&.{ "--system-client", "--server" });
+    task_output.addArgs(&.{ "--retire-broker", "--system-client", "--server" });
     task_output.addFileArg(sf_service.getEmittedBin());
     task_output.addArg("--broker");
     task_output.addFileArg(binder_broker.getEmittedBin());

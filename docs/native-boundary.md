@@ -283,6 +283,19 @@ zig build -j10 cpp-audit
   writable existing mappings while preventing later writes through transferred
   descriptors. Original JNI owns mapping, initialization, atomics and cleanup.
 
+- NetworkUtils, TrafficStats and NetworkUtilsInternal use their original JNI
+  and NetdClient policy, with the declared JNI signature/name corrections.
+  `network/NetworkBackend.cpp` implements the missing fwmark-daemon boundary:
+  it validates the inherited Linux network namespace using `SO_NETNS_COOKIE`,
+  clears an existing kernel mark when selecting that routing domain, and rejects
+  unsupported Android routing domains, VPN exemptions and BPF accounting. Native libc/libcore hooks share the same
+  process policy. The host resolver supplies synchronous DNS; Android dnsproxyd
+  is absent. This does not add Android netd routing tables or a DNS proxy service.
+- SurfaceComposerClient is original. The hosted IServiceManager waits for service
+  replacements while its broker lives. After permanent session loss, previously
+  acquired service identities remain available for final cleanup and return
+  `DEAD_OBJECT`; an unknown service remains absent.
+
 - VintfObject and VintfRuntimeInfo use original JNI, libvintf, libkver and
   generated XSD parsers. Runtime queries read host uname, procfs, properties and
   SELinux state; missing Android manifests retain the original compatibility

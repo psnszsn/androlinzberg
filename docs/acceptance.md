@@ -85,6 +85,18 @@ and original bridge exports in the final platform library. Build tools and compi
 plugins are distinguished from runtime crates. ART and runtime loader resolution
 remain outside this check's scope.
 
+Runtime assembly separately generates `zig-out/bin/art/runtime-inventory.json`
+from the ART/libcore/Bionic build graph. It records declared source hashes,
+compiler flags, exported/imported symbols and staged ELF dependencies. Loader
+checks run outside the repository and reject missing dependencies or a packaged
+SONAME resolving outside the installation. This inventories the runtime exception;
+it does not establish exhaustive preprocessor or dynamic `dlsym` provenance.
+
+`surfaceflinger-service-test` includes two service-lifetime checks: original
+composer clients reconnect to a replacement service while the broker lives, and
+return dead Binder identities for cleanup after the whole session is retired.
+The normal APK/session-loss suite separately verifies supervised shutdown.
+
 ## Native codec service
 
 The acceptance target includes original Codec2 transport, client, allocator,

@@ -165,7 +165,10 @@ object StockColdLaunchSmoke {
         }
         awaitState("Handled configuration activity did not resume") {
             it.getString("activityClass") == "ColdHandledConfigurationActivity" &&
-                matches(it, android.content.res.Configuration.GRAMMATICAL_GENDER_MASCULINE)
+                matches(it, android.content.res.Configuration.GRAMMATICAL_GENDER_MASCULINE) &&
+                it.getStringArrayList("activityEvents").orEmpty()
+                    .lastOrNull { event -> event.startsWith("ColdHandledConfigurationActivity:") } ==
+                    "ColdHandledConfigurationActivity:resume"
         }
         grammar.setRequestedApplicationGrammaticalGender(pkg, 0,
             android.content.res.Configuration.GRAMMATICAL_GENDER_NEUTRAL)
@@ -236,12 +239,17 @@ object StockColdLaunchSmoke {
         val taskId = tasks.getTasks(128, false, true, android.view.Display.DEFAULT_DISPLAY)
             .single { it.baseActivity?.packageName == pkg }.taskId
         val options = android.app.ActivityOptions.makeBasic().apply { setLaunchTaskId(taskId) }
+        val beforeHandledLaunch = snapshot().getStringArrayList("activityEvents").orEmpty().size
         check(tasks.startActivity(null, "android", null,
             Intent().setClassName(pkg, "$pkg.ColdHandledConfigurationActivity")
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), null, null, null, -1, 0, null,
             options.toBundle()) == ActivityManager.START_SUCCESS)
         val handledStart = awaitState("Night-mode handled activity did not resume") {
-            it.getString("activityClass") == "ColdHandledConfigurationActivity" && matches(it, night)
+            val lifecycle = it.getStringArrayList("activityEvents").orEmpty().drop(beforeHandledLaunch)
+                .filter { event -> event.startsWith("ColdHandledConfigurationActivity:") }
+            it.getString("activityClass") == "ColdHandledConfigurationActivity" && matches(it, night) &&
+                lifecycle.contains("ColdHandledConfigurationActivity:create") &&
+                lifecycle.lastOrNull() == "ColdHandledConfigurationActivity:resume"
         }.getStringArrayList("activityEvents").orEmpty().size
         appMode(android.app.UiModeManager.MODE_NIGHT_NO)
         val handled = awaitState("Handled night configuration was not delivered") {

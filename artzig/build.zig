@@ -52,6 +52,16 @@ pub fn build(b: *std.Build) void {
     };
     // genrules ported to Zig (operator_out, mterp, asm_defines, vendored aconfig): no Soong out/ needed
     art_opts.generated = @import("build/genrules.zig").build(b, .{ .vendor = aosp, .art_opts = art_opts });
+    // Apply the explicit runtime boundary to the pinned header, without changing
+    // the source package or copying its unrelated portability definitions.
+    const network_portability = b.addSystemCommand(&.{ "patch", "--batch", "--forward", "--fuzz=0" });
+    network_portability.addFileArg(aosp.path(b, "libcore/luni/src/main/native/Portability.h"));
+    network_portability.addArg("-i");
+    network_portability.addFileArg(b.path("patches/host/0001-libcore-network-portability.patch"));
+    network_portability.addArg("-o");
+    const network_headers = b.addWriteFiles();
+    _ = network_headers.addCopyFile(network_portability.addOutputFileArg("Portability.h"), "network_portability.h");
+    art_opts.network_headers = network_headers.getDirectory();
     const art_gen = @import("build/gen/art.zig").build(b, art_opts);
     // PaletteWriteCrashThreadStacks consumes LogMessage's std::ostream. Keep
     // original logging with this DSO's static libc++ locale/facet identities,
@@ -104,6 +114,7 @@ pub fn build(b: *std.Build) void {
     b.addNamedLazyPath("host-paths-headers", b.path("src"));
     for ([_]*std.Build.Step.Compile{ art_gen.libjavacore, art_gen.libopenjdk }) |native| {
         native.root_module.linkLibrary(host_paths);
+        native.root_module.addCSourceFile(.{ .file = b.path("src/network_hooks.c"), .flags = &.{ "-std=gnu11", "-D_GNU_SOURCE" } });
     }
     const gen_step = b.step("gen-libartbase", "Build libartbase.so + deps with Zig");
     gen_step.dependOn(&b.addInstallArtifact(art_gen.libartbase, .{ .dest_dir = .{ .override = .{ .custom = "gen" } } }).step);

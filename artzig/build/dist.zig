@@ -73,7 +73,17 @@ pub fn build(b: *std.Build, step: *std.Build.Step, o: Options) std.Build.LazyPat
     gbi.filterStderr(" W dex2oat64: elf_debug_loc_writer.h:");
     gbi.run.setName("generate cacheable ART runtime");
 
+    var roots: std.ArrayList(*std.Build.Step.Compile) = .empty;
+    inline for (@typeInfo(art.Artifacts).@"struct".field_names) |name| {
+        const artifact = @field(o.arts, name);
+        if (artifact.isDynamicLibrary() or artifact.kind == .exe)
+            roots.append(b.allocator, artifact) catch @panic("OOM");
+    }
+    roots.appendSlice(b.allocator, o.bionics) catch @panic("OOM");
+    roots.appendSlice(b.allocator, o.icu_libraries) catch @panic("OOM");
+    const inventory = @import("runtime_inventory.zig").add(b, stage.getDirectory(), roots.items, o.vendor);
     const final = b.addWriteFiles();
+    _ = final.addCopyFile(inventory, "runtime-inventory.json");
     _ = final.addCopyDirectory(stage.getDirectory(), "", .{});
     _ = final.addCopyDirectory(boot_image, "apex/com.android.art/javalib", .{});
     const runtime = final.getDirectory();

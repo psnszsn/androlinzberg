@@ -2776,6 +2776,11 @@ export fn AServiceManager_getService(instance: [*:0]const u8) callconv(.c) ?*AIB
 export fn AServiceManager_waitForService(instance: [*:0]const u8) callconv(.c) ?*AIBinder {
     return lookup(instance, true);
 }
+// C++ service clients retain their old, dead identity only during final
+// session retirement. Normal live-broker service discovery remains unchanged.
+export fn azk_binder_sessionDisconnected() callconv(.c) bool {
+    return Runtime.get().disconnected.load(.acquire);
+}
 // AOSP NDK service_manager.cpp delegates declaration queries to IServiceManager.
 // Send its original AIDL through the context object, shared with Java and C++.
 // Registration is deliberately irrelevant: the manifest survives service death.

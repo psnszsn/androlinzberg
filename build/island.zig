@@ -7,6 +7,7 @@ const std = @import("std");
 const gen = @import("gen/island_sources.zig");
 
 pub const Options = struct {
+    resolver: std.Build.LazyPath,
     android_account_headers: std.Build.LazyPath,
     cppstream_headers: std.Build.LazyPath,
     input_dispatcher_headers: std.Build.LazyPath,
@@ -606,6 +607,26 @@ pub fn build(b: *std.Build, o: Options) Result {
         o.aosp.path(b, "system/memory/libmeminfo/libdmabufinfo/include"),
     }, &(android_abi_flags ++ .{ "-D__CPU_BITTYPE=unsigned long int", "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections", "-Dgetpwnam=azk_android_getpwnam", "-Dgetgrnam=azk_android_getgrnam", "-Dopen=azk_process_open", "-Dfopen=azk_process_fopen", "-include", b.pathResolve(&.{"src/native/ProcessAbi.h"}) }));
     g.add(o.aosp.path(b, "bionic/libc/upstream-openbsd/lib/libc/gen"), &.{"setprogname.c"}, &.{}, &.{ "-D__progname=program_invocation_short_name", "-include", "errno.h" });
+    const network_headers = b.addWriteFiles();
+    _ = network_headers.add("sys/limits.h", "#include <limits.h>\n");
+    _ = network_headers.addCopyFile(o.aosp.path(b, "bionic/libc/dns/include/resolv_netid.h"), "resolv_netid.h");
+    _ = network_headers.addCopyFile(o.aosp.path(b, "bionic/libc/dns/include/resolv_params.h"), "resolv_params.h");
+    const network_includes = runtime_includes ++ &[_]std.Build.LazyPath{
+        network_headers.getDirectory(),
+        o.aosp.path(b, "packages/modules/DnsResolver/include/dnsproxyd_protocol"),
+        o.aosp.path(b, "packages/modules/Connectivity/bpf/headers/include"),
+        o.aosp.path(b, "packages/modules/Connectivity/bpf/syscall_wrappers/include"),
+        o.aosp.path(b, "system/netd/include"),
+        o.aosp.path(b, "packages/modules/Connectivity/staticlibs/netd/libnetdutils/include"),
+        o.aosp.path(b, "system/netd/client"),
+        o.aosp.path(b, "frameworks/base/native/include"),
+    };
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_android_internal_net_NetworkUtilsInternal.cpp"}, network_includes, &android_abi_flags);
+    g.add(o.aosp.path(b, "packages/modules/Connectivity/framework/jni"), &.{"android_net_NetworkUtils.cpp"}, network_includes, &android_abi_flags);
+    g.add(o.aosp.path(b, "packages/modules/Connectivity/framework-t/jni"), &.{"android_net_TrafficStats.cpp"}, network_includes, &android_abi_flags);
+    g.add(o.aosp.path(b, "system/netd/client"), &.{ "NetdClient.cpp", "FwmarkClient.cpp" }, network_includes, &android_abi_flags);
+    g.add(b.path("src/native/network"), &.{"NetworkBackend.cpp"}, network_includes, &android_abi_flags);
+    g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{"net.c"}, network_includes, &.{ "-D__LIBC_HIDDEN__=__attribute__((visibility(\"hidden\")))", "-D__INTRODUCED_IN(x)=", "-D__BIONIC_AVAILABILITY_GUARD(x)=1" });
     const process_includes = runtime_includes ++ &[_]std.Build.LazyPath{
         o.aosp.path(b, "system/core/libprocessgroup"),
         o.aosp.path(b, "system/core/libprocessgroup/util/include"),
@@ -1065,6 +1086,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         link.addPrefixedDirectoryArg("-L", root);
         link.addPrefixedDirectoryArg("-Wl,-rpath,", root);
     }
+    link.addFileArg(o.resolver);
     for (o.host_libraries) |library| link.addArg(b.fmt("-l{s}", .{library}));
     link.addArgs(o.host_link_flags);
     link.addArgs(&.{ "-ldl", "-lpthread", "-lm", "-lcrypto", "-o" });

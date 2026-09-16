@@ -102,12 +102,15 @@ pub fn build(b: *std.Build, o: Options) Artifacts {
     c_bio.root_module.addCSourceFiles(.{
         .root = o.src,
         .files = &(wrapper_srcs ++ [_][]const u8{
-            "libc/libc.c",       "libc/libc-chk.c",  "libc/libc-math.c",
-            "libc/libc-misc.c",  "libc/libc-musl.c", "libc/libc-signal.c",
-            "libc/libc-stdio.c", "libc/libc-sha1.c", "libc/libc-open-overrides.c",
+            "libc/libc-chk.c",    "libc/libc-math.c",
+            "libc/libc-misc.c",   "libc/libc-musl.c",
+            "libc/libc-signal.c", "libc/libc-stdio.c",
+            "libc/libc-sha1.c",   "libc/libc-open-overrides.c",
         }),
         .flags = &(c_common ++ [_][]const u8{"-DPAGESIZE=4096"}),
     });
+    c_bio.root_module.addCSourceFile(.{ .file = o.src.path(b, "libc/libc.c"), .flags = &(c_common ++ .{ "-DPAGESIZE=4096", "-Dgetaddrinfo=azk_host_getaddrinfo" }) });
+    c_bio.root_module.addCSourceFile(.{ .file = b.path("src/network_hooks.c"), .flags = &.{ "-std=gnu11", "-D_GNU_SOURCE" } });
     c_bio.root_module.linkSystemLibrary("m", .{ .needed = true });
     linkByPath(b, c_bio.root_module, "libunwind-generic", &.{ "libunwind.so", "libunwind-x86_64.so" });
     // nix's libbsd.so is an ld script referencing -lmd, and zig does not forward -L

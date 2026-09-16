@@ -71,7 +71,10 @@ static void parcelContracts() {
             << std::endl;
 }
 
-int main() {
+int main(int argc, char **argv) {
+  assert(argc == 2);
+  const bool restart = std::strcmp(argv[1], "restart") == 0;
+  assert(restart || std::strcmp(argv[1], "retire") == 0);
   parcelContracts();
   ProcessState::self()->startThreadPool();
   auto binder =
@@ -122,19 +125,57 @@ int main() {
   std::unique_lock lock(death->mutex);
   assert(death->changed.wait_for(lock, 5s, [&] { return death->died; }));
   lock.unlock();
-  // A lost host graphics process retires this session. Calls made while WMS
-  // tears down its original surfaces must report Binder death, not dereference
-  // an absent service or attach the old surface IDs to a replacement service.
-  for (int retry = 0; retry < 3; ++retry) {
-    assert(SurfaceComposerClient::Transaction().setAlpha(surface, 0.25f).apply() ==
-           DEAD_OBJECT);
-    auto retired = ComposerServiceAIDL::getComposerService();
-    assert(retired);
-    std::vector<int64_t> retiredIds;
-    assert(retired->getPhysicalDisplayIds(&retiredIds).transactionError() ==
-           DEAD_OBJECT);
-    assert(retiredIds.empty());
+  // A cached identity never becomes the replacement service.
+  assert(binder->pingBinder() == DEAD_OBJECT);
+  std::vector<int64_t> deadIds;
+  assert(service->getPhysicalDisplayIds(&deadIds).transactionError() == DEAD_OBJECT);
+  if (restart) {
+    sp<gui::ISurfaceComposer> replacement;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+      replacement = ComposerServiceAIDL::getComposerService();
+      if (IInterface::asBinder(replacement) != binder &&
+          IInterface::asBinder(replacement)->pingBinder() == OK) break;
+      std::this_thread::sleep_for(10ms);
+    }
+    assert(replacement && IInterface::asBinder(replacement) != binder);
+    std::vector<int64_t> replacementIds;
+    assert(replacement->getPhysicalDisplayIds(&replacementIds).isOk());
+    assert(replacementIds.size() == 1);
+    auto newClient = sp<SurfaceComposerClient>::make();
+    assert(newClient->initCheck() == OK);
+    auto newSurface = newClient->createSurface(String8("ReplacementServiceContract"),
+                                              64, 48, PIXEL_FORMAT_RGBA_8888);
+    assert(newSurface && newSurface->isValid());
+    {
+      std::lock_guard guard(commitMutex);
+      committed = false;
+    }
+    assert(SurfaceComposerClient::Transaction().setAlpha(newSurface, 0.75f)
+        .addTransactionCommittedCallback(
+            [&](void *, nsecs_t, const sp<Fence> &,
+                const std::vector<SurfaceControlStats> &) {
+              std::lock_guard guard(commitMutex);
+              committed = true;
+              commitChanged.notify_all();
+            }, nullptr).apply() == OK);
+    std::unique_lock guard(commitMutex);
+    assert(commitChanged.wait_for(guard, 5s, [&] { return committed; }));
+    assert(binder->pingBinder() == DEAD_OBJECT);
+    std::cout << "PASS original legacy and AIDL composer clients reconnect; old identity stays dead"
+              << std::endl;
+  } else {
+    // Whole-session loss retains dead identities for final surface cleanup.
+    for (int retry = 0; retry < 3; ++retry) {
+      assert(SurfaceComposerClient::Transaction().setAlpha(surface, 0.25f).apply() ==
+             DEAD_OBJECT);
+      auto retired = ComposerServiceAIDL::getComposerService();
+      assert(retired);
+      std::vector<int64_t> retiredIds;
+      assert(retired->getPhysicalDisplayIds(&retiredIds).transactionError() ==
+             DEAD_OBJECT);
+      assert(retiredIds.empty());
+    }
+    std::cout << "PASS session retirement returns DEAD_OBJECT for legacy and AIDL clients"
+              << std::endl;
   }
-  std::cout << "PASS SurfaceFlinger death retires legacy and AIDL clients with DEAD_OBJECT"
-            << std::endl;
 }

@@ -1,11 +1,9 @@
 //! Pinned libmediaplayerservice, NuPlayer and their native Soong dependencies.
 const Group = struct { root: []const u8, files: []const []const u8 };
 pub const groups = [_]Group{
-    .{ .root = "frameworks/base/native/android", .files = &.{"net.c"} },
     .{ .root = "frameworks/native/libs/permission", .files = &.{ "AppOpsManager.cpp", "IAppOpsService.cpp" } },
     .{ .root = "frameworks/native/libs/binder", .files = &.{"PermissionController.cpp"} },
     .{ .root = "frameworks/av/media/utils", .files = &.{"ServiceUtilities.cpp"} },
-    .{ .root = "system/netd/client", .files = &.{ "NetdClient.cpp", "FwmarkClient.cpp" } },
     .{ .root = "system/core/libcutils", .files = &.{"qtaguid.cpp"} },
     .{ .root = "frameworks/av/media/libstagefright/renderfright", .files = &.{ "Description.cpp", "Mesh.cpp", "RenderEngine.cpp", "Texture.cpp", "gl/GLESRenderEngine.cpp", "gl/GLExtensions.cpp", "gl/GLFramebuffer.cpp", "gl/GLImage.cpp", "gl/GLShadowTexture.cpp", "gl/GLShadowVertexGenerator.cpp", "gl/GLSkiaShadowPort.cpp", "gl/GLVertexBuffer.cpp", "gl/ImageManager.cpp", "gl/Program.cpp", "gl/ProgramCache.cpp", "gl/filters/BlurFilter.cpp", "gl/filters/GenericProgram.cpp", "threaded/RenderEngineThreaded.cpp" } },
     .{ .root = "frameworks/av/media/libmediaplayerservice", .files = &.{ "MediaPlayerService.cpp", "MetadataRetrieverClient.cpp", "TestPlayerStub.cpp", "DeathNotifier.cpp", "MediaRecorderClient.cpp", "ActivityManager.cpp", "StagefrightRecorder.cpp", "MediaPlayerFactory.cpp", "StagefrightMetadataRetriever.cpp" } },

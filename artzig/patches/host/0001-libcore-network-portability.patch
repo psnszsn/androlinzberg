@@ -1,0 +1,20 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] libcore: route host resolution through native network policy
+
+Keep the pinned JNI and Bionic resolver ABI. The glibc portability boundary
+must honor the original NetdClient process policy rather than bypassing it;
+non-default Android network IDs cannot silently select host default routing.
+
+--- a/luni/src/main/native/Portability.h
++++ b/luni/src/main/native/Portability.h
+@@ -26,7 +26,8 @@
+ extern "C" int android_getaddrinfofornet(const char*, const char*, const struct addrinfo*, unsigned, unsigned, struct addrinfo**);
+ #else
++#include "network_hooks.h"
+ static inline int android_getaddrinfofornet(const char* hostname, const char* servname,
+-    const struct addrinfo* hints, unsigned /*netid*/, unsigned /*mark*/, struct addrinfo** res) {
+-  return getaddrinfo(hostname, servname, hints, res);
++    const struct addrinfo* hints, unsigned netid, unsigned mark, struct addrinfo** res) {
++  return azk_host_getaddrinfofornet(hostname, servname, hints, netid, mark, res);
+ }
+ #endif

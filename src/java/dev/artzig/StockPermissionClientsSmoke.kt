@@ -76,7 +76,7 @@ internal object StockPermissionClientsSmoke {
         val socket = android.system.Os.socket(android.system.OsConstants.AF_INET,
             android.system.OsConstants.SOCK_DGRAM, 0)
         try {
-            val expected = !(android.system.Os.geteuid() == 0 && System.getenv("ANDROID_NO_USE_FWMARK_CLIENT") != null)
+            val expected = false // no Android VPN bypass policy is installed
             check(com.android.internal.net.NetworkUtilsInternal.protectFromVpn(socket) == expected)
             check(com.android.internal.net.NetworkUtilsInternal.protectFromVpn(socket.`getInt$`()) == expected)
             check(android.system.Os.getsockoptInt(socket, android.system.OsConstants.SOL_SOCKET,

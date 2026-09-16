@@ -1,0 +1,49 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] NetworkUtils: match the declared host-resolution JNI ABI
+
+The pinned Java declaration and registration are (I)Z, but the C++ function
+reads a second, nonexistent argument. Use the declared raw netId with the
+original NetdClient resolver-binding function. This is a correctness fix. The host does not jarjar framework classes; use
+the original TcpRepairWindow binary name at both JNI lookup sites.
+
+--- a/framework/jni/android_net_NetworkUtils.cpp
++++ b/framework/jni/android_net_NetworkUtils.cpp
+@@ -18,6 +18,7 @@
+ 
+ #include <android/file_descriptor_jni.h>
+ #include <android/multinetwork.h>
++#include <NetdClient.h>
+ #include <linux/filter.h>
+ #include <linux/tcp.h>
+ #include <netinet/in.h>
+@@ -102,9 +103,9 @@
+ }
+ 
+ static jboolean android_net_utils_bindProcessToNetworkForHostResolution(JNIEnv *env, jclass clazz,
+-        jint netId, jlong netHandle)
+-{
+-    return (jboolean) !android_setprocdns(netHandle);
++        jint netId)
++{
++    return (jboolean) !setNetworkForResolv(netId);
+ }
+ 
+ static jint android_net_utils_bindSocketToNetworkHandle(JNIEnv *env, jclass clazz, jobject javaFd,
+@@ -235,7 +236,7 @@
+     }
+ 
+     jclass class_TcpRepairWindow = env->FindClass(
+-        "android/net/connectivity/android/net/TcpRepairWindow");
++        "android/net/TcpRepairWindow");
+     jmethodID ctor = env->GetMethodID(class_TcpRepairWindow, "<init>", "(IIIIII)V");
+ 
+     return env->NewObject(class_TcpRepairWindow, ctor, trw.snd_wl1, trw.snd_wnd, trw.max_window,
+@@ -288,7 +289,7 @@
+     { "bindSocketToNetworkHandle", "(Ljava/io/FileDescriptor;J)I", (void*) android_net_utils_bindSocketToNetworkHandle },
+     { "attachDropAllBPFFilter", "(Ljava/io/FileDescriptor;)V", (void*) android_net_utils_attachDropAllBPFFilter },
+     { "detachBPFFilter", "(Ljava/io/FileDescriptor;)V", (void*) android_net_utils_detachBPFFilter },
+-    { "getTcpRepairWindow", "(Ljava/io/FileDescriptor;)Landroid/net/connectivity/android/net/TcpRepairWindow;", (void*) android_net_utils_getTcpRepairWindow },
++    { "getTcpRepairWindow", "(Ljava/io/FileDescriptor;)Landroid/net/TcpRepairWindow;", (void*) android_net_utils_getTcpRepairWindow },
+     { "resNetworkSend", "(J[BII)Ljava/io/FileDescriptor;", (void*) android_net_utils_resNetworkSend },
+     { "resNetworkQuery", "(JLjava/lang/String;III)Ljava/io/FileDescriptor;", (void*) android_net_utils_resNetworkQuery },
+     { "resNetworkResult", "(Ljava/io/FileDescriptor;)Landroid/net/DnsResolver$DnsResponse;", (void*) android_net_utils_resNetworkResult },

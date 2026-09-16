@@ -2,7 +2,7 @@
 """Audit production native compiler inputs and preprocessed client boundaries.
 
 The command graph comes from Step.Run.argv and Clang records in linked libraries,
-not a second source manifest. ART, injected compiler runtimes, Rust and hosted
+not a second source manifest. ART, injected compiler runtimes and hosted
 loader resolution require separate inventory. No stock-client percentage is assigned.
 """
 from __future__ import annotations
@@ -76,6 +76,8 @@ HEADER_PROBES = ANDROID_BRANCHES | {CORE + name for name in (
 HEADER_PROBES.update({"frameworks/base/libs/hwui/jni/" + name for name in (
     "Movie.cpp", "YuvToJpegEncoder.cpp", "pdf/PdfDocument.cpp",
 )})
+REQUIRED.add("frameworks/native/libs/gui/SurfaceComposerClient.cpp")
+HEADER_PROBES.add("frameworks/native/libs/gui/SurfaceComposerClient.cpp")
 REQUIRED.add("external/skia/src/pdf/SkPDFDocument.cpp")
 REQUIRED.add("frameworks/av/media/ndk/NdkImageReader.cpp")
 HEADER_PROBES.add("frameworks/av/media/ndk/NdkImageReader.cpp")
@@ -180,7 +182,29 @@ HEADER_PROBES.update({"system/core/libprocessgroup/sched_policy.cpp", "bionic/li
 REQUIRED.add("frameworks/native/libs/nativewindow/ANativeWindow.cpp")
 HEADER_PROBES.add("frameworks/native/libs/nativewindow/ANativeWindow.cpp")
 HEADER_PROBES.add("system/core/libutils/Threads.cpp")
+REQUIRED.update({
+    CORE + "com_android_internal_net_NetworkUtilsInternal.cpp",
+    "packages/modules/Connectivity/framework-t/jni/android_net_TrafficStats.cpp",
+    "system/netd/client/NetdClient.cpp", "frameworks/base/native/android/net.c",
+})
+EXACT_PATCHED = {
+    "packages/modules/Connectivity/framework/jni/android_net_NetworkUtils.cpp": "artzig/patches/packages-modules-Connectivity/0001-match-host-resolution-JNI-signature.patch",
+    "system/netd/client/FwmarkClient.cpp": "artzig/patches/system/netd/0001-host-route-fwmark-operations-to-Linux-policy.patch",
+}
+# Keep the pinned JNI array/buffer correctness fixes, with exact patch checks.
+EXACT_PATCHED["frameworks/base/core/jni/android_opengl_GLES20.cpp"] = "artzig/patches/frameworks-base/0028-GLES-release-original-heap-buffer-array-pointers.patch"
+EXACT_PATCHED["frameworks/base/core/jni/android_opengl_GLES30.cpp"] = "artzig/patches/frameworks-base/0028-GLES-release-original-heap-buffer-array-pointers.patch"
+EXACT_PATCHED["frameworks/base/core/jni/android_opengl_GLES31.cpp"] = "artzig/patches/frameworks-base/0028-GLES-release-original-heap-buffer-array-pointers.patch"
+EXACT_PATCHED["frameworks/base/core/jni/android_opengl_GLES32.cpp"] = "artzig/patches/frameworks-base/0028-GLES-release-original-heap-buffer-array-pointers.patch"
+EXACT_PATCHED["frameworks/base/core/jni/com_google_android_gles_jni_GLImpl.cpp"] = "artzig/patches/frameworks-base/0032-legacy-GLES-retain-JNI-array-bases-and-typed-buffer-bounds.patch"
+EXACT_PATCHED["frameworks/base/native/android/surface_control.cpp"] = "artzig/patches/frameworks-base/0069-HWUI-and-NDK-stock-SurfaceControl-on-host.patch"
+EXACT_PATCHED["frameworks/native/libs/ui/DependencyMonitor.cpp"] = "artzig/patches/frameworks-native/0002-renderengine-host-egl.patch"
+HEADER_PROBES.update(EXACT_PATCHED)
+HEADER_PROBES.add("system/netd/client/NetdClient.cpp")
 REGISTRARS = (
+    "android::register_android_net_NetworkUtils(",
+    "android::register_android_net_TrafficStats(",
+    "android::register_com_android_internal_net_NetworkUtilsInternal(",
     "register_android_os_Process(",
     "android::register_com_android_internal_os_RuntimeInit(",
     "register_android_graphics_classes", "android::register_android_graphics_pdf_PdfEditor(",
@@ -205,6 +229,26 @@ def registrar_matches(symbol: str, registrar: str) -> bool:
 def digest(path: Path) -> str:
     with path.open("rb") as file:
         return hashlib.file_digest(file, "sha256").hexdigest()
+
+
+def exact_patch_matches(original: Path, compiled: Path, patch: Path) -> bool:
+    # Modified clients are limited to the declared patch, not a broad filename
+    # exemption. Reproduce it from the independent reference into a private file.
+    with tempfile.TemporaryDirectory(prefix="azk-native-patch-") as directory:
+        output = Path(directory) / "source"
+        contents = patch.read_text()
+        sections = list(re.finditer(r"^--- a/(.+)\n\+\+\+ b/(.+)\n", contents, re.M))
+        selected = []
+        for index, section in enumerate(sections):
+            if str(original).endswith("/" + section.group(1)):
+                end = sections[index + 1].start() if index + 1 < len(sections) else len(contents)
+                selected.append(contents[section.start():end].split("\ndiff --git ")[0].rstrip("\n") + "\n")
+        if sections and len(selected) != 1:
+            return False
+        result = subprocess.run(["patch", "--batch", "--forward", "--fuzz=0",
+                                 str(original), "-o", str(output)],
+                                input=(selected[0] if sections else contents).encode(), capture_output=True)
+        return result.returncode == 0 and output.read_bytes() == compiled.read_bytes()
 
 
 def decode_commands(model: dict, paths: list[Path]) -> list[list[str]]:
@@ -304,6 +348,8 @@ def boundary_errors(source: str, probe: dict, repo: Path) -> list[str]:
         errors.append("Native window bypasses the shared libgui loader alias")
     if source == "system/core/libutils/Threads.cpp" and probe["macros"].get("setpriority") != "azk_setpriority":
         errors.append("Thread priorities bypass the installed/unprivileged host scheduling boundary")
+    if source == "system/netd/client/FwmarkClient.cpp" and "__ANDROID_HOST__" not in probe["macros"]:
+        errors.append("Network policy falls back to absent-daemon success")
     if source == CORE + "android_util_Process.cpp":
         for original, backend in {"getpwnam": "azk_android_getpwnam", "getgrnam": "azk_android_getgrnam",
                                   "open": "azk_process_open", "fopen": "azk_process_fopen",
@@ -490,6 +536,10 @@ def main() -> int:
     for name in sorted(REQUIRED):
         if name not in selected or selected[name]["kind"] != "unchanged":
             errors.append(f"restored client missing or changed: {name}")
+    for name, patch in EXACT_PATCHED.items():
+        record = selected.get(name)
+        if not record or not exact_patch_matches(reference / name, Path(record["path"]), repo / patch):
+            errors.append(f"native source differs from its declared patch: {name}")
     probes = [record for record in sources + linked_sources if record.get("source") in HEADER_PROBES]
     headers = {}
     with ThreadPoolExecutor(max_workers=4) as pool:

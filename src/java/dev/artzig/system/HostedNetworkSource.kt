@@ -14,6 +14,10 @@ import java.io.IOException
 import java.net.InetAddress
 import java.net.NetworkInterface
 
+// Native NetworkBackend.cpp exposes this inherited Linux network namespace.
+// It is one logical network, not a claim to own per-interface netd tables.
+internal const val HOST_NAMESPACE_NETWORK_ID = 0xfffe
+
 /** The default route in the host network namespace, observed without changing its routing. */
 internal data class HostedNetworkSnapshot(
     val network: Network,
@@ -30,8 +34,6 @@ internal fun interface HostedNetworkSource {
 
 /** Linux replaces netd/NetworkAgent discovery; Android values and callbacks remain stock. */
 internal class LinuxNetworkSource : HostedNetworkSource {
-    private val ids = HashMap<String, Int>()
-    private var nextId = 100
     private data class Route(val iface: String, val gateway: InetAddress, val metric: Long)
 
     override fun supportsLegacyType(type: Int): Boolean = try {
@@ -85,7 +87,7 @@ internal class LinuxNetworkSource : HostedNetworkSource {
                 // not evidence of Internet validation, so VALIDATED is deliberately absent.
                 addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
             }
-            HostedNetworkSnapshot(Network(ids.getOrPut(route.iface) { nextId++ }), info, capabilities, links)
+            HostedNetworkSnapshot(Network(HOST_NAMESPACE_NETWORK_ID), info, capabilities, links)
         }
     } catch (_: IOException) { null } catch (_: SecurityException) { null }
 

@@ -10556,3 +10556,6 @@ F aosp system/core/libprocessgroup/util/util.cpp
 F aosp bionic/libc/include/android/set_abort_message.h
 F aosp bionic/libc/private/bionic_futex.h
 F aosp bionic/libc/private/bionic_lock.h
+F aosp frameworks/base/core/jni/com_android_internal_net_NetworkUtilsInternal.cpp
+F aosp packages/modules/Connectivity/framework/jni/android_net_NetworkUtils.cpp
+F aosp packages/modules/Connectivity/framework-t/jni/android_net_TrafficStats.cpp

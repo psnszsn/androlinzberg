@@ -11,6 +11,38 @@ SPEC.loader.exec_module(audit)
 
 
 class NativeAuditTest(unittest.TestCase):
+    def test_exact_patch_rejects_extra_client_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original, compiled, patch = (root / name for name in ("input", "compiled", "change.patch"))
+            original.write_text("before\n")
+            compiled.write_text("after\n")
+            patch.write_text("--- a/input\n+++ b/input\n@@ -1 +1 @@\n-before\n+after\n")
+            self.assertTrue(audit.exact_patch_matches(original, compiled, patch))
+            compiled.write_text("after\nextra\n")
+            self.assertFalse(audit.exact_patch_matches(original, compiled, patch))
+            self.assertEqual(original.read_text(), "before\n")
+
+    def test_network_host_policy_branch_is_required(self):
+        name = "system/netd/client/FwmarkClient.cpp"
+        probe = {"macros": {}, "headers": []}
+        self.assertTrue(audit.boundary_errors(name, probe, Path("/repo")))
+        probe["macros"]["__ANDROID_HOST__"] = "1"
+        self.assertEqual(audit.boundary_errors(name, probe, Path("/repo")), [])
+
+    def test_exact_patch_selects_only_the_matching_translation_unit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original, compiled, patch = (root / name for name in ("input", "compiled", "change.patch"))
+            original.write_text("before\n")
+            compiled.write_text("after\n")
+            patch.write_text("--- a/other\n+++ b/other\n@@ -1 +1 @@\n-wrong\n+wrong2\n"
+                             "diff --git a/input b/input\n"
+                             "--- a/input\n+++ b/input\n@@ -1 +1 @@\n-before\n+after\n")
+            self.assertTrue(audit.exact_patch_matches(original, compiled, patch))
+            original.rename(root / "unlisted")
+            self.assertFalse(audit.exact_patch_matches(root / "unlisted", compiled, patch))
+
     def test_rust_wrapper_records_declared_environment_only(self):
         command = ["/build-command", "--arg", "python3", "--arg", "/repo/tools/rust-compile.py",
                    "--arg", "/tmp/cache.d", "--arg", "/runner", "--arg", "/pinned/bin/rustc",

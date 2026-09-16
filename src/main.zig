@@ -529,6 +529,10 @@ fn bootHeadless(init: std.process.Init, role: runtime_identity.Role) !Headless {
     const tree = try installTree(init);
     const runtime_overlay_dir = try std.fs.path.join(arena, &.{ tree, "lib", "art" });
     const island_path = try std.fs.path.join(arena, &.{ tree, "lib", "libandroid_platform.so" });
+    // Libcore's native dispatch must see the same platform policy callbacks
+    // in system/test VMs as it does in APK VMs.
+    const island_path_z = try arena.dupeSentinel(u8, island_path, 0);
+    if (dlopen(island_path_z, 2 | 0x100) == null) return error.PlatformLoadFailed; // RTLD_NOW|RTLD_GLOBAL
     var lib = try std.DynLib.open(island_path);
     try bindPlatformIo(&lib, init.io);
     try initializeAndroidRuntime(&lib, init);

@@ -10,15 +10,17 @@ import unittest
 
 
 class NativeRunnerTest(unittest.TestCase):
-    def run_fixture(self, server_exit, args=None, file_arg=None):
+    def run_fixture(self, server_exit, args=None, file_arg=None, death_mode=None):
         with tempfile.TemporaryDirectory(prefix="azk-runner-test-") as temporary:
             directory = Path(temporary)
             broker = directory / "broker"
             broker.write_text(f"#!{sys.executable}\nimport sys\n"
                               "print('ready', flush=True)\nsys.stdin.read()\n")
             probe = directory / "probe"
-            probe.write_text(f"#!{sys.executable}\nimport sys\n"
+            probe.write_text(f"#!{sys.executable}\nimport sys, os\n"
                              "if sys.argv[1] == 'server':\n"
+                             "    assert os.environ['AZK_BINDER_SYSTEM_COOKIE'] == 'facade-v2-system'\n"
+                             "    assert os.environ['AZK_BINDER_PACKAGE'] == 'dev.artzig.facade.v2.server'\n"
                              "    print('ready', flush=True)\n"
                              "    sys.stdin.read()\n"
                              f"    sys.exit({server_exit})\n"
@@ -31,7 +33,8 @@ class NativeRunnerTest(unittest.TestCase):
                  "--broker", str(broker), "--probe", str(probe),
                  "--output", str(directory / "results"),
                  *["--probe-arg=" + arg for arg in (args or [])],
-                 *(["--probe-file-arg=" + file_arg] if file_arg else [])],
+                 *(["--probe-file-arg=" + file_arg] if file_arg else []),
+                 *([death_mode] if death_mode else [])],
                 capture_output=True, text=True, timeout=15,
             )
             journal = json.loads((directory / "results/run/results.json").read_text())
@@ -51,6 +54,18 @@ class NativeRunnerTest(unittest.TestCase):
     def test_client_file_argument_resolves_before_chdir(self):
         result, journal = self.run_fixture(0, ["--javatest"], "./relative path/library.so")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(journal["child_exit_codes"], [0, 0, 0])
+
+    def test_replacement_preserves_server_credentials(self):
+        result, journal = self.run_fixture(0, death_mode="--restart-service")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(journal["service_restarted"])
+        self.assertEqual(journal["child_exit_codes"], [0, 0, 0, 0])
+
+    def test_complete_session_retirement(self):
+        result, journal = self.run_fixture(0, death_mode="--retire-broker")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(journal["broker_retired_exit"], 0)
         self.assertEqual(journal["child_exit_codes"], [0, 0, 0])
 
     def test_failed_service_cannot_be_hidden_by_client_success(self):

@@ -82,24 +82,28 @@ internal object ConnectivitySmoke {
             FileDescriptor::class.java,
             java.lang.Long.TYPE,
         ).apply { isAccessible = true }
-        val malformed = bind.invoke(null, null, 42L shl 32) as Int
-        check(malformed == -OsConstants.EINVAL) { "malformed native handle errno: $malformed" }
+        // Pinned JNI delegates the NDK's POSIX return ABI: -1 on failure.
+        val malformed = bind.invoke(null, FileDescriptor(), 42L shl 32) as Int
+        check(malformed == -1) { "malformed native handle result: $malformed" }
 
         val socket = Os.socket(OsConstants.AF_INET, OsConstants.SOCK_DGRAM, 0)
         try {
-            check((bind.invoke(null, socket, handle) as Int) == 0) { "valid native handle bind" }
+            check((bind.invoke(null, socket, handle) as Int) == -1) { "unknown network must fail" }
+            expectSocketException("unknown network") { network.bindSocket(socket) }
+            val hostNetwork = Network(dev.artzig.system.HOST_NAMESPACE_NETWORK_ID)
+            check((bind.invoke(null, socket, hostNetwork.networkHandle) as Int) == 0) { "host namespace bind" }
             check((bind.invoke(null, socket, 0L) as Int) == 0) { "unset native handle bind" }
-            network.bindSocket(socket)
+            hostNetwork.bindSocket(socket)
 
             Os.connect(socket, InetSocketAddress("127.0.0.1", 9))
-            expectSocketException("connected socket") { network.bindSocket(socket) }
+            expectSocketException("connected socket") { hostNetwork.bindSocket(socket) }
         } finally {
             Os.close(socket)
         }
 
         val invalidFd = FileDescriptor()
         val invalidFdResult = bind.invoke(null, invalidFd, handle) as Int
-        check(invalidFdResult == -OsConstants.EBADF) { "invalid socket errno: $invalidFdResult" }
+        check(invalidFdResult == -1) { "invalid socket result: $invalidFdResult" }
 
         println("Connectivity smoke: PASS")
     }

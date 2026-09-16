@@ -107,6 +107,7 @@ pub const Options = struct {
     optimize: std.builtin.OptimizeMode,
     vendor: std.Build.LazyPath,
     project: std.Build.LazyPath,
+    network_headers: std.Build.LazyPath = undefined,
     host: host_toolchain.Result,
     /// Original external/icu stable shim, built with matching runtime data.
     icu: *std.Build.Step.Compile,
@@ -271,6 +272,15 @@ const SourceGroups = struct {
         });
         self.next_index += 1;
         addIncludes(self.b, self.options, module, group_flags.includes);
+        if (std.mem.eql(u8, self.owner_name, "libjavacore.so") or std.mem.eql(u8, self.owner_name, "libopenjdk.so")) {
+            module.addIncludePath(self.options.project.path(self.b, "src"));
+            module.addIncludePath(self.options.network_headers);
+            module.addCMacro("socket", "azk_host_socket");
+            module.addCMacro("connect", "azk_host_connect");
+            module.addCMacro("accept4", "azk_host_accept4");
+            module.addCMacro("accept", "azk_host_accept");
+            module.addCMacro("getaddrinfo", "azk_host_getaddrinfo");
+        }
         return .{ .name = name, .module = module };
     }
 
@@ -279,6 +289,12 @@ const SourceGroups = struct {
             .name = group.name,
             .root_module = group.module,
         }));
+    }
+
+    fn sourceFlags(self: *SourceGroups, original: []const []const u8) []const []const u8 {
+        if (std.mem.eql(u8, self.owner_name, "libjavacore.so"))
+            return std.mem.concat(self.b.allocator, []const u8, &.{ original, &.{ "-include", self.b.root.joinString(self.b.allocator, "src/network_portability_force.h") catch @panic("OOM") } }) catch @panic("OOM");
+        return original;
     }
 
     fn addCSourceFiles(self: *SourceGroups, source: AddCSourceFilesOptions) void {
@@ -293,7 +309,7 @@ const SourceGroups = struct {
                 const group = self.newModule(source.flags);
                 group.module.addCSourceFile(.{
                     .file = root.path(self.b, file),
-                    .flags = source.flags.args,
+                    .flags = self.sourceFlags(source.flags.args),
                     .language = source.language,
                 });
                 self.attachObject(group);
@@ -305,7 +321,7 @@ const SourceGroups = struct {
             group.module.addCSourceFiles(.{
                 .root = source.root,
                 .files = source.files,
-                .flags = source.flags.args,
+                .flags = self.sourceFlags(source.flags.args),
                 .language = source.language,
             });
             self.attachObject(group);
@@ -316,7 +332,7 @@ const SourceGroups = struct {
         const group = self.newModule(source.flags);
         group.module.addCSourceFile(.{
             .file = source.file,
-            .flags = source.flags.args,
+            .flags = self.sourceFlags(source.flags.args),
             .language = source.language,
         });
         self.attachObject(group);

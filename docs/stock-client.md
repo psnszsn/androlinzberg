@@ -4,9 +4,10 @@ The selected application-facing Java/Kotlin framework sources use pinned
 Android 16 r1 AOSP code. The audited root framework source set has no tracked
 framework stubs or modified static client sources. **The complete client stack
 is not stock:** JNI, native libraries and ART/libcore still contain host
-adaptations. Some JNI implementations delegate back to repository-owned JVM
-code inside the app process. See the [native client audit](native-client-audit.md)
-for the remaining replacements and process boundaries.
+adaptations. Framework JNI now uses the pinned clients with the exact corrections
+and host boundaries recorded in the [native client audit](native-client-audit.md).
+The agreed exceptions are the hosted libbinder/AZKB transport and ART/libcore
+runtime, plus native host backends such as EGL, gralloc and Linux scheduling.
 
 The hosted runtime supplies the services and native facilities needed by those
 clients. It does not boot an Android system image or implement every device
@@ -30,6 +31,10 @@ capability. Selected server sources retain documented adaptations; see
   shared control block, timestamps and underrun accounting are the AOSP ones.
   WallpaperService is available, while desktop-wide live-wallpaper presentation
   remains unsupported.
+- Original networking JNI and NetdClient share process policy across Java and
+  Android native sockets/DNS. The inherited Linux network namespace supplies
+  routing; unavailable Android network domains, VPN exemptions and BPF tagging
+  return errors.
 - The unchanged official AOSP WebView 140.0.7339.15 provider supports HTML,
   JavaScript, input and video. The optional overlay path is tested through the
   provider's supported developer setting in temporary data. Production retains

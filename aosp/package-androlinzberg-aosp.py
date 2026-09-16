@@ -73,6 +73,8 @@ framework_patches = tuple(
 packager.SOURCE_MANIFEST = HERE / "androlinzberg-files.txt"
 packager.PACKAGE_NAME = "androlinzberg"
 packager.PATCH_SERIES = framework_patches + (
+    ("system/netd", patch_root / "system/netd/0001-host-route-fwmark-operations-to-Linux-policy.patch"),
+    ("packages/modules/Connectivity", patch_root / "packages-modules-Connectivity/0001-match-host-resolution-JNI-signature.patch"),
     ("frameworks/native", patch_root / "frameworks-native/0012-sensorservice-initialize-mode-without-HAL.patch"),
     ("system/core/libcutils", patch_root / "system/libcutils/0001-use-stock-memfd-operations-for-host-ndk-shared-memory.patch"),
     ("system/core/libcutils", patch_root / "system/libcutils/0002-session-reserved-socket-directory.patch"),
@@ -116,10 +118,6 @@ packager.PATCH_SERIES = framework_patches + (
     (
         "frameworks/native",
         patch_root / "frameworks-native" / "0001-libgui-host-binder-transport.patch",
-    ),
-    (
-        "frameworks/native",
-        patch_root / "frameworks-native" / "0011-libgui-retire-host-composer-clients-after-death.patch",
     ),
     (
         "frameworks/native",

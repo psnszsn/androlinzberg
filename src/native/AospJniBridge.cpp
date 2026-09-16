@@ -258,6 +258,9 @@ extern int register_android_util_MemoryIntArray(JNIEnv*);
 extern int register_com_android_internal_security_VerityUtils(JNIEnv*);
 extern int register_android_os_incremental_IncrementalManager(JNIEnv*);
 extern int register_android_net_LocalSocketImpl(JNIEnv*);
+extern int register_android_net_NetworkUtils(JNIEnv*);
+extern int register_android_net_TrafficStats(JNIEnv*);
+extern int register_com_android_internal_net_NetworkUtilsInternal(JNIEnv*);
 extern int register_android_app_backup_FullBackup(JNIEnv*);
 extern int register_android_database_CursorWindow(JNIEnv*);
 extern int register_android_database_SQLiteConnection(JNIEnv*);
@@ -318,6 +321,7 @@ static jobject roundTripHidlMemory(JNIEnv* env, jclass, jobject memory) {
 static int registerStockNdkLooperSmoke(JNIEnv* env);
 static int registerStockNdkGraphicsSmoke(JNIEnv* env);
 static int registerStockNativePropertiesSmoke(JNIEnv* env);
+static int registerStockNetworkingSmoke(JNIEnv* env);
 static int registerStockHidlMemorySmoke(JNIEnv* env) {
     const JNINativeMethod methods[] = {
         {"nativeRoundTrip", "(Landroid/os/HidlMemory;)Landroid/os/HidlMemory;",
@@ -568,6 +572,9 @@ int azk_register_utility_jni(JNIEnv* env) {
     if (android::register_android_tracing_PerfettoDataSource(env) != 0) return -1;
     if (android::register_android_tracing_PerfettoDataSourceInstance(env) != 0) return -1;
     if (android::register_android_tracing_PerfettoProducer(env) != 0) return -1;
+    if (android::register_android_net_NetworkUtils(env) != 0) return -1;
+    if (android::register_android_net_TrafficStats(env) != 0) return -1;
+    if (android::register_com_android_internal_net_NetworkUtilsInternal(env) != 0) return -1;
     if (azk_process_backend_initialize() != 0 || register_android_os_Process(env) != 0) return -1;
     return 0;
 }
@@ -650,6 +657,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(registerStockNdkLooperSmoke),
             E(registerStockNdkGraphicsSmoke),
             E(registerStockNativePropertiesSmoke),
+            E(registerStockNetworkingSmoke),
             E(registerHostedZygoteCommandBuffer),
             E(registerPerfettoTrace),
             E(android::register_android_os_PerfettoTrackEventExtra),
@@ -993,4 +1001,39 @@ static int registerStockNativePropertiesSmoke(JNIEnv* env) {
         {"applicationTargetSdk", "(Z)I", reinterpret_cast<void*>(nativeApplicationTargetSdk)},
     };
     return jniRegisterNativeMethods(env, "dev/artzig/StockNativePropertiesSmoke", methods, 5);
+}
+
+// Resolve the real bionic_translation exports used by Android native libraries.
+// Do not bypass that loader boundary by calling the policy implementation here.
+static void* nativeNetworkSymbol(const char* name) {
+    // Framework-only VMs intentionally use the host loader. Load the installed
+    // Android libc ABI adapter explicitly for this native boundary test.
+    static void* shim = dlopen("libc_bio.so", RTLD_NOW | RTLD_LOCAL);
+    return shim ? dlsym(shim, name) : nullptr;
+}
+static jint testNativeSocketError(JNIEnv*, jclass) {
+    auto call = reinterpret_cast<int (*)(int, int, int)>(nativeNetworkSymbol("bionic_socket"));
+    if (!call) return ENOSYS;
+    int fd = call(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) return errno;
+    close(fd);
+    return 0;
+}
+static jint testNativeDnsError(JNIEnv*, jclass) {
+    auto call = reinterpret_cast<int (*)(const char*, const char*, const void*, void**)>(nativeNetworkSymbol("bionic_getaddrinfo"));
+    auto release = reinterpret_cast<void (*)(void*)>(nativeNetworkSymbol("bionic_freeaddrinfo"));
+    if (!call || !release) return ENOSYS;
+    void* result = nullptr;
+    const int rc = call("127.0.0.1", nullptr, nullptr, &result);
+    const int error = errno;
+    const bool resolved = result != nullptr;
+    if (result) release(result);
+    return rc == 0 ? (resolved ? 0 : EIO) : (error ? error : EIO);
+}
+static int registerStockNetworkingSmoke(JNIEnv* env) {
+    const JNINativeMethod methods[] = {
+        {"nativeSocketError", "()I", reinterpret_cast<void*>(testNativeSocketError)},
+        {"nativeDnsError", "()I", reinterpret_cast<void*>(testNativeDnsError)},
+    };
+    return jniRegisterNativeMethods(env, "dev/artzig/StockNetworkingSmoke", methods, std::size(methods));
 }

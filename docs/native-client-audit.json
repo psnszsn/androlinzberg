@@ -1,10 +1,10 @@
 {
-  "revision": "Recording and Debug client follow-up (pending validation, 2026-09-16)",
+  "revision": "Completed native client migration within the declared Binder/runtime and host backend boundaries (2026-09-16)",
   "reference": "Pinned checkout described by aosp/README.md; project revisions below",
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 16119,
+      "unchanged": 16118,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -30,7 +30,6 @@
         "frameworks/native/libs/binder/ndk/include_cpp/android/binder_auto_utils.h",
         "frameworks/native/libs/binder/ndk/include_cpp/android/binder_interface_utils.h",
         "frameworks/native/libs/binder/ndk/include_ndk/android/binder_status.h",
-        "frameworks/native/libs/gui/SurfaceComposerClient.cpp",
         "frameworks/native/libs/renderengine/RenderEngine.cpp",
         "frameworks/native/libs/renderengine/skia/SkiaGLRenderEngine.cpp",
         "frameworks/native/libs/renderengine/skia/SkiaRenderEngine.cpp",
@@ -54,6 +53,7 @@
         "frameworks/native/services/surfaceflinger/Scheduler/src/Timer.cpp",
         "frameworks/native/services/surfaceflinger/SurfaceFlinger.cpp",
         "frameworks/native/services/surfaceflinger/SurfaceFlingerProperties.cpp",
+        "packages/modules/Connectivity/framework/jni/android_net_NetworkUtils.cpp",
         "system/core/libcutils/ashmem-dev.cpp",
         "system/core/libcutils/socket_local_client_unix.cpp",
         "system/core/libutils/Threads.cpp",
@@ -63,10 +63,11 @@
         "system/core/libutils/include/utils/Thread.h",
         "system/incremental_delivery/incfs/util/include/util/map_ptr.h",
         "system/libbase/include/android-base/properties.h",
-        "system/libbase/properties.cpp"
+        "system/libbase/properties.cpp",
+        "system/netd/client/FwmarkClient.cpp"
       ],
       "added": [],
-      "archive_sha256": "f8218ddba1a4bec114b004d65e532861efc69b43d91693767f4d04ba480d53ab"
+      "archive_sha256": "f5b63e0b57597fa2b550bffbb3c1c5b7b64fdeb0a131f7c4473e8cde16699648"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -222,6 +223,14 @@
     "system/libprocinfo": {
       "revision": "c505848d69aae712eda6cb89cd50e2dfffa592e0",
       "tracked_clean": true
+    },
+    "system/netd": {
+      "revision": "68859d33e9bfe9ddb1afdc282905c63339c1928d",
+      "tracked_clean": true
+    },
+    "packages/modules/Connectivity": {
+      "revision": "627eb3c63e7c7cb3cb9f8ea319e4bb1676079c3a",
+      "tracked_clean": true
     }
   },
   "date": "2026-09-15",
@@ -238,14 +247,12 @@
     ".inl"
   ],
   "delegated_registration_modules": [
-    "src/binder/network_utils_internal_jni.zig",
     "src/binder/pointer_icon_jni.zig",
     "src/binder/egl_interop_test.zig",
-    "src/binder/traffic_stats_jni.zig",
     "src/binder/zygote_tagging_jni.zig",
     "src/binder/ndk_codec_test.zig"
   ],
-  "registration_scope_note": "8 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
+  "registration_scope_note": "Four delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; zygote_tagging_jni belongs to the explicit runtime exception; egl_interop_test and ndk_codec_test register dev.artzig tests. Central and C++ registrars are additional.",
   "installed_dso_spot_checks": {
     "lib/libandroid_platform.so": {
       "sha256": "72e2ccd4a07ecabab21193965f22be156730853296a8114eaecbd0950f335972",
@@ -267,7 +274,7 @@
       ]
     }
   },
-  "framework_package_refresh": "2026-09-16: original Process JNI, Bionic accounts, libprocessgroup and ANativeWindow; optional UiThread server task-profile fallback",
+  "framework_package_refresh": "2026-09-16: networking JNI and original SurfaceComposerClient package refreshed; full acceptance502 passed, installed platform/PDF/Binder hashes verified",
   "binder_jni_followup": {
     "runtime_revision": "b7d78a39",
     "verified_date": "2026-09-13",
@@ -696,18 +703,18 @@
   "compiled_island_followup": {
     "target": "native-client-source-test",
     "report": "zig-out/test-results/native-client-source.json",
-    "inputs": 2616,
+    "inputs": 2623,
     "source_counts": {
-      "unchanged": 2292,
-      "modified": 22,
-      "owned": 21,
+      "unchanged": 2296,
+      "modified": 24,
+      "owned": 22,
       "generated": 281
     },
-    "required_original_clients": 128,
-    "preprocessed_boundaries": 53,
-    "consumed_headers": 2832,
-    "scope": "Native island/Skia Step.Run commands and actual ELF compiler records for declared C/C++ inputs in linked Step.Compile libraries; all compilation contexts of selected boundary header/macro probes; platform/NDK/PDF ELF owners. Pinned Rust compiler commands, effective cfg, consumed inputs, sysroot and bridge ownership are included. ART, injected C/C++ compiler runtimes and runtime loader resolution require separate inventory.",
-    "validation": "Full acceptance464 passed: 128 original-source guards, 53 header/macro probes; 17 focused audit regressions passed separately."
+    "required_original_clients": 133,
+    "preprocessed_boundaries": 64,
+    "consumed_headers": 2902,
+    "scope": "Native island/Skia Step.Run commands and actual ELF compiler records for declared C/C++ inputs in linked Step.Compile libraries; all compilation contexts of selected boundary header/macro probes; platform/NDK/PDF ELF owners. Pinned Rust compiler commands, effective cfg, consumed inputs, sysroot and bridge ownership are included. The separate runtime exception inventory covers declared ART/libcore build inputs and staged ELF resolution; compiler-injected C/C++ archives and exhaustive dynamic dlsym resolution are outside that evidence.",
+    "validation": "Full acceptance502 passed: 133 original-source guards and 64 header/macro probes; 20 focused audit regressions passed"
   },
   "graphics_helpers_followup": {
     "sources": [
@@ -743,19 +750,27 @@
     "target": "acceptance-test",
     "passed": true,
     "verified_date": "2026-09-16",
-    "log": "/tmp/azk-priority-accept464.log",
+    "log": "/tmp/azk-network-accept502.log",
     "apk_cases": 28,
     "recorded_actions": 88,
     "structured_runtime_issues": 0,
     "failure_artifacts": 0,
     "unsuccessful_actions": 0,
     "video": "All three fresh stock-video screenshots inspected; SurfaceView, TextureView, resize and pixel checks passed",
-    "installed_outputs": "refreshed; platform and PDF-client SHA-256 match the native provenance report",
+    "installed_outputs": "refreshed; platform, PDF-client and Binder NDK SHA-256 match native provenance",
     "known_optional_exclusions": [
       "performance-hint TestSessionCreationWithNullLayers remains a pinned null-SurfaceControl failure outside aggregate acceptance",
       "codec2-params-test retains two known host-compiler parameter comparisons outside aggregate acceptance"
     ],
-    "checkpoint": "Original Process and ANativeWindow with dual host scheduling modes"
+    "checkpoint": "Completed networking, original composer client, native provenance and runtime exception inventory",
+    "session_loss_cases": 6,
+    "composer_service_restart": "passed with a fresh committed transaction; old Binder identity stays dead",
+    "log_sha256": "e62718028631bc50a057a08c38f4e8d7ebf8aa31d5b6927894c208fe0e1643f6",
+    "installed_sha256": {
+      "platform": "132a947a7f7e26a4d292173a7dabd7daffccb2b543316d8caa8826b233044423",
+      "pdfclient": "4cb4f80a3856ba1bc5666c5741cfe57ad6118ff36fb3afc6e235099b57b2497b",
+      "ndk": "cd234ee68ba3de14b97c3fc9d95877ca3df8d415ad3ef8355bbb0da29668bd9d"
+    }
   },
   "skia_egl_followup": {
     "implementation": "Original Soong SkUserConfig generator uses selected GN Android features, Vulkan and JPEG gainmaps. Original Android logging and Vulkan AHardwareBuffer implementation are compiled. Native and app EGL share context telemetry filtering, begin-frame validation, damage swaps and damage-region translation through system Mesa. Handwritten input/HWUI flags deleted in favor of original generators.",
@@ -970,7 +985,7 @@
   "linked_native_followup": {
     "implementation": "Record actual lowered Clang commands in the production Step.Compile libraries linked by the native island; verify declared C/C++ coverage, source identity and every selected compilation context. Restore original BufferQueueThreadState through existing authenticated AIDL/HIDL interfaces.",
     "validation": {
-      "aggregate_acceptance": "passed /tmp/azk-priority-accept464.log",
+      "aggregate_acceptance": "passed /tmp/azk-network-accept502.log",
       "apk_cases": 28,
       "recorded_actions": 88,
       "structured_runtime_issues": 0,
@@ -981,10 +996,10 @@
     "libraries": 17,
     "compilation_records": 1365,
     "source_counts": {
-      "unchanged": 714,
+      "unchanged": 715,
       "generated": 637,
       "owned": 7,
-      "modified": 7
+      "modified": 6
     },
     "recorded_objects_in_platform": 675,
     "removed": "Unused VideoSurface implementation/header and its adapter-only test; current Codec2/IGBA/video regressions retained",
@@ -1010,5 +1025,36 @@
     "generated_consumed_files": 3,
     "inventoried_sysroot_archives": 27,
     "validation": "44 original input-verifier tests and included-module cache invalidation experiment passed; full acceptance464 includes native Rust provenance."
+  },
+  "networking_followup": {
+    "implementation": "Original NetworkUtils, TrafficStats and NetworkUtilsInternal JNI with NetdClient/FwmarkClient/NDK network APIs in one platform ELF. Removed owned JNI and Kotlin process-networking/accounting substitutes.",
+    "declared_corrections": "Pinned NetworkUtils host-resolution JNI argument count and unrelocated TcpRepairWindow names; FwmarkClient calls the Linux socket boundary instead of the absent fwmark daemon.",
+    "host_boundary": "One inherited Linux network namespace, validated by SO_NETNS_COOKIE; original per-process policy reaches libcore and Android native socket/DNS operations. Actual kernel marks and failures are preserved. Other Android network domains, VPN exemptions and BPF tagging are unsupported; Android dnsproxyd is absent.",
+    "validation": "Full acceptance502: Java/native networking deny and restore, synchronous/denied asynchronous DNS, real loopback, socket filters/cookies, original errno ABI, DownloadManager transfers and network validation. No arbitrary network-ID success."
+  },
+  "composer_client_followup": {
+    "implementation": "Removed hosted SurfaceComposerClient patch. Original clients reconnect while AZKB lives; permanent session retirement preserves known dead identities in the retained Binder service adapter for final cleanup.",
+    "validation": "Native replacement SF accepts a new stock-client layer transaction and committed callback; original handles remain dead. Complete-session retirement returns DEAD_OBJECT. Java output cleanup and all six supervised session-loss cases passed in acceptance502."
+  },
+  "runtime_inventory_followup": {
+    "report": "zig-out/bin/art/runtime-inventory.json",
+    "elf_artifacts": 35,
+    "declared_input_rows": 2819,
+    "unique_declared_inputs": 1625,
+    "compile_units": 1722,
+    "external_compiler_commands": 2,
+    "host_dependencies": 8,
+    "scope": "declared ART/libcore/Bionic runtime exception",
+    "limitation": "Declared build inputs, not exhaustive preprocessor/compiler-injected inputs or dlsym resolution",
+    "validation": "Required by every runtime assembly and acceptance502; three parser regressions and a missing-library experiment pass. Staged host-loader closure resolves outside the repository; packaged SONAMEs cannot escape the installation."
+  },
+  "migration_scope": {
+    "completed": true,
+    "retained_exceptions": [
+      "Hosted libbinder/AZKB transport",
+      "ART/libcore/Bionic translation and exec-based startup",
+      "Declared native host backends: system Mesa/EGL, gralloc, Wayland, PipeWire, FFmpeg, Linux networking and scheduling"
+    ],
+    "meaning": "Selected framework/JNI/native client migration and its declared provenance/behavioral acceptance are complete. This is not literal whole-process AOSP identity or support for every Android device capability."
   }
 }

@@ -1,0 +1,28 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] netd: use the host kernel policy boundary
+
+Original NetdClient owns validation, process policy and libc hook ordering.
+This host has no Android fwmark daemon; its original absent-daemon success
+would incorrectly accept network selection, VPN exemptions and BPF tagging.
+Delegate commands below that client to the real Linux socket policy boundary.
+
+--- a/client/FwmarkClient.cpp
++++ b/client/FwmarkClient.cpp
+@@ -69,5 +69,12 @@
+ }
+ 
++#ifdef __ANDROID_HOST__
++extern "C" int azk_netd_host_command(const FwmarkCommand*, int);
++#endif
++
+ int FwmarkClient::send(FwmarkCommand* data, int fd, FwmarkConnectInfo* connectInfo) {
++#ifdef __ANDROID_HOST__
++    return azk_netd_host_command(data, fd);
++#else
+     mChannel = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+     if (mChannel == -1) {
+@@ -121,3 +128,4 @@
+ 
+     return error;
++#endif
+ }

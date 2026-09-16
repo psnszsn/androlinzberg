@@ -7,9 +7,15 @@
 #include <utils/Vector.h>
 #include <log/log.h>
 #include <functional>
+#include <map>
+#include <mutex>
+#include <string>
 #include <variant>
+extern "C" bool azk_binder_sessionDisconnected();
 namespace android {
 class IServiceManager : public virtual RefBase {
+  std::mutex mSessionMutex;
+  std::map<std::string, sp<IBinder>> mSessionServices;
 public:
   static constexpr int DUMP_FLAG_PRIORITY_DEFAULT = 1 << 3;
   sp<IBinder> checkService(const String16 &name) {
@@ -24,8 +30,23 @@ public:
   }
 #pragma clang diagnostic pop
   sp<IBinder> waitForService(const String16 &name) {
-    return IBinder::fromNative(
-        AServiceManager_waitForService(String8(name).c_str()));
+    const std::string key(String8(name).c_str());
+    auto service = IBinder::fromNative(AServiceManager_waitForService(key.c_str()));
+    std::lock_guard lock(mSessionMutex);
+    if (service) {
+      mSessionServices[key] = service;
+      return service;
+    }
+    // Pinned IServiceManager waits for replacements while the broker lives.
+    // A lost AZKB session cannot restart its object namespace. Preserve a
+    // previously acquired dead identity for final cleanup, whose transactions
+    // return DEAD_OBJECT, rather than inventing a replacement or waiting forever.
+    // Unknown services and ordinary live-session failures still return null.
+    if (azk_binder_sessionDisconnected()) {
+      const auto previous = mSessionServices.find(key);
+      if (previous != mSessionServices.end()) return previous->second;
+    }
+    return nullptr;
   }
   bool isDeclared(const String16 &name) {
     return AServiceManager_isDeclared(String8(name).c_str());

@@ -5,11 +5,13 @@ The JVM source check covers selected framework source files. Android-native
 implementations, runtime libraries and process placement still contain substantial
 host adaptations.
 
-The complete `acceptance-test` target passed on 2026-09-16 for the original
-Process, native-window and dual scheduling checkpoint. All 28 APK cases passed, with 88 recorded
-actions, zero structured runtime issues and no failure artifacts. Native, JVM,
-system, desktop, video, source-provenance and build checks passed. Source
-packages, pins and installed outputs are current.
+The agreed native client migration is complete within the boundaries documented
+here. The complete `acceptance-test` target passed on 2026-09-16: all 28 APK
+cases, 88 recorded actions, zero structured runtime issues and no new failure
+artifacts. Native, JVM, system, desktop, audio, video, source-provenance and build
+checks passed, including all six session-loss cases and original composer service
+reconnection. All three fresh video frames were inspected. Package pins and
+installed platform/PDF/Binder hashes match this checkpoint.
 
 This is a source and architecture audit, not an exhaustive per-method
 compatibility certification. The follow-up validation record distinguishes
@@ -37,17 +39,17 @@ also does not mean zero unsupported native operations.
 
 ## Compiled native check
 
-`native-client-source-test` consumes the actual 2,616 island/Skia compiler commands
+`native-client-source-test` consumes the actual 2,623 island/Skia compiler commands
 and 1,365 recorded Clang commands from 17 linked libraries. The direct inputs are
-2,292 unchanged AOSP units, 22 modified, 21 owned and 281 generated. Library
-records contain 714 unchanged, seven modified, seven owned and 637 generated units.
+2,296 unchanged AOSP units, 24 modified, 22 owned and 281 generated. Library
+records contain 715 unchanged, six modified, seven owned and 637 generated units.
 These are compilation contexts, including unused archive members, not unique
 source counts or a stock-client percentage. The report separately identifies the
 675 recorded objects included in the platform ELF.
 
 All declared C/C++ library inputs require compiler records. The audit verifies
-128 required original sources and preprocesses 53 sensitive boundaries in every
-selected compilation context, recording macros and 2,832 consumed headers. Seventeen
+133 required original sources and preprocesses 64 sensitive boundaries in every
+selected compilation context, recording macros and 2,902 consumed headers. Twenty
 regressions cover disabled branches, incorrect Binder headers, malformed archives,
 quoted options and explicit source-language selection. Raw compiler metadata can
 contain temporary paths; this check does not establish reproducible binary output.
@@ -56,8 +58,9 @@ The check also verifies JNI registrar ownership and rejects FFmpeg/VAAPI depende
 in the platform client ELF. A runtime test resolves six NDK entry points inside the
 actual application, checks unique platform/Binder images, and rejects decoding
 libraries in its process mappings. This is representative ownership coverage, not
-an exhaustive dynamic symbol-resolution proof. ART, injected C/C++ compiler runtimes
-and the complete hosted-loader dependency graph still need separate inventory.
+an exhaustive dynamic symbol-resolution proof. The separate runtime inventory below covers declared ART/libcore build inputs
+and staged ELF dependency resolution; compiler-injected C/C++ archives and
+exhaustive dynamic symbol resolution remain outside its evidence.
 The report is `zig-out/test-results/native-client-source.json` and runs in acceptance.
 
 Original BufferQueueThreadState now selects authenticated AIDL/HIDL caller identity
@@ -81,6 +84,28 @@ tests. A build experiment also verified that changing an included Rust module,
 without changing the root source, invalidates the cached crate. Rust environment
 comments are preserved for auditing while Zig receives a compatible dependency
 rule. These focused checks do not replace full APK acceptance.
+
+## Runtime exception inventory
+
+The runtime assembly now produces `bin/art/runtime-inventory.json` from the
+actual ART, libcore, ICU and Bionic translation build graph. It lists declared
+source inputs and hashes, flags/macros, separately invoked compiler commands,
+static link inputs, exported/imported dynamic symbols, SONAMEs and dependencies.
+The runtime package pin and build-applied loader/network patches are included.
+This is the agreed runtime exception, not a claim that ART or libcore are stock.
+
+The check runs the host loader against each staged ELF with the staged library
+directory, from outside the repository. It rejects unresolved dependencies and
+runtime SONAMEs resolved from outside that installation. External host libraries
+are recorded with hashes. Every runtime assembly, including APK acceptance,
+depends on the check. Three loader-parser regressions and a missing-library
+experiment verify rejection of incomplete installations.
+
+This inventory records declared compilation inputs; it does not claim exhaustive
+preprocessor dependencies, compiler-injected runtime archives or every dynamic
+`dlsym` resolution. The framework native audit separately records real compiler
+commands and preprocessed boundary headers. Existing loader and resource-path
+tests exercise Android SONAME aliases and native process-handle resolution.
 
 ## Skia and EGL dependency follow-up
 
@@ -114,11 +139,11 @@ GLConsumer, SyncFeatures, BufferQueueCore and SurfaceTexture EGLConsumer. Every 
 `.h`, `.hpp`, `.hxx`, `.S`, `.s` and `.inl` member was compared byte-for-byte
 with the corresponding pinned checkout path. Both current archives contain
 multiple top-level directories; their paths were retained. Tracked reference
-state was checked clean in all 11 projects containing differences/additions.
+state is checked against the project revisions recorded in the audit policy.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 16,119 | 58 | 0 |
+| Framework | 16,118 | 59 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -138,13 +163,13 @@ the build selection; it is not a complete dynamic-symbol resolution audit.
 
 [`main.zig`](../src/main.zig) calls the Binder and graphics registrars and then
 [`host_natives.zig`](../src/platform/host_natives.zig) when booting APK ART.
-[`framework_jni.zig`](../src/binder/framework_jni.zig) has 6 delegated
-registration modules, plus its own registrations and the Binder registrar.
+[`framework_jni.zig`](../src/binder/framework_jni.zig) has 4 delegated
+registration modules, alongside the original registrars loaded from the platform library.
 That number is not a replaced-class count: it includes host-only cursor helpers
 and dev.artzig EGL/NDK regression helpers. Registering a helper does not prove
 an app uses it.
 
-## Audio and media: app-side replacements
+## Audio and media clients
 
 ### AudioTrack, audio policy and AAudio (stock)
 
@@ -386,8 +411,11 @@ commands and generated reports.
 - GLConsumer, SyncFeatures, BufferQueueCore and SurfaceTexture EGLConsumer now
   use original sources. Android EGL native-buffer imports and balanced display
   ownership use the shared Mesa driver below these clients. SurfaceComposerClient
-  and some native Surface/Image wrappers still retain patches for transport,
-  lifetime, portability or failure behavior. See the exact file inventory.
+  now uses its original source. Final session retirement lives in the Binder
+  service adapter: a known dead service identity remains available for cleanup
+  after permanent broker loss, with transactions returning DEAD_OBJECT. While
+  the broker lives, lookup still waits for a replacement. Native SurfaceControl
+  only removes unused legacy configstore includes; the audit checks that exact patch.
 - The original WebView APK is unchanged, but it loads these adapted native
   graphics/media/runtime dependencies. APK provenance is not provenance of
   the full process it runs in.
@@ -411,10 +439,10 @@ process, while the separate presenter and SurfaceFlinger own presentation.
 |---|---|---|
 | ART and process bootstrap | [ART patches](../artzig/patches/art/), [`HostedAndroidRuntime.cpp`](../src/native/HostedAndroidRuntime.cpp), [`zygote_tagging_jni.zig`](../src/binder/zygote_tagging_jni.zig); hosted class-loader projection, native-loader callbacks, stack/exit behavior and exec startup | Runtime changes are outside the JVM source identity result. Hosted zygote speaks stock requests but starts a fresh VM, not forked preloaded ART |
 | libc and dynamic loading | [`bionic_translation.cfg`](../src/bionic_translation.cfg), `artzig/src/art.zig`, [`GraphicsEnvironmentBackend.cpp`](../src/native/GraphicsEnvironmentBackend.cpp) | Android sonames map to host or owned implementations; Android linker namespaces are absent and extension requests fail. Restoring native clients is distinct from using full stock bionic/linker |
-| Libcore and files | [libcore patches](../artzig/patches/libcore/), [`host_paths.zig`](../artzig/src/host_paths.zig), AssetsProvider patch | Native path and authenticated-identity translation runs in the process. Move fixed filesystem/identity differences below libcore or document an explicit runtime exception |
+| Libcore and files | [libcore patches](../artzig/patches/libcore/), [`host_paths.zig`](../artzig/src/host_paths.zig), AssetsProvider patch | Native path and authenticated-identity translation runs in the process. Retained as the agreed runtime exception, inventoried separately from stock framework/JNI sources |
 | SystemProperties / SystemClock / Process | Original JNI, Bionic account lookup and libprocessgroup; native properties, authenticated identity/procfs and scheduling adapters | Properties retain hosted state and authorization. Process priority queries return actual kernel values; denied own-thread boosts are best effort for ordinary users. Optional host setup enables boosts |
 | SharedMemory / MemoryFile / ApplicationSharedMemory / MemoryIntArray | Original JNI, compiled against the existing libcutils sealed-memfd backend | Host adaptation is below JNI; original mapping, atomic access and cleanup are retained |
-| NetworkUtils / process networking / TrafficStats | Central JNI, [`network_utils_internal_jni.zig`](../src/binder/network_utils_internal_jni.zig), [`traffic_stats_jni.zig`](../src/binder/traffic_stats_jni.zig) | Owned socket/fallback behavior. VPN/netd policy and Android per-UID tagging are not implemented by successful ordinary Linux networking |
+| NetworkUtils / process networking / TrafficStats | Original JNI and NetdClient; [`NetworkBackend.cpp`](../src/native/network/NetworkBackend.cpp) and native libc hooks | Original per-process network policy reaches Java and Android native sockets/DNS. Host Linux owns routing. The observed network represents the inherited host namespace; its socket identity is checked using SO_NETNS_COOKIE. Other Android network IDs, VPN exemptions and BPF tagging fail explicitly. Android dnsproxyd is absent |
 | Trace and Java Perfetto data sources | Original JNI and Perfetto SDK | In-process packet capture works; no system traced daemon is installed |
 | Log / EventLog / SecurityLog | Original JNI and liblog; diagnostics observe Java-originated liblog output | Original host log reader returns no historical events; Android logd is absent |
 | Debug | Original JNI and memory/debugger clients; [`RuntimeDiagnostics.cpp`](../src/native/RuntimeDiagnostics.cpp) | Host allocator ABI and kernel-metadata fallback remain below JNI; missing Android services and allocation walking are explicit |
@@ -443,24 +471,24 @@ reader visibility and cleanup, including cross-process MemoryIntArray transfer.
 
 Utility validation passed both framework suites, 23 testkit tests and all 28 APK
 tests (90 recorded actions, zero structured runtime issues in the final run).
-## Remaining work and acceptance criteria
+## Completed migration scope
 
-1. Close remaining networking JNI adaptations against
-   their native dependencies and host policy. Preserve explicit missing-service
-   behavior where Android infrastructure is absent.
-2. Retain the agreed libbinder/AZKB and ART/libcore runtime adaptations as
-   explicit exceptions, with their source and ABI inventory kept current.
-3. Complete compiled native source/flags/header and ELF provenance checks.
-   Sensors, Codec2, MediaPlayer and metadata retrieval now use original service clients.
-4. Close remaining libgui, OpenGL binding and native Surface/Image wrapper
-   adaptations. HWUI and Skia buffer clients are now original; host EGL, gralloc
-   and compositor implementations remain at their platform boundaries. Close
-   device, networking, loader and runtime gaps against the declared scope.
+Networking now uses original JNI and NetdClient policy through the native Linux
+boundary. Original SurfaceComposerClient replaces its hosted lifecycle patch;
+service restart and whole-session retirement are both covered. OpenGL JNI keeps
+only the exact audited buffer corrections, while original Surface/Image/HWUI and
+Skia clients use the existing host EGL, gralloc and compositor boundaries.
 
-The native acceptance check now includes linked C/C++ libraries. Complete the remaining
-runtime inventory and ELF/soname resolution checks. Service-backed operations must prove backend
-placement and service death/reconnection. Merely adding servers, retaining the replacement
-JNI, and passing the existing UI suite would not complete this work.
+Compiled C/C++ sources, flags, selected preprocessed boundaries, linked objects,
+Rust dependencies and ELF ownership are audited. The separate runtime inventory
+records the retained ART/libcore exception and verifies staged loader dependencies.
+The known optional upstream test exclusions remain recorded in the JSON report.
+
+The agreed libbinder/AZKB and ART/libcore adaptations remain explicit exceptions.
+System Mesa, Wayland, PipeWire and FFmpeg keep their existing roles; no extra GPU
+presentation copy was introduced. Unavailable Android routing domains, hardware,
+HALs and native daemons retain explicit failures. This completion does not claim
+literal stock identity for the entire process or full Android device capabilities.
 
 ## Media and graphics JNI follow-up validation
 
@@ -769,3 +797,25 @@ Full aggregate acceptance passed for this checkpoint under the unchanged
 issues and no failed actions. All six service-loss cases passed; SurfaceView,
 TextureView and resized video screenshots were inspected. Package pins and
 installed platform/PDF-client hashes match the provenance report.
+
+## Networking and composer closure
+
+The owned NetworkUtils, NetworkUtilsInternal and TrafficStats JNI, plus their
+Kotlin process-networking/accounting substitutes, are deleted. Original NetdClient
+owns validation and process state. Native libcore/Bionic dispatch reaches that same
+state for Java and Android native sockets/DNS. The inherited host namespace is
+validated by its kernel cookie; selecting an unrelated Android network fails.
+Real DownloadManager transfers and network validation pass through this path.
+
+The composer regression kills and replaces the actual SF process while keeping
+the broker live. Original clients acquire a new service, create a layer and receive
+a committed transaction callback, while the old Binder identity remains dead.
+A second case retires the broker and verifies bounded cleanup with DEAD_OBJECT.
+Cold-launch tests now wait for RESUME before observing configuration callbacks,
+so startup callbacks cannot be counted as configuration-change callbacks.
+
+Full acceptance passed for this closure under the ordinary user's existing
+permissions. Runtime inventories and both source archives are current; the
+framework archive includes the declared networking corrections and removes the
+composer-client patch. The ART archive is unchanged; its explicit build-time
+network portability adaptation is recorded by the runtime inventory.

@@ -109,9 +109,16 @@ internal object StockNetworkValidationSmoke {
             finally { parcel.recycle() }
         }
         Server().use { server ->
+            // Real HTTP uses the supported host namespace; the evidence-only
+            // state-machine fixtures below can retain synthetic network IDs.
+            val routed = network(dev.artzig.system.HOST_NAMESPACE_NETWORK_ID)
+            HttpNetworkProbe { HttpNetworkProbe.Config(server.url("/ok"), server.url("/ok")) }.use {
+                check(it.evaluate(network(100)).isFailed)
+                check(server.requests.isEmpty())
+            }
             fun evaluate(https: String, http: String, fallback: String? = null, useHttps: Boolean = true): Result =
                 HttpNetworkProbe { HttpNetworkProbe.Config(server.url(https), server.url(http), fallback?.let(server::url),
-                    useHttps = useHttps, userAgent = "stock-probe-fixture") }.use { it.evaluate(network()) }
+                    useHttps = useHttps, userAgent = "stock-probe-fixture") }.use { it.evaluate(routed) }
             check(evaluate("/ok", "/fail").isSuccessful)
             check(evaluate("/fail", "/ok").isPartialConnectivity)
             val portal = evaluate("/fail", "/portal")
@@ -122,12 +129,12 @@ internal object StockNetworkValidationSmoke {
             val page = evaluate("/fail", "/page", useHttps = false)
             check(page.isPortal && page.redirectUrl == server.url("/page").toString())
             check(evaluate("/fail", "/ok", useHttps = false).isSuccessful)
-            val pacNetwork = network().let { it.copy(links = LinkProperties(it.links).apply {
+            val pacNetwork = routed.let { it.copy(links = LinkProperties(it.links).apply {
                 httpProxy = ProxyInfo.buildPacProxy(Uri.parse(server.url("/pac-redirect").toString()))
             }) }
             HttpNetworkProbe { HttpNetworkProbe.Config(null, null) }.use { check(it.evaluate(pacNetwork).isSuccessful) }
-            HttpNetworkProbe { HttpNetworkProbe.Config(null, null, enabled = false) }.use { check(it.evaluate(network()).isSuccessful) }
-            HttpNetworkProbe { HttpNetworkProbe.Config(null, null) }.use { check(it.evaluate(network()).isFailed) }
+            HttpNetworkProbe { HttpNetworkProbe.Config(null, null, enabled = false) }.use { check(it.evaluate(routed).isSuccessful) }
+            HttpNetworkProbe { HttpNetworkProbe.Config(null, null) }.use { check(it.evaluate(routed).isFailed) }
             val requests = server.requests.toList()
             check(requests.none { it.first.startsWith("http://signin.invalid") })
             check(requests.filter { it.first != "/pac" && it.first != "/pac-redirect" }
