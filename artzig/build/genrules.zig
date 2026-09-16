@@ -89,8 +89,8 @@ pub fn build(b: *std.Build, o: Options) art.GeneratedArtifacts {
     // --- aconfig flag library: vendored
     return .{
         .aconfig = .{
-            .sources = &.{b.path("src/gen/aconfig/com_android_art_flags.cc")},
-            .include_roots = &.{b.path("src/gen/aconfig")},
+            .sources = b.allocator.dupe(std.Build.LazyPath, &.{b.path("src/gen/aconfig/com_android_art_flags.cc")}) catch @panic("OOM"),
+            .include_roots = b.allocator.dupe(std.Build.LazyPath, &.{b.path("src/gen/aconfig")}) catch @panic("OOM"),
         },
         .compiler_operators = .{ .sources = compiler_operators },
         .dex2oat_operators = .{ .sources = dex2oat_operators },
@@ -98,6 +98,6 @@ pub fn build(b: *std.Build, o: Options) art.GeneratedArtifacts {
         .dexfile_operators = .{ .sources = dexfile_operators },
         .runtime_operators = .{ .sources = runtime_operators },
         .mterp = mterp,
-        .asm_defines = .{ .sources = &.{}, .include_roots = &.{asm_defines.dirname()} },
+        .asm_defines = .{ .sources = &.{}, .include_roots = b.allocator.dupe(std.Build.LazyPath, &.{asm_defines.dirname()}) catch @panic("OOM") },
     };
 }
