@@ -65,6 +65,14 @@ comptime {
 
 var g_io: std.Io = undefined;
 
+pub export fn azk_kernel_vmap_stack() callconv(.c) c_int {
+    const mapped = @import("kernel_metadata.zig").runningKernelStackMapping(g_io, std.heap.c_allocator) catch |err| {
+        std.log.err("running kernel stack metadata unavailable: {t}", .{err});
+        return -1;
+    };
+    return if (mapped) 1 else 0;
+}
+
 pub export fn azk_platform_bind_io(
     userdata: ?*anyopaque,
     vtable: *const std.Io.VTable,

@@ -1,10 +1,10 @@
 {
-  "revision": "Original PDF editing and graphics registration checkpoint (2026-09-15)",
+  "revision": "Recording and Debug client follow-up (pending validation, 2026-09-16)",
   "reference": "Pinned checkout described by aosp/README.md; project revisions below",
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 16052,
+      "unchanged": 16093,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -68,7 +68,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "9104ba9bfcfd393b919646c49f5f5ad45d6b10a425ed24560f8fdf0432f397be"
+      "archive_sha256": "b42a8a5d82abd8436f481a48ac475800015e038e24fc337ed08faa3acd135df4"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -212,6 +212,18 @@
     "packages/providers/MediaProvider": {
       "revision": "d3bb9ac8e6daab448635eaa30e85e2e8d8cbad8e",
       "tracked_clean": true
+    },
+    "system/memory/libmemtrack": {
+      "revision": "94dd383b1e2ca9c0dfb8ed94e7af1459ea10b55a",
+      "tracked_clean": true
+    },
+    "system/memory/libmeminfo": {
+      "revision": "d392610501ce556d7aa10d047e02f197256cd6a4",
+      "tracked_clean": true
+    },
+    "system/libprocinfo": {
+      "revision": "c505848d69aae712eda6cb89cd50e2dfffa592e0",
+      "tracked_clean": true
     }
   },
   "date": "2026-09-15",
@@ -229,12 +241,10 @@
   ],
   "delegated_registration_modules": [
     "src/binder/network_utils_internal_jni.zig",
-    "src/binder/debug_jni.zig",
     "src/binder/pointer_icon_jni.zig",
     "src/binder/egl_interop_test.zig",
     "src/binder/traffic_stats_jni.zig",
     "src/binder/zygote_tagging_jni.zig",
-    "src/binder/audio_system_jni.zig",
     "src/binder/ndk_codec_test.zig"
   ],
   "registration_scope_note": "8 delegated modules, not replaced-class counts: pointer_icon_jni owns a host cursor helper; egl_interop_test and ndk_codec_test register only dev.artzig tests. Central and C++ registrars are additional.",
@@ -688,18 +698,18 @@
   "compiled_island_followup": {
     "target": "native-client-source-test",
     "report": "zig-out/test-results/native-client-source.json",
-    "inputs": 2581,
+    "inputs": 2607,
     "source_counts": {
-      "unchanged": 2261,
+      "unchanged": 2282,
       "modified": 22,
-      "owned": 21,
-      "generated": 277
+      "owned": 22,
+      "generated": 281
     },
-    "required_original_clients": 101,
-    "preprocessed_boundaries": 42,
-    "consumed_headers": 2583,
+    "required_original_clients": 113,
+    "preprocessed_boundaries": 46,
+    "consumed_headers": 2790,
     "scope": "Native island and linked Skia Step.Run translation units; effective macros and consumed headers for selected restored boundaries; platform/NDK ELF owners. Other static linked libraries, ART and runtime loader resolution are outside this check.",
-    "validation": "Passed full acceptance355: 101 original-source guards, 42 header/macro probes and seven audit failure regressions."
+    "validation": "Passed full acceptance377: 113 original-source guards, 46 header/macro probes and eight audit failure regressions."
   },
   "graphics_helpers_followup": {
     "sources": [
@@ -735,9 +745,9 @@
     "target": "acceptance-test",
     "passed": true,
     "verified_date": "2026-09-16",
-    "log": "/tmp/azk-stock-pdf-renderer-acceptance355.log",
+    "log": "/tmp/azk-recording-debug-accept377.log",
     "apk_cases": 28,
-    "recorded_actions": 88,
+    "recorded_actions": 90,
     "structured_runtime_issues": 0,
     "failure_artifacts": 0,
     "unsuccessful_actions": 0,
@@ -747,7 +757,7 @@
       "performance-hint TestSessionCreationWithNullLayers remains a pinned null-SurfaceControl failure outside aggregate acceptance",
       "codec2-params-test retains two known host-compiler parameter comparisons outside aggregate acceptance"
     ],
-    "checkpoint": "Original PDF renderer and modern GIF decoder"
+    "checkpoint": "Original recording, effects and Debug JNI"
   },
   "skia_egl_followup": {
     "implementation": "Original Soong SkUserConfig generator uses selected GN Android features, Vulkan and JPEG gainmaps. Original Android logging and Vulkan AHardwareBuffer implementation are compiled. Native and app EGL share context telemetry filtering, begin-frame validation, damage swaps and damage-region translation through system Mesa. Handwritten input/HWUI flags deleted in favor of original generators.",
@@ -944,5 +954,19 @@
       "video": "All three fresh video screenshots inspected; rendering, texture transition and resize passed",
       "focused": "PDF rendering, text extraction/search, descriptor/error contracts, independent editor/renderer state and modern GIF decoding passed"
     }
+  },
+  "recording_debug_followup": {
+    "implementation": "Original MediaRecorder, MediaProfiles, AudioEffect, default-effect and Visualizer JNI; original Debug JNI, memory clients, generated memtrack protocols and debuggerd client. Removed two handwritten JNI modules. Host allocator/BTF adapters remain below Debug JNI.",
+    "validation": {
+      "aggregate_acceptance": "passed /tmp/azk-recording-debug-accept377.log",
+      "apk_cases": 28,
+      "recorded_actions": 90,
+      "structured_runtime_issues": 0,
+      "failed_actions": 0,
+      "failure_artifacts": 0,
+      "video": "All three fresh video screenshots inspected; rendering, texture transition and resize passed",
+      "focused": "Recorder permission denial and lifecycle contracts; original Visualizer constants; Debug memory, descriptor and kernel metadata contracts; absent memtrack Binder null handling; malformed and actual kernel BTF metadata passed"
+    },
+    "limitations": "No host capture device or audio-effect engine is added. Heap-allocation walking remains explicitly unavailable, and memtrack/debuggerd clients retain their original missing-service failures."
   }
 }

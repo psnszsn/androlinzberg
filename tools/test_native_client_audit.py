@@ -66,6 +66,18 @@ class NativeAuditTest(unittest.TestCase):
         self.assertTrue(audit.registrar_matches("android::register_pdf(_JNIEnv*)", "android::register_pdf("))
         self.assertFalse(audit.registrar_matches("android::register_pdf_backup(_JNIEnv*)", "android::register_pdf("))
 
+    def test_debug_requires_wide_allocator_counters_and_private_kernel_query(self):
+        probe = {"macros": {"__ANDROID__": "1", "mallinfo": "mallinfo2",
+                            "mallinfo2(...)": "azk_android_mallinfo(__VA_ARGS__)",
+                            "mallopt": "azk_android_mallopt", "LoadKernelConfigs": "LoadDebugStackConfigs"},
+                 "headers": []}
+        name = audit.CORE + "android_os_Debug.cpp"
+        self.assertFalse(audit.boundary_errors(name, probe, Path("/repo")))
+        for key in ("mallinfo", "mallinfo2(...)", "LoadKernelConfigs"):
+            invalid = {"macros": dict(probe["macros"]), "headers": []}
+            del invalid["macros"][key]
+            self.assertTrue(audit.boundary_errors(name, invalid, Path("/repo")))
+
     def test_dependency_file_escaped_paths(self):
         with tempfile.TemporaryDirectory() as temp:
             header = Path(temp) / "header with spaces.h"

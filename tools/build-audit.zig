@@ -317,6 +317,7 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
         "src/native/HostedAndroidRuntime.cpp",
         "src/native/MediaPlayerJniBridge.cpp",
         "src/native/PlatformFiles.cpp",
+        "src/native/RuntimeDiagnostics.cpp",
         // Original sensor service construction and public NDK contract checks.
         "src/native/SensorClientTest.cpp",
         "src/native/SensorServiceBootstrap.cpp",

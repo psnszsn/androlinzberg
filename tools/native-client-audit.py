@@ -102,6 +102,19 @@ HEADER_PROBES.update({
     "packages/providers/MediaProvider/pdf/framework/libs/pdfClient/pdf_document_jni.cc",
 })
 ANDROID_BRANCHES.add("packages/providers/MediaProvider/pdf/framework/libs/pdfClient/pdf_document_jni.cc")
+REQUIRED.update({CORE + "android_os_Debug.cpp", "frameworks/av/media/libmedia/mediarecorder.cpp",
+                 "system/memory/libmeminfo/procmeminfo.cpp", "system/memory/libmeminfo/sysmeminfo.cpp",
+                 "system/memory/libmemtrack/memtrack.cpp"})
+REQUIRED.update({"frameworks/base/media/jni/" + name for name in (
+    "android_media_MediaRecorder.cpp", "android_media_MediaProfiles.cpp",
+    "audioeffect/android_media_AudioEffect.cpp", "audioeffect/android_media_SourceDefaultEffect.cpp",
+    "audioeffect/android_media_StreamDefaultEffect.cpp", "audioeffect/android_media_Visualizer.cpp",
+    "audioeffect/Visualizer.cpp",
+)})
+ANDROID_BRANCHES.update({CORE + "android_os_Debug.cpp", "frameworks/base/media/jni/android_media_MediaRecorder.cpp"})
+HEADER_PROBES.update({CORE + "android_os_Debug.cpp", "frameworks/base/media/jni/android_media_MediaRecorder.cpp",
+                     "frameworks/base/media/jni/audioeffect/android_media_AudioEffect.cpp",
+                     "system/memory/libmemtrack/memtrack.cpp"})
 SKIA_ANDROID_BUFFER = "external/skia/src/gpu/ganesh/vk/AHardwareBufferVk.cpp"
 SKIA_ANDROID_SOURCES = {SKIA_ANDROID_BUFFER,
     "external/skia/src/gpu/vk/VulkanInterface.cpp",
@@ -241,6 +254,11 @@ def preprocess(command: list[str]) -> dict:
 
 def boundary_errors(source: str, probe: dict, repo: Path) -> list[str]:
     errors = []
+    if source == CORE + "android_os_Debug.cpp":
+        expected = {"mallinfo": "mallinfo2", "mallinfo2(...)": "azk_android_mallinfo(__VA_ARGS__)",
+                    "mallopt": "azk_android_mallopt", "LoadKernelConfigs": "LoadDebugStackConfigs"}
+        if any(probe["macros"].get(key) != value for key, value in expected.items()):
+            errors.append("Debug client lost the host allocator ABI or private kernel-query boundary")
     if source == "external/skia/src/codec/SkWuffsCodec.cpp":
         macros = probe["macros"]
         if not {"SK_CODEC_DECODES_GIF", "SK_HAS_WUFFS_LIBRARY"}.issubset(macros) or "WUFFS_IMPLEMENTATION" in macros:

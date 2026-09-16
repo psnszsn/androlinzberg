@@ -63,7 +63,4 @@ namespace android {
 std::string dumpMemoryAddresses(size_t) {
     return "Allocation backtraces are unavailable with the host allocator.\n";
 }
-std::string GetUnreachableMemoryString(bool, size_t) {
-    return "Unreachable-memory scanning is unavailable with the host allocator.\n";
-}
 } // namespace android

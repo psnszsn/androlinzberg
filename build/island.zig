@@ -600,6 +600,30 @@ pub fn build(b: *std.Build, o: Options) Result {
         o.aosp.path(b, "system/memory/libmeminfo/libdmabufinfo/include"),
     }, &(android_abi_flags ++ .{ "-D__CPU_BITTYPE=unsigned long int", "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections" }));
     g.add(o.aosp.path(b, "bionic/libc/upstream-openbsd/lib/libc/gen"), &.{"setprogname.c"}, &.{}, &.{ "-D__progname=program_invocation_short_name", "-include", "errno.h" });
+    const debug_flags = android_abi_flags ++ .{ "-D__printflike(x,y)=__attribute__((__format__(printf,x,y)))", "-Dsigset64_t=sigset_t", "-Dsigaddset64=sigaddset", "-Dsigdelset64=sigdelset" };
+    const debug_includes = runtime_includes ++ &[_]std.Build.LazyPath{
+        o.aosp.path(b, "packages/modules/Connectivity/bpf/headers/include"),
+        o.aosp.path(b, "packages/modules/Connectivity/bpf/syscall_wrappers/include"),
+        o.aosp.path(b, "system/memory/libmemtrack/include"),
+        o.aosp.path(b, "frameworks/native/libs/binderdebug/include"),
+        o.aosp.path(b, "system/core/debuggerd/include"),
+        o.aosp.path(b, "system/core/debuggerd/common/include"),
+        o.aosp.path(b, "system/libprocinfo/include"),
+        o.aosp.path(b, "system/memory/libmeminfo/include"),
+        o.aosp.path(b, "system/memory/libmeminfo/libdmabufinfo/include"),
+        o.aosp.path(b, "system/libvintf/include"),
+        o.aosp.path(b, "system/memory/libmemunreachable/include"),
+        o.aosp.path(b, "system/core/debuggerd"),
+        o.aosp.path(b, "bionic/libc/system_properties/include"),
+    };
+    g.add(o.aosp.path(b, "system/memory/libmeminfo"), &.{ "androidprocheaps.cpp", "pageacct.cpp", "procmeminfo.cpp", "sysmeminfo.cpp" }, debug_includes, &debug_flags);
+    g.add(o.aosp.path(b, "system/memory/libmeminfo/libdmabufinfo"), &.{ "dmabufinfo.cpp", "dmabuf_sysfs_stats.cpp" }, debug_includes, &debug_flags);
+    g.add(o.aosp.path(b, "system/memory/libmemtrack"), &.{"memtrack.cpp"}, debug_includes, &debug_flags);
+    g.add(o.aosp.path(b, "frameworks/native/libs/binderdebug"), &.{"BinderDebug.cpp"}, debug_includes, &debug_flags);
+    g.add(o.aosp.path(b, "system/core/debuggerd"), &.{ "client/debuggerd_client.cpp", "util.cpp" }, debug_includes, &debug_flags);
+    g.add(o.aosp.path(b, "system/libprocinfo"), &.{"process.cpp"}, debug_includes, &debug_flags);
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_os_Debug.cpp"}, debug_includes, &(android_abi_flags ++ .{ "-DAZK_STOCK_DEBUG_ABI", "-include", b.pathResolve(&.{"src/native/RuntimeDiagnostics.h"}) }));
+    g.add(b.path("src/native"), &.{"RuntimeDiagnostics.cpp"}, debug_includes, &.{});
     for (sensors.groups) |group| g.add(o.aosp.path(b, group.root), group.files, sensor_includes.items, &android_abi_flags);
     g.add(b.path("src/native"), &.{ "SensorServiceBootstrap.cpp", "SensorClientTest.cpp" }, sensor_includes.items, &android_abi_flags);
     g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{"sensor.cpp"}, sensor_includes.items, &android_abi_flags);
@@ -860,6 +884,14 @@ pub fn build(b: *std.Build, o: Options) Result {
         "android_media_AudioTrackCallback.cpp",     "android_media_DeviceCallback.cpp",        "android_media_audio_common_AidlConversion.cpp",
         "android_media_ToneGenerator.cpp",
     }, audio_includes.items, &audio_flags);
+    var recorder_includes: std.ArrayList(std.Build.LazyPath) = .empty;
+    recorder_includes.appendSlice(b.allocator, audio_includes.items) catch @panic("OOM");
+    recorder_includes.appendSlice(b.allocator, codec_includes.items) catch @panic("OOM");
+    recorder_includes.appendSlice(b.allocator, &.{ extractor_headers.getDirectory(), o.aosp.path(b, "frameworks/base/media/jni/audioeffect") }) catch @panic("OOM");
+    g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{ "android_media_MediaRecorder.cpp", "android_media_MediaProfiles.cpp" }, recorder_includes.items, &android_abi_flags);
+    g.add(o.aosp.path(b, "frameworks/av/media/libmedia"), &.{"mediarecorder.cpp"}, recorder_includes.items, &android_abi_flags);
+    g.add(o.aosp.path(b, "frameworks/base/media/jni/audioeffect"), &.{ "android_media_AudioEffect.cpp", "android_media_SourceDefaultEffect.cpp", "android_media_StreamDefaultEffect.cpp", "android_media_Visualizer.cpp", "Visualizer.cpp" }, recorder_includes.items, &(android_abi_flags ++ .{"-DJNI_OnLoad=azk_audioeffect_JNI_OnLoad"}));
+    g.add(o.aosp.path(b, "system/media/audio_utils"), &.{"fixedfft.cpp"}, audio_includes.items, &audio_flags);
     // Unsupported-by-default Bn bases mirror the generated service interfaces.
     const unsupported_headers = b.addWriteFiles();
     for (o.aidl_header_roots, @import("generator_sources.zig").cpp_aidl) |root, entry| {

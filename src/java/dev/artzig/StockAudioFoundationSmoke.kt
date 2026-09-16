@@ -1,9 +1,7 @@
 @file:Suppress("DEPRECATION")
 package dev.artzig
 
-import android.content.AttributionSource
 import android.content.Context
-import android.content.ContextWrapper
 import android.hardware.Camera
 import android.media.AudioAttributes
 import android.media.AudioDescriptor
@@ -25,7 +23,6 @@ import android.media.audio.common.AudioStreamType
 import android.media.audio.common.AudioUsage
 import android.os.Parcel
 import android.os.Parcelable
-import android.os.Process
 
 /** Public stock format contracts and the fixed-output/absent-recorder native boundary. */
 internal object StockAudioFoundationSmoke {
@@ -147,6 +144,8 @@ internal object StockAudioFoundationSmoke {
         check(CamcorderProfile.get(CamcorderProfile.QUALITY_HIGH) == null)
         check(!CamcorderProfile.hasProfile(CamcorderProfile.QUALITY_HIGH))
         check(AudioEffect.queryEffects() == null)
+        check(android.media.audiofx.Visualizer.getCaptureSizeRange().contentEquals(intArrayOf(128, 1024)))
+        check(android.media.audiofx.Visualizer.getMaxCaptureRate() == 20_000)
         // AudioFlinger reports no input buffer: stock AudioRecord maps that to ERROR_BAD_VALUE.
         check(AudioRecord.getMinBufferSize(48_000, AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT) == AudioRecord.ERROR_BAD_VALUE)
@@ -159,14 +158,27 @@ internal object StockAudioFoundationSmoke {
         } finally {
             record.release()
         }
-        val context = object : ContextWrapper(null) {
-            override fun getPackageName() = "dev.artzig.audio-test"
-            override fun getApplicationContext(): Context = this
-            override fun getAttributionSource() = AttributionSource.Builder(Process.myUid())
-                .setPackageName(packageName).build()
+    }
+
+    fun recorderLifecycle(context: Context) {
+        check(context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
+            android.content.pm.PackageManager.PERMISSION_DENIED)
+        val recorder = MediaRecorder(context)
+        try {
+            check(runCatching { recorder.start() }.exceptionOrNull() is IllegalStateException)
+            check(runCatching { recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4) }
+                .exceptionOrNull() is IllegalStateException)
+            // The bound fixture lacks RECORD_AUDIO. The real recorder service
+            // rejects capture after successful construction and initialization.
+            val failure = runCatching { recorder.setAudioSource(MediaRecorder.AudioSource.MIC) }
+                .exceptionOrNull()
+            check(failure is RuntimeException && failure.message == "setAudioSource failed.") { "$failure" }
+            recorder.reset()
+            check(runCatching { recorder.stop() }.exceptionOrNull() is IllegalStateException)
+        } finally {
+            recorder.release()
         }
-        val recorderFailure = runCatching { MediaRecorder(context) }.exceptionOrNull()
-        check(recorderFailure is RuntimeException && recorderFailure.message == "Unable to initialize media recorder")
+        check(runCatching { recorder.start() }.exceptionOrNull() is IllegalStateException)
     }
 
     private fun <T : Parcelable> copy(value: T, creator: Parcelable.Creator<T>): T {

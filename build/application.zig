@@ -57,11 +57,11 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     // framework registrar already carried in libbinder_ndk, so expose that same Zig library.
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libframework-connectivity-jni.so");
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libframework-connectivity-tiramisu-jni.so");
-    // Stock MediaCrypto loads this name; its no-plugin JNI is registered in the same library.
+    // Original media JNI registrars run from the native island during framework startup.
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libmedia_jni.so");
     // Legacy DRM JNI is registered from the native island during framework startup.
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libdrmframework_jni.so");
-    // Stock AudioEffect uses the same hosted JNI registrar.
+    // Original AudioEffect/Visualizer JNI is registered from that same island.
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libaudioeffect_jni.so");
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libcom_android_net_module_util_jni.so");
     _ = tree.addCopyFile(options.libart, "lib/art/libart.so");

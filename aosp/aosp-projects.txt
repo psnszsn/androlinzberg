@@ -108,6 +108,7 @@ platform/external/testng
 platform/external/tinyxml2
 platform/external/tremolo
 platform/external/turbine
+platform/external/wuffs-mirror-release-c
 platform/external/zlib
 platform/external/zopfli
 platform/external/zstd
@@ -187,6 +188,7 @@ platform/system/logging
 platform/system/memory/libdmabufheap
 platform/system/memory/libion
 platform/system/memory/libmeminfo
+platform/system/memory/libmemtrack
 platform/system/memory/libmemunreachable
 platform/system/netd
 platform/system/security
@@ -207,4 +209,3 @@ platform/tools/tradefederation
 system/timezone
 toolchain/pgo-profiles
 tools/platform-compat
-platform/external/wuffs-mirror-release-c

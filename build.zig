@@ -1134,6 +1134,14 @@ pub fn build(b: *std.Build) void {
     const run_process_memory_tests = b.addRunArtifact(process_memory_tests);
     b.step("process-memory-test", "Test Android process-memory accounting").dependOn(&run_process_memory_tests.step);
     const native_test_step = b.step("native-test", "Build Zig JNI adapters and run native unit tests");
+    const kernel_metadata_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/native/kernel_metadata.zig"),
+        .target = target,
+        .optimize = optimize,
+    }) });
+    const run_kernel_metadata_tests = b.addRunArtifact(kernel_metadata_tests);
+    b.step("kernel-metadata-test", "Test running-kernel stack configuration metadata").dependOn(&run_kernel_metadata_tests.step);
+    native_test_step.dependOn(&run_kernel_metadata_tests.step);
     const host_stack_step = b.step("host-stack-test", "Check ART stack bounds under Chromium-style affinity denial");
     const host_stack_test = b.addExecutable(.{
         .name = "host-stack-test",

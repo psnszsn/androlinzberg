@@ -244,13 +244,13 @@ zig build -j10 cpp-audit
   native `media.metrics` collector retains the original failed-record result.
   CAS native HIDL and Java AIDL protocols and TV input constants are generated
   from the pinned declarations; they do not supply hardware services.
-- `src/binder/debug_jni.zig` registers the stock `android.os.Debug` natives.
-  `process_memory.zig` retains pinned Android heap classification and reads
-  Linux procfs/sysfs through `std.Io`. Allocator reports use the host allocator's
-  memory-stream API, then write through an `Io.File` duplicate; caller descriptors
-  remain owned by their Java streams. Binder object counts come from the hosted
-  Binder runtime. Android-only debuggerd, malloc_debug, memtrack, and heap-tracing
-  facilities retain failure results or explicit unsupported diagnostics.
+- Original `android_os_Debug.cpp` now owns Debug JNI, with the original memory,
+  DMA-BUF, memtrack and debuggerd clients. `RuntimeDiagnostics.cpp` translates
+  glibc allocator totals to the Bionic ABI. When the kernel config is unavailable,
+  the private Debug query reads the running kernel's BTF `task_struct` metadata
+  for `CONFIG_VMAP_STACK`; it does not invent a complete kernel config. Unavailable
+  allocation walking is reported explicitly, and absent Android services retain
+  their original failure results. `process_memory.zig` remains used by Process JNI.
 - Original `libs/nativedisplay/ADisplay.cpp` reads physical display metadata and
   composition preferences through SurfaceComposerClient. The build excludes
   hostgraphics' fixed display implementation. A native API regression compares
@@ -638,3 +638,10 @@ continues to own a separate PDFium instance in the platform library. Native
 font lookups use the shared host-path mapping; bitmap results retain Android's
 RGBA layout. Modern GIF decoding uses original SkWuffsCodec and pinned Wuffs,
 with no new rendering or presentation adapter.
+
+Original recorder, media-profile, audio-effect and Visualizer JNI now use the
+existing media/audio services. The handwritten audio JNI module and its override
+of MediaCodec persistent-input-surface cleanup were removed. This restores client
+state and ownership contracts; it does not create a capture device or effect engine.
+The combined recording/Debug batch passed full acceptance, including recorder
+permission/lifecycle failures, real Debug memory/kernel queries and all 28 APK cases.

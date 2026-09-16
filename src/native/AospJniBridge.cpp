@@ -79,6 +79,7 @@ namespace android {
 int register_android_app_Activity(JNIEnv*);
 int register_android_app_ActivityThread(JNIEnv*);
 int register_android_ddm_DdmHandleNativeHeap(JNIEnv*);
+int register_android_os_Debug(JNIEnv*);
 int register_android_os_HidlSupport(JNIEnv*);
 int register_android_os_HwBinder(JNIEnv*);
 int register_android_os_HwRemoteBinder(JNIEnv*);
@@ -271,6 +272,12 @@ extern int register_android_media_MediaCodec(JNIEnv*);
 extern int register_android_media_MediaCodecList(JNIEnv*);
 extern int azk_register_media_player(JNIEnv*);
 extern int register_android_media_MediaMetadataRetriever(JNIEnv*);
+extern int register_android_media_MediaRecorder(JNIEnv*);
+extern int register_android_media_MediaProfiles(JNIEnv*);
+extern int register_android_media_AudioEffect(JNIEnv*);
+extern int register_android_media_SourceDefaultEffect(JNIEnv*);
+extern int register_android_media_StreamDefaultEffect(JNIEnv*);
+extern int register_android_media_visualizer(JNIEnv*);
 namespace android { int register_android_os_GraphicsEnvironment(JNIEnv*); }
 namespace android { int register_com_android_server_wm_TaskFpsCallbackController(JNIEnv*); }
 namespace android { int register_android_view_TunnelModeEnabledListener(JNIEnv*); }
@@ -611,6 +618,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_os_FileObserver),
             E(registerLegacyDrm),
             E(android::register_android_os_HidlMemory),
+            E(android::register_android_os_Debug),
             E(android::register_android_os_HidlSupport),
             E(android::register_android_os_HwBinder),
             E(android::register_android_os_HwRemoteBinder),
@@ -652,6 +660,12 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_android_media_MediaCodecList),
             E(azk_register_media_player),
             E(register_android_media_MediaMetadataRetriever),
+            E(register_android_media_MediaRecorder),
+            E(register_android_media_MediaProfiles),
+            E(register_android_media_AudioEffect),
+            E(register_android_media_SourceDefaultEffect),
+            E(register_android_media_StreamDefaultEffect),
+            E(register_android_media_visualizer),
             E(android::register_android_os_GraphicsEnvironment),
             E(android::register_com_android_server_wm_TaskFpsCallbackController),
             E(android::register_android_view_TunnelModeEnabledListener),

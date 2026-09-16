@@ -2477,32 +2477,42 @@ export fn AIBinder_new(clazz: *const AIBinder_Class, args: ?*anyopaque) callconv
     const user = if (clazz.on_create) |cb| cb(args) else args;
     return AIBinder.createLocal(@constCast(clazz), user);
 }
-export fn AIBinder_getClass(binder: *AIBinder) callconv(.c) ?*AIBinder_Class {
+// Null contracts follow pinned frameworks/native/libs/binder/ndk/ibinder.cpp.
+// Generated AIDL fromBinder uses these for absent optional services.
+export fn AIBinder_getClass(raw_binder: ?*AIBinder) callconv(.c) ?*AIBinder_Class {
+    const binder = raw_binder orelse return null;
     return binder.class;
 }
 export fn AIBinder_Class_disableInterfaceTokenHeader(clazz: *AIBinder_Class) callconv(.c) void {
     clazz.token_header = false;
 }
-export fn AIBinder_associateClass(binder: *AIBinder, clazz: *const AIBinder_Class) callconv(.c) bool {
+export fn AIBinder_associateClass(raw_binder: ?*AIBinder, raw_class: ?*const AIBinder_Class) callconv(.c) bool {
+    const binder = raw_binder orelse return false;
+    const clazz = raw_class orelse return false;
     if (binder.class == null) {
         binder.class = @constCast(clazz);
         return true;
     }
     return binder.class == clazz or std.mem.eql(u8, binder.class.?.descriptor, clazz.descriptor);
 }
-export fn AIBinder_getUserData(binder: *AIBinder) callconv(.c) ?*anyopaque {
+export fn AIBinder_getUserData(raw_binder: ?*AIBinder) callconv(.c) ?*anyopaque {
+    const binder = raw_binder orelse return null;
     return binder.user_data;
 }
-export fn AIBinder_isRemote(binder: *const AIBinder) callconv(.c) bool {
+export fn AIBinder_isRemote(raw_binder: ?*const AIBinder) callconv(.c) bool {
+    const binder = raw_binder orelse return false;
     return binder.kind == .remote;
 }
-export fn AIBinder_isAlive(binder: *const AIBinder) callconv(.c) bool {
+export fn AIBinder_isAlive(raw_binder: ?*const AIBinder) callconv(.c) bool {
+    const binder = raw_binder orelse return false;
     return !binder.dead.load(.monotonic);
 }
-export fn AIBinder_incStrong(binder: *AIBinder) callconv(.c) void {
+export fn AIBinder_incStrong(raw_binder: ?*AIBinder) callconv(.c) void {
+    const binder = raw_binder orelse return;
     _ = binder.strong.fetchAdd(1, .monotonic);
 }
-export fn AIBinder_decStrong(binder: *AIBinder) callconv(.c) void {
+export fn AIBinder_decStrong(raw_binder: ?*AIBinder) callconv(.c) void {
+    const binder = raw_binder orelse return;
     if (binder.kind == .remote) {
         const r = Runtime.get();
         r.mu.lockUncancelable(g_io);
@@ -2522,7 +2532,8 @@ export fn AIBinder_decStrong(binder: *AIBinder) callconv(.c) void {
         },
     }
 }
-export fn AIBinder_debugGetRefCount(binder: *AIBinder) callconv(.c) i32 {
+export fn AIBinder_debugGetRefCount(raw_binder: ?*AIBinder) callconv(.c) i32 {
+    const binder = raw_binder orelse return -1;
     return @intCast(binder.strong.load(.monotonic));
 }
 export fn AIBinder_prepareTransaction(binder: *AIBinder, in: *?*AParcel) callconv(.c) i32 {

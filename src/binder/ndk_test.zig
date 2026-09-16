@@ -30,8 +30,14 @@ extern fn AIBinder_Class_getFunctionName(clazz: ?*AIBinder_Class, code: u32) cal
 extern fn AIBinder_new(clazz: *const AIBinder_Class, args: ?*anyopaque) callconv(.c) *AIBinder;
 extern fn AIBinder_prepareTransaction(binder: *AIBinder, in: *?*AParcel) callconv(.c) i32;
 extern fn AIBinder_transact(binder: *AIBinder, code: u32, in: *?*AParcel, out: *?*AParcel, flags: u32) callconv(.c) i32;
-extern fn AIBinder_decStrong(binder: *AIBinder) callconv(.c) void;
-extern fn AIBinder_isRemote(binder: *const AIBinder) callconv(.c) bool;
+extern fn AIBinder_decStrong(binder: ?*AIBinder) callconv(.c) void;
+extern fn AIBinder_isRemote(binder: ?*const AIBinder) callconv(.c) bool;
+extern fn AIBinder_associateClass(binder: ?*AIBinder, clazz: ?*const AIBinder_Class) callconv(.c) bool;
+extern fn AIBinder_getClass(binder: ?*AIBinder) callconv(.c) ?*const AIBinder_Class;
+extern fn AIBinder_getUserData(binder: ?*AIBinder) callconv(.c) ?*anyopaque;
+extern fn AIBinder_isAlive(binder: ?*const AIBinder) callconv(.c) bool;
+extern fn AIBinder_incStrong(binder: ?*AIBinder) callconv(.c) void;
+extern fn AIBinder_debugGetRefCount(binder: ?*AIBinder) callconv(.c) i32;
 extern fn AIBinder_ping(binder: ?*AIBinder) callconv(.c) i32;
 extern fn AServiceManager_addService(binder: ?*AIBinder, instance: ?[*:0]const u8) callconv(.c) i32;
 extern fn AServiceManager_addServiceWithFlags(binder: ?*AIBinder, instance: ?[*:0]const u8, flags: u32) callconv(.c) i32;
@@ -196,6 +202,15 @@ pub fn main(init: std.process.Init) !void {
         AIBinder_Class_getFunctionName(class, 4) == null and
         AIBinder_Class_getFunctionName(class, std.math.maxInt(u32)) == null, "transaction name holes and bounds return null", &failures);
     const service = AIBinder_new(class, null);
+    check(!AIBinder_associateClass(null, class), "absent service cannot associate an AIDL class", &failures);
+    check(!AIBinder_associateClass(service, null), "null class is rejected", &failures);
+    check(AIBinder_getClass(null) == null and AIBinder_getUserData(null) == null, "null binder has no class or payload", &failures);
+    check(!AIBinder_isRemote(null) and !AIBinder_isAlive(null), "null binder is neither remote nor alive", &failures);
+    check(AIBinder_debugGetRefCount(null) == -1, "null reference count returns minus one", &failures);
+    AIBinder_incStrong(null);
+    AIBinder_decStrong(null);
+    check(AIBinder_associateClass(service, class) and AIBinder_getClass(service) == class, "valid class association survives rejected null arguments", &failures);
+
     check(AIBinder_ping(service) == 0, "local ping bypasses the user transaction handler", &failures);
     check(AIBinder_ping(null) == std.math.minInt(i32) + 8, "null ping returns STATUS_UNEXPECTED_NULL", &failures);
     check(AServiceManager_addService(null, "invalid") == -3, "null service rejected", &failures);

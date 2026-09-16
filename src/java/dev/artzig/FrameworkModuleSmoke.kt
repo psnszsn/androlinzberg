@@ -326,6 +326,7 @@ internal object FrameworkModuleSmoke {
 
         }
         testHostedPermissionGrants()
+        StockAudioFoundationSmoke.recorderLifecycle(checkNotNull(ActivityThread.currentApplication()))
         println("hosted framework module smoke: PASS")
     }
 
@@ -1671,6 +1672,8 @@ internal object FrameworkModuleSmoke {
         check(android.os.Debug.getNativeHeapAllocatedSize() > 0)
         check(android.os.Debug.getNativeHeapFreeSize() >= 0)
         check(android.os.Debug.threadCpuTimeNanos() > 0)
+        check(android.os.Debug.getUnreachableMemory(16, false).contains("unavailable"))
+        println("stock Debug: kernel VMAP_STACK=${android.os.Debug.isVmapStack()}")
         val report = java.io.File.createTempFile("allocator-report", ".xml")
         try {
             java.io.FileOutputStream(report).use { stream ->

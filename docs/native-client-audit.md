@@ -6,7 +6,7 @@ implementations, runtime libraries and process placement still contain substanti
 host adaptations.
 
 The complete `acceptance-test` target passed on 2026-09-16 for the original
-PDF renderer and modern GIF decoder checkpoint. All 28 APK cases passed, with 88 recorded
+recording, effects and Debug JNI checkpoint. All 28 APK cases passed, with 90 recorded
 actions, zero structured runtime issues and no failure artifacts. Native, JVM,
 system, desktop, video, source-provenance and build checks passed. Source
 packages, pins and installed outputs are current.
@@ -22,7 +22,7 @@ behavior; they do not establish native provenance or stock process boundaries.
 
 [`aosp-source-identity.py`](../tools/aosp-source-identity.py) compares the root
 framework build's static Java/Kotlin/annotation inputs against its explicitly
-supplied AOSP package and checkout. Its last acceptance report found 7,119
+supplied AOSP package and checkout. Its last acceptance report found 7,126
 unchanged inputs and 64 modified server inputs, with no modified or
 repository-owned `android.*` / `com.android.internal.*` client replacements in
 that selection.
@@ -37,17 +37,17 @@ also does not mean zero unsupported native operations.
 
 ## Compiled native and Skia check
 
-`native-client-source-test` consumes the actual 2,581 native-island and linked Skia compiler
+`native-client-source-test` consumes the actual 2,607 native-island and linked Skia compiler
 commands and verifies the linked object files. The current selection contains
-2,261 unchanged AOSP units, 22 modified units, 21 owned units and 277 generated
-units. Its 101 required client sources must remain original and present. Forty-two
+2,282 unchanged AOSP units, 22 modified units, 22 owned units and 281 generated
+units. Its 113 required client sources must remain original and present. Forty-six
 sensitive client/service boundaries are preprocessed again with those commands;
-the report records effective macros and the 2,583 headers actually consumed.
+the report records effective macros and the 2,790 headers actually consumed.
 This catches disabled Android branches and incompatible Binder header selection.
 
 The check also verifies unique JNI registrar ownership and rejects FFmpeg/VAAPI
 dependencies in the platform client ELF. It runs in `acceptance-test` and writes
-`zig-out/test-results/native-client-source.json`. The check and its seven failure
+`zig-out/test-results/native-client-source.json`. The check and its eight failure
 regressions passed, along with the build-tool, C++ and graph audits. It does not
 yet inspect translation units inside other linked static libraries, ART, or runtime
 loader resolution. Those remain necessary before claiming complete native
@@ -89,7 +89,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 16,052 | 60 | 0 |
+| Framework | 16,093 | 60 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -109,7 +109,7 @@ the build selection; it is not a complete dynamic-symbol resolution audit.
 
 [`main.zig`](../src/main.zig) calls the Binder and graphics registrars and then
 [`host_natives.zig`](../src/platform/host_natives.zig) when booting APK ART.
-[`framework_jni.zig`](../src/binder/framework_jni.zig) has 8 delegated
+[`framework_jni.zig`](../src/binder/framework_jni.zig) has 6 delegated
 registration modules, plus its own registrations and the Binder registrar.
 That number is not a replaced-class count: it includes host-only cursor helpers
 and dev.artzig EGL/NDK regression helpers. Registering a helper does not prove
@@ -388,7 +388,7 @@ process, while the separate presenter and SurfaceFlinger own presentation.
 | NetworkUtils / process networking / TrafficStats | Central JNI, [`network_utils_internal_jni.zig`](../src/binder/network_utils_internal_jni.zig), [`traffic_stats_jni.zig`](../src/binder/traffic_stats_jni.zig) | Owned socket/fallback behavior. VPN/netd policy and Android per-UID tagging are not implemented by successful ordinary Linux networking |
 | Trace and Java Perfetto data sources | Original JNI and Perfetto SDK | In-process packet capture works; no system traced daemon is installed |
 | Log / EventLog / SecurityLog | Original JNI and liblog; diagnostics observe Java-originated liblog output | Original host log reader returns no historical events; Android logd is absent |
-| Debug | [`debug_jni.zig`](../src/binder/debug_jni.zig) | Host procfs/allocator implementations and unavailable Android facilities replace original clients |
+| Debug | Original JNI and memory/debugger clients; [`RuntimeDiagnostics.cpp`](../src/native/RuntimeDiagnostics.cpp) | Host allocator ABI and kernel-metadata fallback remain below JNI; missing Android services and allocation walking are explicit |
 | VINTF | Original VintfObject/VintfRuntimeInfo JNI, libvintf, libkver and generated XSD parser | Original manifest/matrix compatibility and runtime queries; this host supplies no Android manifests or matrices |
 | ClassLoaderFactory / CharsetUtils / OverlayConfig | Original JNI | Native loader namespaces remain a host seam; charset conversion is original, and OverlayConfig retains the original idmap2 executable probe |
 | SELinux | [`selinux_backend.zig`](../src/native/selinux_backend.zig) | Host policy adapter beneath reused JNI; Android seapp policy is not supplied |
@@ -416,7 +416,7 @@ Utility validation passed both framework suites, 23 testkit tests and all 28 APK
 tests (90 recorded actions, zero structured runtime issues in the final run).
 ## Remaining work and acceptance criteria
 
-1. Close remaining Process, Debug and networking JNI adaptations against
+1. Close remaining Process and networking JNI adaptations against
    their native dependencies and host policy. Preserve explicit missing-service
    behavior where Android infrastructure is absent.
 2. Decide whether libbinder and AZKB remain explicit native adaptations or
@@ -697,3 +697,19 @@ and restricted JNI exports. Full aggregate acceptance passed, including all 28 A
 cases, 88 recorded actions, zero structured issues or failed actions, all six
 service-loss cases, and the desktop/video checks. All three fresh video screenshots
 were inspected. Installed platform and PDF-client hashes match the native audit.
+
+## Recording and Debug clients
+
+The original MediaRecorder, media-profile, AudioEffect, default-effect and
+Visualizer JNI replace the handwritten audio module, including its stale override
+of MediaCodec persistent-input-surface cleanup. Debug now uses its original JNI,
+procfs/sysfs memory clients, generated memtrack protocols and debuggerd client.
+Host allocator totals and a bounded kernel-BTF reader provide the remaining ABI
+and kernel metadata adaptation. No capture input, effect engine or heap-allocation
+walker is fabricated. Full aggregate acceptance passed, including all 28 APK cases,
+90 recorded actions, zero structured runtime issues and failed actions, all six
+service-loss cases, and desktop/video checks. Fresh video frames were inspected;
+installed platform and PDF-client hashes match the native audit. The original
+memtrack client exposed a Binder null-contract bug, now fixed and covered by the
+NDK suite. The kernel reader uses bounded positional reads across the borrowed
+I/O interface and tests malformed metadata, both byte orders and the running kernel.

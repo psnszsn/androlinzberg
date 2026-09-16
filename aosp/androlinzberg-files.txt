@@ -10487,3 +10487,47 @@ F aosp packages/providers/MediaProvider/pdf/framework/pdf_viewer_flags.aconfig
 F aosp packages/providers/MediaProvider/pdf/framework/pdf_viewer_flags_readonly.aconfig
 D aosp packages/providers/MediaProvider/pdf/framework/libs/pdfClient
 F aosp packages/providers/MediaProvider/pdf/framework/Android.bp
+
+# Original recorder, media-profile and audio-effect JNI closure.
+F aosp frameworks/base/media/java/android/media/CameraProfile.java
+F aosp frameworks/base/media/java/android/media/DecoderCapabilities.java
+F aosp frameworks/base/media/java/android/media/EncoderCapabilities.java
+F aosp frameworks/base/media/java/android/media/audiofx/DefaultEffect.java
+F aosp frameworks/base/media/java/android/media/audiofx/SourceDefaultEffect.java
+F aosp frameworks/base/media/java/android/media/audiofx/StreamDefaultEffect.java
+F aosp frameworks/base/media/java/android/media/audiofx/Visualizer.java
+F aosp frameworks/base/media/jni/android_media_MediaRecorder.cpp
+F aosp frameworks/base/media/jni/android_media_MediaProfiles.cpp
+F aosp frameworks/av/media/libmedia/mediarecorder.cpp
+F aosp system/media/audio_utils/fixedfft.cpp
+D aosp frameworks/base/media/jni/audioeffect
+
+# Original Debug JNI and Linux memory/debugger clients.
+F aosp system/memory/libmeminfo/androidprocheaps.cpp
+F aosp system/memory/libmeminfo/pageacct.cpp
+F aosp system/memory/libmeminfo/procmeminfo.cpp
+F aosp system/memory/libmeminfo/sysmeminfo.cpp
+F aosp system/memory/libmeminfo/libdmabufinfo/dmabufinfo.cpp
+F aosp system/memory/libmeminfo/libdmabufinfo/dmabuf_sysfs_stats.cpp
+F aosp system/memory/libmemtrack/memtrack.cpp
+F aosp frameworks/native/libs/binderdebug/BinderDebug.cpp
+F aosp system/core/debuggerd/client/debuggerd_client.cpp
+F aosp system/core/debuggerd/util.cpp
+F aosp system/libprocinfo/process.cpp
+F aosp system/memory/libmeminfo/meminfo_private.h
+F aosp system/core/debuggerd/util.h
+F aosp system/core/debuggerd/protocol.h
+F aosp frameworks/base/core/jni/android_os_Debug.cpp
+F aosp frameworks/base/core/jni/android_os_Debug.h
+D aosp packages/modules/Connectivity/bpf/headers/include
+D aosp packages/modules/Connectivity/bpf/syscall_wrappers/include
+D aosp system/memory/libmemtrack/include
+D aosp frameworks/native/libs/binderdebug/include
+D aosp system/core/debuggerd/include
+D aosp system/core/debuggerd/common/include
+D aosp system/libprocinfo/include
+D aosp hardware/interfaces/memtrack/aidl/aidl_api/android.hardware.memtrack/1
+
+# Bionic signal ABI declarations used by the original debuggerd client.
+F aosp bionic/libc/platform/bionic/macros.h
+F aosp bionic/libc/platform/bionic/reserved_signals.h

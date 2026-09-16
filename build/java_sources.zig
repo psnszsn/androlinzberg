@@ -3430,6 +3430,13 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/media/java/android/media/AudioSystem.java");
     try c.file("$FB/media/java/android/media/BluetoothProfileConnectionInfo.java");
     try c.file("$FB/media/java/android/media/CamcorderProfile.java");
+    try c.file("$FB/media/java/android/media/CameraProfile.java");
+    try c.file("$FB/media/java/android/media/DecoderCapabilities.java");
+    try c.file("$FB/media/java/android/media/EncoderCapabilities.java");
+    try c.file("$FB/media/java/android/media/audiofx/DefaultEffect.java");
+    try c.file("$FB/media/java/android/media/audiofx/SourceDefaultEffect.java");
+    try c.file("$FB/media/java/android/media/audiofx/StreamDefaultEffect.java");
+    try c.file("$FB/media/java/android/media/audiofx/Visualizer.java");
     try c.file("$FB/media/java/android/media/EncoderProfiles.java");
     try c.file("$FB/media/java/android/media/FadeManagerConfiguration.java");
     try c.file("$FB/media/java/android/media/MediaRecorder.java");
