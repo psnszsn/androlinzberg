@@ -17,6 +17,8 @@ import android.graphics.Rect
 import android.graphics.YuvImage
 import android.graphics.pdf.PdfDocument
 import android.graphics.pdf.PdfEditor
+import android.graphics.pdf.PdfRenderer
+import android.graphics.drawable.AnimatedImageDrawable
 import android.os.ParcelFileDescriptor
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -33,7 +35,8 @@ internal object StockImageCodecSmoke {
         yuvEncoding()
         pdfDocument()
         pdfEditing()
-        println("stock-image-codecs: PASS ByteBuffer, GIF, YUV/JPEG-R, PDF creation/editing")
+        pdfRendering()
+        println("stock-image-codecs: PASS ByteBuffer, GIF/Movie/ImageDecoder, YUV/JPEG-R, PDF creation/editing/rendering")
     }
 
     private inline fun <reified T : Throwable> fails(block: () -> Unit) {
@@ -78,6 +81,19 @@ internal object StockImageCodecSmoke {
             255.toByte(),0,0,0,0,255.toByte(),
             33,249.toByte(),4,0,10,0,0,0,44,0,0,0,0,1,0,1,0,0,2,2,68,1,0,
             33,249.toByte(),4,0,10,0,0,0,44,0,0,0,0,1,0,1,0,0,2,2,76,1,0,59)
+        val first = ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(gif))) { decoder, info, _ ->
+            check(info.isAnimated && info.mimeType == "image/gif")
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+        }
+        check(first.width == 1 && first.height == 1 && first.getPixel(0, 0) == Color.RED)
+        first.recycle()
+        val animation = ImageDecoder.decodeDrawable(ImageDecoder.createSource(ByteBuffer.wrap(gif)))
+        check(animation is AnimatedImageDrawable)
+        val frame = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+        animation.setBounds(0, 0, 1, 1)
+        animation.draw(Canvas(frame))
+        check(frame.getPixel(0, 0) == Color.RED)
+        frame.recycle()
         val padded = byteArrayOf(0, 0, 0) + gif + byteArrayOf(0)
         val fromArray = checkNotNull(Movie.decodeByteArray(padded, 3, gif.size))
         val fromStream = checkNotNull(Movie.decodeStream(ByteArrayInputStream(gif)))
@@ -238,4 +254,67 @@ internal object StockImageCodecSmoke {
             output.delete()
         }
     }
+    private fun pdfRendering() {
+        val input = File.createTempFile("stock-pdf-render-", ".pdf")
+        try {
+            val document = PdfDocument()
+            for (index in 0..1) {
+                val page = document.startPage(PdfDocument.PageInfo.Builder(160, 120, index).create())
+                page.canvas.drawColor(if (index == 0) Color.RED else Color.BLUE)
+                page.canvas.drawText("Stock PDF text", 8f, 25f, Paint().apply { color = Color.BLACK; textSize = 16f })
+                document.finishPage(page)
+            }
+            input.outputStream().use { document.writeTo(it) }
+            document.close()
+            val descriptor = ParcelFileDescriptor.open(input, ParcelFileDescriptor.MODE_READ_ONLY)
+            val renderer = PdfRenderer(descriptor)
+            try {
+                check(renderer.pageCount == 2)
+                fails<IllegalArgumentException> { renderer.openPage(2) }
+                // PdfEditor destroys its own PDFium library on close. Rendering
+                // must continue in libpdfclient's independently owned instance.
+                val editor = PdfEditor(ParcelFileDescriptor.open(input, ParcelFileDescriptor.MODE_READ_ONLY))
+                try {
+                    check(editor.pageCount == 2)
+                } finally {
+                    editor.close()
+                }
+                for (index in 0..1) {
+                    val page = renderer.openPage(index)
+                    check(page.width == 160 && page.height == 120 && page.index == index)
+                    val bitmap = Bitmap.createBitmap(160, 120, Bitmap.Config.ARGB_8888)
+                    try {
+                        page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        check(bitmap.getPixel(80, 80) == if (index == 0) Color.RED else Color.BLUE)
+                        check(page.textContents.joinToString(" ") { it.text }.contains("Stock PDF text"))
+                        check(page.searchText("PDF").isNotEmpty())
+                    } finally {
+                        bitmap.recycle()
+                        page.close()
+                    }
+                    // AOSP retains cached dimensions after close; operations
+                    // requiring the native page reject the closed owner.
+                    check(page.width == 160 && page.height == 120)
+                    fails<IllegalStateException> { page.textContents }
+                }
+            } finally {
+                renderer.close()
+            }
+            check(!descriptor.fileDescriptor.valid())
+            fails<IllegalStateException> { renderer.pageCount }
+            input.writeText("not a PDF")
+            ParcelFileDescriptor.open(input, ParcelFileDescriptor.MODE_READ_ONLY).use {
+                fails<IOException> { PdfRenderer(it) }
+            }
+            val pipe = ParcelFileDescriptor.createPipe()
+            try {
+                fails<IllegalArgumentException> { PdfRenderer(pipe[0]) }
+            } finally {
+                pipe.forEach { it.close() }
+            }
+        } finally {
+            input.delete()
+        }
+    }
+
 }

@@ -853,6 +853,7 @@ fn statsJava(
             "--javaPackage", spec.package,
             "--javaClass",   spec.class,
         });
+        if (@hasField(@TypeOf(spec), "min_api")) run.addArgs(&.{ "--minApiLevel", spec.min_api });
         run.setName("generate " ++ spec.class ++ ".java");
         result[index] = java;
     }

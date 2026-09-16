@@ -40,7 +40,7 @@ for n in sorted(seen):
     srcs = ["src/ports/SkDebug_android.cpp" if s == "src/ports/SkDebug_stdio.cpp" else s
             for s in srcs]
     for d in x.get("defines", []):
-        if d not in DROP_DEFINES:
+        if d not in DROP_DEFINES and not d.startswith("WUFFS_"):
             defines.add(d)
     for l in x.get("libs", []) or []:
         if l not in libs:
@@ -48,6 +48,9 @@ for n in sorted(seen):
     if not srcs:
         continue
     flags = [c for c in x.get("cflags", []) if c.startswith("-m")]
+    # Wuffs is a single-file implementation: its private defines must not leak
+    # into SkWuffsCodec, which includes the same file for declarations only.
+    flags += ["-D" + d for d in x.get("defines", []) if d.startswith("WUFFS_")]
     groups.append((n, srcs, flags))
 
 def zstr(s):

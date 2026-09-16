@@ -2687,6 +2687,8 @@ pub const logtags = [_]Logtags{
 };
 
 pub const aconfig = [_]Aconfig{
+    .{ .package = "android.graphics.pdf.flags", .container = "com.android.mediaprovider", .source = .aosp, .declarations = &.{"packages/providers/MediaProvider/pdf/framework/pdf_viewer_flags.aconfig"} },
+    .{ .package = "android.graphics.pdf.flags.readonly", .mode = .force_read_only, .container = "com.android.mediaprovider", .source = .aosp, .declarations = &.{"packages/providers/MediaProvider/pdf/framework/pdf_viewer_flags_readonly.aconfig"} },
     .{ .package = "com.android.hardware.libsensor.flags", .cpp_source = true, .container = "system", .source = .aosp, .declarations = &.{"frameworks/native/libs/sensor/libsensor_flags.aconfig"} },
     .{ .package = "com.android.frameworks.sensorservice.flags", .cpp_source = true, .container = "system", .source = .aosp, .declarations = &.{"frameworks/native/services/sensorservice/sensorservice_flags.aconfig"} },
     .{ .package = "com.android.server.power.hint", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/services/core/java/com/android/server/power/hint/flags.aconfig"} },
@@ -4676,6 +4678,7 @@ pub const input_dispatcher_stats_flags = [_][]const u8{
 pub const hwui_native_stats = .{ .module = "hwui", .namespace = "android,uirenderer,stats", .stem = "statslog_hwui" };
 
 pub const stats_java = .{
+    .{ .module = "mediaprovider", .package = "android.graphics.pdf", .class = "PdfStatsLog", .min_api = "31" },
     .{ .module = "ike", .package = "com.android.internal.net.ipsec.ike.utils", .class = "IkeMetricsInterface" },
     .{ .module = "connectivity", .package = "com.android.net.module.util", .class = "FrameworkConnectivityStatsLog" },
     .{ .module = "framework", .package = "com.android.internal.util", .class = "FrameworkStatsLog" },

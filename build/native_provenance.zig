@@ -21,7 +21,7 @@ fn samePath(a: LazyPath, b: LazyPath) bool {
     };
 }
 
-pub fn add(b: *std.Build, compiles: []const *std.Build.Step.Run, reference: []const u8, package: LazyPath, platform: LazyPath, ndk: LazyPath) *std.Build.Step {
+pub fn add(b: *std.Build, compiles: []const *std.Build.Step.Run, reference: []const u8, package: LazyPath, platform: LazyPath, ndk: LazyPath, pdfclient: LazyPath) *std.Build.Step {
     const run = b.addSystemCommand(&.{ "python3", "-B" });
     run.addFileArg(b.path("tools/native-client-audit.py"));
     run.addArgs(&.{ "--reference", reference, "--package" });
@@ -32,6 +32,8 @@ pub fn add(b: *std.Build, compiles: []const *std.Build.Step.Run, reference: []co
     run.addFileArg(platform);
     run.addArg("--ndk");
     run.addFileArg(ndk);
+    run.addArg("--pdfclient");
+    run.addFileArg(pdfclient);
     var paths: std.ArrayList(LazyPath) = .empty;
     var tokens: std.ArrayList(Token) = .empty;
     var token_ids: std.StringHashMapUnmanaged(usize) = .empty;

@@ -631,3 +631,10 @@ uninstallation and fallback-key policy. Its desktop transport calls
 intentionally bypass filtering; only filter reinjection uses that path. Native
 InputDispatcher owns key repeat, so the Wayland seat must not also synthesize
 repeat events when using this boundary.
+
+Original PDF rendering uses the separately loaded `libpdfclient.so`, with
+PDFium globals localized by its pinned export script. Original PdfEditor
+continues to own a separate PDFium instance in the platform library. Native
+font lookups use the shared host-path mapping; bitmap results retain Android's
+RGBA layout. Modern GIF decoding uses original SkWuffsCodec and pinned Wuffs,
+with no new rendering or presentation adapter.

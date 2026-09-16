@@ -233,6 +233,7 @@ pub fn build(b: *std.Build) void {
     _ = skia_android_headers.addCopyFile(aosp.path(b, "bionic/libc/include/sys/system_properties.h"), "sys/system_properties.h");
     const skia_build = @import("build/skia.zig").build(b, .{
         .root = aosp.path(b, "external/skia"),
+        .wuffs = aosp.path(b, "external/wuffs-mirror-release-c"),
         .target = target,
         .host_include_roots = host_toolchain.skia.roots,
         .include_dirs = &.{
@@ -1036,6 +1037,7 @@ pub fn build(b: *std.Build) void {
     });
     egl_support.root_module.addObjectFile(island.file);
     const application_tree = @import("build/application.zig").build(b, .{
+        .pdfclient = island.pdfclient,
         .launcher = exe.getEmittedBin(),
         .broker = binder_broker.getEmittedBin(),
         .surfaceflinger = sf_service.getEmittedBin(),
@@ -1685,7 +1687,7 @@ pub fn build(b: *std.Build) void {
         // The comparison always runs so changes in this checkout are observed.
         if (!std.fs.path.isAbsolute(reference))
             std.debug.panic("aosp-reference must be an absolute checkout path", .{});
-        native_client_audit.dependOn(@import("build/native_provenance.zig").add(b, std.mem.concat(b.allocator, *std.Build.Step.Run, &.{ island.native_compiles, skia_build.compiles }) catch @panic("oom"), reference, aosp, island.file, binder_ndk.getEmittedBin()));
+        native_client_audit.dependOn(@import("build/native_provenance.zig").add(b, std.mem.concat(b.allocator, *std.Build.Step.Run, &.{ island.native_compiles, skia_build.compiles }) catch @panic("oom"), reference, aosp, island.file, binder_ndk.getEmittedBin(), island.pdfclient));
         compare.addArg(reference);
         compare.addArg("--package");
         compare.addDirectoryArg(aosp);

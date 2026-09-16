@@ -1,12 +1,12 @@
 # Native client audit
 
-Audit updated 2026-09-15. **The complete client stack is not stock AOSP.**
+Audit updated 2026-09-16. **The complete client stack is not stock AOSP.**
 The JVM source check covers selected framework source files. Android-native
 implementations, runtime libraries and process placement still contain substantial
 host adaptations.
 
-The complete `acceptance-test` target passed on 2026-09-15 for the original
-embedded runtime and process naming checkpoint. All 28 APK cases passed, with 88 recorded
+The complete `acceptance-test` target passed on 2026-09-16 for the original
+PDF renderer and modern GIF decoder checkpoint. All 28 APK cases passed, with 88 recorded
 actions, zero structured runtime issues and no failure artifacts. Native, JVM,
 system, desktop, video, source-provenance and build checks passed. Source
 packages, pins and installed outputs are current.
@@ -22,7 +22,7 @@ behavior; they do not establish native provenance or stock process boundaries.
 
 [`aosp-source-identity.py`](../tools/aosp-source-identity.py) compares the root
 framework build's static Java/Kotlin/annotation inputs against its explicitly
-supplied AOSP package and checkout. Its last acceptance report found 7,088
+supplied AOSP package and checkout. Its last acceptance report found 7,119
 unchanged inputs and 64 modified server inputs, with no modified or
 repository-owned `android.*` / `com.android.internal.*` client replacements in
 that selection.
@@ -37,12 +37,12 @@ also does not mean zero unsupported native operations.
 
 ## Compiled native and Skia check
 
-`native-client-source-test` consumes the actual 2,557 native-island and linked Skia compiler
+`native-client-source-test` consumes the actual 2,581 native-island and linked Skia compiler
 commands and verifies the linked object files. The current selection contains
-2,237 unchanged AOSP units, 22 modified units, 21 owned units and 277 generated
-units. Its 97 required client sources must remain original and present. Forty
+2,261 unchanged AOSP units, 22 modified units, 21 owned units and 277 generated
+units. Its 101 required client sources must remain original and present. Forty-two
 sensitive client/service boundaries are preprocessed again with those commands;
-the report records effective macros and the 2,528 headers actually consumed.
+the report records effective macros and the 2,583 headers actually consumed.
 This catches disabled Android branches and incompatible Binder header selection.
 
 The check also verifies unique JNI registrar ownership and rejects FFmpeg/VAAPI
@@ -89,7 +89,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 15,991 | 60 | 0 |
+| Framework | 16,052 | 60 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -676,3 +676,24 @@ Full aggregate acceptance passed, including all six session-loss cases, both
 framework suites, native provenance, and 28 APK cases with 88 actions and no
 structured runtime issues. The source archive, dependency pin and installed
 platform ELF match this checkpoint.
+
+## PDF renderer and modern GIF decoding
+
+The framework now includes original PdfRenderer and its 30 Java collaborators,
+with generated PDF flags and PdfStatsLog. Original libpdfclient loads as a
+separate JNI library. Its original export script keeps PDFium globals private,
+so closing a PdfEditor cannot destroy the renderer's library state. Both use
+the existing native font-path boundary and host FreeType/ICU dependencies.
+
+Skia now includes its original Wuffs GIF decoder and the separately pinned
+Wuffs C dependency. GN's implementation flags remain local to that dependency.
+ImageDecoder can decode GIF bitmaps and animated drawables; legacy Movie still
+uses its original giflib path. These changes do not alter GPU presentation.
+
+Module checks passed for actual PDF pixels, text extraction and search,
+editor/renderer coexistence, descriptor ownership, malformed/nonseekable input,
+and closed-page operations. The native audit also checks libpdfclient's ELF
+and restricted JNI exports. Full aggregate acceptance passed, including all 28 APK
+cases, 88 recorded actions, zero structured issues or failed actions, all six
+service-loss cases, and the desktop/video checks. All three fresh video screenshots
+were inspected. Installed platform and PDF-client hashes match the native audit.

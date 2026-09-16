@@ -10,6 +10,7 @@ const gen = @import("gen/skia_sources.zig");
 pub const Options = struct {
     /// external/skia in the root AOSP dependency.
     root: std.Build.LazyPath,
+    wuffs: std.Build.LazyPath,
     target: std.Build.ResolvedTarget,
     host_include_roots: []const std.Build.LazyPath,
     /// extra include dirs (framework mode needs cutils/trace.h + log/log.h)
@@ -113,7 +114,13 @@ pub fn build(b: *std.Build, o: Options) Result {
             compile.addPrefixedDirectoryArg("-I", o.root.path(b, "include/third_party/vulkan"));
             for (o.include_dirs) |include| compile.addPrefixedDirectoryArg("-I", include);
             for (o.host_include_roots) |include| compile.addPrefixedDirectoryArg("-isystem", include);
-            compile.addFileArg(o.root.path(b, file));
+            compile.addPrefixedDirectoryArg("-I", o.wuffs.path(b, "release/c"));
+            // GN names its external checkout; AOSP pins this dependency separately.
+            const wuffs_prefix = "third_party/externals/wuffs/";
+            compile.addFileArg(if (std.mem.startsWith(u8, file, wuffs_prefix))
+                o.wuffs.path(b, file[wuffs_prefix.len..])
+            else
+                o.root.path(b, file));
             compile.addArg("-o");
             const object = compile.addOutputFileArg(b.fmt("skia-tu-{d}.o", .{object_index}));
             object_index += 1;

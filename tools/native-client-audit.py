@@ -91,6 +91,17 @@ HEADER_PROBES.update({
     "frameworks/base/libs/hwui/jni/pdf/PdfEditor.cpp",
     "external/pdfium/core/fxge/android/cfpf_skiafontmgr.cpp",
 })
+REQUIRED.update({
+    "external/skia/src/codec/SkWuffsCodec.cpp",
+    "external/wuffs-mirror-release-c/release/c/wuffs-v0.3.c",
+    "packages/providers/MediaProvider/pdf/framework/libs/pdfClient/pdf_document_jni.cc",
+    "packages/providers/MediaProvider/pdf/framework/libs/pdfClient/document.cc",
+})
+HEADER_PROBES.update({
+    "external/skia/src/codec/SkWuffsCodec.cpp",
+    "packages/providers/MediaProvider/pdf/framework/libs/pdfClient/pdf_document_jni.cc",
+})
+ANDROID_BRANCHES.add("packages/providers/MediaProvider/pdf/framework/libs/pdfClient/pdf_document_jni.cc")
 SKIA_ANDROID_BUFFER = "external/skia/src/gpu/ganesh/vk/AHardwareBufferVk.cpp"
 SKIA_ANDROID_SOURCES = {SKIA_ANDROID_BUFFER,
     "external/skia/src/gpu/vk/VulkanInterface.cpp",
@@ -230,6 +241,10 @@ def preprocess(command: list[str]) -> dict:
 
 def boundary_errors(source: str, probe: dict, repo: Path) -> list[str]:
     errors = []
+    if source == "external/skia/src/codec/SkWuffsCodec.cpp":
+        macros = probe["macros"]
+        if not {"SK_CODEC_DECODES_GIF", "SK_HAS_WUFFS_LIBRARY"}.issubset(macros) or "WUFFS_IMPLEMENTATION" in macros:
+            errors.append("Skia GIF decoder disabled or mixed with Wuffs implementation flags")
     if source in SKIA_ANDROID_SOURCES:
         macros = probe["macros"]
         if (not {"SK_BUILD_FOR_ANDROID", "SK_VULKAN"}.issubset(macros)
@@ -261,7 +276,7 @@ def elf(path: Path) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("reference", "package", "repo", "commands", "platform", "ndk", "output"):
+    for name in ("reference", "package", "repo", "commands", "platform", "ndk", "pdfclient", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--path", type=Path, action="append", required=True)
     args = parser.parse_args()
@@ -307,7 +322,15 @@ def main() -> int:
             for path in probe["headers"]:
                 if str(path) not in headers:
                     headers[str(path)] = classify(path, package, reference, repo)
-    platform, ndk = elf(args.platform), elf(args.ndk)
+    platform, ndk, pdfclient = elf(args.platform), elf(args.ndk), elf(args.pdfclient)
+    exports = subprocess.check_output(["nm", "-D", "--defined-only", str(args.pdfclient)], text=True)
+    exports = [line.split()[-1].split("@")[0] for line in exports.splitlines() if line.split()]
+    if "JNI_OnLoad" not in exports or "Java_android_graphics_pdf_PdfDocumentProxy_createFromFd" not in exports:
+        errors.append("original PDF client JNI entry missing")
+    if any(not name.startswith(("JNI_", "Java_", "VERS_")) for name in exports):
+        errors.append("PDF client leaks native globals outside original jni.lds boundary")
+    pdfclient["exports"] = exports
+    del pdfclient["symbols"]
     owners = {}
     for registrar in REGISTRARS:
         matches = [symbol for symbol in platform["symbols"] if registrar_matches(symbol, registrar)]
@@ -321,7 +344,7 @@ def main() -> int:
     report = {"passed": not errors, "scope": "Native island and linked Skia Step.Run translation units; effective macros and consumed headers for selected restored boundaries; platform/NDK ELF owners. Other static linked libraries, ART and runtime loader resolution are outside this check.",
               "reference": reference_state, "source_counts": dict(Counter(record["kind"] for record in sources)),
               "required_original_clients": len(REQUIRED), "header_probe_count": len(probes),
-              "sources": sources, "headers": list(headers.values()), "platform": platform, "ndk": ndk,
+              "sources": sources, "headers": list(headers.values()), "platform": platform, "ndk": ndk, "pdfclient": pdfclient,
               "registrars": owners, "errors": errors}
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     print(f"native island: {len(sources)} compiled inputs, {len(REQUIRED)} restored source guards, {len(probes)} preprocessed boundaries, {len(errors)} errors", flush=True)

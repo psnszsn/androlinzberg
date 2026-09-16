@@ -7,6 +7,7 @@ pub const defines = [_][]const u8{
     "NDEBUG",
     "SKIA_IMPLEMENTATION=1",
     "SK_CODEC_DECODES_BMP",
+    "SK_CODEC_DECODES_GIF",
     "SK_CODEC_DECODES_ICO",
     "SK_CODEC_DECODES_JPEG",
     "SK_CODEC_DECODES_JPEG_GAINMAPS",
@@ -27,6 +28,7 @@ pub const defines = [_][]const u8{
     "SK_GAMMA_APPLY_TO_A8",
     "SK_GANESH",
     "SK_GL",
+    "SK_HAS_WUFFS_LIBRARY",
     "SK_PDF_USE_HARFBUZZ_SUBSET",
     "SK_SUPPORT_PDF",
     "SK_TYPEFACE_FACTORY_FREETYPE",
@@ -977,6 +979,9 @@ pub const groups = [_]Group{
     .{ .name = "//:webp_encode", .flags = &.{}, .files = &.{
         "src/encode/SkWebpEncoderImpl.cpp",
     } },
+    .{ .name = "//:wuffs", .flags = &.{}, .files = &.{
+        "src/codec/SkWuffsCodec.cpp",
+    } },
     .{ .name = "//:xml", .flags = &.{}, .files = &.{
         "src/codec/SkXmp.cpp",
         "src/svg/SkSVGCanvas.cpp",
@@ -997,5 +1002,8 @@ pub const groups = [_]Group{
     } },
     .{ .name = "//src/gpu/vk/vulkanmemoryallocator:vulkanmemoryallocator", .flags = &.{}, .files = &.{
         "src/gpu/vk/vulkanmemoryallocator/VulkanMemoryAllocatorWrapper.cpp",
+    } },
+    .{ .name = "//third_party/wuffs:wuffs", .flags = &.{ "-DWUFFS_IMPLEMENTATION", "-DWUFFS_CONFIG__MODULES", "-DWUFFS_CONFIG__MODULE__BASE", "-DWUFFS_CONFIG__MODULE__GIF", "-DWUFFS_CONFIG__MODULE__LZW" }, .files = &.{
+        "third_party/externals/wuffs/release/c/wuffs-v0.3.c",
     } },
 };

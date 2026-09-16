@@ -4,7 +4,7 @@
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 15991,
+      "unchanged": 16052,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -68,7 +68,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "bcbc7fb4f4e77b15eb8fe9a231aa595449f2c6aa8ba07c6817bc30d883731b96"
+      "archive_sha256": "9104ba9bfcfd393b919646c49f5f5ad45d6b10a425ed24560f8fdf0432f397be"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -203,6 +203,14 @@
     },
     "external/pdfium": {
       "revision": "61aafefc3df2bda22588c7764d1177018f0af4e4",
+      "tracked_clean": true
+    },
+    "external/wuffs-mirror-release-c": {
+      "revision": "ecaeabeb59e4fb29313f893ead3c9d90dc2fb586",
+      "tracked_clean": true
+    },
+    "packages/providers/MediaProvider": {
+      "revision": "d3bb9ac8e6daab448635eaa30e85e2e8d8cbad8e",
       "tracked_clean": true
     }
   },
@@ -680,18 +688,18 @@
   "compiled_island_followup": {
     "target": "native-client-source-test",
     "report": "zig-out/test-results/native-client-source.json",
-    "inputs": 2557,
+    "inputs": 2581,
     "source_counts": {
-      "unchanged": 2237,
+      "unchanged": 2261,
       "modified": 22,
       "owned": 21,
       "generated": 277
     },
-    "required_original_clients": 97,
-    "preprocessed_boundaries": 40,
-    "consumed_headers": 2528,
+    "required_original_clients": 101,
+    "preprocessed_boundaries": 42,
+    "consumed_headers": 2583,
     "scope": "Native island and linked Skia Step.Run translation units; effective macros and consumed headers for selected restored boundaries; platform/NDK ELF owners. Other static linked libraries, ART and runtime loader resolution are outside this check.",
-    "validation": "Passed full acceptance329: 97 original-source guards, 40 header/macro probes and seven audit failure regressions."
+    "validation": "Passed full acceptance355: 101 original-source guards, 42 header/macro probes and seven audit failure regressions."
   },
   "graphics_helpers_followup": {
     "sources": [
@@ -726,20 +734,20 @@
   "current_acceptance": {
     "target": "acceptance-test",
     "passed": true,
-    "verified_date": "2026-09-15",
-    "log": "/tmp/azk-stock-runtime-acceptance329.log",
+    "verified_date": "2026-09-16",
+    "log": "/tmp/azk-stock-pdf-renderer-acceptance355.log",
     "apk_cases": 28,
     "recorded_actions": 88,
     "structured_runtime_issues": 0,
     "failure_artifacts": 0,
     "unsuccessful_actions": 0,
     "video": "All three fresh stock-video screenshots inspected; SurfaceView, TextureView, resize and pixel checks passed",
-    "installed_outputs": "refreshed; platform SHA-256 matches the native provenance report",
+    "installed_outputs": "refreshed; platform and PDF-client SHA-256 match the native provenance report",
     "known_optional_exclusions": [
       "performance-hint TestSessionCreationWithNullLayers remains a pinned null-SurfaceControl failure outside aggregate acceptance",
       "codec2-params-test retains two known host-compiler parameter comparisons outside aggregate acceptance"
     ],
-    "checkpoint": "Original embedded AndroidRuntime and Process naming"
+    "checkpoint": "Original PDF renderer and modern GIF decoder"
   },
   "skia_egl_followup": {
     "implementation": "Original Soong SkUserConfig generator uses selected GN Android features, Vulkan and JPEG gainmaps. Original Android logging and Vulkan AHardwareBuffer implementation are compiled. Native and app EGL share context telemetry filtering, begin-frame validation, damage swaps and damage-region translation through system Mesa. Handwritten input/HWUI flags deleted in favor of original generators.",
@@ -922,6 +930,19 @@
       "native_provenance": "passed /tmp/azk-stock-runtime-audit322.log; C++ boundary allowlist updated separately",
       "apk_launch": "passed /tmp/azk-stock-runtime-launch323.log; no structured runtime issues",
       "aggregate_acceptance": "passed /tmp/azk-stock-runtime-acceptance329.log; 28 APK cases, 88 actions, no runtime issues or failed actions; all six service-loss cases passed"
+    }
+  },
+  "pdf_renderer_followup": {
+    "implementation": "Original framework PdfRenderer and 30 Java collaborators; generated PDF flags and PdfStatsLog; original libpdfclient with private PDFium globals. Original Skia Wuffs decoder and pinned Wuffs C dependency enable GIF in ImageDecoder.",
+    "validation": {
+      "aggregate_acceptance": "passed /tmp/azk-stock-pdf-renderer-acceptance355.log",
+      "apk_cases": 28,
+      "recorded_actions": 88,
+      "structured_runtime_issues": 0,
+      "failed_actions": 0,
+      "failure_artifacts": 0,
+      "video": "All three fresh video screenshots inspected; rendering, texture transition and resize passed",
+      "focused": "PDF rendering, text extraction/search, descriptor/error contracts, independent editor/renderer state and modern GIF decoding passed"
     }
   }
 }

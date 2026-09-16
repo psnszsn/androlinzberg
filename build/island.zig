@@ -50,6 +50,7 @@ pub const Options = struct {
 
 pub const Result = struct {
     native_compiles: []const *std.Build.Step.Run,
+    pdfclient: std.Build.LazyPath,
     vintf_objects: []const std.Build.LazyPath,
     hint_client: std.Build.LazyPath,
     binder_jni_sources: []const std.Build.LazyPath,
@@ -799,6 +800,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{ "jni/pdf/PdfEditor.cpp", "jni/pdf/PdfUtils.cpp", "apex/jni_runtime.cpp" }, hwui_includes ++ &[_]std.Build.LazyPath{o.aosp.path(b, "external/pdfium/public")}, &hwui_flags);
     const pdfium_includes = &.{ o.aosp.path(b, "external/pdfium"), o.aosp.path(b, "external/pdfium/third_party"), extractor_headers.getDirectory() };
     const pdfium_flags = &(android_abi_flags ++ [_][]const u8{ "-O3", "-fexceptions", "-DANDROID", "-DCOMPONENT_BUILD", "-DFPDF_IMPLEMENTATION", "-DOPJ_STATIC", "-DPNG_PREFIX", "-DPNG_USE_READ_MACROS" });
+    const pdfium_start = objects.items.len;
     for (@import("gen/pdfium_sources.zig").sources) |source| {
         // Current libc++ instantiates unique_ptr destruction earlier; provide the
         // original complete image type without changing the pinned sources.
@@ -884,6 +886,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     bridge_includes.append(b.allocator, o.aosp.path(b, "frameworks/native/opengl/libs/EGL")) catch @panic("OOM");
     g.add(b.path(""), &our_srcs, bridge_includes.items, &.{});
     g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{"hardware_buffer_jni.cpp"}, hwui_includes, &android_abi_flags);
+    const platform_files_index = objects.items.len;
     g.add(b.path("src/native"), &.{"PlatformFiles.cpp"}, &.{}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"core_jni_helpers.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.input_handle_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
@@ -937,6 +940,13 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/av/drm/libdrmframework"), &gen.legacy_drm_client_srcs, legacy_drm_includes, &.{});
     // Keep the original standalone-library registrar while sharing the native island.
     g.add(o.aosp.path(b, "frameworks/base/drm/jni"), &.{"android_drm_DrmManagerClient.cpp"}, legacy_drm_includes, &.{"-DJNI_OnLoad=azk_legacy_drm_JNI_OnLoad"});
+
+    const pdfium_objects = objects.items[pdfium_start..][0..@import("gen/pdfium_sources.zig").sources.len];
+    var pdf_objects: std.ArrayList(std.Build.LazyPath) = .empty;
+    var pdf_g = g;
+    pdf_g.objects = &pdf_objects;
+    const pdf_root = o.aosp.path(b, "packages/providers/MediaProvider/pdf/framework/libs/pdfClient");
+    pdf_g.add(pdf_root, &.{ "annotation.cc", "document.cc", "file.cc", "form_filler.cc", "form_widget_info.cc", "image_object.cc", "jni_conversion.cc", "linux_fileops.cc", "normalize.cc", "page.cc", "page_object.cc", "path_object.cc", "pdf_document_jni.cc", "rect.cc", "text_object.cc", "utf.cc", "utils/annot.cc", "utils/annot_hider.cc", "utils/byte_value.cc", "utils/pdf_strings.cc", "utils/text.cc", "utils/utf.cc" }, &.{ pdf_root, o.aosp.path(b, "external/pdfium"), o.aosp.path(b, "external/pdfium/public"), extractor_headers.getDirectory() }, &(android_abi_flags ++ .{ "-fexceptions", "-include", "vector" }));
 
     // Zig's bundled LLD rejects valid weak-hidden libc++ COMDAT relocations in
     // Skia before resolving them locally. Keep Zig's compiler and libc++, but
@@ -1001,5 +1011,22 @@ pub fn build(b: *std.Build, o: Options) Result {
     link.addArgs(o.host_link_flags);
     link.addArgs(&.{ "-ldl", "-lpthread", "-lm", "-lcrypto", "-o" });
     const output = link.addOutputFileArg("libandroid_platform.so");
-    return .{ .native_compiles = native_compiles.items, .hint_client = objects.items[hint_start], .file = output, .step = &link.step, .binder_jni_sources = binder_jni_sources.items, .binder_jni_includes = common_includes.items, .vintf_objects = objects.items[vintf_start..vintf_end] };
+    // Original libpdfclient is a separate JNI library with private PDFium
+    // globals, preserving the original jni.lds lifetime boundary.
+    const pdf_link = b.addSystemCommand(&.{ b.graph.zig_exe, "c++", "-fuse-ld=bfd", "-shared", "-Wl,-z,defs", "-Wl,--gc-sections", "-Wl,-soname,libpdfclient.so", "-Wl,-rpath,$ORIGIN/..", "-Wl,--wrap=fopen,--wrap=stat,--wrap=opendir,--wrap=FT_Open_Face" });
+    pdf_link.step.name = "link original libpdfclient.so";
+    pdf_link.removeEnvironmentVariable("NIX_LDFLAGS");
+    pdf_link.addPrefixedFileArg("-Wl,--version-script,", pdf_root.path(b, "jni.lds"));
+    for (pdf_objects.items) |object| pdf_link.addFileArg(object);
+    for (pdfium_objects) |object| pdf_link.addFileArg(object);
+    pdf_link.addFileArg(objects.items[platform_files_index]);
+    pdf_link.addFileArg(output);
+    pdf_link.addFileArg(o.binder_cpp.getEmittedBin());
+    for (o.host_library_roots) |root| {
+        pdf_link.addPrefixedDirectoryArg("-L", root);
+        pdf_link.addPrefixedDirectoryArg("-Wl,-rpath,", root);
+    }
+    pdf_link.addArgs(&.{ "-lfreetype", "-licuuc", "-licui18n", "-ljpeg", "-lz", "-ldl", "-lpthread", "-lm", "-o" });
+    const pdfclient = pdf_link.addOutputFileArg("libpdfclient.so");
+    return .{ .pdfclient = pdfclient, .native_compiles = native_compiles.items, .hint_client = objects.items[hint_start], .file = output, .step = &link.step, .binder_jni_sources = binder_jni_sources.items, .binder_jni_includes = common_includes.items, .vintf_objects = objects.items[vintf_start..vintf_end] };
 }
