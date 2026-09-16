@@ -1,56 +1,10 @@
 From: Androlinzberg maintainers
-Subject: [PATCH] libgui: adapt host caller identity and gralloc boundaries
-
-Pinned AOSP producer interfaces retain their original Binder/HIDL discovery.
-BufferQueueThreadState uses authenticated AZKB caller identity.
+Subject: [PATCH] libui: select host gralloc backends
 
 Select host allocator/mapper factories at libui's Gralloc boundary. Retain the
 stock GraphicBuffer validation, metadata, accounting and ownership above it;
 the host backend owns GBM allocations and imported DMA-BUF descriptors.
 
---- a/libs/gui/BufferQueueThreadState.cpp
-+++ b/libs/gui/BufferQueueThreadState.cpp
-@@ -14,36 +14,11 @@
-  * limitations under the License.
-  */
- 
--#ifndef NO_BINDER
-+// Host adaptation of BufferQueueThreadState: AZKB has one Binder dispatch
-+// domain and no HIDL Binder service. Preserve its authenticated caller identity.
- #include <binder/IPCThreadState.h>
--#include <binderthreadstate/CallerUtils.h>
--#endif // NO_BINDER
--#include <hwbinder/IPCThreadState.h>
- #include <private/gui/BufferQueueThreadState.h>
--#include <unistd.h>
--
- namespace android {
--
--uid_t BufferQueueThreadState::getCallingUid() {
--#ifndef NO_BINDER
--    if (getCurrentServingCall() == BinderCallType::HWBINDER) {
--        return hardware::IPCThreadState::self()->getCallingUid();
--    }
--    return IPCThreadState::self()->getCallingUid();
--#else // NO_BINDER
--    return hardware::IPCThreadState::self()->getCallingUid();
--#endif // NO_BINDER
-+uid_t BufferQueueThreadState::getCallingUid() { return IPCThreadState::self()->getCallingUid(); }
-+pid_t BufferQueueThreadState::getCallingPid() { return IPCThreadState::self()->getCallingPid(); }
- }
--
--pid_t BufferQueueThreadState::getCallingPid() {
--#ifndef NO_BINDER
--    if (getCurrentServingCall() == BinderCallType::HWBINDER) {
--        return hardware::IPCThreadState::self()->getCallingPid();
--    }
--    return IPCThreadState::self()->getCallingPid();
--#else // NO_BINDER
--    return hardware::IPCThreadState::self()->getCallingPid();
--#endif // NO_BINDER
--}
--
--} // namespace android
 --- a/libs/ui/GraphicBufferMapper.cpp
 +++ b/libs/ui/GraphicBufferMapper.cpp
 @@ -33,10 +33,7 @@

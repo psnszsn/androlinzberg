@@ -4,7 +4,7 @@
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 16093,
+      "unchanged": 16094,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -30,7 +30,6 @@
         "frameworks/native/libs/binder/ndk/include_cpp/android/binder_auto_utils.h",
         "frameworks/native/libs/binder/ndk/include_cpp/android/binder_interface_utils.h",
         "frameworks/native/libs/binder/ndk/include_ndk/android/binder_status.h",
-        "frameworks/native/libs/gui/BufferQueueThreadState.cpp",
         "frameworks/native/libs/gui/SurfaceComposerClient.cpp",
         "frameworks/native/libs/nativewindow/ANativeWindow.cpp",
         "frameworks/native/libs/renderengine/RenderEngine.cpp",
@@ -68,7 +67,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "b42a8a5d82abd8436f481a48ac475800015e038e24fc337ed08faa3acd135df4"
+      "archive_sha256": "56f47a9440bbc71f3d3200d1823dafe4ce302fd034be4a776ba93f7e8e21a880"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -269,7 +268,7 @@
       ]
     }
   },
-  "framework_package_refresh": "2026-09-15: original PDF editing and complete HWUI graphics registrar, pinned PDFium; bounded host font directory",
+  "framework_package_refresh": "2026-09-16: restore original BufferQueue caller selection after recording/Debug dependency import",
   "binder_jni_followup": {
     "runtime_revision": "b7d78a39",
     "verified_date": "2026-09-13",
@@ -705,11 +704,11 @@
       "owned": 22,
       "generated": 281
     },
-    "required_original_clients": 113,
-    "preprocessed_boundaries": 46,
-    "consumed_headers": 2790,
-    "scope": "Native island and linked Skia Step.Run translation units; effective macros and consumed headers for selected restored boundaries; platform/NDK ELF owners. Other static linked libraries, ART and runtime loader resolution are outside this check.",
-    "validation": "Passed full acceptance377: 113 original-source guards, 46 header/macro probes and eight audit failure regressions."
+    "required_original_clients": 117,
+    "preprocessed_boundaries": 48,
+    "consumed_headers": 2804,
+    "scope": "Native island/Skia Step.Run commands and actual ELF compiler records for declared C/C++ inputs in linked Step.Compile libraries; all compilation contexts of selected boundary header/macro probes; platform/NDK/PDF ELF owners. ART, injected compiler runtimes, Rust and runtime loader resolution require separate inventory.",
+    "validation": "Passed full acceptance397: 117 original-source guards, 48 header/macro probes and twelve audit regressions."
   },
   "graphics_helpers_followup": {
     "sources": [
@@ -745,7 +744,7 @@
     "target": "acceptance-test",
     "passed": true,
     "verified_date": "2026-09-16",
-    "log": "/tmp/azk-recording-debug-accept377.log",
+    "log": "/tmp/azk-linked-accept397.log",
     "apk_cases": 28,
     "recorded_actions": 90,
     "structured_runtime_issues": 0,
@@ -757,7 +756,7 @@
       "performance-hint TestSessionCreationWithNullLayers remains a pinned null-SurfaceControl failure outside aggregate acceptance",
       "codec2-params-test retains two known host-compiler parameter comparisons outside aggregate acceptance"
     ],
-    "checkpoint": "Original recording, effects and Debug JNI"
+    "checkpoint": "Original BufferQueue caller selection and linked native provenance"
   },
   "skia_egl_followup": {
     "implementation": "Original Soong SkUserConfig generator uses selected GN Android features, Vulkan and JPEG gainmaps. Original Android logging and Vulkan AHardwareBuffer implementation are compiled. Native and app EGL share context telemetry filtering, begin-frame validation, damage swaps and damage-region translation through system Mesa. Handwritten input/HWUI flags deleted in favor of original generators.",
@@ -968,5 +967,28 @@
       "focused": "Recorder permission denial and lifecycle contracts; original Visualizer constants; Debug memory, descriptor and kernel metadata contracts; absent memtrack Binder null handling; malformed and actual kernel BTF metadata passed"
     },
     "limitations": "No host capture device or audio-effect engine is added. Heap-allocation walking remains explicitly unavailable, and memtrack/debuggerd clients retain their original missing-service failures."
+  },
+  "linked_native_followup": {
+    "implementation": "Record actual lowered Clang commands in the production Step.Compile libraries linked by the native island; verify declared C/C++ coverage, source identity and every selected compilation context. Restore original BufferQueueThreadState through existing authenticated AIDL/HIDL interfaces.",
+    "validation": {
+      "aggregate_acceptance": "passed /tmp/azk-linked-accept397.log",
+      "apk_cases": 28,
+      "recorded_actions": 90,
+      "structured_runtime_issues": 0,
+      "failed_actions": 0,
+      "failure_artifacts": 0,
+      "video": "All three fresh video screenshots inspected; SurfaceView, TextureView and resize passed"
+    },
+    "libraries": 17,
+    "compilation_records": 1364,
+    "source_counts": {
+      "unchanged": 713,
+      "generated": 637,
+      "owned": 6,
+      "modified": 8
+    },
+    "recorded_objects_in_platform": 675,
+    "removed": "Unused VideoSurface implementation/header and its adapter-only test; current Codec2/IGBA/video regressions retained",
+    "runtime": "Six NDK symbols resolve to their expected ELF owners in the application; one image each for platform/Binder libraries; no FFmpeg/VAAPI decoding libraries mapped in the application"
   }
 }

@@ -78,6 +78,7 @@ pub const includes = [_][]const u8{
     "libnativehelper/include_jni",
     "frameworks/native/libs/ftl/include",
     "frameworks/native/libs/gui/include",
+    "frameworks/native/libs/binderthreadstate/include",
     "frameworks/native/libs/ui/include",
     "frameworks/native/libs/ui/include_private",
     "frameworks/native/libs/ui/include_types",
@@ -151,7 +152,6 @@ pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     gui_mod.addCSourceFiles(.{ .root = aosp.path(b, "frameworks/native/libs/gui/bufferqueue"), .files = &.{ "1.0/B2HProducerListener.cpp", "1.0/WProducerListener.cpp", "1.0/H2BGraphicBufferProducer.cpp", "1.0/H2BProducerListener.cpp", "1.0/Conversion.cpp", "2.0/B2HGraphicBufferProducer.cpp", "2.0/B2HProducerListener.cpp", "2.0/H2BGraphicBufferProducer.cpp", "2.0/H2BProducerListener.cpp", "2.0/types.cpp" }, .flags = flags });
     gui_mod.addCSourceFile(.{ .file = aosp.path(b, "frameworks/native/libs/nativewindow/ANativeWindow.cpp"), .flags = flags });
     gui_mod.addCSourceFile(.{ .file = b.path("src/native/graphics/SurfaceQueue.cpp"), .flags = flags });
-    gui_mod.addCSourceFile(.{ .file = b.path("src/native/graphics/VideoSurface.cpp"), .flags = flags });
     gui_mod.addCSourceFile(.{ .file = generated.sources.path(b, "LibGuiProperties.sysprop.cpp"), .flags = flags });
     gui_mod.addCSourceFile(.{ .file = generated.sources.path(b, "com_android_graphics_libgui_flags.cc"), .flags = flags });
     for (declarations.gui_cpp_aidl ++ declarations.graphics_ndk_aidl) |file| {

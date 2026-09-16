@@ -645,3 +645,10 @@ of MediaCodec persistent-input-surface cleanup were removed. This restores clien
 state and ownership contracts; it does not create a capture device or effect engine.
 The combined recording/Debug batch passed full acceptance, including recorder
 permission/lifecycle failures, real Debug memory/kernel queries and all 28 APK cases.
+
+Original BufferQueueThreadState now uses the pinned AIDL/HIDL caller-selection
+helper over authenticated transport state. The unused VideoSurface adapter and its
+adapter-only tests are deleted; production playback remains original Codec2 over
+the existing DMA-BUF allocator. Compiled provenance includes the linked C/C++
+libraries, and the framework smoke checks representative NDK symbol ownership in
+the actual application process. Full aggregate acceptance passed for this cleanup.

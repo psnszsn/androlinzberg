@@ -341,7 +341,6 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
         "src/native/graphics/HostTrace.cpp",
         "src/native/graphics/SurfaceFlingerHost.cpp",
         "src/native/graphics/SurfaceQueue.cpp",
-        "src/native/graphics/VideoSurface.cpp",
     };
     if (files.len != expected.len) return error.AuditFailed;
     for (files, expected) |actual, suffix| {

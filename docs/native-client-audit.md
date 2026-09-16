@@ -6,7 +6,7 @@ implementations, runtime libraries and process placement still contain substanti
 host adaptations.
 
 The complete `acceptance-test` target passed on 2026-09-16 for the original
-recording, effects and Debug JNI checkpoint. All 28 APK cases passed, with 90 recorded
+BufferQueue and linked-native provenance checkpoint. All 28 APK cases passed, with 90 recorded
 actions, zero structured runtime issues and no failure artifacts. Native, JVM,
 system, desktop, video, source-provenance and build checks passed. Source
 packages, pins and installed outputs are current.
@@ -35,23 +35,35 @@ inside the app. An unchanged Java declaration of a native method therefore
 says nothing about whether its implementation is stock. Zero framework stubs
 also does not mean zero unsupported native operations.
 
-## Compiled native and Skia check
+## Compiled native check
 
-`native-client-source-test` consumes the actual 2,607 native-island and linked Skia compiler
-commands and verifies the linked object files. The current selection contains
-2,282 unchanged AOSP units, 22 modified units, 22 owned units and 281 generated
-units. Its 113 required client sources must remain original and present. Forty-six
-sensitive client/service boundaries are preprocessed again with those commands;
-the report records effective macros and the 2,790 headers actually consumed.
-This catches disabled Android branches and incompatible Binder header selection.
+`native-client-source-test` consumes the actual 2,607 island/Skia compiler commands
+and 1,364 recorded Clang commands from 17 linked libraries. The direct inputs are
+2,282 unchanged AOSP units, 22 modified, 22 owned and 281 generated. Library
+records contain 713 unchanged, eight modified, six owned and 637 generated units.
+These are compilation contexts, including unused archive members, not unique
+source counts or a stock-client percentage. The report separately identifies the
+675 recorded objects included in the platform ELF.
 
-The check also verifies unique JNI registrar ownership and rejects FFmpeg/VAAPI
-dependencies in the platform client ELF. It runs in `acceptance-test` and writes
-`zig-out/test-results/native-client-source.json`. The check and its eight failure
-regressions passed, along with the build-tool, C++ and graph audits. It does not
-yet inspect translation units inside other linked static libraries, ART, or runtime
-loader resolution. Those remain necessary before claiming complete native
-provenance. These counts are compilation inputs, not a stock-client percentage.
+All declared C/C++ library inputs require compiler records. The audit verifies
+117 required original sources and preprocesses 48 sensitive boundaries in every
+selected compilation context, recording macros and 2,804 consumed headers. Twelve
+regressions cover disabled branches, incorrect Binder headers, malformed archives,
+quoted options and explicit source-language selection. Raw compiler metadata can
+contain temporary paths; this check does not establish reproducible binary output.
+
+The check also verifies JNI registrar ownership and rejects FFmpeg/VAAPI dependencies
+in the platform client ELF. A runtime test resolves six NDK entry points inside the
+actual application, checks unique platform/Binder images, and rejects decoding
+libraries in its process mappings. This is representative ownership coverage, not
+an exhaustive dynamic symbol-resolution proof. ART, Rust, injected compiler runtimes
+and the complete hosted-loader dependency graph still need separate inventory.
+The report is `zig-out/test-results/native-client-source.json` and runs in acceptance.
+
+Original BufferQueueThreadState now selects authenticated AIDL/HIDL caller identity
+through the existing transport interfaces. The old VideoSurface adapter and its
+self-contained test were deleted after the audit confirmed no production references;
+current Codec2, DMA-BUF and APK video regressions cover the production path.
 
 ## Skia and EGL dependency follow-up
 
@@ -89,7 +101,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 16,093 | 60 | 0 |
+| Framework | 16,094 | 59 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -419,9 +431,8 @@ tests (90 recorded actions, zero structured runtime issues in the final run).
 1. Close remaining Process and networking JNI adaptations against
    their native dependencies and host policy. Preserve explicit missing-service
    behavior where Android infrastructure is absent.
-2. Decide whether libbinder and AZKB remain explicit native adaptations or
-   whether literal native identity requires replacing them below the restored
-   Binder JNI boundary.
+2. Retain the agreed libbinder/AZKB and ART/libcore runtime adaptations as
+   explicit exceptions, with their source and ABI inventory kept current.
 3. Complete compiled native source/flags/header and ELF provenance checks.
    Sensors, Codec2, MediaPlayer and metadata retrieval now use original service clients.
 4. Close remaining libgui, OpenGL binding and native Surface/Image wrapper
@@ -429,9 +440,8 @@ tests (90 recorded actions, zero structured runtime issues in the final run).
    and compositor implementations remain at their platform boundaries. Close
    device, networking, loader and runtime gaps against the declared scope.
 
-The native acceptance check must expand from the island and Skia compilation commands
-to the remaining linked library and runtime closure, with the adaptation inventory and
-ELF/soname resolution checks. Process tests must prove backend placement and
+The native acceptance check now includes linked C/C++ libraries. Complete the remaining
+Rust/runtime inventory and ELF/soname resolution checks. Process tests must prove backend placement and
 service death/reconnection. Merely adding servers, retaining the replacement
 JNI, and passing the existing UI suite would not complete this work.
 

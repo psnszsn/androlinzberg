@@ -742,6 +742,7 @@ pub fn build(b: *std.Build) void {
         .codec2 = codec2,
     };
     const island = @import("build/island.zig").build(b, island_options);
+    const linked_native_inputs = @import("build/native_provenance.zig").record(b, island.step.cast(std.Build.Step.Run).?);
     @import("build/vintf.zig").testSuite(b, island_options, island, binder_broker);
     @import("build/performance_hint.zig").testSuite(b, island_options, island, binder_broker);
     const media_service_probe = @import("build/codec2.zig").serviceProbe(b, codec2, island.file, binder_cpp, binder_ndk);
@@ -1695,7 +1696,7 @@ pub fn build(b: *std.Build) void {
         // The comparison always runs so changes in this checkout are observed.
         if (!std.fs.path.isAbsolute(reference))
             std.debug.panic("aosp-reference must be an absolute checkout path", .{});
-        native_client_audit.dependOn(@import("build/native_provenance.zig").add(b, std.mem.concat(b.allocator, *std.Build.Step.Run, &.{ island.native_compiles, skia_build.compiles }) catch @panic("oom"), reference, aosp, island.file, binder_ndk.getEmittedBin(), island.pdfclient));
+        native_client_audit.dependOn(@import("build/native_provenance.zig").add(b, std.mem.concat(b.allocator, *std.Build.Step.Run, &.{ island.native_compiles, skia_build.compiles }) catch @panic("oom"), linked_native_inputs, reference, aosp, island.file, binder_ndk.getEmittedBin(), island.pdfclient));
         compare.addArg(reference);
         compare.addArg("--package");
         compare.addDirectoryArg(aosp);

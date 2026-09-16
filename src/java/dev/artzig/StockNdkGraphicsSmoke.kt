@@ -13,7 +13,39 @@ internal object StockNdkGraphicsSmoke {
     private external fun sharedMemory(memory: android.os.SharedMemory): Boolean
     private external fun checkedIo(file: FileDescriptor, socket: FileDescriptor): Boolean
 
+    private external fun symbolOwner(symbol: String): String?
+
+    private fun verifyNativeOwners() {
+        val owners = mapOf(
+            "AIBinder_new" to "libbinder_ndk.so",
+            "AParcel_create" to "libbinder_ndk.so",
+            "AHardwareBuffer_allocate" to "libandroid_platform.so",
+            "AMediaCodec_createDecoderByType" to "libandroid_platform.so",
+            "AAudio_createStreamBuilder" to "libandroid_platform.so",
+            "ASensorManager_getInstance" to "libandroid_platform.so",
+        )
+        for ((symbol, expected) in owners) {
+            val owner = checkNotNull(symbolOwner(symbol)) { "Native symbol is absent: $symbol" }
+            check(File(owner).name == expected) { "$symbol resolves to $owner, expected $expected" }
+        }
+        val mappings = File("/proc/self/maps").readLines().mapNotNull { line ->
+            val fields = line.split(Regex("\\s+"), limit = 6)
+            if (fields.size == 6 && fields[5].startsWith("/")) fields else null
+        }
+        for (name in owners.values.toSet() + "libbinder.so") {
+            val images = mappings.filter { File(it[5]).name == name }
+                .map { it[3] to it[4] }.toSet()
+            check(images.size == 1) { "Expected one mapped $name, found $images" }
+        }
+        val decodeLibraries = listOf("libavcodec.", "libavformat.", "libavutil.", "libswscale.", "libva.")
+        check(mappings.none { row -> decodeLibraries.any { File(row[5]).name.startsWith(it) } }) {
+            "Media decode backend was loaded into the application process"
+        }
+        println("stock-native-owners: PASS runtime NDK owners, unique ELF images and media decode process boundary")
+    }
+
     fun run() {
+        verifyNativeOwners()
         val bitmap = Bitmap.createBitmap(3, 2, Bitmap.Config.ARGB_8888)
         val surface = android.view.Surface()
         try {

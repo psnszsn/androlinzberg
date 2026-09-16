@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Audit actual native-island and linked Skia compiler inputs and preprocessed client boundaries.
+"""Audit production native compiler inputs and preprocessed client boundaries.
 
-The command graph comes from Step.Run.argv, not a second source manifest. Linked
-archives other than Skia, ART and the hosted loader require separate provenance checks; this
-report deliberately does not assign a stock-client percentage.
+The command graph comes from Step.Run.argv and Clang records in linked libraries,
+not a second source manifest. ART, injected compiler runtimes, Rust and hosted
+loader resolution require separate inventory. No stock-client percentage is assigned.
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 import re
 import shlex
+import struct
 import subprocess
 import tempfile
 
@@ -162,6 +163,10 @@ HEADER_PROBES.update(HWUI_ANDROID_SOURCES)
 SKIA_ANDROID_SOURCES.add("external/skia/src/gpu/ganesh/gl/AHardwareBufferGL.cpp")
 REQUIRED.update(SKIA_ANDROID_SOURCES)
 HEADER_PROBES.update(SKIA_ANDROID_SOURCES)
+REQUIRED.update({"frameworks/native/libs/gui/" + name for name in (
+    "GLConsumer.cpp", "SyncFeatures.cpp", "BufferQueueCore.cpp", "BufferQueueThreadState.cpp",
+)})
+HEADER_PROBES.update({"frameworks/native/libs/gui/GLConsumer.cpp", "frameworks/native/libs/gui/BufferQueueThreadState.cpp"})
 REGISTRARS = (
     "android::register_com_android_internal_os_RuntimeInit(",
     "register_android_graphics_classes", "android::register_android_graphics_pdf_PdfEditor(",
@@ -237,9 +242,11 @@ def preprocess(command: list[str]) -> dict:
     with tempfile.TemporaryDirectory(prefix="azk-native-provenance-") as directory:
         depfile = Path(directory) / "headers.d"
         args = list(command)
-        output = args.index("-o")
-        del args[output:output + 2]
-        args.remove("-c")
+        if "-o" in args:
+            output = args.index("-o")
+            del args[output:output + 2]
+        if "-c" in args:
+            args.remove("-c")
         args += ["-E", "-dM", "-MD", "-MF", str(depfile), "-MT", "audit"]
         result = subprocess.run(args, text=True, capture_output=True, timeout=180)
         if result.returncode:
@@ -254,6 +261,12 @@ def preprocess(command: list[str]) -> dict:
 
 def boundary_errors(source: str, probe: dict, repo: Path) -> list[str]:
     errors = []
+    if source == "frameworks/native/libs/gui/BufferQueueThreadState.cpp":
+        if "NO_BINDER" in probe["macros"]:
+            errors.append("BufferQueue lost the AIDL caller identity branch")
+        headers = {str(path) for path in probe["headers"]}
+        if str(repo / "src/native/binder/include/binder/IPCThreadState.h") not in headers:
+            errors.append("BufferQueue caller identity bypasses the authenticated Binder transport")
     if source == CORE + "android_os_Debug.cpp":
         expected = {"mallinfo": "mallinfo2", "mallinfo2(...)": "azk_android_mallinfo(__VA_ARGS__)",
                     "mallopt": "azk_android_mallopt", "LoadKernelConfigs": "LoadDebugStackConfigs"}
@@ -292,9 +305,103 @@ def elf(path: Path) -> dict:
                         if len(line.split(maxsplit=2)) == 3]}
 
 
+def command_records(data: bytes) -> list[tuple[str, list[str]]]:
+    if data.startswith(b'!<arch>\n'):
+        result = []
+        offset = 8
+        names = b''
+        while offset < len(data):
+            header = data[offset:offset + 60]
+            if len(header) != 60 or header[58:] != b'`\n':
+                raise ValueError('invalid ar member header')
+            size = int(header[48:58])
+            start = offset + 60
+            member = data[start:start + size]
+            if len(member) != size:
+                raise ValueError('truncated ar member')
+            name = header[:16].decode().strip()
+            if name == '//':
+                names = member
+            elif name not in ('/', '/SYM64/'):
+                if name.startswith('#1/'):
+                    length = int(name[3:])
+                    name, member = member[:length].decode().rstrip('\0'), member[length:]
+                elif name.startswith('/'):
+                    name = names[int(name[1:]):].split(b'/\n', 1)[0].decode()
+                else:
+                    name = name.rstrip('/')
+                for _, command in command_records(member):
+                    result.append((name, command))
+            offset = start + size + size % 2
+        return result
+    if data.startswith((b'BC\xc0\xde', b'\xde\xc0\x17\x0b', b'!<thin>')):
+        raise ValueError('unsupported bitcode or thin archive: cannot verify compiler records')
+    if not data.startswith(b'\x7fELF'):
+        raise ValueError('native input is neither ELF nor ordinary ar')
+    if data[:6] != b'\x7fELF\x02\x01' or len(data) < 64:
+        raise ValueError('unsupported or truncated ELF header')
+    header = struct.unpack_from('<16sHHIQQQIHHHHHH', data)
+    offset, entrysize, count, names = header[6], header[11], header[12], header[13]
+    if entrysize != 64 or not count or names >= count or offset + count * entrysize > len(data):
+        raise ValueError('invalid ELF section table')
+    sections = [struct.unpack_from('<IIQQQQIIQQ', data, offset + i * entrysize) for i in range(count)]
+    def content(section):
+        start, size = section[4], section[5]
+        if start + size > len(data):
+            raise ValueError('truncated ELF section')
+        return data[start:start + size]
+    strings = content(sections[names])
+    records = []
+    for section in sections:
+        index = section[0]
+        if index >= len(strings) or b'\0' not in strings[index:]:
+            raise ValueError('invalid ELF section name')
+        if strings[index:].split(b'\0', 1)[0] == b'.GCC.command.line':
+            raw = content(section)
+            if raw and not raw.endswith(b'\0'):
+                raise ValueError('unterminated compiler record')
+            for value in raw.split(b'\0'):
+                if not value:
+                    continue
+                # LLVM escapes whitespace/backslashes, but leaves quotes literal.
+                lexer = shlex.shlex(value.decode(), posix=True)
+                lexer.whitespace_split = True
+                lexer.quotes = ''
+                lexer.commenters = ''
+                records.append(('', list(lexer)))
+    return records
+
+
+def replay_record(command: list[str], compiler: Path) -> tuple[Path, list[str]]:
+    if len(command) < 4 or Path(command[0]).resolve() != compiler.resolve():
+        raise ValueError('untrusted or malformed recorded compiler command')
+    source_index = 1
+    if command[1] == "-x":
+        if len(command) < 6 or command[2] not in ("c", "c++", "assembler", "assembler-with-cpp"):
+            raise ValueError("unsupported recorded source language")
+        source_index = 3
+    source = Path(command[source_index]).resolve(strict=True)
+    if source.suffix not in ('.c', '.cc', '.cpp', '.cxx', '.S', '.s') or '-c' not in command:
+        raise ValueError('record has no native compilation source')
+    args = [str(compiler), 'clang']
+    index = 1
+    while index < len(command):
+        value = command[index]
+        if value in ('-o', '-MF', '-MT', '-MQ'):
+            if index + 1 >= len(command):
+                raise ValueError('missing recorded compiler option argument')
+            index += 2
+        elif value in ('-c', '-MD', '-MMD', '-MV'):
+            index += 1
+        else:
+            args.append(value)
+            index += 1
+    return source, args
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("reference", "package", "repo", "commands", "platform", "ndk", "pdfclient", "output"):
+    for name in ("reference", "package", "repo", "commands", "platform", "ndk", "pdfclient", "compiler", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--path", type=Path, action="append", required=True)
     args = parser.parse_args()
@@ -312,7 +419,8 @@ def main() -> int:
         reference_state[name] = {"revision": head, "tracked_clean": not dirty}
         if head != pin["revision"] or dirty:
             errors.append(f"reference project is dirty or not at its pin: {name}")
-    commands = decode_commands(json.loads(args.commands.read_text()), args.path)
+    model = json.loads(args.commands.read_text())
+    commands = decode_commands(model, args.path)
     sources, selected = [], {}
     for command in commands:
         source, obj = source_and_object(command)
@@ -326,17 +434,44 @@ def main() -> int:
             selected[name] = record
             if record["kind"] == "missing_reference" or record["kind"] == "modified" and name not in allowed:
                 errors.append(f"unlisted native source adaptation: {name}")
+    platform_commands = {tuple(command) for _, command in command_records(args.platform.read_bytes())}
+    libraries, linked_sources = [], []
+    for library in model["libraries"]:
+        artifact = args.path[library["artifact"]].resolve(strict=True)
+        declared = {args.path[index].resolve(strict=True) for index in library["sources"]}
+        actual = set()
+        library_record = {"path": str(artifact), "sha256": digest(artifact),
+                          "declared_sources": [str(path) for path in sorted(declared)], "records": []}
+        for member, command in command_records(artifact.read_bytes()):
+            source, replay = replay_record(command, args.compiler)
+            actual.add(source)
+            record = classify(source, package, reference, repo)
+            record.update(command=replay, recorded_command=command, library=str(artifact), member=member,
+                          object_in_platform=tuple(command) in platform_commands)
+            linked_sources.append(record)
+            library_record["records"].append(len(linked_sources) - 1)
+            if "source" in record:
+                name = record["source"]
+                selected.setdefault(name, record)
+                if record["kind"] == "missing_reference" or record["kind"] == "modified" and name not in allowed:
+                    errors.append(f"unlisted linked native adaptation: {name}")
+        # Assembly and Zig compiler/runtime support are retained as explicit
+        # inventory; every declared C/C++ translation unit must have a record.
+        missing = {path for path in declared - actual if path.suffix in (".c", ".cc", ".cpp", ".cxx")}
+        if missing:
+            errors.append(f"missing compiler records in {artifact}: {sorted(map(str, missing))}")
+        libraries.append(library_record)
     for name in sorted(REQUIRED):
         if name not in selected or selected[name]["kind"] != "unchanged":
             errors.append(f"restored client missing or changed: {name}")
-    probes = sorted(HEADER_PROBES & selected.keys())
+    probes = [record for record in sources + linked_sources if record.get("source") in HEADER_PROBES]
     headers = {}
     with ThreadPoolExecutor(max_workers=4) as pool:
-        results = pool.map(preprocess, [selected[name]["command"] for name in probes])
-        for name, probe in zip(probes, results):
-            errors.extend(boundary_errors(name, probe, repo))
-            selected[name]["effective_macros"] = probe["macros"]
-            selected[name]["consumed_headers"] = [str(path) for path in probe["headers"]]
+        results = pool.map(preprocess, [record["command"] for record in probes])
+        for record, probe in zip(probes, results):
+            errors.extend(boundary_errors(record["source"], probe, repo))
+            record["effective_macros"] = probe["macros"]
+            record["consumed_headers"] = [str(path) for path in probe["headers"]]
             for path in probe["headers"]:
                 if str(path) not in headers:
                     headers[str(path)] = classify(path, package, reference, repo)
@@ -359,13 +494,14 @@ def main() -> int:
         if name.startswith(("libavcodec.", "libavformat.", "libavutil.", "libswscale.", "libva.")):
             errors.append(f"media decode backend linked into client platform: {name}")
     del platform["symbols"], ndk["symbols"]
-    report = {"passed": not errors, "scope": "Native island and linked Skia Step.Run translation units; effective macros and consumed headers for selected restored boundaries; platform/NDK ELF owners. Other static linked libraries, ART and runtime loader resolution are outside this check.",
+    report = {"passed": not errors, "scope": "Native island/Skia Step.Run commands and actual ELF compiler records for declared C/C++ inputs in linked Step.Compile libraries; all compilation contexts of selected boundary header/macro probes; platform/NDK/PDF ELF owners. ART, injected compiler runtimes, Rust and runtime loader resolution require separate inventory.",
               "reference": reference_state, "source_counts": dict(Counter(record["kind"] for record in sources)),
               "required_original_clients": len(REQUIRED), "header_probe_count": len(probes),
-              "sources": sources, "headers": list(headers.values()), "platform": platform, "ndk": ndk, "pdfclient": pdfclient,
+              "sources": sources, "linked_libraries": libraries, "linked_sources": linked_sources,
+              "linked_source_counts": dict(Counter(record["kind"] for record in linked_sources)), "headers": list(headers.values()), "platform": platform, "ndk": ndk, "pdfclient": pdfclient,
               "registrars": owners, "errors": errors}
     args.output.write_text(json.dumps(report, indent=2) + "\n")
-    print(f"native island: {len(sources)} compiled inputs, {len(REQUIRED)} restored source guards, {len(probes)} preprocessed boundaries, {len(errors)} errors", flush=True)
+    print(f"native island: {len(sources)} direct inputs and {len(linked_sources)} records across {len(libraries)} linked libraries, {len(REQUIRED)} restored source guards, {len(probes)} preprocessed boundaries, {len(errors)} errors", flush=True)
     for error in errors:
         print(error, flush=True)
     return int(bool(errors))

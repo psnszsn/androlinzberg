@@ -21,7 +21,7 @@ fn samePath(a: LazyPath, b: LazyPath) bool {
     };
 }
 
-pub fn add(b: *std.Build, compiles: []const *std.Build.Step.Run, reference: []const u8, package: LazyPath, platform: LazyPath, ndk: LazyPath, pdfclient: LazyPath) *std.Build.Step {
+pub fn add(b: *std.Build, compiles: []const *std.Build.Step.Run, libraries: []const Library, reference: []const u8, package: LazyPath, platform: LazyPath, ndk: LazyPath, pdfclient: LazyPath) *std.Build.Step {
     const run = b.addSystemCommand(&.{ "python3", "-B" });
     run.addFileArg(b.path("tools/native-client-audit.py"));
     run.addArgs(&.{ "--reference", reference, "--package" });
@@ -34,6 +34,7 @@ pub fn add(b: *std.Build, compiles: []const *std.Build.Step.Run, reference: []co
     run.addFileArg(ndk);
     run.addArg("--pdfclient");
     run.addFileArg(pdfclient);
+    run.addArgs(&.{ "--compiler", b.graph.zig_exe });
     var paths: std.ArrayList(LazyPath) = .empty;
     var tokens: std.ArrayList(Token) = .empty;
     var token_ids: std.StringHashMapUnmanaged(usize) = .empty;
@@ -83,11 +84,81 @@ pub fn add(b: *std.Build, compiles: []const *std.Build.Step.Run, reference: []co
         }
         commands.append(b.allocator, command.items) catch @panic("OOM");
     }
-    const manifest = b.addWriteFiles().add("native-compiler-inputs.json", std.json.Stringify.valueAlloc(b.allocator, .{ .tokens = tokens.items, .commands = commands.items }, .{}) catch @panic("OOM"));
+    const LibraryInput = struct { artifact: usize, sources: []const usize };
+    var library_inputs: std.ArrayList(LibraryInput) = .empty;
+    for (libraries) |library| {
+        const artifact = paths.items.len;
+        paths.append(b.allocator, library.artifact) catch @panic("OOM");
+        run.addArg("--path");
+        run.addFileArg(library.artifact);
+        var sources: std.ArrayList(usize) = .empty;
+        for (library.sources) |source| {
+            sources.append(b.allocator, paths.items.len) catch @panic("OOM");
+            paths.append(b.allocator, source) catch @panic("OOM");
+            run.addArg("--path");
+            run.addFileArg(source);
+        }
+        library_inputs.append(b.allocator, .{ .artifact = artifact, .sources = sources.items }) catch @panic("OOM");
+    }
+    const manifest = b.addWriteFiles().add("native-compiler-inputs.json", std.json.Stringify.valueAlloc(b.allocator, .{ .tokens = tokens.items, .commands = commands.items, .libraries = library_inputs.items }, .{}) catch @panic("OOM"));
     run.addArg("--commands");
     run.addFileArg(manifest);
     run.addArg("--output");
     const report = run.addOutputFileArg("native-client-source.json");
     run.has_side_effects = true;
     return &b.addInstallFileWithDir(report, .prefix, "test-results/native-client-source.json").step;
+}
+
+pub const Library = struct {
+    artifact: LazyPath,
+    sources: []const LazyPath,
+};
+const Walker = struct {
+    b: *std.Build,
+    seen: std.AutoHashMapUnmanaged(*std.Build.Step.Compile, void) = .empty,
+    modules: std.AutoHashMapUnmanaged(*std.Build.Module, void) = .empty,
+    libraries: std.ArrayList(Library) = .empty,
+
+    fn flags(self: *Walker, value: *[]const []const u8) void {
+        for (value.*) |flag| if (std.mem.eql(u8, flag, "-frecord-command-line")) return;
+        value.* = std.mem.concat(self.b.allocator, []const u8, &.{ value.*, &.{"-frecord-command-line"} }) catch @panic("OOM");
+    }
+    fn path(self: *Walker, value: LazyPath) void {
+        if (value == .generated) {
+            const producer = self.b.graph.generated_files.items[@intFromEnum(value.generated.index)];
+            if (producer.cast(std.Build.Step.Compile)) |dependency| self.compile(dependency);
+        }
+    }
+    fn compile(self: *Walker, value: *std.Build.Step.Compile) void {
+        const entry = self.seen.getOrPut(self.b.allocator, value) catch @panic("OOM");
+        if (entry.found_existing) return;
+        var sources: std.ArrayList(LazyPath) = .empty;
+        for (value.root_module.getGraph().modules) |module| {
+            const visited = self.modules.getOrPut(self.b.allocator, module) catch @panic("OOM");
+            for (module.link_objects.items) |object| switch (object) {
+                .other_step => |dependency| self.compile(dependency),
+                .static_path => |file| self.path(file),
+                .c_source_file => |file| {
+                    if (!visited.found_existing) self.flags(&file.flags);
+                    sources.append(self.b.allocator, file.file) catch @panic("OOM");
+                },
+                .c_source_files => |files| {
+                    if (!visited.found_existing) self.flags(&files.flags);
+                    for (files.files) |file| sources.append(self.b.allocator, files.root.path(self.b, file)) catch @panic("OOM");
+                },
+                .assembly_file => |file| sources.append(self.b.allocator, file) catch @panic("OOM"),
+                else => {},
+            };
+        }
+        self.libraries.append(self.b.allocator, .{ .artifact = value.getEmittedBin(), .sources = sources.items }) catch @panic("OOM");
+    }
+};
+pub fn record(b: *std.Build, link: *std.Build.Step.Run) []const Library {
+    var walker: Walker = .{ .b = b };
+    for (link.argv.items) |arg| switch (arg) {
+        .artifact => |value| walker.compile(value.artifact),
+        .lazy_path => |value| walker.path(value.lazy_path),
+        else => {},
+    };
+    return walker.libraries.items;
 }

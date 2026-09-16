@@ -11,6 +11,50 @@ SPEC.loader.exec_module(audit)
 
 
 class NativeAuditTest(unittest.TestCase):
+    def test_recorded_options_preserve_literal_quotes_and_spaces(self):
+        import struct
+        def elf_record(record):
+            names = b'\0.shstrtab\0.GCC.command.line\0'
+            payload = record + b'\0'
+            data = bytearray(64 + 3 * 64)
+            data[:64] = struct.pack('<16sHHIQQQIHHHHHH', b'\x7fELF\x02\x01' + b'\0' * 10,
+                                    1, 62, 1, 0, 0, 64, 0, 64, 0, 0, 64, 3, 1)
+            for index, name, content in ((1, 1, names), (2, 11, payload)):
+                struct.pack_into('<IIQQQQIIQQ', data, 64 + index * 64,
+                                 name, 1, 0, 0, len(data), len(content), 0, 0, 1, 0)
+                data += content
+            return bytes(data)
+        data = elf_record(b'/zig /a\\ b/source.cpp -D VALUE="a\\ b" -c -o /tmp/out.o')
+        records = audit.command_records(data)
+        self.assertEqual(records, [('', ['/zig', '/a b/source.cpp', '-D', 'VALUE="a b"', '-c', '-o', '/tmp/out.o'])])
+        self.assertRaises(ValueError, audit.command_records, data[:-1])
+        name = 'a_very_long_source_name.cpp.o'
+        table = (name + '/\n').encode()
+        def member(label, value):
+            header = f'{label:<16}{0:<12}{0:<6}{0:<6}{0:<8}{len(value):<10}`\n'.encode()
+            return header + value + (b'\n' if len(value) % 2 else b'')
+        archive = b'!<arch>\n' + member('//', table) + member('/0', data)
+        self.assertEqual(audit.command_records(archive), [(name, records[0][1])])
+        self.assertRaises(ValueError, audit.command_records, archive[:-3])
+
+    def test_explicit_source_language_and_bookkeeping_replay(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "api level.cpp"
+            source.touch()
+            compiler = Path(directory) / "zig"
+            command = [str(compiler), "-x", "c", str(source), "-D", 'VALUE="a b"',
+                       "-MD", "-MV", "-MF", "old.d", "-c", "-o", "old.o"]
+            path, replay = audit.replay_record(command, compiler)
+            self.assertEqual(path, source.resolve())
+            self.assertEqual(replay, [str(compiler), "clang", "-x", "c", str(source), "-D", 'VALUE="a b"'])
+
+    def test_unreadable_records_do_not_pass_as_original(self):
+        for data in (b'BC\xc0\xde', b'!<thin>\n', b'\x7fELF\x01\x01', b'not ELF'):
+            with self.assertRaises(ValueError):
+                audit.command_records(data)
+        with self.assertRaises(ValueError):
+            audit.replay_record(['/bin/untrusted', '/source.cpp', '-c', '-o', 'x'], Path('/compiler'))
+
     def test_command_paths_preserve_spaces_and_macro_arguments(self):
         model = {"tokens": [{"text": "zig"}, {"text": "-DVALUE=a b"},
                             {"path": 0, "prefix": "-I", "suffix": ""}],
@@ -65,6 +109,17 @@ class NativeAuditTest(unittest.TestCase):
         self.assertFalse(audit.registrar_matches("register_android_graphics_classes_backup", "register_android_graphics_classes"))
         self.assertTrue(audit.registrar_matches("android::register_pdf(_JNIEnv*)", "android::register_pdf("))
         self.assertFalse(audit.registrar_matches("android::register_pdf_backup(_JNIEnv*)", "android::register_pdf("))
+
+    def test_buffer_queue_caller_selection_requires_binder_branch_and_transport(self):
+        repo = Path("/repo")
+        source = "frameworks/native/libs/gui/BufferQueueThreadState.cpp"
+        probe = {"macros": {}, "headers": [repo / "src/native/binder/include/binder/IPCThreadState.h"]}
+        self.assertFalse(audit.boundary_errors(source, probe, repo))
+        probe["macros"]["NO_BINDER"] = "1"
+        self.assertTrue(audit.boundary_errors(source, probe, repo))
+        probe["macros"].clear()
+        probe["headers"].clear()
+        self.assertTrue(audit.boundary_errors(source, probe, repo))
 
     def test_debug_requires_wide_allocator_counters_and_private_kernel_query(self):
         probe = {"macros": {"__ANDROID__": "1", "mallinfo": "mallinfo2",

@@ -877,13 +877,25 @@ static jboolean testNdkSharedMemory(JNIEnv* env, jclass, jobject javaMemory) {
     munmap(writable, 4096);
     return valid;
 }
+// Exercise symbol lookup in the application's actual ELF scope, not a separate
+// executable whose link order could hide duplicate native owners.
+#include <dlfcn.h>
+static jstring nativeSymbolOwner(JNIEnv* env, jclass, jstring symbol) {
+    ScopedUtfChars name(env, symbol);
+    if (!name.c_str()) return nullptr;
+    void* address = dlsym(RTLD_DEFAULT, name.c_str());
+    Dl_info owner{};
+    if (!address || !dladdr(address, &owner) || !owner.dli_fname) return nullptr;
+    return env->NewStringUTF(owner.dli_fname);
+}
 static int registerStockNdkGraphicsSmoke(JNIEnv* env) {
     const JNINativeMethod methods[] = {
         {"sharedMemory", "(Landroid/os/SharedMemory;)Z", reinterpret_cast<void*>(testNdkSharedMemory)},
         {"bitmapAndWindow", "(Landroid/graphics/Bitmap;Landroid/view/Surface;)Z", reinterpret_cast<void*>(testNdkBitmapAndWindow)},
         {"checkedIo", "(Ljava/io/FileDescriptor;Ljava/io/FileDescriptor;)Z", reinterpret_cast<void*>(testFortifiedIo)},
+        {"symbolOwner", "(Ljava/lang/String;)Ljava/lang/String;", reinterpret_cast<void*>(nativeSymbolOwner)},
     };
-    return jniRegisterNativeMethods(env, "dev/artzig/StockNdkGraphicsSmoke", methods, 3);
+    return jniRegisterNativeMethods(env, "dev/artzig/StockNdkGraphicsSmoke", methods, std::size(methods));
 }
 
 extern "C" const void* bionic___system_property_find(const char*);
