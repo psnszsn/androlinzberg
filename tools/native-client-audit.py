@@ -8,6 +8,7 @@ loader resolution require separate inventory. No stock-client percentage is assi
 from __future__ import annotations
 
 import argparse
+import native_rust_audit
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
@@ -422,7 +423,7 @@ def main() -> int:
     model = json.loads(args.commands.read_text())
     commands = decode_commands(model, args.path)
     sources, selected = [], {}
-    for command in commands:
+    for command in commands[:model["native_count"]]:
         source, obj = source_and_object(command)
         record = classify(source, package, reference, repo)
         record.update(command=command, object={"path": str(obj), "sha256": digest(obj)})
@@ -493,11 +494,13 @@ def main() -> int:
     for name in platform["needed"]:
         if name.startswith(("libavcodec.", "libavformat.", "libavutil.", "libswscale.", "libva.")):
             errors.append(f"media decode backend linked into client platform: {name}")
+    rust, rust_errors = native_rust_audit.audit(model, commands, args.path, package, reference, repo, platform["symbols"], classify, digest)
+    errors.extend(rust_errors)
     del platform["symbols"], ndk["symbols"]
-    report = {"passed": not errors, "scope": "Native island/Skia Step.Run commands and actual ELF compiler records for declared C/C++ inputs in linked Step.Compile libraries; all compilation contexts of selected boundary header/macro probes; platform/NDK/PDF ELF owners. ART, injected compiler runtimes, Rust and runtime loader resolution require separate inventory.",
+    report = {"passed": not errors, "scope": "Native island/Skia Step.Run commands and actual ELF compiler records for declared C/C++ inputs in linked Step.Compile libraries; all compilation contexts of selected boundary header/macro probes; platform/NDK/PDF ELF owners. Pinned Rust compiler commands, effective cfg, consumed inputs, sysroot and bridge ownership are included. ART, injected C/C++ compiler runtimes and runtime loader resolution require separate inventory.",
               "reference": reference_state, "source_counts": dict(Counter(record["kind"] for record in sources)),
               "required_original_clients": len(REQUIRED), "header_probe_count": len(probes),
-              "sources": sources, "linked_libraries": libraries, "linked_sources": linked_sources,
+              "sources": sources, "rust": rust, "linked_libraries": libraries, "linked_sources": linked_sources,
               "linked_source_counts": dict(Counter(record["kind"] for record in linked_sources)), "headers": list(headers.values()), "platform": platform, "ndk": ndk, "pdfclient": pdfclient,
               "registrars": owners, "errors": errors}
     args.output.write_text(json.dumps(report, indent=2) + "\n")

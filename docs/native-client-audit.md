@@ -56,7 +56,7 @@ The check also verifies JNI registrar ownership and rejects FFmpeg/VAAPI depende
 in the platform client ELF. A runtime test resolves six NDK entry points inside the
 actual application, checks unique platform/Binder images, and rejects decoding
 libraries in its process mappings. This is representative ownership coverage, not
-an exhaustive dynamic symbol-resolution proof. ART, Rust, injected compiler runtimes
+an exhaustive dynamic symbol-resolution proof. ART, injected C/C++ compiler runtimes
 and the complete hosted-loader dependency graph still need separate inventory.
 The report is `zig-out/test-results/native-client-source.json` and runs in acceptance.
 
@@ -64,6 +64,23 @@ Original BufferQueueThreadState now selects authenticated AIDL/HIDL caller ident
 through the existing transport interfaces. The old VideoSurface adapter and its
 self-contained test were deleted after the audit confirmed no production references;
 current Codec2, DMA-BUF and APK video regressions cover the production path.
+
+## Rust client provenance
+
+The native audit also consumes the real pinned rustc invocations and compiler
+`dep-info` outputs. It distinguishes runtime crates, compiler plugins, and build
+tools, records effective target/cfg and declared environment, compares consumed
+inputs with the pin, and checks original input-verifier exports in the final ELF.
+The selected Rust configuration uses the pinned Soong host variants.
+
+The focused audit passed for 44 crates: 28 runtime crates, six compiler plugins,
+and ten build tools. Its unique consumed inputs were 545 unchanged files and
+three generated files. It inventories all 27 pinned sysroot archives; this does
+not mean all 27 were linked. The original input-verifier suite passed all 44
+tests. A build experiment also verified that changing an included Rust module,
+without changing the root source, invalidates the cached crate. Rust environment
+comments are preserved for auditing while Zig receives a compatible dependency
+rule. These focused checks do not replace full APK acceptance.
 
 ## Skia and EGL dependency follow-up
 
@@ -441,7 +458,7 @@ tests (90 recorded actions, zero structured runtime issues in the final run).
    device, networking, loader and runtime gaps against the declared scope.
 
 The native acceptance check now includes linked C/C++ libraries. Complete the remaining
-Rust/runtime inventory and ELF/soname resolution checks. Process tests must prove backend placement and
+runtime inventory and ELF/soname resolution checks. Process tests must prove backend placement and
 service death/reconnection. Merely adding servers, retaining the replacement
 JNI, and passing the existing UI suite would not complete this work.
 

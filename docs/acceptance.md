@@ -78,8 +78,12 @@ client source identity, preprocesses sensitive boundaries to inspect their
 actual macros and headers, and verifies platform/NDK JNI registrar ownership.
 It also rejects FFmpeg/VAAPI dependencies in the client platform ELF. The report
 is installed at `zig-out/test-results/native-client-source.json`; the target is
-part of `acceptance-test`. Linked static library inputs, ART and runtime loader
-resolution are outside its current scope.
+part of `acceptance-test`. Linked C/C++ libraries contribute their actual compiler
+records. Rust crates contribute actual compiler arguments, effective target/cfg,
+compiler-generated dependencies, declared environment, pinned sysroot inventory,
+and original bridge exports in the final platform library. Build tools and compiler
+plugins are distinguished from runtime crates. ART and runtime loader resolution
+remain outside this check's scope.
 
 ## Native codec service
 

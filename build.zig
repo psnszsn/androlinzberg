@@ -44,6 +44,7 @@ pub fn build(b: *std.Build) void {
     const native_provenance_tests = b.addSystemCommand(&.{ "python3", "-B" });
     native_provenance_tests.addFileArg(b.path("tools/test_native_client_audit.py"));
     native_provenance_tests.addFileInput(b.path("tools/native-client-audit.py"));
+    native_provenance_tests.addFileInput(b.path("tools/native_rust_audit.py"));
     build_tools_test.dependOn(&native_provenance_tests.step);
     const doc_header_tests = b.addSystemCommand(&.{ "python3", "-B", "tools/test_javadoc_headers.py" });
     build_tools_test.dependOn(&doc_header_tests.step);
@@ -1696,7 +1697,7 @@ pub fn build(b: *std.Build) void {
         // The comparison always runs so changes in this checkout are observed.
         if (!std.fs.path.isAbsolute(reference))
             std.debug.panic("aosp-reference must be an absolute checkout path", .{});
-        native_client_audit.dependOn(@import("build/native_provenance.zig").add(b, std.mem.concat(b.allocator, *std.Build.Step.Run, &.{ island.native_compiles, skia_build.compiles }) catch @panic("oom"), linked_native_inputs, reference, aosp, island.file, binder_ndk.getEmittedBin(), island.pdfclient));
+        native_client_audit.dependOn(@import("build/native_provenance.zig").add(b, std.mem.concat(b.allocator, *std.Build.Step.Run, &.{ island.native_compiles, skia_build.compiles }) catch @panic("oom"), generated.native.input.rust.?, linked_native_inputs, reference, aosp, island.file, binder_ndk.getEmittedBin(), island.pdfclient));
         compare.addArg(reference);
         compare.addArg("--package");
         compare.addDirectoryArg(aosp);

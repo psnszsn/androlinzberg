@@ -7,6 +7,9 @@ const LazyPath = std.Build.LazyPath;
 pub const Artifact = struct {
     file: LazyPath,
     dependencies: []const LazyPath,
+    compile: *std.Build.Step.Run,
+    depfile: LazyPath,
+    kind: []const u8,
 };
 
 pub const Builder = struct {
@@ -55,6 +58,10 @@ pub const Builder = struct {
         const run = command.create(b);
         run.run.setName(b.fmt("rustc {s} (AOSP 1.83.0)", .{key_name}));
         const sysroot = self.aosp.path(b, "prebuilts/rust/linux-x86/1.83.0");
+        run.addArg("python3");
+        run.addFileArg(b.path("tools/rust-compile.py"));
+        run.run.addArg("--arg");
+        _ = run.run.addDepFileOutputArg2(b.fmt("{s}.cache.d", .{key_name}), .{});
         run.addFileArg(self.runner.getEmittedBin());
         run.addFileArg(sysroot.path(b, "bin/rustc"));
         run.addArg("--sysroot");
@@ -109,6 +116,8 @@ pub const Builder = struct {
         run.setPathEnvironment("CARGO_MANIFEST_DIR", if (crate.directory.len == 0) source.dirname() else self.aosp.path(b, crate.directory));
         if (std.mem.eql(u8, name, "libbinder_ndk_sys"))
             run.setPathEnvironment("OUT_DIR", self.generated.get("binder-bindings").?.dirname());
+        run.run.addArgs(&.{ "--prefix", "--emit=link,dep-info=" });
+        const depfile = run.run.addOutputFileArg(b.fmt("{s}.d", .{key_name}));
         run.addArg("-o");
         const filename = if (test_options != null) b.fmt("{s}-rust-test", .{crate.crate_name}) else switch (crate.kind) {
             .bin => crate.crate_name,
@@ -116,7 +125,7 @@ pub const Builder = struct {
             .proc_macro => b.fmt("lib{s}.so", .{crate.crate_name}),
             .staticlib => b.fmt("lib{s}_rust.a", .{crate.crate_name}),
         };
-        const artifact: Artifact = .{ .file = run.addOutputFileArg(filename), .dependencies = unique.toOwnedSlice(b.allocator) catch @panic("oom") };
+        const artifact: Artifact = .{ .file = run.addOutputFileArg(filename), .dependencies = unique.toOwnedSlice(b.allocator) catch @panic("oom"), .compile = run.run, .depfile = depfile, .kind = @tagName(crate.kind) };
         self.artifacts.put(b.allocator, key_name, artifact) catch @panic("oom");
         return artifact;
     }

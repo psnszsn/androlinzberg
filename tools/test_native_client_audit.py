@@ -11,6 +11,32 @@ SPEC.loader.exec_module(audit)
 
 
 class NativeAuditTest(unittest.TestCase):
+    def test_rust_wrapper_records_declared_environment_only(self):
+        command = ["/build-command", "--arg", "python3", "--arg", "/repo/tools/rust-compile.py",
+                   "--arg", "/tmp/cache.d", "--arg", "/runner", "--arg", "/pinned/bin/rustc",
+                   "--env", "CARGO_PKG_VERSION", "1.2.3", "--arg", "root.rs",
+                   "--arg", "--cfg", "--arg", 'feature="a b"',
+                   "--prefix", "--emit=link,dep-info=", "/a b/input.d"]
+        argv, env = audit.native_rust_audit.unwrap(command)
+        self.assertEqual(argv, ["/runner", "/pinned/bin/rustc", "root.rs", "--cfg",
+                                'feature="a b"', "--emit=link,dep-info=/a b/input.d"])
+        self.assertEqual(env, {"CARGO_PKG_VERSION": "1.2.3"})
+        self.assertRaises(ValueError, audit.native_rust_audit.unwrap, command + ["--unknown"])
+
+    def test_rust_dependencies_keep_spaces_generated_includes_and_env(self):
+        text = "out.d: root.rs /generated/bindings.rs /path/with\\ space.rs\n\nroot.rs:\n# env-dep:OUT_DIR=/generated\n# env-dep:UNSET\n"
+        paths, env = audit.native_rust_audit.dep_inputs(text)
+        self.assertEqual(paths, ["/generated/bindings.rs", "/path/with space.rs", "root.rs"])
+        self.assertEqual(env, {"OUT_DIR": "/generated", "UNSET": None})
+        for invalid in ("", "out.d:", "# env-dep:ONLY=1"):
+            self.assertRaises(ValueError, audit.native_rust_audit.dep_inputs, invalid)
+
+    def test_rust_effective_cfg_query_does_not_recompile(self):
+        command = ["/runner", "/rustc", "root.rs", "--emit=link,dep-info=out.d", "-o", "out.a",
+                   "--cfg", 'feature="real"', "-Copt-level=2"]
+        self.assertEqual(audit.native_rust_audit.print_command(command, "cfg"),
+                         ["/runner", "/rustc", "root.rs", "--cfg", 'feature="real"', "-Copt-level=2", "--print=cfg"])
+
     def test_recorded_options_preserve_literal_quotes_and_spaces(self):
         import struct
         def elf_record(record):
