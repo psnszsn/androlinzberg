@@ -93,6 +93,23 @@ class NativeAuditTest(unittest.TestCase):
         self.assertTrue(audit.boundary_errors(name, {"macros": {"__ANDROID_HOST__": "1"}, "headers": []}, Path("/repo")))
         self.assertFalse(audit.boundary_errors(name, {"macros": {"__ANDROID__": "1"}, "headers": []}, Path("/repo")))
 
+    def test_thread_priority_uses_the_host_policy_below_original_jni(self):
+        name = "system/core/libutils/Threads.cpp"
+        self.assertTrue(audit.boundary_errors(name, {"macros": {}, "headers": []}, Path("/repo")))
+        self.assertFalse(audit.boundary_errors(name, {"macros": {"setpriority": "azk_setpriority"}, "headers": []}, Path("/repo")))
+
+    def test_process_and_account_files_keep_identity_below_original_jni(self):
+        macros = {"__ANDROID__": "1", "getpwnam": "azk_android_getpwnam", "getgrnam": "azk_android_getgrnam",
+                  "open": "azk_process_open", "fopen": "azk_process_fopen",
+                  "setuid": "azk_process_setuid", "setgid": "azk_process_setgid"}
+        name = audit.CORE + "android_util_Process.cpp"
+        self.assertFalse(audit.boundary_errors(name, {"macros": macros, "headers": []}, Path("/repo")))
+        del macros["setuid"]
+        self.assertTrue(audit.boundary_errors(name, {"macros": macros, "headers": []}, Path("/repo")))
+        name = "bionic/libc/bionic/grp_pwd_file.cpp"
+        self.assertTrue(audit.boundary_errors(name, {"macros": {}, "headers": []}, Path("/repo")))
+        self.assertFalse(audit.boundary_errors(name, {"macros": {"open": "azk_android_account_open"}, "headers": []}, Path("/repo")))
+
     def test_binder_facade_must_be_consumed_not_merely_on_search_path(self):
         repo = Path("/repo")
         name = audit.CORE + "android_util_Binder.cpp"

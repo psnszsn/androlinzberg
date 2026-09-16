@@ -4,7 +4,7 @@
   "scope": "Packaged native source/header files; compiled Binder, utility and media/graphics JNI follow-ups are recorded separately",
   "packages": {
     "androlinzberg-aosp-android-16.0.0_r1.tar.gz": {
-      "unchanged": 16094,
+      "unchanged": 16119,
       "modified": [
         "bionic/libc/bionic/fortify.cpp",
         "bionic/libc/private/bionic_fortify.h",
@@ -31,7 +31,6 @@
         "frameworks/native/libs/binder/ndk/include_cpp/android/binder_interface_utils.h",
         "frameworks/native/libs/binder/ndk/include_ndk/android/binder_status.h",
         "frameworks/native/libs/gui/SurfaceComposerClient.cpp",
-        "frameworks/native/libs/nativewindow/ANativeWindow.cpp",
         "frameworks/native/libs/renderengine/RenderEngine.cpp",
         "frameworks/native/libs/renderengine/skia/SkiaGLRenderEngine.cpp",
         "frameworks/native/libs/renderengine/skia/SkiaRenderEngine.cpp",
@@ -67,7 +66,7 @@
         "system/libbase/properties.cpp"
       ],
       "added": [],
-      "archive_sha256": "56f47a9440bbc71f3d3200d1823dafe4ce302fd034be4a776ba93f7e8e21a880"
+      "archive_sha256": "f8218ddba1a4bec114b004d65e532861efc69b43d91693767f4d04ba480d53ab"
     },
     "artzig-aosp-android-16.0.0_r1.tar.gz": {
       "archive_sha256": "aa71ef019f0360bc53c5e795858e58b3ec216d8ccafa6d623d5c6c6e3b9a921c",
@@ -268,7 +267,7 @@
       ]
     }
   },
-  "framework_package_refresh": "2026-09-16: restore original BufferQueue caller selection after recording/Debug dependency import",
+  "framework_package_refresh": "2026-09-16: original Process JNI, Bionic accounts, libprocessgroup and ANativeWindow; optional UiThread server task-profile fallback",
   "binder_jni_followup": {
     "runtime_revision": "b7d78a39",
     "verified_date": "2026-09-13",
@@ -697,18 +696,18 @@
   "compiled_island_followup": {
     "target": "native-client-source-test",
     "report": "zig-out/test-results/native-client-source.json",
-    "inputs": 2607,
+    "inputs": 2616,
     "source_counts": {
-      "unchanged": 2282,
+      "unchanged": 2292,
       "modified": 22,
-      "owned": 22,
+      "owned": 21,
       "generated": 281
     },
-    "required_original_clients": 117,
-    "preprocessed_boundaries": 48,
-    "consumed_headers": 2804,
-    "scope": "Native island/Skia Step.Run commands and actual ELF compiler records for declared C/C++ inputs in linked Step.Compile libraries; all compilation contexts of selected boundary header/macro probes; platform/NDK/PDF ELF owners. ART, injected compiler runtimes, Rust and runtime loader resolution require separate inventory.",
-    "validation": "Passed full acceptance397: 117 original-source guards, 48 header/macro probes and twelve audit regressions."
+    "required_original_clients": 128,
+    "preprocessed_boundaries": 53,
+    "consumed_headers": 2832,
+    "scope": "Native island/Skia Step.Run commands and actual ELF compiler records for declared C/C++ inputs in linked Step.Compile libraries; all compilation contexts of selected boundary header/macro probes; platform/NDK/PDF ELF owners. Pinned Rust compiler commands, effective cfg, consumed inputs, sysroot and bridge ownership are included. ART, injected C/C++ compiler runtimes and runtime loader resolution require separate inventory.",
+    "validation": "Full acceptance464 passed: 128 original-source guards, 53 header/macro probes; 17 focused audit regressions passed separately."
   },
   "graphics_helpers_followup": {
     "sources": [
@@ -744,9 +743,9 @@
     "target": "acceptance-test",
     "passed": true,
     "verified_date": "2026-09-16",
-    "log": "/tmp/azk-linked-accept397.log",
+    "log": "/tmp/azk-priority-accept464.log",
     "apk_cases": 28,
-    "recorded_actions": 90,
+    "recorded_actions": 88,
     "structured_runtime_issues": 0,
     "failure_artifacts": 0,
     "unsuccessful_actions": 0,
@@ -756,7 +755,7 @@
       "performance-hint TestSessionCreationWithNullLayers remains a pinned null-SurfaceControl failure outside aggregate acceptance",
       "codec2-params-test retains two known host-compiler parameter comparisons outside aggregate acceptance"
     ],
-    "checkpoint": "Original BufferQueue caller selection and linked native provenance"
+    "checkpoint": "Original Process and ANativeWindow with dual host scheduling modes"
   },
   "skia_egl_followup": {
     "implementation": "Original Soong SkUserConfig generator uses selected GN Android features, Vulkan and JPEG gainmaps. Original Android logging and Vulkan AHardwareBuffer implementation are compiled. Native and app EGL share context telemetry filtering, begin-frame validation, damage swaps and damage-region translation through system Mesa. Handwritten input/HWUI flags deleted in favor of original generators.",
@@ -825,7 +824,7 @@
         "codec2-params-test retains two known host-compiler parameter comparisons outside aggregate acceptance"
       ]
     },
-    "remaining": "Process/Debug/network JNI and remaining libgui/OpenGL/native wrapper adaptations; host driver, allocator, Binder/AZKB and runtime exceptions remain explicit. Android Vulkan hardware-buffer driver support is not claimed."
+    "remaining": "Networking JNI and remaining libgui/OpenGL/native wrapper adaptations; host driver, allocator, Binder/AZKB and runtime exceptions remain explicit. Android Vulkan hardware-buffer driver support is not claimed."
   },
   "startup_heap_followup": {
     "original_sources": [
@@ -933,7 +932,7 @@
   "embedded_runtime_followup": {
     "implementation": "Original AndroidRuntime.cpp embedded in the existing ART VM, including RuntimeInit registration, Java-capable thread attachment and process exit; original Process setArgV0 entry and Bionic setprogname. Original NdkImageReader restored without a host branch.",
     "host_boundary": "One private friend declaration lets HostedAndroidRuntime bind the existing VM and thread factory; its onStarted dispatches the existing hosted entry. Main retains the actual writable exec argv block and copies launcher arguments before process naming can overwrite it.",
-    "scope": "Other Process JNI operations remain adapted; ART bootstrap and architecture-specific zygote probes remain runtime exceptions.",
+    "scope": "Full Process JNI has since been restored. Authenticated identity/procfs and best-effort scheduling remain native host boundaries; ART bootstrap and architecture-specific zygote probes remain runtime exceptions.",
     "validation": {
       "module_and_exit": "passed /tmp/azk-stock-runtime-build321.log; process argv/comm, UTF-8, empty/null names and descriptor/buffer ownership checked",
       "native_provenance": "passed /tmp/azk-stock-runtime-audit322.log; C++ boundary allowlist updated separately",
@@ -971,24 +970,45 @@
   "linked_native_followup": {
     "implementation": "Record actual lowered Clang commands in the production Step.Compile libraries linked by the native island; verify declared C/C++ coverage, source identity and every selected compilation context. Restore original BufferQueueThreadState through existing authenticated AIDL/HIDL interfaces.",
     "validation": {
-      "aggregate_acceptance": "passed /tmp/azk-linked-accept397.log",
+      "aggregate_acceptance": "passed /tmp/azk-priority-accept464.log",
       "apk_cases": 28,
-      "recorded_actions": 90,
+      "recorded_actions": 88,
       "structured_runtime_issues": 0,
       "failed_actions": 0,
       "failure_artifacts": 0,
       "video": "All three fresh video screenshots inspected; SurfaceView, TextureView and resize passed"
     },
     "libraries": 17,
-    "compilation_records": 1364,
+    "compilation_records": 1365,
     "source_counts": {
-      "unchanged": 713,
+      "unchanged": 714,
       "generated": 637,
-      "owned": 6,
-      "modified": 8
+      "owned": 7,
+      "modified": 7
     },
     "recorded_objects_in_platform": 675,
     "removed": "Unused VideoSurface implementation/header and its adapter-only test; current Codec2/IGBA/video regressions retained",
     "runtime": "Six NDK symbols resolve to their expected ELF owners in the application; one image each for platform/Binder libraries; no FFmpeg/VAAPI decoding libraries mapped in the application"
+  },
+  "process_native_followup": {
+    "implementation": "Original full Process JNI registrar, Bionic account lookup and generated Android account IDs, original libprocessgroup. Deleted owned Process JNI, proc parser/memory implementations and successful-no-op scheduling-policy shim.",
+    "host_boundary": "Read-only platform account files; shared libcore authenticated identity decisions; real procfs status snapshots translate known peers only. Original libutils attempts real priority changes; denied own-thread boosts keep actual kernel priority and allow ordinary-user startup. Non-boost and cross-process failures retain errors.",
+    "optional_installation": "artzig/nixos/host-scheduling.nix configures RLIMIT_NICE for explicitly selected accounts. No host permissions were applied during testing.",
+    "validation": "Full acceptance464 passed with host RLIMIT_NICE=0:0; original Process JNI and actual /proc priority checks, invalid-thread errors, account and authenticated UID/GID tests, process snapshot unit tests, mocked permitted and denied priority branches. Elevated installation not live-tested."
+  },
+  "nativewindow_followup": {
+    "implementation": "Original ANativeWindow parcel loader resolves libgui to its existing ELF owner; standalone and production DSO parcel round trips and library identity tests passed. System Mesa and buffer presentation unchanged; no added GPU copy.",
+    "validation": "Full acceptance464 passed."
+  },
+  "rust_native_followup": {
+    "implementation": "Actual rustc commands, effective cfg, original dep-info, consumed files, declared environment, pinned sysroot archives and original CXX bridge exports verified; wrapper preserves rustc metadata while providing a compatible Zig dependency rule. Pinned Soong host variants.",
+    "crates": 44,
+    "runtime_crates": 28,
+    "compiler_plugins": 6,
+    "build_tools": 10,
+    "unchanged_consumed_files": 545,
+    "generated_consumed_files": 3,
+    "inventoried_sysroot_archives": 27,
+    "validation": "44 original input-verifier tests and included-module cache invalidation experiment passed; full acceptance464 includes native Rust provenance."
   }
 }

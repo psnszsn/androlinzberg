@@ -115,6 +115,8 @@ pub fn build(b: *std.Build, o: Options) Result {
             for (o.include_dirs) |include| compile.addPrefixedDirectoryArg("-I", include);
             for (o.host_include_roots) |include| compile.addPrefixedDirectoryArg("-isystem", include);
             compile.addPrefixedDirectoryArg("-I", o.wuffs.path(b, "release/c"));
+            compile.addArgs(&.{ "-MD", "-MF" });
+            _ = compile.addDepFileOutputArg2(b.fmt("skia-tu-{d}.d", .{object_index}), .{});
             // GN names its external checkout; AOSP pins this dependency separately.
             const wuffs_prefix = "third_party/externals/wuffs/";
             compile.addFileArg(if (std.mem.startsWith(u8, file, wuffs_prefix))

@@ -83,6 +83,9 @@ a long time and use much disk space.
 
 ## Run an APK
 
+Applications run with ordinary user permissions. An optional
+[host scheduling configuration](docs/host-setup.md) enables Android priority boosts.
+
 Use an absolute path for the APK file:
 
 ```sh

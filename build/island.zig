@@ -7,6 +7,7 @@ const std = @import("std");
 const gen = @import("gen/island_sources.zig");
 
 pub const Options = struct {
+    android_account_headers: std.Build.LazyPath,
     cppstream_headers: std.Build.LazyPath,
     input_dispatcher_headers: std.Build.LazyPath,
     xsd: []const @import("generators.zig").CppXsd,
@@ -108,7 +109,7 @@ const audio_host_interfaces = [_][]const u8{
     "android/media/IAudioTrack.aidl",
 };
 const audio_host_srcs = [_][]const u8{
-    "AAudioSmoke.cpp", "AudioServiceJni.cpp", "HostAudioFlinger.cpp", "HostAudioPolicyService.cpp", "HostAudioTrack.cpp", "HostSchedPolicy.cpp", "azk_pipewire.c",
+    "AAudioSmoke.cpp", "AudioServiceJni.cpp", "HostAudioFlinger.cpp", "HostAudioPolicyService.cpp", "HostAudioTrack.cpp", "azk_pipewire.c",
 };
 const our_srcs = [_][]const u8{
     "src/native/AospJniBridge.cpp",               "src/native/EglWindow.cpp",
@@ -270,6 +271,10 @@ pub fn build(b: *std.Build, o: Options) Result {
                 for (self.common_includes) |include| compile.addPrefixedDirectoryArg("-I", include);
                 for (self.host_includes) |include| compile.addPrefixedDirectoryArg("-isystem", include);
                 for (includes) |include| compile.addPrefixedDirectoryArg("-I", include);
+                // Track consumed headers, including forced ABI headers. Directory
+                // arguments alone only record the search path in the Run cache.
+                compile.addArgs(&.{ "-MD", "-MF" });
+                _ = compile.addDepFileOutputArg2(self.b.fmt("{s}.d", .{name}), .{});
                 const source = root.path(self.b, file);
                 compile.addFileArg(source);
                 for (gen.binder_jni_srcs) |jni_source| {
@@ -351,6 +356,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     }, &.{"-D__unused=__attribute__((__unused__))"});
     const zygote_headers = b.addWriteFiles();
     _ = zygote_headers.addCopyFile(o.aosp.path(b, "bionic/libc/include/sys/system_properties.h"), "sys/system_properties.h");
+    _ = zygote_headers.addCopyFile(o.aosp.path(b, "bionic/libc/include/android/set_abort_message.h"), "android/set_abort_message.h");
     // Keep the stock parser and discard its unselected Android fork loop. Isolate
     // the Bionic declarations and translate their annotations for host libc.
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_android_internal_os_ZygoteCommandBuffer.cpp"}, &.{
@@ -598,8 +604,28 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_util_Process.cpp"}, runtime_includes ++ &[_]std.Build.LazyPath{
         o.aosp.path(b, "system/memory/libmeminfo/include"),
         o.aosp.path(b, "system/memory/libmeminfo/libdmabufinfo/include"),
-    }, &(android_abi_flags ++ .{ "-D__CPU_BITTYPE=unsigned long int", "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections" }));
+    }, &(android_abi_flags ++ .{ "-D__CPU_BITTYPE=unsigned long int", "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections", "-Dgetpwnam=azk_android_getpwnam", "-Dgetgrnam=azk_android_getgrnam", "-Dopen=azk_process_open", "-Dfopen=azk_process_fopen", "-include", b.pathResolve(&.{"src/native/ProcessAbi.h"}) }));
     g.add(o.aosp.path(b, "bionic/libc/upstream-openbsd/lib/libc/gen"), &.{"setprogname.c"}, &.{}, &.{ "-D__progname=program_invocation_short_name", "-include", "errno.h" });
+    const process_includes = runtime_includes ++ &[_]std.Build.LazyPath{
+        o.aosp.path(b, "system/core/libprocessgroup"),
+        o.aosp.path(b, "system/core/libprocessgroup/util/include"),
+        o.aosp.path(b, "external/jsoncpp/include"),
+    };
+    g.add(o.aosp.path(b, "system/core/libprocessgroup"), &.{ "cgroup_map.cpp", "processgroup.cpp", "sched_policy.cpp", "task_profiles.cpp", "util/cgroup_controller.cpp", "util/cgroup_descriptor.cpp", "util/util.cpp" }, process_includes, &android_abi_flags);
+    const account_includes = process_includes ++ &[_]std.Build.LazyPath{
+        b.path("src/native/accounts/include"),            o.android_account_headers,
+        o.aosp.path(b, "bionic/libc"),                    o.aosp.path(b, "bionic/libc/bionic"),
+        o.aosp.path(b, "bionic/libc/async_safe/include"),
+    };
+    var account_flags: std.ArrayList([]const u8) = .empty;
+    account_flags.appendSlice(b.allocator, &android_abi_flags) catch @panic("OOM");
+    account_flags.appendSlice(b.allocator, &.{ "-D__BIONIC_ALIGN(v,a)=(((v)+(a)-1)&~((a)-1))", "-D__LIBC_HIDDEN__=__attribute__((visibility(\"hidden\")))", "-D__predict_true(x)=__builtin_expect(!!(x),1)", "-D__predict_false(x)=__builtin_expect(!!(x),0)", "-D__printflike(x,y)=__attribute__((__format__(printf,x,y)))" }) catch @panic("OOM");
+    for ([_][]const u8{ "getpwnam", "getpwnam_r", "getpwuid", "getpwuid_r", "getgrnam", "getgrnam_r", "getgrgid", "getgrgid_r", "getpwent", "getgrent", "setpwent", "setgrent", "endpwent", "endgrent", "getgrouplist", "initgroups" }) |name|
+        account_flags.append(b.allocator, b.fmt("-D{s}=azk_android_{s}", .{ name, name })) catch @panic("OOM");
+    g.add(o.aosp.path(b, "bionic/libc/bionic"), &.{"grp_pwd.cpp"}, account_includes, account_flags.items);
+    account_flags.append(b.allocator, "-Dopen=azk_android_account_open") catch @panic("OOM");
+    g.add(o.aosp.path(b, "bionic/libc/bionic"), &.{"grp_pwd_file.cpp"}, account_includes, account_flags.items);
+    g.add(o.aosp.path(b, "bionic/libc/async_safe"), &.{"async_safe_log.cpp"}, account_includes, &(android_abi_flags ++ .{ "-D__printflike(x,y)=__attribute__((__format__(printf,x,y)))", "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections" }));
     const debug_flags = android_abi_flags ++ .{ "-D__printflike(x,y)=__attribute__((__format__(printf,x,y)))", "-Dsigset64_t=sigset_t", "-Dsigaddset64=sigaddset", "-Dsigdelset64=sigdelset" };
     const debug_includes = runtime_includes ++ &[_]std.Build.LazyPath{
         o.aosp.path(b, "packages/modules/Connectivity/bpf/headers/include"),

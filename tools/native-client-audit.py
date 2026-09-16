@@ -168,7 +168,20 @@ REQUIRED.update({"frameworks/native/libs/gui/" + name for name in (
     "GLConsumer.cpp", "SyncFeatures.cpp", "BufferQueueCore.cpp", "BufferQueueThreadState.cpp",
 )})
 HEADER_PROBES.update({"frameworks/native/libs/gui/GLConsumer.cpp", "frameworks/native/libs/gui/BufferQueueThreadState.cpp"})
+REQUIRED.update({"system/core/libprocessgroup/" + name for name in (
+    "cgroup_map.cpp", "processgroup.cpp", "sched_policy.cpp", "task_profiles.cpp",
+    "util/cgroup_controller.cpp", "util/cgroup_descriptor.cpp", "util/util.cpp",
+)})
+REQUIRED.update({"bionic/libc/bionic/grp_pwd.cpp", "bionic/libc/bionic/grp_pwd_file.cpp",
+                 "bionic/libc/async_safe/async_safe_log.cpp"})
+ANDROID_BRANCHES.update({"system/core/libprocessgroup/sched_policy.cpp", "bionic/libc/bionic/grp_pwd.cpp"})
+HEADER_PROBES.update({"system/core/libprocessgroup/sched_policy.cpp", "bionic/libc/bionic/grp_pwd.cpp",
+                     "bionic/libc/bionic/grp_pwd_file.cpp"})
+REQUIRED.add("frameworks/native/libs/nativewindow/ANativeWindow.cpp")
+HEADER_PROBES.add("frameworks/native/libs/nativewindow/ANativeWindow.cpp")
+HEADER_PROBES.add("system/core/libutils/Threads.cpp")
 REGISTRARS = (
+    "register_android_os_Process(",
     "android::register_com_android_internal_os_RuntimeInit(",
     "register_android_graphics_classes", "android::register_android_graphics_pdf_PdfEditor(",
     "android::register_android_app_Activity(", "android::register_android_app_ActivityThread(",
@@ -287,6 +300,18 @@ def boundary_errors(source: str, probe: dict, repo: Path) -> list[str]:
         errors.append(f"PDFium Android implementation branch disabled: {source}")
     if source in ANDROID_BRANCHES and "__ANDROID__" not in probe["macros"]:
         errors.append(f"Android implementation branch disabled: {source}")
+    if source == "frameworks/native/libs/nativewindow/ANativeWindow.cpp" and probe["macros"].get("dlopen") != "azk_graphics_dlopen":
+        errors.append("Native window bypasses the shared libgui loader alias")
+    if source == "system/core/libutils/Threads.cpp" and probe["macros"].get("setpriority") != "azk_setpriority":
+        errors.append("Thread priorities bypass the installed/unprivileged host scheduling boundary")
+    if source == CORE + "android_util_Process.cpp":
+        for original, backend in {"getpwnam": "azk_android_getpwnam", "getgrnam": "azk_android_getgrnam",
+                                  "open": "azk_process_open", "fopen": "azk_process_fopen",
+                                  "setuid": "azk_process_setuid", "setgid": "azk_process_setgid"}.items():
+            if probe["macros"].get(original) != backend:
+                errors.append(f"Process bypasses Android identity/account boundary: {original}")
+    if source == "bionic/libc/bionic/grp_pwd_file.cpp" and probe["macros"].get("open") != "azk_android_account_open":
+        errors.append("Android account reader accesses the host account database")
     if source in (CORE + "android_util_Binder.cpp", CORE + "android_os_Parcel.cpp"):
         headers = {str(path) for path in probe["headers"]}
         for name in ("Binder", "Parcel", "IPCThreadState"):

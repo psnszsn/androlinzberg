@@ -30,8 +30,12 @@ pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     lib.root_module.addCSourceFiles(.{ .files = &.{ "src/native/binder/Binder.cpp", "src/native/binder/Parcel.cpp" }, .flags = flags });
     lib.root_module.addCSourceFiles(.{ .root = aosp.path(b, "frameworks/native/libs/binder"), .files = &.{ "IInterface.cpp", "Status.cpp", "IResultReceiver.cpp", "ParcelFileDescriptor.cpp", "PermissionCache.cpp", "IPermissionController.cpp", "IMemory.cpp", "MemoryBase.cpp", "MemoryHeapBase.cpp", "MemoryDealer.cpp", "PersistableBundle.cpp" }, .flags = flags });
     for (gen.libutils_srcs) |file| if (sharedUtils(file)) {
-        lib.root_module.addCSourceFile(.{ .file = aosp.path(b, b.fmt("system/core/libutils/{s}", .{file})), .flags = flags });
+        lib.root_module.addCSourceFile(.{ .file = aosp.path(b, b.fmt("system/core/libutils/{s}", .{file})), .flags = if (std.mem.eql(u8, file, "Threads.cpp"))
+            std.mem.concat(b.allocator, []const u8, &.{ flags, &.{"-Dsetpriority=azk_setpriority"} }) catch @panic("oom")
+        else
+            flags });
     };
+    lib.root_module.addCSourceFile(.{ .file = b.path("src/native/binder/ThreadScheduling.cpp"), .flags = flags });
     lib.root_module.addCSourceFiles(.{ .root = aosp.path(b, "system/logging/liblog"), .files = &gen.liblog_srcs, .flags = flags });
     lib.root_module.addCSourceFile(.{ .file = aosp.path(b, "system/core/libcutils/native_handle.cpp"), .flags = flags });
     // Share the original host ashmem backing with the native island.

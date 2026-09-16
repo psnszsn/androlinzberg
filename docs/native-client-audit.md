@@ -6,7 +6,7 @@ implementations, runtime libraries and process placement still contain substanti
 host adaptations.
 
 The complete `acceptance-test` target passed on 2026-09-16 for the original
-BufferQueue and linked-native provenance checkpoint. All 28 APK cases passed, with 90 recorded
+Process, native-window and dual scheduling checkpoint. All 28 APK cases passed, with 88 recorded
 actions, zero structured runtime issues and no failure artifacts. Native, JVM,
 system, desktop, video, source-provenance and build checks passed. Source
 packages, pins and installed outputs are current.
@@ -22,8 +22,8 @@ behavior; they do not establish native provenance or stock process boundaries.
 
 [`aosp-source-identity.py`](../tools/aosp-source-identity.py) compares the root
 framework build's static Java/Kotlin/annotation inputs against its explicitly
-supplied AOSP package and checkout. Its last acceptance report found 7,126
-unchanged inputs and 64 modified server inputs, with no modified or
+supplied AOSP package and checkout. Its last acceptance report found 7,125
+unchanged inputs and 65 modified server inputs, with no modified or
 repository-owned `android.*` / `com.android.internal.*` client replacements in
 that selection.
 
@@ -37,17 +37,17 @@ also does not mean zero unsupported native operations.
 
 ## Compiled native check
 
-`native-client-source-test` consumes the actual 2,607 island/Skia compiler commands
-and 1,364 recorded Clang commands from 17 linked libraries. The direct inputs are
-2,282 unchanged AOSP units, 22 modified, 22 owned and 281 generated. Library
-records contain 713 unchanged, eight modified, six owned and 637 generated units.
+`native-client-source-test` consumes the actual 2,616 island/Skia compiler commands
+and 1,365 recorded Clang commands from 17 linked libraries. The direct inputs are
+2,292 unchanged AOSP units, 22 modified, 21 owned and 281 generated. Library
+records contain 714 unchanged, seven modified, seven owned and 637 generated units.
 These are compilation contexts, including unused archive members, not unique
 source counts or a stock-client percentage. The report separately identifies the
 675 recorded objects included in the platform ELF.
 
 All declared C/C++ library inputs require compiler records. The audit verifies
-117 required original sources and preprocesses 48 sensitive boundaries in every
-selected compilation context, recording macros and 2,804 consumed headers. Twelve
+128 required original sources and preprocesses 53 sensitive boundaries in every
+selected compilation context, recording macros and 2,832 consumed headers. Seventeen
 regressions cover disabled branches, incorrect Binder headers, malformed archives,
 quoted options and explicit source-language selection. Raw compiler metadata can
 contain temporary paths; this check does not establish reproducible binary output.
@@ -118,7 +118,7 @@ state was checked clean in all 11 projects containing differences/additions.
 
 | Archive | Unchanged native files | Modified native files | Added native files |
 |---|---:|---:|---:|
-| Framework | 16,094 | 59 | 0 |
+| Framework | 16,119 | 58 | 0 |
 | Artzig | 3,460 | 24 | 1 |
 
 These are **packaged source/header counts**, including server, host, compiler
@@ -412,7 +412,7 @@ process, while the separate presenter and SurfaceFlinger own presentation.
 | ART and process bootstrap | [ART patches](../artzig/patches/art/), [`HostedAndroidRuntime.cpp`](../src/native/HostedAndroidRuntime.cpp), [`zygote_tagging_jni.zig`](../src/binder/zygote_tagging_jni.zig); hosted class-loader projection, native-loader callbacks, stack/exit behavior and exec startup | Runtime changes are outside the JVM source identity result. Hosted zygote speaks stock requests but starts a fresh VM, not forked preloaded ART |
 | libc and dynamic loading | [`bionic_translation.cfg`](../src/bionic_translation.cfg), `artzig/src/art.zig`, [`GraphicsEnvironmentBackend.cpp`](../src/native/GraphicsEnvironmentBackend.cpp) | Android sonames map to host or owned implementations; Android linker namespaces are absent and extension requests fail. Restoring native clients is distinct from using full stock bionic/linker |
 | Libcore and files | [libcore patches](../artzig/patches/libcore/), [`host_paths.zig`](../artzig/src/host_paths.zig), AssetsProvider patch | Native path and authenticated-identity translation runs in the process. Move fixed filesystem/identity differences below libcore or document an explicit runtime exception |
-| SystemProperties / SystemClock / Process | Original properties and clock JNI; [`native_properties.zig`](../src/binder/native_properties.zig) supplies broker-backed Bionic hooks | Properties retain hosted state and authorization. Process JNI still adapts Linux process operations and authenticated identities |
+| SystemProperties / SystemClock / Process | Original JNI, Bionic account lookup and libprocessgroup; native properties, authenticated identity/procfs and scheduling adapters | Properties retain hosted state and authorization. Process priority queries return actual kernel values; denied own-thread boosts are best effort for ordinary users. Optional host setup enables boosts |
 | SharedMemory / MemoryFile / ApplicationSharedMemory / MemoryIntArray | Original JNI, compiled against the existing libcutils sealed-memfd backend | Host adaptation is below JNI; original mapping, atomic access and cleanup are retained |
 | NetworkUtils / process networking / TrafficStats | Central JNI, [`network_utils_internal_jni.zig`](../src/binder/network_utils_internal_jni.zig), [`traffic_stats_jni.zig`](../src/binder/traffic_stats_jni.zig) | Owned socket/fallback behavior. VPN/netd policy and Android per-UID tagging are not implemented by successful ordinary Linux networking |
 | Trace and Java Perfetto data sources | Original JNI and Perfetto SDK | In-process packet capture works; no system traced daemon is installed |
@@ -445,7 +445,7 @@ Utility validation passed both framework suites, 23 testkit tests and all 28 APK
 tests (90 recorded actions, zero structured runtime issues in the final run).
 ## Remaining work and acceptance criteria
 
-1. Close remaining Process and networking JNI adaptations against
+1. Close remaining networking JNI adaptations against
    their native dependencies and host policy. Preserve explicit missing-service
    behavior where Android infrastructure is absent.
 2. Retain the agreed libbinder/AZKB and ART/libcore runtime adaptations as
@@ -458,8 +458,8 @@ tests (90 recorded actions, zero structured runtime issues in the final run).
    device, networking, loader and runtime gaps against the declared scope.
 
 The native acceptance check now includes linked C/C++ libraries. Complete the remaining
-runtime inventory and ELF/soname resolution checks. Process tests must prove backend placement and
-service death/reconnection. Merely adding servers, retaining the replacement
+runtime inventory and ELF/soname resolution checks. Service-backed operations must prove backend
+placement and service death/reconnection. Merely adding servers, retaining the replacement
 JNI, and passing the existing UI suite would not complete this work.
 
 ## Media and graphics JNI follow-up validation
@@ -691,8 +691,8 @@ real writable exec argument block.
 
 Original Process `setArgV0` and Bionic `setprogname` replace the thread-name-only
 implementation. The regression checks real procfs argument and thread names,
-UTF-8, suffix truncation, empty and null names. Other Process operations remain
-adapted. The session-loss harness recognizes the resulting `system_server`
+UTF-8, suffix truncation, empty and null names. The full Process JNI registrar
+has since been restored, with the native boundaries described below. The session-loss harness recognizes the resulting `system_server`
 process name, while retaining its early-start exec-flag lookup.
 
 NdkImageReader is also original again. Its deprecated HIDL-token API retains
@@ -740,3 +740,32 @@ installed platform and PDF-client hashes match the native audit. The original
 memtrack client exposed a Binder null-contract bug, now fixed and covered by the
 NDK suite. The kernel reader uses bounded positional reads across the borrowed
 I/O interface and tests malformed metadata, both byte orders and the running kernel.
+
+## Process, host scheduling and native-window loading
+
+The original Process JNI registrar replaces the owned JNI table, proc parser and
+memory helpers. Original Bionic account code uses generated Android account IDs
+and the hosted platform's account files. Original libprocessgroup preserves
+missing-profile failures. Native adapters share authenticated ART identities and
+translate only known process/thread identities in real procfs status snapshots;
+other fields and unknown peers retain their kernel data.
+
+Original libutils requests real Linux priorities. When permitted, the kernel
+applies them. A denied boost for a live thread in the calling process is best
+effort: the application continues and queries report the unchanged kernel value.
+Other failures retain their errors. This explicit native adaptation supports
+ordinary-user launches; [optional host setup](host-setup.md) permits boosts for
+system installations. No host permissions were changed during validation.
+The permission-success branch has a native unit test; an elevated installation
+has not been exercised on this host.
+
+Original ANativeWindow parcel loading now resolves the existing libgui ELF owner
+through a narrow loader adapter. Standalone and application tests exercise parcel
+round trips and library identity. System Mesa and the existing buffer path are
+unchanged; this adds no GPU presentation copy.
+
+Full aggregate acceptance passed for this checkpoint under the unchanged
+`RLIMIT_NICE=0:0`: 28 APK cases, 88 recorded actions, zero structured runtime
+issues and no failed actions. All six service-loss cases passed; SurfaceView,
+TextureView and resized video screenshots were inspected. Package pins and
+installed platform/PDF-client hashes match the provenance report.

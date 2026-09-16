@@ -65,7 +65,7 @@ pub fn build(b: *std.Build) void {
         .files = &.{ "system/libbase/logging.cpp", "system/libbase/threads.cpp" },
         .flags = &.{ "-std=gnu++20", "-D_GNU_SOURCE", "-D_FILE_OFFSET_BITS=64", "-D_LARGEFILE64_SOURCE" },
     });
-    // Extend the pinned libjavacore export map with the host's pre-VM setter.
+    // Share the existing pre-VM identity authority with original framework JNI.
     // Keep every original export and the original local-symbol restrictions.
     const identity_exports = b.addSystemCommand(&.{
         "python3", "-c",
@@ -73,7 +73,8 @@ pub fn build(b: *std.Build) void {
         \\source = pathlib.Path(sys.argv[1]).read_text()
         \\marker = "  global:" + chr(10)
         \\assert source.count(marker) == 1
-        \\pathlib.Path(sys.argv[2]).write_text(source.replace(marker, marker + "    azk_process_identity_initialize;" + chr(10), 1))
+        \\exports = ("azk_process_identity_initialize", "azk_process_map_credentials", "azk_process_check_uid_change", "azk_process_check_gid_change")
+        \\pathlib.Path(sys.argv[2]).write_text(source.replace(marker, marker + "".join("    " + name + ";" + chr(10) for name in exports), 1))
     });
     identity_exports.addFileArg(aosp.path(b, "libcore/libjavacore.map"));
     art_gen.libjavacore.setVersionScript(identity_exports.addOutputFileArg("libjavacore-host.map"));

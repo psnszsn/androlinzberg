@@ -249,6 +249,7 @@ internal object FrameworkModuleSmoke {
         testMessageQueueSyncBarrier()
         testMessageQueueHostPumpSemantics()
         StockNdkLooperSmoke.run(::drainMainQueue)
+        StockProcessSmoke.run()
         StockNdkGraphicsSmoke.run()
         StockNativePropertiesSmoke.run()
         testChoreographerPhaseOrder()

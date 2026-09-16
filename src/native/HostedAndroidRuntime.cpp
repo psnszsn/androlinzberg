@@ -8,7 +8,6 @@
 #include <log/log.h>
 #include <new>
 
-extern void android_os_Process_setArgV0(JNIEnv*, jobject, jstring);
 
 namespace android {
 int register_com_android_internal_os_RuntimeInit(JNIEnv*);
@@ -26,10 +25,6 @@ public:
     }
 
     int registerEntry(JNIEnv* env) {
-        const JNINativeMethod process_methods[] = {
-            {"setArgV0Native", "(Ljava/lang/String;)V", reinterpret_cast<void*>(android_os_Process_setArgV0)},
-        };
-        if (registerNativeMethods(env, "android/os/Process", process_methods, 1) != 0) return -1;
         if (register_com_android_internal_os_RuntimeInit(env) != 0) return -1;
         ScopedLocalRef<jclass> bootstrap(env, env->FindClass("dev/artzig/RuntimeBootstrap"));
         if (!bootstrap.get()) return -1;

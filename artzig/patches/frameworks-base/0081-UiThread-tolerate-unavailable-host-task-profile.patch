@@ -1,0 +1,17 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] UiThread: tolerate an unavailable host task profile
+
+The host does not install Android cgroup task profiles. Keep UiThread's stock
+lifecycle, with an explicit server-side fallback for this optional grouping.
+Thread nice priorities use the native host scheduling boundary.
+
+--- a/services/core/java/com/android/server/UiThread.java
++++ b/services/core/java/com/android/server/UiThread.java
+@@ -42,5 +42,6 @@
+     public void run() {
+         // Make sure UiThread is in the fg stune boost group
+-        Process.setThreadGroup(Process.myTid(), Process.THREAD_GROUP_TOP_APP);
++        dev.artzig.system.HostedScheduling.setThreadGroup(
++                Process.myTid(), Process.THREAD_GROUP_TOP_APP);
+         super.run();
+     }

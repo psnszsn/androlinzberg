@@ -10,6 +10,7 @@ import java.io.RandomAccessFile
 /** Public NDK bitmap/window and fortified libc interfaces, using real Java-owned objects. */
 internal object StockNdkGraphicsSmoke {
     private external fun bitmapAndWindow(bitmap: Bitmap, emptySurface: android.view.Surface): Boolean
+    private external fun windowParcel(): Boolean
     private external fun sharedMemory(memory: android.os.SharedMemory): Boolean
     private external fun checkedIo(file: FileDescriptor, socket: FileDescriptor): Boolean
 
@@ -46,6 +47,7 @@ internal object StockNdkGraphicsSmoke {
 
     fun run() {
         verifyNativeOwners()
+        check(windowParcel()) { "Original native-window DSO parcel loader failed" }
         val bitmap = Bitmap.createBitmap(3, 2, Bitmap.Config.ARGB_8888)
         val surface = android.view.Surface()
         try {
@@ -83,6 +85,6 @@ internal object StockNdkGraphicsSmoke {
             check(sharedMemory(memory)) { "NDK shared memory ownership/protection contracts failed" }
             check(memory.size == 4096) { "NDK duplicate closed the Java owner" }
         }
-        println("stock-ndk-graphics: PASS bitmap ownership, pixel mutation, empty surface, fortified I/O and sealed shared memory")
+        println("stock-ndk-graphics: PASS original window parcel loader, bitmap ownership, pixel mutation, empty surface, fortified I/O and sealed shared memory")
     }
 }

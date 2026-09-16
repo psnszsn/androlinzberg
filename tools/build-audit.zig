@@ -327,10 +327,10 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
         "src/native/audio/HostAudioFlinger.cpp",
         "src/native/audio/HostAudioPolicyService.cpp",
         "src/native/audio/HostAudioTrack.cpp",
-        "src/native/audio/HostSchedPolicy.cpp",
         "src/native/binder/Binder.cpp",
         "src/native/binder/Parcel.cpp",
         "src/native/binder/ServiceNotifications.cpp",
+        "src/native/binder/ThreadScheduling.cpp",
         // Session bootstrap for the original native media services.
         "src/native/codec2/FfmpegComponent.cpp",
         "src/native/codec2/FfmpegStore.cpp",

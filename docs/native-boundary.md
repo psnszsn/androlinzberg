@@ -224,8 +224,13 @@ zig build -j10 cpp-audit
   class loaders search their library paths without Android linker namespaces.
   OverlayConfig also uses its original JNI; external idmap2 availability is
   still determined by the original executable probe.
-  Process remains a host adaptation for priorities, signals, procfs and
-  authenticated PID/start-time UID translation across hosted user namespaces.
+  Process JNI, Android account lookup and libprocessgroup now reuse original
+  sources. Native adapters preserve authenticated identities across hosted user
+  namespaces and translate real procfs status snapshots. Original libutils tries
+  real priority changes; denied boosts of its own live threads are best effort
+  for ordinary-user launches. Queries still return the kernel priority. Optional
+  [host configuration](host-setup.md) enables boosts without running apps as root.
+  Missing Android cgroup profiles retain their original native failure results.
 - HIDL uses the pinned Java runtime, JNI, libhidlbase and libhwbinder inside
   `libandroid_platform.so`. Java and C++ base/manager protocols, plus Java CAS/GNSS
   interfaces, are generated from the original HAL declarations. Hardware Binder
@@ -250,7 +255,7 @@ zig build -j10 cpp-audit
   the private Debug query reads the running kernel's BTF `task_struct` metadata
   for `CONFIG_VMAP_STACK`; it does not invent a complete kernel config. Unavailable
   allocation walking is reported explicitly, and absent Android services retain
-  their original failure results. `process_memory.zig` remains used by Process JNI.
+  their original failure results. The replaced Process memory/parser shims are deleted.
 - Original `libs/nativedisplay/ADisplay.cpp` reads physical display metadata and
   composition preferences through SurfaceComposerClient. The build excludes
   hostgraphics' fixed display implementation. A native API regression compares
@@ -388,8 +393,8 @@ AudioFlinger tracks. It contains the C macros and callback code around
   PlaybackThread::Track and AudioPolicyManager::getOutputForAttr, with the
   default engine's product strategy table. They exist because the interfaces
   and the shared control block are AOSP C++; the stock services cannot be
-  compiled without audio HALs. `audio/HostSchedPolicy.cpp` is libprocessgroup's
-  non-Android branch (no cgroups).
+  compiled without audio HALs. The old successful-no-op scheduling shim is
+  deleted; original libprocessgroup reports missing Android task profiles.
 - `graphics/HostGralloc.cpp` implements the pinned AOSP GrallocMapper/Allocator
   interfaces over `platform/graphics_buffer.zig`. AOSP retains GraphicBuffer
   validation and accounting. GBM objects, imports, metadata and descriptor
@@ -652,3 +657,8 @@ adapter-only tests are deleted; production playback remains original Codec2 over
 the existing DMA-BUF allocator. Compiled provenance includes the linked C/C++
 libraries, and the framework smoke checks representative NDK symbol ownership in
 the actual application process. Full aggregate acceptance passed for this cleanup.
+
+Original ANativeWindow parcel operations now load the existing libgui ELF owner
+through a narrow loader boundary. Native and application tests verify parcel
+round trips and library identity. This changes neither system Mesa nor buffer
+presentation and introduces no GPU copy.

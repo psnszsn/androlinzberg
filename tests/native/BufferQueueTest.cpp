@@ -10,6 +10,7 @@
 #include <android-base/properties.h>
 #include <android/hardware_buffer.h>
 #include <android/hardware_buffer_aidl.h>
+#include <android/native_window_aidl.h>
 #include <filesystem>
 #include <gui/BufferQueue.h>
 #include <gui/BufferItem.h>
@@ -567,6 +568,17 @@ int main(int argc, char **argv) {
     assert(native_window_api_connect(window, NATIVE_WINDOW_API_EGL) == OK);
     assert(native_window_set_usage(window, usage) == OK);
     assert(native_window_set_buffers_dimensions(window, 80, 60) == OK);
+    Parcel windowParcel;
+    assert(ANativeWindow_writeToParcel(window, windowParcel.native()) == OK);
+    windowParcel.setDataPosition(0);
+    ANativeWindow *roundTrip = nullptr;
+    assert(ANativeWindow_readFromParcel(windowParcel.native(), &roundTrip) == OK);
+    assert(roundTrip != nullptr);
+    assert(ANativeWindow_getWidth(roundTrip) == ANativeWindow_getWidth(window));
+    assert(ANativeWindow_getHeight(roundTrip) == ANativeWindow_getHeight(window));
+    windowParcel.freeData();
+    ANativeWindow_release(roundTrip);
+    std::cout << "PASS original ANativeWindow parcel loader and producer ownership" << std::endl;
     ANativeWindowBuffer *nativeBuffer = nullptr;
     int fenceFd = -1;
     assert(window->dequeueBuffer(window, &nativeBuffer, &fenceFd) == OK);

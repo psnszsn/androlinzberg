@@ -142,7 +142,7 @@ pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     mod.addCSourceFile(.{ .file = aosp.path(b, "system/core/libsync/sync.c"), .flags = &.{ "-std=gnu11", "-D__INTRODUCED_IN(x)=" } });
     mod.linkSystemLibrary("gbm", .{});
     mod.linkSystemLibrary("EGL", .{});
-    const gui_mod = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true, .link_libcpp = true, .pic = true });
+    const gui_mod = b.createModule(.{ .root_source_file = b.path("src/platform/graphics_loader.zig"), .target = target, .optimize = optimize, .link_libc = true, .link_libcpp = true, .pic = true });
     configure(b, gui_mod, aosp, generated);
     gui_mod.linkLibrary(hidl);
     for (gui_sources) |source| {
@@ -150,7 +150,7 @@ pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
         gui_mod.addCSourceFile(.{ .file = aosp.path(b, "frameworks/native/libs/gui").path(b, source), .flags = if (consumer) flags ++ &egl_consumer_flags else flags });
     }
     gui_mod.addCSourceFiles(.{ .root = aosp.path(b, "frameworks/native/libs/gui/bufferqueue"), .files = &.{ "1.0/B2HProducerListener.cpp", "1.0/WProducerListener.cpp", "1.0/H2BGraphicBufferProducer.cpp", "1.0/H2BProducerListener.cpp", "1.0/Conversion.cpp", "2.0/B2HGraphicBufferProducer.cpp", "2.0/B2HProducerListener.cpp", "2.0/H2BGraphicBufferProducer.cpp", "2.0/H2BProducerListener.cpp", "2.0/types.cpp" }, .flags = flags });
-    gui_mod.addCSourceFile(.{ .file = aosp.path(b, "frameworks/native/libs/nativewindow/ANativeWindow.cpp"), .flags = flags });
+    gui_mod.addCSourceFile(.{ .file = aosp.path(b, "frameworks/native/libs/nativewindow/ANativeWindow.cpp"), .flags = flags ++ &[_][]const u8{"-Ddlopen=azk_graphics_dlopen"} });
     gui_mod.addCSourceFile(.{ .file = b.path("src/native/graphics/SurfaceQueue.cpp"), .flags = flags });
     gui_mod.addCSourceFile(.{ .file = generated.sources.path(b, "LibGuiProperties.sysprop.cpp"), .flags = flags });
     gui_mod.addCSourceFile(.{ .file = generated.sources.path(b, "com_android_graphics_libgui_flags.cc"), .flags = flags });

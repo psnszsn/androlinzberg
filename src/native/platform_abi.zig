@@ -80,6 +80,8 @@ pub export fn azk_platform_bind_io(
     g_io = .{ .userdata = userdata, .vtable = vtable };
     egl_backend.bindDisplayOwnership(&azk_graphics_egl_initialize, &azk_graphics_egl_release);
     @import("selinux_backend.zig").bindIo(g_io);
+    @import("account_backend.zig").bindIo(g_io);
+    @import("process_backend.zig").bindIo(g_io);
 }
 
 extern "c" fn __errno_location() *c_int;

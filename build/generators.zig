@@ -44,6 +44,7 @@ pub const CppXsd = struct {
 };
 
 pub const GeneratedNative = struct {
+    android_account_headers: LazyPath,
     cppstream_headers: LazyPath,
     xsd: []const CppXsd,
     media: @import("graphics.zig").Generated,
@@ -1290,6 +1291,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     });
     _ = expose(b, "stats-tool", "Build stats-log-api-gen", &stats_tool.step);
     const surfaceflinger = @import("surfaceflinger.zig").generate(b, o.aosp.path(""), runner, o.protoc, perfetto, stats_tool);
+    const accounts = b.addSystemCommand(&.{ "python3", "-B" });
+    accounts.addFileArg(o.aosp.path(declarations.android_accounts.generator));
+    accounts.addArg("aidarray");
+    accounts.addFileArg(o.aosp.path(declarations.android_accounts.header));
+    const account_headers = b.addWriteFiles();
+    _ = account_headers.addCopyFile(accounts.captureStdOut(.{}), declarations.android_accounts.output);
     const hwui_stats_headers = b.addWriteFiles();
     const hwui_stats_sources = b.addWriteFiles();
     const hwui_stats = b.addRunArtifact(stats_tool);
@@ -1366,6 +1373,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     for (aconfig_java.cpp_headers) |path| path.addStepDependencies(aggregate);
     for (aconfig_java.cpp_sources) |path| path.addStepDependencies(aggregate);
     for (xsd.cpp) |native| native.source_root.addStepDependencies(aggregate);
+    account_headers.getDirectory().addStepDependencies(aggregate);
     cppstream_headers.addStepDependencies(aggregate);
     inline for (.{ gui, renderengine, perfetto, surfaceflinger, input, input_dispatcher, media }) |native| {
         native.headers.addStepDependencies(aggregate);
@@ -1390,6 +1398,7 @@ pub fn build(b: *std.Build, o: Options) Result {
             .system_features_processor_dependencies = system_features_java.dependencies,
         },
         .native = .{
+            .android_account_headers = account_headers.getDirectory(),
             .cppstream_headers = cppstream_headers,
             .xsd = xsd.cpp,
             .media = media,

@@ -13,6 +13,7 @@
       hostLibc = import ./host-libc.nix { glibc = pkgs.glibc; };
       zigPinned = zig-overlay.packages.${system}."master-2026-08-25";
     in {
+      nixosModules.hostScheduling = import ./nixos/host-scheduling.nix;
       # Zig + a JDK for javac/d8, Repo for refreshing the AOSP source packages,
       # and the native dependencies used by Artzig and Androlinzberg.
       devShells.${system} = {

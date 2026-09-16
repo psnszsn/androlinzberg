@@ -496,6 +496,9 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .link_libcpp = true,
     }) });
+    // The standalone executable owns libgui here. Export its C++ symbols for
+    // the original parcel loader, as the production shared library does.
+    gui_test.rdynamic = true;
     @import("build/graphics.zig").configure(b, gui_test.root_module, aosp, generated.native.gui);
     gui_test.root_module.addCSourceFile(.{ .file = b.path("tests/native/BufferQueueTest.cpp"), .flags = &.{
         "-std=c++23", "-fno-rtti", "-fno-exceptions", "-UNDEBUG", "-Wno-invalid-specialization", "-Wno-inconsistent-missing-override", "-include", b.pathResolve(&.{"src/native/graphics/include/azk/graphics_compat.h"}),
@@ -708,6 +711,7 @@ pub fn build(b: *std.Build) void {
         .host_paths_library = artzig_dep.namedLazyPath("host-paths-library"),
         .host_paths_headers = artzig_dep.namedLazyPath("host-paths-headers"),
         .xsd = generated.native.xsd,
+        .android_account_headers = generated.native.android_account_headers,
         .cppstream_headers = generated.native.cppstream_headers,
         .input_dispatcher_headers = generated.native.input_dispatcher.headers,
         .media_generated = generated.native.media,
@@ -1128,14 +1132,31 @@ pub fn build(b: *std.Build) void {
     system_test_run.run.setName("run hosted system-service tests");
     b.step("system-test", "Run multi-process hosted system-service tests").dependOn(&system_test_run.run.step);
 
-    const process_memory_tests = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("src/binder/process_memory.zig"),
+    const native_test_step = b.step("native-test", "Build Zig JNI adapters and run native unit tests");
+    const scheduling_test = b.addExecutable(.{ .name = "thread-scheduling-test", .root_module = b.createModule(.{
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
+        .link_libcpp = true,
     }) });
-    const run_process_memory_tests = b.addRunArtifact(process_memory_tests);
-    b.step("process-memory-test", "Test Android process-memory accounting").dependOn(&run_process_memory_tests.step);
-    const native_test_step = b.step("native-test", "Build Zig JNI adapters and run native unit tests");
+    scheduling_test.root_module.addIncludePath(aosp.path(b, "system/logging/liblog/include"));
+    scheduling_test.root_module.addCSourceFile(.{ .file = b.path("src/native/binder/ThreadScheduling.cpp"), .flags = &.{
+        "-std=c++20", "-D_GNU_SOURCE", "-Dsetpriority=azk_test_setpriority", "-Dgetpriority=azk_test_getpriority", "-Dtgkill=azk_test_tgkill", "-D__android_log_print=azk_test_log",
+    } });
+    scheduling_test.root_module.addCSourceFile(.{ .file = b.path("tests/native/ThreadSchedulingTest.cpp"), .flags = &.{ "-std=c++20", "-D_GNU_SOURCE", "-UNDEBUG" } });
+    const scheduling_run = b.addRunArtifact(scheduling_test);
+    b.step("thread-scheduling-test", "Verify permitted boosts and unprivileged thread-priority fallback").dependOn(&scheduling_run.step);
+    native_test_step.dependOn(&scheduling_run.step);
+
+    const process_backend_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/native/process_backend.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    }) });
+    const run_process_backend_tests = b.addRunArtifact(process_backend_tests);
+    b.step("process-backend-test", "Test authenticated proc identity translation").dependOn(&run_process_backend_tests.step);
+    native_test_step.dependOn(&run_process_backend_tests.step);
     const kernel_metadata_tests = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("src/native/kernel_metadata.zig"),
         .target = target,
@@ -1187,16 +1208,7 @@ pub fn build(b: *std.Build) void {
     run_egl_backend_tests.addFileArg(egl_backend_tests.getEmittedBin());
     b.step("egl-test", "Test EGL offscreen rendering and surface lifetime").dependOn(&run_egl_backend_tests.run.step);
     native_test_step.dependOn(&run_egl_backend_tests.run.step);
-    native_test_step.dependOn(&run_process_memory_tests.step);
     native_test_step.dependOn(&session_test_run.step);
-    const proc_parser_test = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("src/binder/proc_parser.zig"),
-        .target = target,
-        .optimize = .Debug,
-    }) });
-    const proc_parser_run = b.addRunArtifact(proc_parser_test);
-    b.step("proc-parser-test", "Verify AOSP process numeric parsing").dependOn(&proc_parser_run.step);
-    native_test_step.dependOn(&proc_parser_run.step);
     native_test_step.dependOn(&run_wayland_tests.step);
     native_test_step.dependOn(&codec_work_tests.step);
     native_test_step.dependOn(&run_apk_optimizer_tests.step);

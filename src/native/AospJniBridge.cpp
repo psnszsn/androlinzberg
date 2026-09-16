@@ -484,6 +484,9 @@ namespace android {
 extern int register_com_android_server_display_DisplayControl(JNIEnv*);
 }  // namespace android
 
+extern int register_android_os_Process(JNIEnv*);
+extern "C" int azk_process_backend_initialize();
+
 extern "C" {
 
 // Memory factories must precede the Binder-side memfd overrides. Surface JNI
@@ -565,6 +568,7 @@ int azk_register_utility_jni(JNIEnv* env) {
     if (android::register_android_tracing_PerfettoDataSource(env) != 0) return -1;
     if (android::register_android_tracing_PerfettoDataSourceInstance(env) != 0) return -1;
     if (android::register_android_tracing_PerfettoProducer(env) != 0) return -1;
+    if (azk_process_backend_initialize() != 0 || register_android_os_Process(env) != 0) return -1;
     return 0;
 }
 
@@ -877,6 +881,25 @@ static jboolean testNdkSharedMemory(JNIEnv* env, jclass, jobject javaMemory) {
     munmap(writable, 4096);
     return valid;
 }
+#include <android/native_window_aidl.h>
+#include <gui/BufferQueue.h>
+#include <gui/Surface.h>
+static jboolean testNdkWindowParcel(JNIEnv*, jclass) {
+    android::sp<android::IGraphicBufferProducer> producer;
+    android::sp<android::IGraphicBufferConsumer> consumer;
+    android::BufferQueue::createBufferQueue(&producer, &consumer);
+    auto surface = android::sp<android::Surface>::make(producer, true);
+    android::Parcel parcel;
+    if (ANativeWindow_writeToParcel(surface.get(), parcel.native()) != android::OK) return JNI_FALSE;
+    parcel.setDataPosition(0);
+    ANativeWindow* imported = nullptr;
+    const auto status = ANativeWindow_readFromParcel(parcel.native(), &imported);
+    const bool valid = status == android::OK && imported &&
+            ANativeWindow_getWidth(imported) == ANativeWindow_getWidth(surface.get()) &&
+            ANativeWindow_getHeight(imported) == ANativeWindow_getHeight(surface.get());
+    if (imported) ANativeWindow_release(imported);
+    return valid;
+}
 // Exercise symbol lookup in the application's actual ELF scope, not a separate
 // executable whose link order could hide duplicate native owners.
 #include <dlfcn.h>
@@ -890,6 +913,7 @@ static jstring nativeSymbolOwner(JNIEnv* env, jclass, jstring symbol) {
 }
 static int registerStockNdkGraphicsSmoke(JNIEnv* env) {
     const JNINativeMethod methods[] = {
+        {"windowParcel", "()Z", reinterpret_cast<void*>(testNdkWindowParcel)},
         {"sharedMemory", "(Landroid/os/SharedMemory;)Z", reinterpret_cast<void*>(testNdkSharedMemory)},
         {"bitmapAndWindow", "(Landroid/graphics/Bitmap;Landroid/view/Surface;)Z", reinterpret_cast<void*>(testNdkBitmapAndWindow)},
         {"checkedIo", "(Ljava/io/FileDescriptor;Ljava/io/FileDescriptor;)Z", reinterpret_cast<void*>(testFortifiedIo)},

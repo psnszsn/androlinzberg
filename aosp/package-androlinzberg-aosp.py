@@ -66,6 +66,7 @@ framework_patches = tuple(
         (78, "-UID-observers-use-host-process-authority.patch"),
         (79, "-HintManagerService-retain-unsupported-capabilities-without-Power-HAL.patch"),
         (80, "-AndroidRuntime-allow-embedded-VM-owner.patch"),
+        (81, "-UiThread-tolerate-unavailable-host-task-profile.patch"),
     )
 )
 
@@ -135,10 +136,6 @@ packager.PATCH_SERIES = framework_patches + (
     (
         "frameworks/native",
         patch_root / "frameworks-native" / "0005-inputdispatcher-host-crypto.patch",
-    ),
-    (
-        "frameworks/native",
-        patch_root / "frameworks-native" / "0007-nativewindow-link-stock-parcel-operations.patch",
     ),
     (
         "frameworks/native",

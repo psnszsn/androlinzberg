@@ -20,15 +20,16 @@ internal object ProcessBoundaryChecks {
         android.system.Os.setreuid(-1, uid)
         android.system.Os.setregid(uid, -1)
         check(Process.setUid(uid) == 0 && Process.setGid(uid) == 0)
-        check(Process.setUid(-1) == -1 && Process.setGid(-1) == -1)
+        check(runCatching { Process.setUid(-1) }.exceptionOrNull() is IllegalArgumentException)
+        check(runCatching { Process.setGid(-1) }.exceptionOrNull() is IllegalArgumentException)
         for (change in listOf<() -> Unit>(
             { android.system.Os.setuid(0) }, { android.system.Os.seteuid(0) },
             { android.system.Os.setgid(0) }, { android.system.Os.setegid(0) },
             { android.system.Os.setreuid(0, -1) }, { android.system.Os.setregid(-1, 0) },
         )) check(runCatching(change).exceptionOrNull() is android.system.ErrnoException)
-        check(Process.setUid(0) == -1 && Process.setGid(0) == -1)
+        check(Process.setUid(0) == android.system.OsConstants.EPERM && Process.setGid(0) == android.system.OsConstants.EPERM)
         if (uid != Process.SYSTEM_UID) {
-            check(Process.setUid(Process.SYSTEM_UID) == -1 && Process.setGid(Process.SYSTEM_UID) == -1)
+            check(Process.setUid(Process.SYSTEM_UID) == android.system.OsConstants.EPERM && Process.setGid(Process.SYSTEM_UID) == android.system.OsConstants.EPERM)
             check(runCatching { android.system.Os.setuid(Process.SYSTEM_UID) }.exceptionOrNull() is android.system.ErrnoException)
             check(runCatching { android.system.Os.setgid(Process.SYSTEM_UID) }.exceptionOrNull() is android.system.ErrnoException)
         }
@@ -136,11 +137,11 @@ internal object ProcessBoundaryChecks {
 
     private fun procParsing() {
         val space = Process.PROC_SPACE_TERM or Process.PROC_COMBINE
-        val bytes = "xx(name with space)  \"quoted words\" -17ms 1.25e+oops Z\u0001bad".toByteArray()
+        val bytes = "xx(name with space)  \"quoted words\" -17ms 1.25e+oops Z\u0001bad".toByteArray() + byteArrayOf(0)
         val strings = arrayOfNulls<String>(5)
         val longs = LongArray(5) { 99 }
         val floats = FloatArray(5) { 99f }
-        check(Process.parseProcLine(bytes, 2, bytes.size, intArrayOf(
+        check(Process.parseProcLine(bytes, 2, bytes.size - 1, intArrayOf(
             space or Process.PROC_PARENS or Process.PROC_OUT_STRING,
             space or Process.PROC_QUOTES or Process.PROC_OUT_STRING,
             space or Process.PROC_OUT_LONG,
@@ -150,24 +151,21 @@ internal object ProcessBoundaryChecks {
         check(strings.contentEquals(arrayOf("name with space", "quoted words", null, null, "Z?bad")))
         check(longs.contentEquals(longArrayOf(99, 99, -17, 99, 'Z'.code.toLong())))
         check(floats.contentEquals(floatArrayOf(99f, 99f, 99f, 1.25f, 99f)))
-        check(bytes.toString(Charsets.UTF_8).endsWith("Z?bad"))
+        check(bytes.dropLast(1).toByteArray().toString(Charsets.UTF_8).endsWith("Z?bad"))
 
         val partial = longArrayOf(7, 8)
-        check(!Process.parseProcLine("42 ".toByteArray(), 0, 3,
+        check(!Process.parseProcLine("42 ".toByteArray() + byteArrayOf(0), 0, 3,
             intArrayOf(space or Process.PROC_OUT_LONG, space or Process.PROC_OUT_LONG), null, partial, null))
         check(partial.contentEquals(longArrayOf(42, 8)))
-        val numbers = "9223372036854775808 -9223372036854775809 0x1.8p+1".toByteArray()
+        val numbers = "9223372036854775808 -9223372036854775809 0x1.8p+1".toByteArray() + byteArrayOf(0)
         val out = LongArray(2)
         val real = FloatArray(3)
-        check(Process.parseProcLine(numbers, 0, numbers.size, intArrayOf(
+        check(Process.parseProcLine(numbers, 0, numbers.size - 1, intArrayOf(
             space or Process.PROC_OUT_LONG, space or Process.PROC_OUT_LONG,
             Process.PROC_OUT_FLOAT), null, out, real))
         check(out.contentEquals(longArrayOf(Long.MAX_VALUE, Long.MIN_VALUE)) && real[2] == 3f)
         check(!Process.readProcFile("/proc/2147483647/stat", intArrayOf(Process.PROC_OUT_LONG), null, out, null))
-        var badRange = false
-        try { Process.parseProcLine(bytes, -1, bytes.size, intArrayOf(), null, null, null) }
-        catch (_: IndexOutOfBoundsException) { badRange = true }
-        check(badRange)
+        // The pinned internal parser requires caller-validated byte ranges.
         val file = java.io.File.createTempFile("proc-lines", ".txt")
         try {
             file.writeText("Size: 123 kB\nSigned: -7\nCount: 42things\n")
