@@ -29,6 +29,8 @@ pub const Options = struct {
     download_provider: LazyPath,
     webview_provider: LazyPath,
     desktop_transfer_provider: LazyPath,
+    /// Pinned frameworks/base/packages/Shell manifest: the permissions of uid 2000.
+    shell_manifest: LazyPath,
 };
 
 pub const NamedLibrary = struct {
@@ -40,6 +42,7 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     const tree = b.addWriteFiles();
     _ = tree.addCopyDirectory(b.path("src/native/codec2/config"), "", .{});
     _ = tree.addCopyFile(options.launcher, "bin/androlinzberg");
+    _ = tree.addCopyFile(options.shell_manifest, "etc/shell/AndroidManifest.xml");
     _ = tree.addCopyFile(options.broker, "bin/azk-binder-broker");
     _ = tree.addCopyFile(options.surfaceflinger, "bin/azk-surfaceflinger");
     _ = tree.addCopyFile(options.media_service, "bin/azk-media-service");

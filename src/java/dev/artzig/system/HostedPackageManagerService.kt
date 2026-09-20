@@ -1023,11 +1023,36 @@ class HostedPackageManagerService(private val userManager: UserManagerInternal, 
         }
     }
 
+    /**
+     * What `adb shell` and instrumentation may do: the permissions the pinned
+     * com.android.shell manifest requests for android.uid.shell, which a device
+     * grants because Shell is a platform-signed privileged app. The host has no
+     * Shell APK to install; only a broker inspector peer ever runs as this uid.
+     */
+    private val shellPermissions: Set<String> by lazy {
+        val tree = java.io.File(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES"))).parentFile.parentFile
+        val manifest = java.io.File(tree, "etc/shell/AndroidManifest.xml")
+        if (!manifest.isFile) return@lazy emptySet()
+        val parser = android.util.Xml.newPullParser()
+        manifest.inputStream().use { input ->
+            parser.setInput(input, "UTF-8")
+            buildSet {
+                while (parser.next() != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                    if (parser.eventType == org.xmlpull.v1.XmlPullParser.START_TAG && parser.name == "uses-permission")
+                        parser.getAttributeValue("http://schemas.android.com/apk/res/android", "name")?.let(::add)
+                }
+            }
+        }
+    }
+
     override fun checkUidPermission(permName: String?, uid: Int): Int {
         if (uid == Process.SYSTEM_UID || uid == Process.ROOT_UID) {
             return PackageManager.PERMISSION_GRANTED
         }
         if (permName == null) return PackageManager.PERMISSION_DENIED
+        if (uid == Process.SHELL_UID) {
+            return if (permName in shellPermissions) PackageManager.PERMISSION_GRANTED else PackageManager.PERMISSION_DENIED
+        }
         synchronized(lock) {
             val state = packagesByUid[uid] ?: return PackageManager.PERMISSION_DENIED
             return if (state.grantedPermissions.contains(permName)) {

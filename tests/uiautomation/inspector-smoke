@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Pilot of the Binder test path: launch the window fixture, then join its
+# session from a second ART process as the broker's inspector role and drive
+# the app through stock android.app.UiAutomation. Runs under tools/shot.sh
+# --runner, which supplies the Cage compositor.
+set -euo pipefail
+: "${AZK_LAUNCHER:?}" "${AZK_APK_WINDOW_FIXTURE:?}"
+work=$(mktemp -d /tmp/azk-uiautomation-XXXXXX)
+log="$work/app.log"
+cleanup() {
+    [[ -n ${app:-} ]] && kill "$app" 2>/dev/null || true
+    wait 2>/dev/null || true
+    [[ ${keep:-0} == 1 ]] || rm -rf "$work"
+}
+trap cleanup EXIT
+mkdir -p "$work/data" "$work/native-libs"
+# AZK_TEST_INSPECTION admits an inspector; AZK_TEST_RUNNER_AUTOMATION leaves the
+# single UiAutomation registration to the runner below.
+AZK_TEST_INSPECTION=1 AZK_TEST_RUNNER_AUTOMATION=1 AZK_SIZE=1280x720 \
+    ARTZIG_DATA_DIR="$work/data" ARTZIG_NATIVE_LIB_DIR="$work/native-libs" \
+    "$AZK_LAUNCHER" "$AZK_APK_WINDOW_FIXTURE" >"$log" 2>&1 &
+app=$!
+session=
+for _ in $(seq 300); do
+    session=$(sed -n 's/^azk: binder session: //p' "$log" | tail -1)
+    [[ -n $session && -f $session/session.json ]] && break
+    kill -0 "$app" 2>/dev/null || { keep=1; echo "launcher exited; log: $log" >&2; exit 1; }
+    sleep 0.2
+done
+[[ -n $session ]] || { keep=1; echo "no session; log: $log" >&2; exit 1; }
+if ! AZK_BINDER_ROLE=inspector AZK_TEST_CLASS=dev.artzig.testing.UiAutomationInspectorSmoke \
+    "$AZK_LAUNCHER" --join "$session" --javatest "Counter: 0" "INCREMENT COUNTER" "Counter: 1" \
+    >"$work/inspector.log" 2>&1; then
+    keep=1
+    grep -n "UiAutomationInspectorSmoke\|Exception\|FATAL\|Caused by\|error" "$work/inspector.log" | head -40 >&2
+    echo "inspector failed; logs: $work" >&2
+    exit 1
+fi
+grep "UiAutomationInspectorSmoke" "$work/inspector.log"

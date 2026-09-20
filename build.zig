@@ -1135,6 +1135,7 @@ pub fn build(b: *std.Build) void {
     });
     egl_support.root_module.addObjectFile(island.file);
     const application_tree = @import("build/application.zig").build(b, .{
+        .shell_manifest = aosp.path(b, "frameworks/base/packages/Shell/AndroidManifest.xml"),
         .pdfclient = island.pdfclient,
         .launcher = exe.getEmittedBin(),
         .broker = binder_broker.getEmittedBin(),
@@ -1782,6 +1783,20 @@ pub fn build(b: *std.Build) void {
     integration_run.run.step.dependOn(&testkit_unit_run.run.step);
     integration_run.run.setName("run APK integration tests under Cage");
     b.step("integration-test", "Run Kotlin APK integration tests under Cage").dependOn(&integration_run.run.step);
+
+    // A host ART process joins the session as the broker's inspector role and
+    // drives the fixture through stock UiAutomation and AccessibilityManagerService.
+    const uiautomation_run = @import("build/command.zig").create(b);
+    uiautomation_run.setFileEnvironment("AZK_LAUNCHER", application_tree.path(b, "bin/androlinzberg"));
+    setApplicationEnvironment(uiautomation_run, application_tree);
+    uiautomation_run.setEnvironment("WLR_RENDERER", "gles2");
+    uiautomation_run.setFileEnvironment("AZK_APK_WINDOW_FIXTURE", window_fixture.apk);
+    uiautomation_run.addArg("bash");
+    uiautomation_run.addFileArg(b.path("tools/shot.sh"));
+    uiautomation_run.addArgs(&.{ "zig-out/test-results/uiautomation/suite.png", "--runner", "--" });
+    uiautomation_run.addFileArg(b.path("tests/uiautomation/inspector-smoke"));
+    uiautomation_run.run.setName("drive the window fixture through stock UiAutomation as inspector");
+    b.step("uiautomation-test", "Drive an APK from a host process through stock UiAutomation").dependOn(&uiautomation_run.run.step);
 
     const run = @import("build/command.zig").create(b);
     setApplicationEnvironment(run, application_tree);

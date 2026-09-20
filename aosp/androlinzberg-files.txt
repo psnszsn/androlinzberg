@@ -4569,6 +4569,8 @@ F aosp frameworks/base/core/java/com/android/internal/accessibility/dialog/OnTar
 F aosp frameworks/base/core/java/com/android/internal/accessibility/dialog/OnTargetSelectedListener.java
 F aosp frameworks/base/core/java/com/android/internal/accessibility/dialog/TargetAdapter.java
 F aosp frameworks/base/core/java/com/android/internal/accessibility/dialog/TargetOperations.java
+# Permissions of android.uid.shell, the broker inspector's identity.
+F aosp frameworks/base/packages/Shell/AndroidManifest.xml
 # Stock AccessibilityManagerService closure (see build/java_sources.zig).
 # a11ychecker is omitted: it needs Google's accessibility test framework.
 F aosp frameworks/base/services/accessibility/java/com/android/server/accessibility/AbstractAccessibilityServiceConnection.java

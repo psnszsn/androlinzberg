@@ -14,7 +14,14 @@ pub fn testRole(environ: std.process.Environ) !Role {
     const role = environ.getPosix("AZK_BINDER_ROLE") orelse return .app;
     if (std.mem.eql(u8, role, "system")) return .system;
     if (std.mem.eql(u8, role, "app")) return .app;
+    // The broker, not this process, grants the inspector role: it follows from
+    // the cookie `--join` selected. Locally it is an ordinary unprivileged VM.
+    if (std.mem.eql(u8, role, "inspector")) return .app;
     return error.InvalidBinderRole;
+}
+
+pub fn isInspector(environ: std.process.Environ) bool {
+    return std.mem.eql(u8, environ.getPosix("AZK_BINDER_ROLE") orelse "", "inspector");
 }
 
 pub fn prepare(init: std.process.Init, library: *std.DynLib, role: Role, apk: ?[]const u8) !?art.ProcessIdentity {

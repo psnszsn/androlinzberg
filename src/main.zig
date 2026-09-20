@@ -421,7 +421,13 @@ fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_
         const info = try joinSession(init, dir);
         if (info.storage) |storage| try applySessionStorage(init, storage);
         _ = setenv(binder_session.socket_env, try arena.dupeSentinel(u8, info.socket, 0), 1);
-        if (init.minimal.environ.getPosix("AZK_LAUNCH_CREDENTIAL") == null)
+        if (runtime_identity.isInspector(init.minimal.environ)) {
+            // A host test tool: the broker admits it as Android's shell uid and
+            // shows it only the services UiAutomation uses.
+            const cookie = info.inspector_cookie orelse return error.SessionDoesNotPermitInspection;
+            _ = setenv(binder_session.cookie_env, try arena.dupeSentinel(u8, cookie, 0), 1);
+            _ = setenv("AZK_BINDER_PACKAGE", "com.android.shell", 1);
+        } else if (init.minimal.environ.getPosix("AZK_LAUNCH_CREDENTIAL") == null)
             _ = setenv(binder_session.cookie_env, try arena.dupeSentinel(u8, info.cookie, 0), 1);
         _ = setenv(binder_session.prop_area_env, try arena.dupeSentinel(u8, info.prop_area, 0), 1);
         _ = setenv("AZK_BINDER_SESSION_DIR", try arena.dupeSentinel(u8, dir, 0), 1);
@@ -447,6 +453,8 @@ fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_
             null,
         .environ = init.minimal.environ,
         .storage = storage,
+        .inspection = init.minimal.environ.getPosix("AZK_TEST_SOCKET") != null or
+            std.mem.eql(u8, init.minimal.environ.getPosix("AZK_TEST_INSPECTION") orelse "", "1"),
     });
     _ = setenv(binder_session.socket_env, try arena.dupeSentinel(u8, binder.*.?.socket_path, 0), 1);
     _ = setenv(binder_session.cookie_env, try arena.dupeSentinel(u8, binder.*.?.cookie, 0), 1);
