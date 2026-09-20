@@ -120,6 +120,8 @@ pub const ZigInterfaces = struct {
     files: []const []const u8,
     /// src/binder/aidl.zig.
     runtime: *std.Build.Module,
+    /// A frozen interface version and its API hash, as Soong passes them.
+    version: ?struct { number: u32, hash: []const u8 } = null,
     /// Supplies `@"<canonical name>"` for each unstructured parcelable used.
     custom: ?*std.Build.Module = null,
     target: std.Build.ResolvedTarget,
@@ -131,6 +133,7 @@ pub const ZigInterfaces = struct {
 pub fn zigModule(b: *std.Build, aidl_tool: *std.Build.Step.Compile, o: ZigInterfaces) *std.Build.Module {
     const run = b.addRunArtifact(aidl_tool);
     run.addArg("--lang=zig");
+    if (o.version) |version| run.addArgs(&.{ "--structured", b.fmt("--version={d}", .{version.number}), b.fmt("--hash={s}", .{version.hash}) });
     run.addPrefixedDirectoryArg("-I", o.root);
     for (o.includes) |include| run.addPrefixedDirectoryArg("-I", include);
     run.addArg("-o");

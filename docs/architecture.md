@@ -156,7 +156,9 @@ synchronous and oneway transactions, delivers nested callbacks to the waiting
 thread, tracks remote references and death links, forwards file descriptors,
 and holds the service registry; it also serves the stable `IServiceManager`
 AIDL at the reserved context object, which is how the real AOSP
-`ServiceManager` reaches it. The original Binder, Parcel, ServiceManager and
+`ServiceManager` reaches it. That interface, like the task presenter's, is
+generated from its AIDL by the repository's Zig backend rather than decoded by
+hand (see [development](development.md#aidl-compiler-and-the-zig-backend)). The original Binder, Parcel, ServiceManager and
 ServiceManagerNative JNI units run over the hosted C++ libbinder facade and
 Zig `libbinder_ndk` runtime. Original JNI owns Java Binder holders/proxies and
 C++ Parcel objects; the facade shares AZKB object and descriptor storage with

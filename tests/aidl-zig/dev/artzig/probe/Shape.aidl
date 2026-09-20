@@ -1,6 +1,7 @@
 package dev.artzig.probe;
 
 import dev.artzig.probe.Kind;
+import dev.artzig.probe.Pair;
 import dev.artzig.probe.Point;
 
 /** One field of every marshalling category the Zig backend supports. */
@@ -24,4 +25,8 @@ parcelable Shape {
     @nullable IBinder token;
     List<String> tags;
     @nullable(heap=true) Shape child;
+    Pair<String, Point> pair;
+    @nullable int[2] span;
+    @nullable byte[2] mark;
+    @nullable int[2] absent;
 }

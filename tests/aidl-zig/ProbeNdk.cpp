@@ -57,6 +57,10 @@ class Probe : public BnProbe {
     copy.anchor = shape.anchor;
     copy.token = shape.token;
     copy.tags = shape.tags;
+    copy.pair = shape.pair;
+    copy.span = shape.span;
+    copy.mark = shape.mark;
+    copy.absent = shape.absent;
     if (shape.child) copy.child = std::make_unique<Shape>(Copy(*shape.child));
     return copy;
   }
@@ -166,6 +170,10 @@ class Listener : public BnProbeCallback {
   } while (false)
 
 int Drive(const std::shared_ptr<IProbe>& probe) {
+  int32_t version = 0;
+  std::string hash;
+  EXPECT(probe->getInterfaceVersion(&version).isOk() && version == 3);
+  EXPECT(probe->getInterfaceHash(&hash).isOk() && hash == "probe-hash");
   int32_t sum = 0;
   EXPECT(probe->add(40, 2, &sum).isOk() && sum == IProbe::MAGIC);
   std::string text;
@@ -192,6 +200,10 @@ int Drive(const std::shared_ptr<IProbe>& probe) {
   shape.child = std::make_unique<Shape>();
   shape.child->name = "child";
   shape.child->kind = Kind::CIRCLE;
+  shape.pair.first = "p";
+  shape.pair.second.x = 5;
+  shape.span = std::array<int32_t, 2>{4, 5};
+  shape.mark = std::array<uint8_t, 2>{6, 7};
   Shape mirrored, result;
   Point cursor;
   cursor.x = 10, cursor.y = 20;
@@ -205,6 +217,8 @@ int Drive(const std::shared_ptr<IProbe>& probe) {
   EXPECT(result.anchor.has_value() && result.anchor->y == -2 && result.token.get() == nullptr);
   EXPECT(result.tags.size() == 2 && result.tags[1] == "bc");
   EXPECT(result.child && result.child->kind == Kind::CIRCLE && !result.child->child);
+  EXPECT(result.pair.first == "p" && result.pair.second.x == 5 && result.pair.second.y == 7);
+  EXPECT(result.span && (*result.span)[1] == 5 && result.mark && (*result.mark)[0] == 6 && !result.absent);
   EXPECT(mirrored.name == "mirror:shape");
   EXPECT(cursor.x == 11 && cursor.y == 21);
 

@@ -8,8 +8,9 @@
 // (generate_ndk.cpp), including the vector-size hint a proxy writes for an
 // `out` array.
 //
-// Not expressible yet, and reported as errors: generic parcelables,
-// ParcelableHolder, and @nullable fixed-size arrays.
+// A generic parcelable becomes a function of its type arguments' codecs. Not
+// expressible, and reported as errors: ParcelableHolder and the Java-only
+// types (Map, FileDescriptor, CharSequence).
 
 #include "generate_zig.h"
 
@@ -113,14 +114,13 @@ class Unit {
 
 class Generator {
  public:
-  Generator(Unit& unit, CodeWriter& out) : unit_(unit), out_(out) {}
+  Generator(Unit& unit, CodeWriter& out, const Options& options)
+      : unit_(unit), out_(out), options_(options) {}
 
   bool Ok() const { return ok_; }
 
   void Type(const AidlDefinedType& type) {
-    if (const auto* generic = type.AsParcelable(); generic != nullptr && generic->IsGeneric()) {
-      Fail(type, "generic parcelables");
-    } else if (const auto* iface = type.AsInterface(); iface != nullptr) {
+    if (const auto* iface = type.AsInterface(); iface != nullptr) {
       Interface(*iface);
     } else if (const auto* parcelable = type.AsStructuredParcelable(); parcelable != nullptr) {
       Parcelable(*parcelable);
@@ -154,11 +154,19 @@ class Generator {
       return Sequence(Element(*type.GetTypeParameters()[0], type.IsNullable()));
     }
     const AidlDefinedType* defined = type.GetDefinedType();
-    if (defined == nullptr || type.IsGeneric()) {
+    const bool parcelable = defined != nullptr && (defined->AsStructuredParcelable() != nullptr ||
+                                                   defined->AsUnionDeclaration() != nullptr);
+    if (defined == nullptr || (type.IsGeneric() && !parcelable)) {
       Fail(type, "the type " + type.Signature());
       return {"void", "void"};
     }
-    const string reference = unit_.Reference(*defined);
+    string reference = unit_.Reference(*defined);
+    if (type.IsGeneric()) {
+      // `Pair<int, String>` instantiates the generated function.
+      std::vector<string> arguments;
+      for (const auto& argument : type.GetTypeParameters()) arguments.push_back(TypeOf(*argument).codec);
+      reference += "(" + Join(arguments, ", ") + ")";
+    }
     if (defined->AsInterface() != nullptr) {
       return {reference + ".Client", "c.Interface(" + reference + ")"};
     }
@@ -190,10 +198,9 @@ class Generator {
   TypeInfo TypeOf(const AidlTypeSpecifier& type, bool field = false) {
     TypeInfo info;
     if (type.IsFixedSizeArray()) {
-      if (type.IsNullable()) Fail(type, "@nullable fixed-size arrays");
       const auto dimensions = type.GetFixedSizeArrayDimensions();
       const bool bytes = type.GetName() == "byte";
-      info = bytes ? TypeInfo{"u8", ""} : Named(type);
+      info = bytes ? TypeInfo{"u8", ""} : Element(type, type.IsNullable());
       for (size_t i = dimensions.size(); i-- > 0;) {
         const string count = std::to_string(dimensions[i]);
         const bool packed = bytes && i + 1 == dimensions.size();
@@ -201,7 +208,7 @@ class Generator {
                             : "c.FixedArray(" + info.codec + ", " + count + ")";
         info.zig = "[" + count + "]" + info.zig;
       }
-      return info;
+      return type.IsNullable() ? Optional(info) : info;
     }
     if (type.IsDynamicArray()) {
       info = type.GetName() == "byte" ? TypeInfo{"[]const u8", "c.ByteArray", true}
@@ -276,11 +283,15 @@ class Generator {
     Constants(iface);
     Nested(iface);
 
-    std::vector<const AidlMethod*> methods;
-    for (const auto& method : iface.GetMethods()) {
-      // getInterfaceVersion/getInterfaceHash are answered by stock backends only.
-      if (method->IsUserDefined()) methods.push_back(method.get());
+    // A versioned interface also has getInterfaceVersion/getInterfaceHash;
+    // aidl.Server answers them from these constants unless the implementation
+    // declares the methods itself.
+    if (options_.Version() > 0) {
+      out_ << "pub const version: i32 = " << std::to_string(options_.Version()) << ";\n";
+      out_ << "pub const hash = \"" << options_.Hash() << "\";\n";
     }
+    std::vector<const AidlMethod*> methods;
+    for (const auto& method : iface.GetMethods()) methods.push_back(method.get());
 
     struct Signature {
       std::vector<std::pair<string, TypeInfo>> args, reply;
@@ -292,7 +303,8 @@ class Generator {
     for (const AidlMethod* method : methods) {
       Signature& signature = signatures[method];
       if (method->GetType().GetName() != "void") {
-        signature.reply.emplace_back("result", TypeOf(method->GetType()));
+        // Java stubs reserve `_result` for the return value, so no argument uses it.
+        signature.reply.emplace_back("_result", TypeOf(method->GetType()));
       }
       for (const auto& argument : method->GetArguments()) {
         const TypeInfo info = TypeOf(argument->GetType());
@@ -373,9 +385,40 @@ class Generator {
     out_ << "};\n";
   }
 
-  void Parcelable(const AidlStructuredParcelable& parcelable) {
-    out_ << "pub const " << Identifier(parcelable.GetName()) << " = struct {\n";
+  // `parcelable Tagged<A, B>` is `fn Tagged(comptime A: type, comptime B: type)
+  // type` over the codecs of its arguments, so each instantiation is a distinct
+  // Zig type. AIDL gives a structured parcelable no way to declare a field of a
+  // parameter's type, so the parameters never affect the wire form.
+  template <typename Declaration>
+  void Open(const Declaration& declaration, const string& container) {
+    type_parameters_ = declaration.IsGeneric() ? declaration.GetTypeParameters() : std::vector<string>{};
+    const string self = Identifier(declaration.GetName());
+    if (type_parameters_.empty()) {
+      out_ << "pub const " << self << " = " << container << " {\n";
+    } else {
+      std::vector<string> parameters;
+      for (const string& parameter : type_parameters_) {
+        parameters.push_back("comptime " + Identifier(parameter) + ": type");
+      }
+      out_ << "pub fn " << self << "(" << Join(parameters, ", ") << ") type {\n";
+      out_.Indent();
+      for (const string& parameter : type_parameters_) out_ << "_ = " << Identifier(parameter) << ";\n";
+      out_ << "return " << container << " {\n";
+    }
     out_.Indent();
+  }
+  void Close() {
+    out_.Dedent();
+    out_ << "};\n";
+    if (!type_parameters_.empty()) {
+      out_.Dedent();
+      out_ << "}\n";
+    }
+    type_parameters_.clear();
+  }
+
+  void Parcelable(const AidlStructuredParcelable& parcelable) {
+    Open(parcelable, "struct");
     std::vector<std::pair<string, TypeInfo>> fields;
     for (const auto& field : parcelable.GetFields()) {
       const TypeInfo info = TypeOf(field->GetType(), /*field=*/true);
@@ -391,15 +434,14 @@ class Generator {
     out_ << "\n";
     Table("aidl_fields", fields);
     Constants(parcelable);
+    const std::vector<string> parameters = type_parameters_;
     Nested(parcelable);
-    out_.Dedent();
-    out_ << "};\n";
+    type_parameters_ = parameters;
+    Close();
   }
 
   void Union(const AidlUnionDecl& alternatives) {
-    const string self = Identifier(alternatives.GetName());
-    out_ << "pub const " << self << " = union(enum) {\n";
-    out_.Indent();
+    Open(alternatives, "union(enum)");
     std::vector<std::pair<string, TypeInfo>> fields;
     for (const auto& field : alternatives.GetFields()) {
       const TypeInfo info = TypeOf(field->GetType());
@@ -411,7 +453,7 @@ class Generator {
     if (!fields.empty()) {
       // AIDL initializes a union to the default of its first alternative.
       const auto& first = *alternatives.GetFields().front();
-      out_ << "pub const aidl_default: " << self << " = .{ ." << Identifier(first.GetName()) << " = ";
+      out_ << "pub const aidl_default: @This() = .{ ." << Identifier(first.GetName()) << " = ";
       if (first.GetDefaultValue() != nullptr) {
         out_ << first.ValueString(Literal);
       } else {
@@ -420,9 +462,10 @@ class Generator {
       out_ << " };\n";
     }
     Constants(alternatives);
+    const std::vector<string> parameters = type_parameters_;
     Nested(alternatives);
-    out_.Dedent();
-    out_ << "};\n";
+    type_parameters_ = parameters;
+    Close();
   }
 
   void Enum(const AidlEnumDeclaration& enumeration) {
@@ -450,6 +493,9 @@ class Generator {
 
   Unit& unit_;
   CodeWriter& out_;
+  const Options& options_;
+  // Type parameters of the generic parcelable being emitted.
+  std::vector<string> type_parameters_;
   bool ok_ = true;
 };
 
@@ -463,7 +509,7 @@ bool GenerateZig(const Options& options, const AidlTypenames&, const AidlDefined
   string body;
   {
     CodeWriterPtr writer = CodeWriter::ForString(&body);
-    Generator generator(unit, *writer);
+    Generator generator(unit, *writer, options);
     generator.Type(defined_type);
     writer->Close();
     if (!generator.Ok()) return false;

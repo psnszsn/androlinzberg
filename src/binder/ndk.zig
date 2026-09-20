@@ -2784,11 +2784,16 @@ export fn azk_binder_sessionDisconnected() callconv(.c) bool {
 // AOSP NDK service_manager.cpp delegates declaration queries to IServiceManager.
 // Send its original AIDL through the context object, shared with Java and C++.
 // Registration is deliberately irrelevant: the manifest survives service death.
+/// Generated from the pinned IServiceManager.aidl by `aidl --lang=zig`; only
+/// its descriptor and transaction codes are used here, because this library is
+/// the NDK ABI the generated proxies themselves run on.
+const ServiceManager = @import("servicemanager_aidl").@"android.os.IServiceManager";
+
 fn declarationQuery(code: u32, value: []const u8) ?*AParcel {
     const binder = azk_binder_contextObject();
     defer AIBinder_decStrong(binder);
     var request: ?*AParcel = AParcel.create();
-    request.?.writeInterfaceToken("android.os.IServiceManager");
+    request.?.writeInterfaceToken(ServiceManager.descriptor);
     request.?.writeString(value, @intCast(value.len));
     var reply: ?*AParcel = null;
     const rc = AIBinder_transact(binder, code, &request, &reply, 0);
@@ -2805,7 +2810,7 @@ fn declarationQuery(code: u32, value: []const u8) ?*AParcel {
 }
 export fn AServiceManager_isDeclared(instance: ?[*:0]const u8) callconv(.c) bool {
     const name = std.mem.span(instance orelse return false);
-    const reply = declarationQuery(9, name) orelse return false;
+    const reply = declarationQuery(ServiceManager.method.isDeclared.code, name) orelse return false;
     defer reply.destroy();
     return (reply.readI32() orelse return false) != 0;
 }
@@ -3058,7 +3063,7 @@ export fn AServiceManager_forceLazyServicesPersist(persist: bool) callconv(.c) v
 export fn AServiceManager_forEachDeclaredInstance(interface: ?[*:0]const u8, context: ?*anyopaque, callback: ?*const fn ([*:0]const u8, ?*anyopaque) callconv(.c) void) callconv(.c) void {
     const name = std.mem.span(interface orelse @panic("interface == nullptr"));
     const notify = callback orelse @panic("callback == nullptr");
-    const reply = declarationQuery(10, name) orelse return;
+    const reply = declarationQuery(ServiceManager.method.getDeclaredInstances.code, name) orelse return;
     defer reply.destroy();
     const count = reply.readI32() orelse return;
     if (count < 0) return;

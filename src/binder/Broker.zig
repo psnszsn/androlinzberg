@@ -22,6 +22,10 @@ const net = Io.net;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const Client = @import("Client.zig");
+/// Zig AIDL runtime over AZKB frames (broker_aidl.zig) and the interfaces
+/// `aidl --lang=zig` generates against it.
+const aidl = @import("aidl");
+const os_aidl = @import("servicemanager_aidl");
 const Server = @import("Server.zig");
 const Connection = @import("Connection.zig");
 const LaunchGrants = @import("LaunchGrants.zig");
@@ -1462,17 +1466,14 @@ fn notifyServiceCallbacks(b: *Broker, name: []const u8, object: *Object) ServeEr
         const cb = b.objects.get(cb_gid) orelse continue;
         const owner = b.peers.get(cb.owner) orelse continue;
         if (!owner.alive or cb.dead) continue;
-        var data: std.ArrayList(u8) = .empty;
-        defer data.deinit(gpa);
-        var entries: std.ArrayList(ObjectEntry) = .empty;
-        defer entries.deinit(gpa);
-        // Interface token, then onRegistration(String name, IBinder binder).
-        try smWriteI32(&data, gpa, 0); // strict-mode policy
-        try smWriteI32(&data, gpa, -1); // work source
-        try smWriteI32(&data, gpa, 0x53595354); // 'SYST'
-        try smWriteString16(&data, gpa, "android.os.IServiceCallback");
-        try smWriteString16(&data, gpa, name);
-        const cost: DeliveryBudget.Usage = .{ .bytes = data.items.len + 256, .count = 1 };
+        // Interface token, then onRegistration(String name, IBinder binder). The
+        // Binder is filled in once admission has priced the transaction.
+        const Method = ServiceCallback.method.onRegistration;
+        var request: aidl.Frame = .{ .gpa = gpa };
+        defer request.deinit();
+        const parcel = request.parcel();
+        encodeRegistration(parcel, name) catch return error.OutOfMemory;
+        const cost: DeliveryBudget.Usage = .{ .bytes = request.data.items.len - @sizeOf(i32) + 256, .count = 1 };
         const routing_id = (try b.beginDelivery(owner, 0, 0, 0, true, cost)) orelse {
             log.warn("peer {d} exhausted service callback admission; disconnecting", .{owner.id});
             owner.requestClose();
@@ -1481,23 +1482,29 @@ fn notifyServiceCallbacks(b: *Broker, name: []const u8, object: *Object) ServeEr
         errdefer b.finishDelivery(routing_id);
         const ref = try b.deliverRef(owner, object);
         errdefer if (ref.kind == .remote) b.undeliverAll(owner, &.{object});
-        const off: u32 = @intCast(data.items.len);
-        try smWriteI32(&data, gpa, 1);
-        try entries.append(gpa, .{ .offset = off, .kind = binderEntryKind(ref.kind), .value = ref.value });
+        request.entries.items[0].binder = parcelBinder(ref).?;
+        var arena_state: std.heap.ArenaAllocator = .init(gpa);
+        defer arena_state.deinit();
         var frame = try b.encode(Server.serveTransact, .{Server.TransactOptions{
             .target = ObjectRef.local(cb.local_id),
-            .code = 1, // IServiceCallback.TRANSACTION_onRegistration
+            .code = Method.code,
             .flags = 1, // FLAG_ONEWAY
             .caller_pid = 0,
             .caller_uid = 1000, // the service manager's identity
             .routing_id = routing_id,
-            .entries = entries.items,
-            .data = data.items,
+            .entries = try smEntries(arena_state.allocator(), &request),
+            .data = request.data.items,
             .fd_count = 0,
         }});
         frame.user_work = true;
         owner.enqueue(frame);
     }
+}
+
+fn encodeRegistration(parcel: aidl.Parcel, name: []const u8) aidl.Error!void {
+    try parcel.writeInterfaceToken(ServiceCallback.descriptor);
+    // The placeholder reference occupies the side-table slot delivery fills.
+    try aidl.encodeArgs(ServiceCallback.method.onRegistration, parcel, .{ .name = name, .binder = .{ .kind = .remote, .value = 0 } });
 }
 
 /// Drops the callback registrations owned by a departing peer. Requires `b.mutex`.
@@ -1588,42 +1595,47 @@ fn handleList(peer: *Peer, header: Client.Message.Header) ServeError!void {
 // visible through both and wakes the same waiters.
 // ---------------------------------------------------------------------------
 
-/// The interface descriptor the IServiceManager token names.
-const iservicemanager_descriptor = "android.os.IServiceManager";
-
-/// Parcel exception codes (android.os.Parcel). writeNoException == writeInt(0);
-/// a nonzero code followed by a message string is an exception the proxy throws.
-const EX_SECURITY: i32 = -1;
-const EX_ILLEGAL_ARGUMENT: i32 = -3;
-const EX_ILLEGAL_STATE: i32 = -5;
-const EX_UNSUPPORTED_OPERATION: i32 = -7;
-
-/// Stable IServiceManager transaction codes (declaration order from
-/// IBinder.FIRST_CALL_TRANSACTION == 1).
-const SM = struct {
-    const getService = 1;
-    const getService2 = 2;
-    const checkService = 3;
-    const checkService2 = 4;
-    const addService = 5;
-    const listServices = 6;
-    const isDeclared = 9;
-    const getDeclaredInstances = 10;
-    const updatableViaApex = 11;
-    const getUpdatableNames = 12;
-    const getConnectionInfo = 13;
-    const registerForNotifications = 7;
-    const unregisterForNotifications = 8;
-    const registerClientCallback = 14;
-    const tryUnregisterService = 15;
-    const getServiceDebugInfo = 16;
-};
+/// Generated from the pinned frameworks/native/libs/binder/aidl by
+/// `aidl --lang=zig`; `aidl` is the frame transport (broker_aidl.zig), so the
+/// transaction codes, argument order, union and parcelable framing below are
+/// the stable interface's own rather than a transcription of it.
+const ServiceManager = os_aidl.@"android.os.IServiceManager";
+const ServiceCallback = os_aidl.@"android.os.IServiceCallback";
+const SM = ServiceManager.method;
 
 fn binderEntryKind(kind: ObjectRef.Kind) ObjectEntry.Kind {
     return switch (kind) {
         .local => .binder_local,
         .remote => .binder_remote,
         else => .binder_null,
+    };
+}
+
+fn parcelBinder(ref: ObjectRef) ?aidl.Binder {
+    return switch (ref.kind) {
+        .local => .{ .kind = .local, .value = ref.value },
+        .remote => .{ .kind = .remote, .value = ref.value },
+        else => null,
+    };
+}
+
+fn objectRef(binder: aidl.Binder) ObjectRef {
+    return switch (binder.kind) {
+        .local => ObjectRef.local(binder.value),
+        .remote => ObjectRef.remote(binder.value),
+    };
+}
+
+/// What one IServiceManager method produced: its reply, an AIDL exception the
+/// generated proxy rethrows, or nothing because the peer was already failed.
+fn Outcome(comptime Method: type) type {
+    return union(enum) {
+        reply: Method.Reply,
+        exception: struct { code: aidl.Exception, message: []const u8 },
+
+        fn raise(code: aidl.Exception, message: []const u8) @This() {
+            return .{ .exception = .{ .code = code, .message = message } };
+        }
     };
 }
 
@@ -1637,375 +1649,265 @@ fn handleServiceManagerTransact(
     payload: Client.Payload,
 ) ServeError!void {
     const b = peer.broker;
-    const gpa = b.gpa;
-    const io = b.io;
     if (header.request_id == 0) return; // IServiceManager has no oneway methods
 
-    b.mutex.lockUncancelable(io);
-    defer b.mutex.unlock(io);
+    b.mutex.lockUncancelable(b.io);
+    defer b.mutex.unlock(b.io);
 
-    var r = ParcelReader{ .data = payload.data };
-    if (!r.enforceToken(gpa, iservicemanager_descriptor))
-        return smReplyException(peer, header, EX_ILLEGAL_STATE, "bad IServiceManager interface token");
+    var arena_state: std.heap.ArenaAllocator = .init(b.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
 
-    var data: std.ArrayList(u8) = .empty;
-    defer data.deinit(gpa);
-    var entries: std.ArrayList(ObjectEntry) = .empty;
-    defer entries.deinit(gpa);
+    var binders: std.ArrayList(aidl.ObjectEntry) = .empty;
+    for (0..payload.entries.len) |index| {
+        const entry = payload.entry(index);
+        const binder: aidl.Binder = switch (entry.kind) {
+            .binder_local => .{ .kind = .local, .value = entry.value },
+            .binder_remote => .{ .kind = .remote, .value = entry.value },
+            else => continue,
+        };
+        try binders.append(arena, .{ .offset = entry.offset, .binder = binder });
+    }
+    var request = aidl.Frame.reading(arena, payload.data, binders.items);
+    const input = request.parcel();
+    if (!input.enforceInterface(arena, ServiceManager.descriptor))
+        return smReplyException(peer, header, .illegal_state, "bad IServiceManager interface token");
 
-    switch (t.code) {
-        SM.getService, SM.checkService => {
-            const name = r.readString16(gpa) catch return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "bad service name");
-            defer gpa.free(name);
-            try smWriteI32(&data, gpa, 0); // no exception
-            try smWriteServiceBinder(b, peer, &data, &entries, name);
-            try smReply(peer, header, data.items, entries.items);
-        },
-        SM.getService2, SM.checkService2 => {
-            // The framework's ServiceManagerProxy resolves every service through
-            // checkService2, which returns a Service union. Reply shape:
-            //   no-exception, Service(present), tag=serviceWithMetadata,
-            //   ServiceWithMetadata(present, length-prefixed){ IBinder, boolean }.
-            const name = r.readString16(gpa) catch return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "bad service name");
-            defer gpa.free(name);
-            try smWriteI32(&data, gpa, 0); // no exception
-            try smWriteI32(&data, gpa, 1); // Service typedObject present
-            try smWriteI32(&data, gpa, 0); // union tag: serviceWithMetadata
-            try smWriteI32(&data, gpa, 1); // ServiceWithMetadata typedObject present
-            const swm_start = data.items.len;
-            try smWriteI32(&data, gpa, 0); // parcelable size placeholder
-            try smWriteServiceBinder(b, peer, &data, &entries, name); // @nullable IBinder service
-            try smWriteI32(&data, gpa, 0); // isLazyService = false
-            const size: i32 = @intCast(data.items.len - swm_start);
-            std.mem.writeInt(i32, data.items[swm_start..][0..4], size, .little);
-            try smReply(peer, header, data.items, entries.items);
-        },
-        SM.addService => {
-            const name = r.readString16(gpa) catch return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "bad service name");
-            defer gpa.free(name);
-            if (name.len == 0 or name.len > limits.max_name_len or std.mem.indexOfScalar(u8, name, 0) != null)
-                return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "malformed service name");
-            const binder_off: u32 = @intCast(r.pos);
-            _ = r.readI32(); // strong binder placeholder
-            const svc_ref = smFindBinder(payload, binder_off) orelse
-                return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "addService without a binder");
-            if (!mayRegister(peer, name)) {
-                log.warn("peer {d} ({s}) may not register '{s}' (gid-1)", .{ peer.id, peer.package, name });
-                return smReplyException(peer, header, EX_SECURITY, "not allowed to add this service");
+    ServiceManagerMethods.held = .empty;
+    defer for (ServiceManagerMethods.held.items) |object| b.maybeReleaseObject(object) catch {};
+    inline for (ServiceManager.methods) |Method| {
+        if (t.code == Method.code) {
+            // Pinned servicemanager refuses isolated callers before it parses.
+            if (Method == SM.registerForNotifications or Method == SM.unregisterForNotifications) {
+                if (isIsolated(peer.android_uid)) return smReplyException(peer, header, .security, "isolated app");
             }
-            const object = resolveRef(peer, svc_ref) catch |err| switch (err) {
+            const args = aidl.decodeArgs(Method, input, arena) catch |failure| switch (failure) {
                 error.OutOfMemory => return error.OutOfMemory,
-                error.ResourceLimit => return protocolError(peer, "exported Binder object limit exceeded"),
-                error.Invalid => return protocolError(peer, "addService with an object the peer does not hold"),
+                else => return smReplyException(peer, header, .illegal_argument, "malformed " ++ Method.name ++ " arguments"),
             };
-            defer b.maybeReleaseObject(object) catch {};
-            if (object.dead) return smReplyException(peer, header, EX_ILLEGAL_STATE, "service object is dead");
-            const allow_isolated = r.readI32() orelse return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "missing allowIsolated");
-            const dump_priority = r.readI32() orelse return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "missing dumpPriority");
-            switch (try registerService(b, peer, object, name, allow_isolated != 0, @bitCast(dump_priority))) {
-                .ok => {},
-                .taken => return smReplyException(peer, header, EX_ILLEGAL_STATE, "service already registered by another owner"),
-                .exhausted => return smReplyException(peer, header, EX_ILLEGAL_STATE, "service registry capacity exhausted"),
-            }
-            try smWriteI32(&data, gpa, 0); // void -> no exception only
-            try smReply(peer, header, data.items, entries.items);
-        },
-        SM.listServices => {
-            const priority: u32 = @bitCast(r.readI32() orelse return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "missing dumpPriority"));
-            var names: std.ArrayList([]const u8) = .empty;
-            defer names.deinit(gpa);
-            var it = b.services.iterator();
-            while (it.next()) |entry| {
-                if (entry.value_ptr.dump_priority & priority != 0) try names.append(gpa, entry.key_ptr.*);
-            }
-            // Pinned ServiceManager stores registrations in an ordered map.
-            std.mem.sort([]const u8, names.items, {}, struct {
-                fn lessThan(_: void, a: []const u8, other: []const u8) bool {
-                    return std.mem.lessThan(u8, a, other);
-                }
-            }.lessThan);
-            try smWriteI32(&data, gpa, 0);
-            try smWriteI32(&data, gpa, @intCast(names.items.len));
-            for (names.items) |name| try smWriteString16(&data, gpa, name);
-            try smReply(peer, header, data.items, entries.items);
-        },
-        SM.isDeclared => {
-            const name = r.readString16(gpa) catch return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "bad service name");
-            defer gpa.free(name);
-            try smWriteI32(&data, gpa, 0); // no exception
-            try smWriteI32(&data, gpa, @intFromBool(b.declared_services.contains(name)));
-            try smReply(peer, header, data.items, entries.items);
-        },
-        SM.getDeclaredInstances => {
-            const interface = r.readString16(gpa) catch return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "bad interface name");
-            defer gpa.free(interface);
-            var instances: std.ArrayList([]const u8) = .empty;
-            defer instances.deinit(gpa);
-            var declared = b.declared_services.keyIterator();
-            while (declared.next()) |name| {
-                if (name.len > interface.len and std.mem.startsWith(u8, name.*, interface) and name.*[interface.len] == '/')
-                    try instances.append(gpa, name.*[interface.len + 1 ..]);
-            }
-            std.mem.sort([]const u8, instances.items, {}, struct {
-                fn lessThan(_: void, a: []const u8, other: []const u8) bool {
-                    return std.mem.lessThan(u8, a, other);
-                }
-            }.lessThan);
-            try smWriteI32(&data, gpa, 0);
-            try smWriteI32(&data, gpa, @intCast(instances.items.len));
-            for (instances.items) |instance| try smWriteString16(&data, gpa, instance);
-            try smReply(peer, header, data.items, entries.items);
-        },
-        SM.getUpdatableNames => {
-            try smWriteI32(&data, gpa, 0); // no exception
-            try smWriteI32(&data, gpa, 0); // empty String[]
-            try smReply(peer, header, data.items, entries.items);
-        },
-        SM.updatableViaApex => {
-            try smWriteI32(&data, gpa, 0); // no exception
-            try smWriteI32(&data, gpa, -1); // null String
-            try smReply(peer, header, data.items, entries.items);
-        },
-        SM.getConnectionInfo => {
-            try smWriteI32(&data, gpa, 0); // no exception
-            try smWriteI32(&data, gpa, 0); // null @nullable ConnectionInfo
-            try smReply(peer, header, data.items, entries.items);
-        },
-        SM.getServiceDebugInfo => {
-            try smWriteI32(&data, gpa, 0); // no exception
-            try smWriteI32(&data, gpa, 0); // empty ServiceDebugInfo[]
-            try smReply(peer, header, data.items, entries.items);
-        },
-        SM.registerForNotifications, SM.unregisterForNotifications => {
-            if (isIsolated(peer.android_uid)) return smReplyException(peer, header, EX_SECURITY, "isolated app");
-            // registerForNotifications(name, IServiceCallback) /
-            // unregisterForNotifications(name, IServiceCallback): void.
-            const name = r.readString16(gpa) catch return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "bad service name");
-            defer gpa.free(name);
-            const binder_off: u32 = @intCast(r.pos);
-            _ = r.readI32();
-            const cb_ref = smFindBinder(payload, binder_off) orelse
-                return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "notification callback missing");
-            const cb = resolveRef(peer, cb_ref) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                error.ResourceLimit => return protocolError(peer, "exported Binder object limit exceeded"),
-                error.Invalid => return protocolError(peer, "service callback the peer does not hold"),
-            };
-            defer b.maybeReleaseObject(cb) catch {};
-            if (name.len == 0 or name.len > limits.max_name_len or std.mem.indexOfScalar(u8, name, 0) != null)
-                return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "malformed service callback name");
-            if (t.code == SM.registerForNotifications) {
-                if (cb.dead) return smReplyException(peer, header, EX_ILLEGAL_STATE, "callback object is dead");
-                const existing = b.service_callbacks.get(name);
-                if (existing) |list| {
-                    for (list.items) |gid| if (gid == cb.id) {
-                        try smWriteI32(&data, gpa, 0);
-                        return smReply(peer, header, data.items, entries.items);
+            switch (try @field(ServiceManagerMethods, Method.name)(b, peer, arena, args)) {
+                .exception => |exception| return smReplyException(peer, header, exception.code, exception.message),
+                .reply => |reply| {
+                    var output: aidl.Frame = .{ .gpa = arena };
+                    aidl.encodeReply(Method, output.parcel(), reply) catch |failure| switch (failure) {
+                        error.OutOfMemory => return error.OutOfMemory,
+                        else => return smReplyException(peer, header, .illegal_state, "unencodable " ++ Method.name ++ " reply"),
                     };
-                }
-                if (b.service_callback_count >= b.resource_limits.callbacks or
-                    (existing == null and b.service_callbacks.count() >= b.resource_limits.callback_names))
-                    return smReplyException(peer, header, EX_ILLEGAL_STATE, "service callback capacity exhausted");
-                const gop = try b.service_callbacks.getOrPut(gpa, name);
-                if (!gop.found_existing) {
-                    gop.key_ptr.* = try gpa.dupe(u8, name);
-                    gop.value_ptr.* = .empty;
-                }
-                var known = false;
-                for (gop.value_ptr.items) |gid| known = known or gid == cb.id;
-                if (!known) {
-                    try gop.value_ptr.append(gpa, cb.id);
-                    cb.service_refs += 1; // keep the callback exported while registered
-                    b.service_callback_count += 1;
-                }
-            } else if (b.service_callbacks.getPtr(name)) |list| {
-                var i: usize = 0;
-                while (i < list.items.len) : (i += 1) {
-                    if (list.items[i] != cb.id) continue;
-                    _ = list.swapRemove(i);
-                    cb.service_refs -= 1;
-                    b.service_callback_count -= 1;
-                    break;
-                }
-                if (list.items.len == 0) {
-                    const kv = b.service_callbacks.fetchRemove(name).?;
-                    var l = kv.value;
-                    l.deinit(gpa);
-                    gpa.free(kv.key);
-                }
+                    return smReply(peer, header, arena, &output);
+                },
             }
-            try smWriteI32(&data, gpa, 0); // no exception
-            try smReply(peer, header, data.items, entries.items);
-        },
-        SM.registerClientCallback, SM.tryUnregisterService => {
-            // Void methods: client-count callbacks (lazy services) are accepted
-            // but never delivered on this host; callers do not block on them.
-            try smWriteI32(&data, gpa, 0); // no exception
-            try smReply(peer, header, data.items, entries.items);
-        },
-        else => return smReplyException(peer, header, EX_UNSUPPORTED_OPERATION, "unsupported IServiceManager transaction"),
+        }
     }
+    return smReplyException(peer, header, .unsupported_operation, "unsupported IServiceManager transaction");
 }
 
-/// Writes a strong-binder value (writeStrongBinder layout: an i32 placeholder +
-/// a side-table entry) for the registry service `name`, delivering it to `peer`;
-/// writes a null binder (i32 0, no entry) when the service is absent.
-fn smWriteServiceBinder(
-    b: *Broker,
-    peer: *Peer,
-    data: *std.ArrayList(u8),
-    entries: *std.ArrayList(ObjectEntry),
-    name: []const u8,
-) ServeError!void {
-    if (b.services.get(name)) |service| {
-        if (!service.permits(peer)) return smWriteI32(data, b.gpa, 0);
-        const object = b.objects.get(service.object_id).?;
-        const ref = try b.deliverRef(peer, object);
-        const off: u32 = @intCast(data.items.len);
-        try smWriteI32(data, b.gpa, 1); // strong binder present
-        try entries.append(b.gpa, .{ .offset = off, .kind = binderEntryKind(ref.kind), .value = ref.value });
-    } else {
-        try smWriteI32(data, b.gpa, 0); // null binder
+/// The registry service `name` as a Binder delivered to `peer`, or null when it
+/// is absent or not visible to that peer.
+fn smServiceBinder(b: *Broker, peer: *Peer, name: []const u8) ServeError!?aidl.Binder {
+    const service = b.services.get(name) orelse return null;
+    if (!service.permits(peer)) return null;
+    return parcelBinder(try b.deliverRef(peer, b.objects.get(service.object_id).?));
+}
+
+fn validServiceName(name: []const u8) bool {
+    return name.len != 0 and name.len <= limits.max_name_len and std.mem.indexOfScalar(u8, name, 0) == null;
+}
+
+fn sortedNames(names: [][]const u8) void {
+    // Pinned ServiceManager stores registrations in an ordered map.
+    std.mem.sort([]const u8, names, {}, struct {
+        fn lessThan(_: void, a: []const u8, other: []const u8) bool {
+            return std.mem.lessThan(u8, a, other);
+        }
+    }.lessThan);
+}
+
+/// One function per IServiceManager method, named after it. All run under
+/// `b.mutex`; `arena` lives until the reply is encoded.
+const ServiceManagerMethods = struct {
+    /// Objects a method resolved from the caller's references. They are
+    /// released only after the reply is queued, so a peer sees the answer
+    /// before any release notice for an export the method did not keep.
+    threadlocal var held: std.ArrayList(*Object) = .empty;
+
+    fn getService(b: *Broker, peer: *Peer, _: Allocator, args: SM.getService.Args) ServeError!Outcome(SM.getService) {
+        return .{ .reply = .{ ._result = try smServiceBinder(b, peer, args.name) } };
     }
-}
-
-/// Sends an IServiceManager reply (status ok, handled) carrying `data`/`entries`.
-fn smReply(peer: *Peer, header: Client.Message.Header, data: []const u8, entries: []const ObjectEntry) ServeError!void {
-    const b = peer.broker;
-    peer.enqueue(try b.encode(Server.serveReply, .{Server.ReplyOptions{
-        .request_id = header.request_id,
-        .status = .ok,
-        .handled = true,
-        .entries = entries,
-        .data = data,
-    }}));
-}
-
-/// Sends an IServiceManager reply that carries a Parcel exception (nonzero code
-/// + message), which the generated proxy rethrows.
-fn smReplyException(peer: *Peer, header: Client.Message.Header, code: i32, msg: []const u8) ServeError!void {
-    const b = peer.broker;
-    const gpa = b.gpa;
-    var data: std.ArrayList(u8) = .empty;
-    defer data.deinit(gpa);
-    try smWriteI32(&data, gpa, code);
-    try smWriteString16(&data, gpa, msg);
-    peer.enqueue(try b.encode(Server.serveReply, .{Server.ReplyOptions{
-        .request_id = header.request_id,
-        .status = .ok,
-        .handled = true,
-        .data = data.items,
-    }}));
-}
-
-/// Finds the strong-binder side-table entry at `offset` in a request payload and
-/// returns the reference the sending peer expressed.
-fn smFindBinder(payload: Client.Payload, offset: u32) ?ObjectRef {
-    for (0..payload.entries.len) |i| {
-        const e = payload.entry(i);
-        if (e.offset != offset) continue;
-        return switch (e.kind) {
-            .binder_local => ObjectRef.local(e.value),
-            .binder_remote => ObjectRef.remote(e.value),
-            else => null,
+    fn checkService(b: *Broker, peer: *Peer, _: Allocator, args: SM.checkService.Args) ServeError!Outcome(SM.checkService) {
+        return .{ .reply = .{ ._result = try smServiceBinder(b, peer, args.name) } };
+    }
+    // The framework's ServiceManagerProxy resolves every service through
+    // checkService2, which returns a Service union.
+    fn getService2(b: *Broker, peer: *Peer, _: Allocator, args: SM.getService2.Args) ServeError!Outcome(SM.getService2) {
+        return .{ .reply = .{ ._result = .{ .serviceWithMetadata = .{ .service = try smServiceBinder(b, peer, args.name), .isLazyService = false } } } };
+    }
+    fn checkService2(b: *Broker, peer: *Peer, _: Allocator, args: SM.checkService2.Args) ServeError!Outcome(SM.checkService2) {
+        return .{ .reply = .{ ._result = .{ .serviceWithMetadata = .{ .service = try smServiceBinder(b, peer, args.name), .isLazyService = false } } } };
+    }
+    fn addService(b: *Broker, peer: *Peer, arena: Allocator, args: SM.addService.Args) ServeError!Outcome(SM.addService) {
+        const Result = Outcome(SM.addService);
+        if (!validServiceName(args.name)) return Result.raise(.illegal_argument, "malformed service name");
+        if (!mayRegister(peer, args.name)) {
+            log.warn("peer {d} ({s}) may not register '{s}' (gid-1)", .{ peer.id, peer.package, args.name });
+            return Result.raise(.security, "not allowed to add this service");
+        }
+        const object = resolveRef(peer, objectRef(args.service)) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.ResourceLimit => return protocolError(peer, "exported Binder object limit exceeded"),
+            error.Invalid => return protocolError(peer, "addService with an object the peer does not hold"),
+        };
+        try held.append(arena, object);
+        if (object.dead) return Result.raise(.illegal_state, "service object is dead");
+        return switch (try registerService(b, peer, object, args.name, args.allowIsolated, @bitCast(args.dumpPriority))) {
+            .ok => .{ .reply = .{} },
+            .taken => Result.raise(.illegal_state, "service already registered by another owner"),
+            .exhausted => Result.raise(.illegal_state, "service registry capacity exhausted"),
         };
     }
-    return null;
-}
-
-fn smWriteI32(list: *std.ArrayList(u8), gpa: Allocator, v: i32) ServeError!void {
-    var buf: [4]u8 = undefined;
-    std.mem.writeInt(i32, &buf, v, .little);
-    try list.appendSlice(gpa, &buf);
-}
-
-/// Appends `utf8` in the AOSP writeString16 layout: i32 code-unit count, the
-/// UTF-16LE units, a NUL unit, padded to a 4-byte boundary.
-fn smWriteString16(list: *std.ArrayList(u8), gpa: Allocator, utf8: []const u8) ServeError!void {
-    var units: std.ArrayList(u16) = .empty;
-    defer units.deinit(gpa);
-    var i: usize = 0;
-    while (i < utf8.len) {
-        const seq = std.unicode.utf8ByteSequenceLength(utf8[i]) catch 1;
-        const cp: u21 = if (i + seq <= utf8.len)
-            (std.unicode.utf8Decode(utf8[i .. i + seq]) catch utf8[i])
-        else
-            utf8[i];
-        i += seq;
-        if (cp <= 0xFFFF) {
-            try units.append(gpa, @intCast(cp));
-        } else {
-            const c = cp - 0x10000;
-            try units.append(gpa, @intCast(0xD800 + (c >> 10)));
-            try units.append(gpa, @intCast(0xDC00 + (c & 0x3FF)));
+    fn listServices(b: *Broker, _: *Peer, arena: Allocator, args: SM.listServices.Args) ServeError!Outcome(SM.listServices) {
+        const priority: u32 = @bitCast(args.dumpPriority);
+        var names: std.ArrayList([]const u8) = .empty;
+        var it = b.services.iterator();
+        while (it.next()) |entry| {
+            if (entry.value_ptr.dump_priority & priority != 0) try names.append(arena, entry.key_ptr.*);
         }
+        sortedNames(names.items);
+        return .{ .reply = .{ ._result = names.items } };
     }
-    try smWriteI32(list, gpa, @intCast(units.items.len));
-    for (units.items) |u| {
-        var buf: [2]u8 = undefined;
-        std.mem.writeInt(u16, &buf, u, .little);
-        try list.appendSlice(gpa, &buf);
+    fn isDeclared(b: *Broker, _: *Peer, _: Allocator, args: SM.isDeclared.Args) ServeError!Outcome(SM.isDeclared) {
+        return .{ .reply = .{ ._result = b.declared_services.contains(args.name) } };
     }
-    try list.appendSlice(gpa, &[_]u8{ 0, 0 }); // NUL terminator unit
-    while (list.items.len % 4 != 0) try list.append(gpa, 0); // pad to 4
-}
-
-/// A cursor over a request Parcel's data for IServiceManager decoding.
-const ParcelReader = struct {
-    data: []const u8,
-    pos: usize = 0,
-
-    fn readI32(r: *ParcelReader) ?i32 {
-        if (r.pos + 4 > r.data.len) return null;
-        const v = std.mem.readInt(i32, r.data[r.pos..][0..4], .little);
-        r.pos += 4;
-        return v;
-    }
-
-    /// Reads a writeString16 value into freshly allocated UTF-8. `error.Null`
-    /// for the -1 marker; the caller frees a returned slice.
-    fn readString16(r: *ParcelReader, gpa: Allocator) error{ OutOfMemory, Malformed, Null }![]u8 {
-        const count = r.readI32() orelse return error.Malformed;
-        if (count < 0) return error.Null;
-        const n: usize = @intCast(count);
-        var out: std.ArrayList(u8) = .empty;
-        errdefer out.deinit(gpa);
-        var i: usize = 0;
-        while (i < n) : (i += 1) {
-            if (r.pos + 2 > r.data.len) return error.Malformed;
-            const unit = std.mem.readInt(u16, r.data[r.pos..][0..2], .little);
-            r.pos += 2;
-            var cp: u21 = unit;
-            if (unit >= 0xD800 and unit <= 0xDBFF and i + 1 < n and r.pos + 2 <= r.data.len) {
-                const low = std.mem.readInt(u16, r.data[r.pos..][0..2], .little);
-                if (low >= 0xDC00 and low <= 0xDFFF) {
-                    cp = 0x10000 + ((@as(u21, unit) - 0xD800) << 10) + (@as(u21, low) - 0xDC00);
-                    r.pos += 2;
-                    i += 1;
-                } else cp = 0xFFFD;
-            } else if (unit >= 0xD800 and unit <= 0xDFFF) cp = 0xFFFD; // lone surrogate
-            var buf: [4]u8 = undefined;
-            const len = std.unicode.utf8Encode(cp, &buf) catch (std.unicode.utf8Encode(0xFFFD, &buf) catch unreachable);
-            try out.appendSlice(gpa, buf[0..len]);
+    fn getDeclaredInstances(b: *Broker, _: *Peer, arena: Allocator, args: SM.getDeclaredInstances.Args) ServeError!Outcome(SM.getDeclaredInstances) {
+        const interface = args.iface;
+        var instances: std.ArrayList([]const u8) = .empty;
+        var declared = b.declared_services.keyIterator();
+        while (declared.next()) |name| {
+            if (name.len > interface.len and std.mem.startsWith(u8, name.*, interface) and name.*[interface.len] == '/')
+                try instances.append(arena, name.*[interface.len + 1 ..]);
         }
-        r.pos += 2; // NUL unit
-        r.pos = std.mem.alignForward(usize, r.pos, 4);
-        if (r.pos > r.data.len) r.pos = r.data.len;
-        return out.toOwnedSlice(gpa);
+        sortedNames(instances.items);
+        return .{ .reply = .{ ._result = instances.items } };
+    }
+    fn updatableViaApex(_: *Broker, _: *Peer, _: Allocator, _: SM.updatableViaApex.Args) ServeError!Outcome(SM.updatableViaApex) {
+        return .{ .reply = .{ ._result = null } };
+    }
+    fn getUpdatableNames(_: *Broker, _: *Peer, _: Allocator, _: SM.getUpdatableNames.Args) ServeError!Outcome(SM.getUpdatableNames) {
+        return .{ .reply = .{ ._result = &.{} } };
+    }
+    fn getConnectionInfo(_: *Broker, _: *Peer, _: Allocator, _: SM.getConnectionInfo.Args) ServeError!Outcome(SM.getConnectionInfo) {
+        return .{ .reply = .{ ._result = null } };
+    }
+    fn getServiceDebugInfo(_: *Broker, _: *Peer, _: Allocator, _: SM.getServiceDebugInfo.Args) ServeError!Outcome(SM.getServiceDebugInfo) {
+        return .{ .reply = .{ ._result = &.{} } };
+    }
+    // Client-count callbacks (lazy services) are accepted but never delivered
+    // on this host; callers do not block on them.
+    fn registerClientCallback(_: *Broker, _: *Peer, _: Allocator, _: SM.registerClientCallback.Args) ServeError!Outcome(SM.registerClientCallback) {
+        return .{ .reply = .{} };
+    }
+    fn tryUnregisterService(_: *Broker, _: *Peer, _: Allocator, _: SM.tryUnregisterService.Args) ServeError!Outcome(SM.tryUnregisterService) {
+        return .{ .reply = .{} };
     }
 
-    /// Consumes the AOSP interface token (strict-mode policy, work source,
-    /// interface header marker, descriptor string) and reports whether it names
-    /// `descriptor`.
-    fn enforceToken(r: *ParcelReader, gpa: Allocator, descriptor: []const u8) bool {
-        _ = r.readI32() orelse return false; // strict-mode policy
-        _ = r.readI32() orelse return false; // work source
-        _ = r.readI32() orelse return false; // interface header marker
-        const s = r.readString16(gpa) catch return false;
-        defer gpa.free(s);
-        return std.mem.eql(u8, s, descriptor);
+    /// The callback object behind a notification registration, or the
+    /// exception that refuses it.
+    fn notificationCallback(comptime Method: type, peer: *Peer, arena: Allocator, name: []const u8, callback: ServiceCallback.Client) ServeError!union(enum) { object: *Object, refused: Outcome(Method) } {
+        const object = resolveRef(peer, objectRef(callback.remote)) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.ResourceLimit => return protocolError(peer, "exported Binder object limit exceeded"),
+            error.Invalid => return protocolError(peer, "service callback the peer does not hold"),
+        };
+        try held.append(arena, object);
+        if (!validServiceName(name)) {
+            return .{ .refused = Outcome(Method).raise(.illegal_argument, "malformed service callback name") };
+        }
+        return .{ .object = object };
+    }
+    fn registerForNotifications(b: *Broker, peer: *Peer, arena: Allocator, args: SM.registerForNotifications.Args) ServeError!Outcome(SM.registerForNotifications) {
+        const Result = Outcome(SM.registerForNotifications);
+        const gpa = b.gpa;
+        const cb = switch (try notificationCallback(SM.registerForNotifications, peer, arena, args.name, args.callback)) {
+            .refused => |refusal| return refusal,
+            .object => |object| object,
+        };
+        if (cb.dead) return Result.raise(.illegal_state, "callback object is dead");
+        const existing = b.service_callbacks.get(args.name);
+        if (existing) |list| {
+            for (list.items) |gid| if (gid == cb.id) return .{ .reply = .{} };
+        }
+        if (b.service_callback_count >= b.resource_limits.callbacks or
+            (existing == null and b.service_callbacks.count() >= b.resource_limits.callback_names))
+            return Result.raise(.illegal_state, "service callback capacity exhausted");
+        const gop = try b.service_callbacks.getOrPut(gpa, args.name);
+        if (!gop.found_existing) {
+            gop.key_ptr.* = try gpa.dupe(u8, args.name);
+            gop.value_ptr.* = .empty;
+        }
+        try gop.value_ptr.append(gpa, cb.id);
+        cb.service_refs += 1; // keep the callback exported while registered
+        b.service_callback_count += 1;
+        return .{ .reply = .{} };
+    }
+    fn unregisterForNotifications(b: *Broker, peer: *Peer, arena: Allocator, args: SM.unregisterForNotifications.Args) ServeError!Outcome(SM.unregisterForNotifications) {
+        const gpa = b.gpa;
+        const cb = switch (try notificationCallback(SM.unregisterForNotifications, peer, arena, args.name, args.callback)) {
+            .refused => |refusal| return refusal,
+            .object => |object| object,
+        };
+        if (b.service_callbacks.getPtr(args.name)) |list| {
+            var i: usize = 0;
+            while (i < list.items.len) : (i += 1) {
+                if (list.items[i] != cb.id) continue;
+                _ = list.swapRemove(i);
+                cb.service_refs -= 1;
+                b.service_callback_count -= 1;
+                break;
+            }
+            if (list.items.len == 0) {
+                const kv = b.service_callbacks.fetchRemove(args.name).?;
+                var l = kv.value;
+                l.deinit(gpa);
+                gpa.free(kv.key);
+            }
+        }
+        return .{ .reply = .{} };
     }
 };
+
+/// The side table of a written frame in the wire form the peer receives.
+fn smEntries(arena: Allocator, frame: *const aidl.Frame) ServeError![]const ObjectEntry {
+    const entries = try arena.alloc(ObjectEntry, frame.entries.items.len);
+    for (entries, frame.entries.items) |*entry, written|
+        entry.* = .{ .offset = written.offset, .kind = binderEntryKind(objectRef(written.binder).kind), .value = written.binder.value };
+    return entries;
+}
+
+/// Sends an IServiceManager reply (status ok, handled) carrying `frame`.
+fn smReply(peer: *Peer, header: Client.Message.Header, arena: Allocator, frame: *const aidl.Frame) ServeError!void {
+    const b = peer.broker;
+    peer.enqueue(try b.encode(Server.serveReply, .{Server.ReplyOptions{
+        .request_id = header.request_id,
+        .status = .ok,
+        .handled = true,
+        .entries = try smEntries(arena, frame),
+        .data = frame.data.items,
+    }}));
+}
+
+/// Sends an IServiceManager reply that carries a Parcel exception, which the
+/// generated proxy rethrows.
+fn smReplyException(peer: *Peer, header: Client.Message.Header, code: aidl.Exception, message: []const u8) ServeError!void {
+    const b = peer.broker;
+    var frame: aidl.Frame = .{ .gpa = b.gpa };
+    defer frame.deinit();
+    aidl.encodeException(frame.parcel(), code, message) catch return error.OutOfMemory;
+    peer.enqueue(try b.encode(Server.serveReply, .{Server.ReplyOptions{
+        .request_id = header.request_id,
+        .status = .ok,
+        .handled = true,
+        .data = frame.data.items,
+    }}));
+}
 
 /// Property policy (source note: init's property_service + SELinux property
 /// contexts, reduced): the system process may set anything, but an `ro.*`

@@ -47,7 +47,7 @@ const Probe = struct {
         var mirrored = shape;
         mirrored.name = try std.fmt.allocPrint(call.arena, "mirror:{s}", .{shape.name});
         return .{
-            .result = shape,
+            ._result = shape,
             .mirrored = mirrored,
             .cursor = .{ .x = cursor.x + 1, .y = cursor.y + shape.rgb[0] },
         };
@@ -67,7 +67,7 @@ const Probe = struct {
             s.* = value * factor;
             d.* = value * 2;
         }
-        return .{ .result = scaled, .doubled = doubled };
+        return .{ ._result = scaled, .doubled = doubled };
     }
     pub fn relay(_: *Probe, _: *aidl.Call, callback: IProbeCallback.Client, question: i32) !i32 {
         const answer = try callback.ask(question);
@@ -138,6 +138,8 @@ fn drive(io: Io, gpa: std.mem.Allocator, client: IProbe.Client, peer: []const u8
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
+    expect(try client.getInterfaceVersion() == IProbe.version and IProbe.version == 3, "interface version", peer, failures);
+    expect(std.mem.eql(u8, try client.getInterfaceHash(arena), IProbe.hash), "interface hash", peer, failures);
     expect(try client.add(40, 2) == IProbe.MAGIC, "int arguments and result", peer, failures);
     expect(std.mem.eql(u8, try client.echo(arena, "grüße, 世界"), "grüße, 世界"), "UTF-8 <-> UTF-16 string", peer, failures);
     expect(std.mem.eql(u8, try client.echo(arena, ""), ""), "empty string is not null", peer, failures);
@@ -156,9 +158,12 @@ fn drive(io: Io, gpa: std.mem.Allocator, client: IProbe.Client, peer: []const u8
         .anchor = .{ .x = -1, .y = -2 },
         .tags = &.{ "a", "bc" },
         .child = &child,
+        .pair = .{ .first = "p", .second = .{ .x = 5 } },
+        .span = .{ 4, 5 },
+        .mark = .{ 6, 7 },
     };
     const transformed = try client.transform(arena, shape, .{ .x = 10, .y = 20 });
-    const result = transformed.result;
+    const result = transformed._result;
     expect(result.kind == .SQUARE and result.scale == 1.5 and result.visible and result.glyph == 0x4e16, "parcelable scalar fields and defaults", peer, failures);
     expect(std.mem.eql(u8, result.name, "shape") and std.mem.eql(u8, result.label.?, "label"), "parcelable strings", peer, failures);
     expect(result.origin.x == 3 and result.origin.y == 7, "nested parcelable with a declared default", peer, failures);
@@ -169,6 +174,8 @@ fn drive(io: Io, gpa: std.mem.Allocator, client: IProbe.Client, peer: []const u8
     expect(result.anchor.?.y == -2 and result.token == null, "nullable parcelable and absent binder", peer, failures);
     expect(result.tags.len == 2 and std.mem.eql(u8, result.tags[1], "bc"), "List<String>", peer, failures);
     expect(result.child != null and result.child.?.kind == .CIRCLE and result.child.?.child == null, "heap-nullable recursion", peer, failures);
+    expect(std.mem.eql(u8, result.pair.first, "p") and result.pair.second.x == 5 and result.pair.second.y == 7, "generic parcelable", peer, failures);
+    expect(result.span != null and result.span.?[1] == 5 and result.mark != null and result.mark.?[0] == 6 and result.absent == null, "nullable fixed-size arrays", peer, failures);
     expect(std.mem.eql(u8, transformed.mirrored.name, "mirror:shape"), "out parcelable", peer, failures);
     expect(transformed.cursor.x == 11 and transformed.cursor.y == 21, "inout parcelable", peer, failures);
 
@@ -180,7 +187,7 @@ fn drive(io: Io, gpa: std.mem.Allocator, client: IProbe.Client, peer: []const u8
     expect((try client.choose(arena, .{ .kinds = &.{ .NONE, .NONE, .NONE } })).number == 3, "union array alternative", peer, failures);
 
     const scaled = try client.scale(arena, &.{ 1, 2, 3 }, 10, 3);
-    expect(std.mem.eql(i64, scaled.result, &.{ 10, 20, 30 }) and std.mem.eql(i64, scaled.doubled, &.{ 2, 4, 6 }), "out array with a length hint", peer, failures);
+    expect(std.mem.eql(i64, scaled._result, &.{ 10, 20, 30 }) and std.mem.eql(i64, scaled.doubled, &.{ 2, 4, 6 }), "out array with a length hint", peer, failures);
 
     var listener: Listener = .{};
     var listener_server: IProbeCallback.Server(Listener) = undefined;

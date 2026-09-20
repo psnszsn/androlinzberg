@@ -45,7 +45,10 @@ export fn bionic___system_property_read(info: ?*const Info, name: ?[*]u8, value:
     return @intCast(text.len);
 }
 export fn bionic___system_property_get(name: ?[*:0]const u8, value: [*]u8) callconv(.c) c_int {
-    const info = bionic___system_property_find(name) orelse { value[0] = 0; return 0; };
+    const info = bionic___system_property_find(name) orelse {
+        value[0] = 0;
+        return 0;
+    };
     return bionic___system_property_read(info, null, value);
 }
 export fn bionic___system_property_read_callback(info: ?*const Info, callback: Callback, cookie: ?*anyopaque) callconv(.c) void {

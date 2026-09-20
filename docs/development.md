@@ -85,11 +85,20 @@ The same executable accepts `--lang=zig`. That backend is repository-owned
 (`tools/aidl-zig`) and is linked beside the unmodified compiler rather than
 patched into it: `main.cpp` selects it, the pinned front end parses and
 validates, and `generate_zig.cpp` walks the resulting AST. It emits data types
-and codec tables only. `src/binder/aidl.zig`, imported by generated code as
-`aidl`, implements parcelable framing, nullability, status headers, proxy
-calls and server dispatch once, through comptime reflection, on top of the
-`libbinder_ndk` C ABI. Generated Zig is therefore wire-compatible with the
-other backends by construction.
+and codec tables only. The runtime generated code imports as `aidl` implements
+parcelable framing, nullability, status headers, proxy calls and server
+dispatch once, through comptime reflection. `src/binder/aidl_core.zig` holds
+the transport-independent half; two transports instantiate it:
+
+- `src/binder/aidl.zig`, over the `libbinder_ndk` C ABI, for ordinary clients
+  and services. Generated Zig is wire-compatible with the other backends by
+  construction.
+- `src/binder/broker_aidl.zig`, over raw AZKB parcel frames, for the broker,
+  which serves `android.os.IServiceManager` without being a libbinder client.
+  Its Binder values are per-peer object references.
+
+The build chooses the transport by the module it names `aidl`, so one
+generated interface serves both.
 
 `aidl.zigModule` in `build/aidl.zig` turns a list of AIDL files into a module
 that exposes each type under its canonical name:
@@ -108,11 +117,17 @@ A server method is `fn name(self, call: *aidl.Call, <in arguments>...) !Result`;
 `out` parameters. Reply allocations use `call.arena`. Decoded Binder and
 descriptor arguments are released when the method returns, so a method that
 keeps one clones or duplicates it. `aidl.decodeArgs`/`encodeReply` serve a
-transaction that must hop threads before it is answered. An unstructured
+transaction that must hop threads before it is answered: the Wayland task
+presenter (`src/platform/task_presenter.zig`) admits requests on Binder
+threads, serves `IWaylandTaskPresenter` on its Wayland thread through a
+`aidl.LocalObject`, and can answer `startNativeDrag` after later protocol
+dispatch. A versioned interface (`--version`/`--hash`) gets `version`, `hash`
+and the `getInterfaceVersion`/`getInterfaceHash` transactions, which
+`aidl.Server` answers itself. A generic parcelable is a function of its
+arguments' codecs, e.g. `Pair(c.String, c.Parcelable(Point))`. An unstructured
 parcelable such as `android.view.Surface` is supplied by an `aidl_custom`
-module as `@"<canonical name>"` with `writeToParcel`/`readFromParcel`. Generic
-parcelables, `ParcelableHolder`, `@nullable` fixed-size arrays and the
-`getInterfaceVersion`/`getInterfaceHash` meta-transactions are not generated.
+module as `@"<canonical name>"` with `writeToParcel`/`readFromParcel`.
+`ParcelableHolder` and the Java-only types are not generated.
 
 `zig build -j10 aidl-zig-test` compiles `tests/aidl-zig` with both the Zig and
 the pinned NDK backend and drives Zig→Zig, Zig→NDK and NDK→Zig across a real
