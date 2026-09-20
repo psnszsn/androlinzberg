@@ -169,6 +169,25 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/com/android/internal/accessibility/dialog/OnTargetSelectedListener.java");
     try c.file("$CJ/com/android/internal/accessibility/dialog/TargetAdapter.java");
     try c.file("$CJ/com/android/internal/accessibility/dialog/TargetOperations.java");
+
+    // Stock AccessibilityManagerService (UiAutomation's system-server half) with
+    // its magnification, gesture and window-tracking collaborators. The package
+    // omits a11ychecker, which needs Google's accessibility test framework and
+    // which nothing else refers to.
+    try c.add("$FB/services/accessibility/java", .{});
+    try c.file("$CJ/com/android/internal/accessibility/dialog/AccessibilityButtonChooserActivity.java");
+    try c.file("$CJ/com/android/internal/accessibility/dialog/AccessibilityServiceWarning.java");
+    try c.file("$CJ/com/android/internal/accessibility/dialog/AccessibilityShortcutChooserActivity.java");
+    try c.file("$CJ/com/android/internal/accessibility/dialog/ButtonTargetAdapter.java");
+    try c.file("$CJ/com/android/internal/accessibility/dialog/ShortcutTargetAdapter.java");
+    try c.file("$CJ/android/appwidget/AppWidgetManagerInternal.java");
+    try c.file("$CJ/android/util/FeatureFlagUtils.java");
+    try c.file("$CJ/com/android/internal/accessibility/common/MagnificationConstants.java");
+    try c.file("$CJ/com/android/internal/accessibility/util/AccessibilityStatsLogUtils.java");
+    try c.file("$FB/media/java/android/media/AudioManagerInternal.java");
+    try c.file("$FB/packages/SettingsLib/RestrictedLockUtils/src/com/android/settingslib/RestrictedLockUtils.java");
+    try c.file("$FB/services/core/java/com/android/server/AccessibilityManagerInternal.java");
+    try c.file("$MU/java/com/android/modules/expresslog/Histogram.java");
     try c.file("$CJ/com/android/internal/accessibility/dialog/ToggleAccessibilityServiceTarget.java");
     try c.file("$CJ/com/android/internal/accessibility/dialog/ToggleAllowListingFeatureTarget.java");
     try c.file("$CJ/com/android/internal/accessibility/dialog/VolumeShortcutToggleAccessibilityServiceTarget.java");
@@ -3062,6 +3081,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/com/android/internal/util/dump/DumpableContainerImpl.java");
     try c.file("$CJ/android/app/AppGlobals.java");
     try c.file("$CJ/android/app/UiAutomation.java");
+    try c.file("$CJ/android/app/UiAutomationConnection.java");
     try c.file("$CJ/android/os/PerformanceCollector.java");
     try c.file("$CJ/android/os/TestLooperManager.java");
     try c.file("$CJ/android/app/LoadedApk.java");

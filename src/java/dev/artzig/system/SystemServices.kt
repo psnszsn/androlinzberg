@@ -32,10 +32,6 @@ internal object SystemServices {
     fun start(context: Context, stockWindows: StockWindowServices, onBootComplete: () -> Unit) {
         com.android.server.HostedBootTasks.start()
         android.os.ServiceManager.addService(Context.INPUT_METHOD_SERVICE, HostedInputMethodManagerService(context))
-        android.os.ServiceManager.addService(
-            Context.ACCESSIBILITY_SERVICE,
-            HostedAccessibilityManagerService(context),
-        )
         val manager = SystemServiceManager(context)
         LocalServices.addService(SystemServiceManager::class.java, manager)
         val userLifecycle = HostedUserLifecycle()
@@ -271,6 +267,26 @@ internal object SystemServices {
         LocalServices.addService(HostedLauncherAppsService::class.java, launcherApps)
         android.os.ServiceManager.addService(Context.APPWIDGET_SERVICE, HostedAppWidgetService(context, hostedPermissions))
         stockWindows.startWindows(manager, activityManager)
+        android.os.ServiceManager.addService(Context.SAFETY_CENTER_SERVICE, HostedSafetyCenterService())
+        // Stock AccessibilityManagerService: window and interaction-connection
+        // tracking for every app, and the system-server half of UiAutomation. As in
+        // SystemServer.startOtherServices it follows the window manager, whose
+        // accessibility controller, power and settings it reads when constructed.
+        manager.startService(com.android.server.accessibility.AccessibilityManagerService.Lifecycle::class.java)
+        // Transitional: the legacy in-process inspection bridge performs
+        // accessibility actions, which stock AccessibilityManager permits only
+        // while accessibility is enabled. A stock UiAutomation registration is
+        // how a test consumer enables it; the ART test runner will hold that
+        // registration itself and this one goes away with the bridge.
+        if (dev.artzig.testing.ProcessInspection.enabled && System.getenv("AZK_TEST_RUNNER_AUTOMATION") == null) {
+            val automationThread = android.os.HandlerThread("LegacyInspectionAutomation").apply { start() }
+            // connect() waits for the service's init callback, which the
+            // accessibility service posts to this (main) thread.
+            Thread({
+                android.app.UiAutomation(automationThread.looper, android.app.UiAutomationConnection())
+                    .connect(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+            }, "LegacyInspectionAutomationConnect").start()
+        }
         // Reused AOSP clipboard service (publishes "clipboard" itself).
         HostedClipboardMonitor.enable()
         manager.startService(com.android.server.clipboard.ClipboardService::class.java)
