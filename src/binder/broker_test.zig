@@ -13,6 +13,7 @@ const linux = std.os.linux;
 
 const cookie = "test-cookie";
 const system_cookie = "test-system-cookie";
+const inspector_cookie = "test-inspector-cookie";
 
 /// Heap-allocated: tasks keep pointers into `group`.
 const Harness = struct {
@@ -41,7 +42,7 @@ const Harness = struct {
         const path = try gpa.dupe(u8, try std.fmt.bufPrint(&buf, "/tmp/azk-binder-test-{x}.sock", .{nonce}));
         var prop_buf: [64]u8 = undefined;
         const prop_path = try gpa.dupe(u8, try std.fmt.bufPrint(&prop_buf, "/tmp/azk-binder-test-{x}.props", .{nonce}));
-        const broker = try Broker.init(gpa, io, .{ .socket_path = path, .cookie = cookie, .system_cookie = system_cookie, .prop_area_path = prop_path, .delivery_limits = limits, .resource_limits = resources, .declared_services = declared });
+        const broker = try Broker.init(gpa, io, .{ .socket_path = path, .cookie = cookie, .system_cookie = system_cookie, .inspector_cookie = inspector_cookie, .prop_area_path = prop_path, .delivery_limits = limits, .resource_limits = resources, .declared_services = declared });
         const h = try gpa.create(Harness);
         h.* = .{ .broker = broker, .path = path, .prop_path = prop_path };
         try h.group.concurrent(io, runBroker, .{broker});
@@ -1981,4 +1982,34 @@ test "declared AIDL instances survive service startup and death independently of
     } else return error.ServiceDidNotDie;
     try expectManifestReply(&client, 9, first, &.{"true"});
     try expectManifestReply(&client, 10, interface, &.{ "alpha", "zeta" });
+}
+
+test "inspector joins as shell and sees only the automation services" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const h = try Harness.start(gpa, io);
+    defer h.stop(gpa, io);
+    var system: Peer = undefined;
+    try system.connect(io, h.path, system_cookie);
+    defer system.close();
+    try system.expectWelcome();
+    try system.client.serveRegisterService(1, ObjectRef.local(1), "accessibility");
+    try expectServiceStatus(&system, 1, .ok);
+    try system.client.serveRegisterService(2, ObjectRef.local(2), "package");
+    try expectServiceStatus(&system, 2, .ok);
+
+    var inspector: Peer = undefined;
+    try inspector.connect(io, h.path, inspector_cookie);
+    defer inspector.close();
+    try inspector.expectWelcome();
+    try testing.expectEqual(Server.Message.Welcome.Role.inspector, inspector.welcome.role);
+    try testing.expectEqual(@as(u32, 2000), inspector.welcome.uid);
+
+    try inspector.client.serveLookupService(1, "accessibility", false);
+    try expectServiceStatus(&inspector, 1, .ok);
+    // A registered service outside the allow-list is indistinguishable from an absent one.
+    try inspector.client.serveLookupService(2, "package", false);
+    try expectServiceStatus(&inspector, 2, .not_found);
+    try inspector.client.serveRegisterService(3, ObjectRef.local(1), "dev.artzig.testing.inspection");
+    try expectServiceStatus(&inspector, 3, .denied);
 }

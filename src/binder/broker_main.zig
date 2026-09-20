@@ -26,6 +26,7 @@ pub fn main(init: std.process.Init) !void {
     var prop_area_path: ?[]const u8 = null;
     const cookie = init.minimal.environ.getPosix("AZK_BINDER_COOKIE");
     const system_cookie = init.minimal.environ.getPosix("AZK_BINDER_SYSTEM_COOKIE");
+    const inspector_cookie = init.minimal.environ.getPosix("AZK_BINDER_INSPECTOR_COOKIE");
     var first_app_uid: u32 = Client.default_app_uid;
     var declared_services: std.ArrayList([]const u8) = .empty;
     defer declared_services.deinit(gpa);
@@ -62,6 +63,7 @@ pub fn main(init: std.process.Init) !void {
             std.debug.print("azk-binder-broker: AZK_BINDER_SYSTEM_COOKIE is not set\n", .{});
             return error.InvalidArguments;
         },
+        .inspector_cookie = inspector_cookie,
         .prop_area_path = prop_area_path orelse {
             std.debug.print("azk-binder-broker: --prop-area is required\n", .{});
             return error.InvalidArguments;

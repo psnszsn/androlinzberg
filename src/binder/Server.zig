@@ -86,6 +86,9 @@ pub const Message = struct {
             app = 0,
             system = 1,
             isolated = 2,
+            /// A host test tool: Android's shell identity, able to look up
+            /// the services stock UiAutomation uses and nothing else.
+            inspector = 3,
             _,
         };
     };

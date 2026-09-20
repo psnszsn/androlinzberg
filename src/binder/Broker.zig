@@ -47,6 +47,8 @@ socket_path: []const u8,
 cookie: []const u8,
 /// Presented only by the session's trusted system process.
 system_cookie: []const u8,
+/// Presented by host test tools; null unless the session permits inspection.
+inspector_cookie: ?[]const u8,
 /// Package name -> Android uid for this session; uids are never reused.
 packages: std.StringHashMapUnmanaged(u32) = .empty,
 /// Session-wide system property area; the broker is the only writer
@@ -105,6 +107,9 @@ pub const Options = struct {
     socket_path: []const u8,
     cookie: []const u8,
     system_cookie: []const u8,
+    /// Present only when the session was started for inspection. A peer that
+    /// presents it joins as `inspector` (see `inspector_services`).
+    inspector_cookie: ?[]const u8 = null,
     /// File every session process maps read-only for `SystemProperties`.
     prop_area_path: []const u8,
     first_app_uid: u32 = Client.default_app_uid,
@@ -251,6 +256,8 @@ pub fn init(gpa: Allocator, io: Io, options: Options) !*Broker {
     errdefer gpa.free(cookie);
     const system_cookie = try gpa.dupe(u8, options.system_cookie);
     errdefer gpa.free(system_cookie);
+    const inspector_cookie = if (options.inspector_cookie) |value| try gpa.dupe(u8, value) else null;
+    errdefer if (inspector_cookie) |value| gpa.free(value);
     var declared_services: std.StringHashMapUnmanaged(void) = .empty;
     errdefer {
         var names = declared_services.keyIterator();
@@ -284,6 +291,7 @@ pub fn init(gpa: Allocator, io: Io, options: Options) !*Broker {
         .socket_path = socket_path,
         .cookie = cookie,
         .system_cookie = system_cookie,
+        .inspector_cookie = inspector_cookie,
         .declared_services = declared_services,
         .props = props,
         .delivery_limits = options.delivery_limits,
@@ -441,6 +449,7 @@ pub fn deinit(b: *Broker) void {
     gpa.free(b.socket_path);
     gpa.free(b.cookie);
     gpa.free(b.system_cookie);
+    if (b.inspector_cookie) |value| gpa.free(value);
     gpa.destroy(b);
 }
 
@@ -723,6 +732,12 @@ fn handleHello(peer: *Peer, header: Client.Message.Header, body: []const u8) Ser
             peer.role = .system;
             peer.android_uid = Client.system_uid;
             peer.package = try gpa.dupe(u8, "android");
+        } else if (b.inspector_cookie != null and std.mem.eql(u8, cookie, b.inspector_cookie.?)) {
+            // `adb shell am instrument`: the identity stock accessibility
+            // policy already trusts to register a UiAutomation.
+            peer.role = .inspector;
+            peer.android_uid = shell_uid;
+            peer.package = try gpa.dupe(u8, "com.android.shell");
         } else if (std.mem.eql(u8, cookie, b.cookie)) {
             if (package.len == 0) return protocolError(peer, "app peer without a package name");
             peer.role = .app;
@@ -897,10 +912,28 @@ fn handleRevokeLaunch(peer: *Peer, header: Client.Message.Header, body: []const 
     peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, status, ObjectRef.null_ref, "" }));
 }
 
+/// android.os.Process.SHELL_UID.
+const shell_uid: u32 = 2000;
+
+/// What an inspector may look up: the services android.app.UiAutomation and
+/// UiAutomationConnection obtain, plus the hosted inspection journal and the
+/// task presenter's test methods. It registers nothing.
+const inspector_services = [_][]const u8{
+    "accessibility",               "window", "permissionmgr",
+    "activity",                    "user",   "dev.artzig.testing.inspection",
+    "dev.artzig.window.presenter",
+};
+
+fn inspectorMaySee(name: []const u8) bool {
+    for (inspector_services) |allowed| if (std.mem.eql(u8, name, allowed)) return true;
+    return false;
+}
+
 /// Registry policy: the system process may claim any name; an app may only
 /// claim its own package name or names beneath it.
 fn mayRegister(peer: *const Peer, name: []const u8) bool {
     if (isIsolated(peer.android_uid)) return false;
+    if (peer.role == .inspector) return false;
     if (peer.role == .system) return true;
     if (!namespacePrefix(peer.package, name)) return false;
     // A dotted-prefix package must not squat inside a longer known package's
@@ -1396,7 +1429,8 @@ const Service = struct {
     allow_isolated: bool,
     dump_priority: u32,
 
-    fn permits(service: Service, peer: *const Peer) bool {
+    fn permits(service: Service, peer: *const Peer, name: []const u8) bool {
+        if (peer.role == .inspector) return inspectorMaySee(name);
         return service.allow_isolated or !isIsolated(peer.android_uid);
     }
 };
@@ -1444,7 +1478,7 @@ fn registerService(b: *Broker, peer: *Peer, object: *Object, name: []const u8, a
         if (b.peers.get(w.peer)) |waiter| {
             waiter.service_waiters -= 1;
             if (waiter.alive) {
-                const allowed = service.permits(waiter);
+                const allowed = service.permits(waiter, name);
                 const ref = if (allowed) try b.deliverRef(waiter, object) else ObjectRef.null_ref;
                 waiter.enqueue(try b.encode(Server.serveServiceResult, .{ w.request_id, @as(Server.Message.ServiceResult.Status, if (allowed) .ok else .not_found), ref, "" }));
             }
@@ -1545,7 +1579,7 @@ fn handleLookup(peer: *Peer, header: Client.Message.Header, body: []const u8) Se
     b.mutex.lockUncancelable(io);
     defer b.mutex.unlock(io);
     if (b.services.get(name)) |service| {
-        if (!service.permits(peer)) {
+        if (!service.permits(peer, name)) {
             peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .not_found, ObjectRef.null_ref, "" }));
             return;
         }
@@ -1705,7 +1739,7 @@ fn handleServiceManagerTransact(
 /// is absent or not visible to that peer.
 fn smServiceBinder(b: *Broker, peer: *Peer, name: []const u8) ServeError!?aidl.Binder {
     const service = b.services.get(name) orelse return null;
-    if (!service.permits(peer)) return null;
+    if (!service.permits(peer, name)) return null;
     return parcelBinder(try b.deliverRef(peer, b.objects.get(service.object_id).?));
 }
 

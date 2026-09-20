@@ -16,6 +16,9 @@ pub const socket_env = "AZK_BINDER_SOCKET";
 pub const cookie_env = "AZK_BINDER_COOKIE";
 /// Given only to the broker, compositor and session's system process.
 pub const system_cookie_env = "AZK_BINDER_SYSTEM_COOKIE";
+/// Given to the broker, and published in `session.json`, only for a session
+/// started for inspection; a host test tool presents it as `AZK_BINDER_COOKIE`.
+pub const inspector_cookie_env = "AZK_BINDER_INSPECTOR_COOKIE";
 /// Path of the session's read-only property area file (see
 /// `src/binder/prop_area.zig`); exported to every session process.
 pub const prop_area_env = "AZK_PROP_AREA";
@@ -45,6 +48,8 @@ pub const Storage = struct {
 pub const SessionInfo = struct {
     socket: []const u8,
     cookie: []const u8,
+    /// Joins the session as the `inspector` role; absent outside inspection.
+    inspector_cookie: ?[]const u8 = null,
     launcher: []const u8,
     pid: i32,
     prop_area: []const u8,
@@ -83,6 +88,7 @@ pub const Session = struct {
     prop_area_path: []u8,
     cookie: []u8,
     system_cookie: []u8,
+    inspector_cookie: ?[]u8 = null,
 
     pub const Options = struct {
         broker_exe: []const u8,
@@ -103,6 +109,8 @@ pub const Session = struct {
         storage: ?Storage = null,
         first_app_uid: u32 = Client.default_app_uid,
         declared_services: []const []const u8 = &.{},
+        /// Admit host test tools as the broker's `inspector` role.
+        inspection: bool = false,
     };
 
     pub fn start(gpa: std.mem.Allocator, io: Io, options: Options) !Session {
@@ -149,6 +157,9 @@ pub const Session = struct {
         io.random(&random);
         const system_cookie = try std.fmt.allocPrint(gpa, "{x}", .{&random});
         errdefer gpa.free(system_cookie);
+        io.random(&random);
+        const inspector_cookie = if (options.inspection) try std.fmt.allocPrint(gpa, "{x}", .{&random}) else null;
+        errdefer if (inspector_cookie) |value| gpa.free(value);
         var uid_buf: [16]u8 = undefined;
         const uid_text = try std.fmt.bufPrint(&uid_buf, "{d}", .{options.first_app_uid});
 
@@ -157,6 +168,7 @@ pub const Session = struct {
         defer child_env.deinit();
         try child_env.put(cookie_env, cookie);
         try child_env.put(system_cookie_env, system_cookie);
+        if (inspector_cookie) |value| try child_env.put(inspector_cookie_env, value);
         var broker_args: std.ArrayList([]const u8) = .empty;
         defer broker_args.deinit(gpa);
         try broker_args.appendSlice(gpa, &.{ options.broker_exe, "--socket", socket_path, "--prop-area", prop_area_path, "--session-dir", dir, "--first-app-uid", uid_text });
@@ -185,6 +197,7 @@ pub const Session = struct {
             .prop_area_path = prop_area_path,
             .cookie = cookie,
             .system_cookie = system_cookie,
+            .inspector_cookie = inspector_cookie,
             .ready_timeout = options.ready_timeout,
             .shutdown_timeout = options.shutdown_timeout,
         };
@@ -197,6 +210,7 @@ pub const Session = struct {
         const text = try std.json.Stringify.valueAlloc(s.gpa, SessionInfo{
             .socket = s.socket_path,
             .cookie = s.cookie,
+            .inspector_cookie = s.inspector_cookie,
             .launcher = launcher_exe,
             .pid = @intCast(std.os.linux.getpid()),
             .prop_area = s.prop_area_path,
@@ -341,6 +355,7 @@ pub const Session = struct {
         s.gpa.free(s.prop_area_path);
         s.gpa.free(s.cookie);
         s.gpa.free(s.system_cookie);
+        if (s.inspector_cookie) |value| s.gpa.free(value);
         s.gpa.destroy(s.drain);
     }
 };
