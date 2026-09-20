@@ -5,13 +5,12 @@ const graphics = @import("graphics.zig");
 const declarations = @import("generator_sources.zig");
 pub const Generated = graphics.Generated;
 
-pub fn generate(b: *std.Build, aosp: std.Build.LazyPath, runner: *std.Build.Step.Compile, protoc: *std.Build.Step.Compile, stats: *std.Build.Step.Compile) Generated {
+pub fn generate(b: *std.Build, aosp: std.Build.LazyPath, runner: *std.Build.Step.Compile, aidl_tool: *std.Build.Step.Compile, protoc: *std.Build.Step.Compile, stats: *std.Build.Step.Compile) Generated {
     const headers = b.addWriteFiles();
     const sources = b.addWriteFiles();
     inline for (.{ &declarations.input_dispatcher_pm_aidl, &declarations.input_dispatcher_stats_aidl }, .{ "cpp", "ndk" }) |files, language| {
         for (files) |file| {
-            const run = b.addRunArtifact(runner);
-            run.addFileArg(aosp.path(b, "prebuilts/sdk/tools/linux/bin/aidl"));
+            const run = b.addRunArtifact(aidl_tool);
             run.addArg(b.fmt("--lang={s}", .{language}));
             for ([_][]const u8{ "frameworks/native/libs/binder/aidl", "frameworks/native/libs/binder/ndk/aidl", "packages/modules/StatsD/aidl" }) |root| run.addPrefixedDirectoryArg("-I", aosp.path(b, root));
             run.addArg("-h");

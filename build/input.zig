@@ -21,7 +21,7 @@ pub const Library = struct {
     }
 };
 
-pub fn generate(b: *std.Build, aosp: std.Build.LazyPath, runner: *std.Build.Step.Compile, gui: graphics.Generated, aidl: []const std.Build.LazyPath) Generated {
+pub fn generate(b: *std.Build, aosp: std.Build.LazyPath, runner: *std.Build.Step.Compile, aidl_tool: *std.Build.Step.Compile, gui: graphics.Generated, aidl: []const std.Build.LazyPath) Generated {
     const headers = b.addWriteFiles();
     const sources = b.addWriteFiles();
     _ = headers.addCopyFile(aosp.path(b, "external/rust/cxx/include/cxx.h"), "rust/cxx.h");
@@ -58,8 +58,7 @@ pub fn generate(b: *std.Build, aosp: std.Build.LazyPath, runner: *std.Build.Step
     const constants = b.addWriteFiles();
     var rust_files: std.ArrayList(std.Build.LazyPath) = .empty;
     for ([_][]const u8{ "IInputConstants", "InputConfig", "InputEventInjectionResult", "InputEventInjectionSync", "MotionEventFlag", "PointerIconType" }) |name| {
-        const generate_aidl = b.addRunArtifact(runner);
-        generate_aidl.addFileArg(aosp.path(b, "prebuilts/sdk/tools/linux/bin/aidl"));
+        const generate_aidl = b.addRunArtifact(aidl_tool);
         generate_aidl.addArgs(&.{ "--lang=rust", "-I" });
         generate_aidl.addDirectoryArg(aosp.path(b, "frameworks/native/libs/input"));
         generate_aidl.addArg("-o");

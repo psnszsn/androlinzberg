@@ -400,6 +400,13 @@ AudioFlinger tracks. It contains the C macros and callback code around
 
 ## C++ boundary
 
+- `tools/aidl-zig/main.cpp` and `tools/aidl-zig/generate_zig.cpp` are the
+  `--lang=zig` backend of the AIDL compiler build (`build/aidl.zig`). They are
+  C++ because the backend walks the pinned compiler's `AidlDefinedType` AST and
+  `CodeWriter`; a Zig tool would have to re-parse AIDL. The pinned compiler is
+  compiled unpatched, and the backend emits declarations only: marshalling
+  lives in `src/binder/aidl.zig`. `tests/aidl-zig/ProbeNdk.cpp` is the stock
+  NDK-backend peer of `zig build aidl-zig-test`.
 - `audio/HostAudioFlinger.cpp`, `audio/HostAudioPolicyService.cpp` and
   `audio/HostAudioTrack.cpp` implement the pinned AudioFlinger / AudioPolicy /
   IAudioTrack AIDL for the host output, following AudioFlinger::createTrack,

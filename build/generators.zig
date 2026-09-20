@@ -20,6 +20,8 @@ pub const Options = struct {
 };
 
 pub const Result = struct {
+    /// The pinned AIDL compiler with the Zig backend (build/aidl.zig).
+    aidl_tool: *std.Build.Step.Compile,
     jvm: GeneratedJvm,
     native: GeneratedNative,
     resources: FrameworkResources,
@@ -344,7 +346,7 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
 fn aidlJava(
     b: *std.Build,
     aosp: *std.Build.Dependency,
-    runner: *std.Build.Step.Compile,
+    aidl_tool: *std.Build.Step.Compile,
 ) []const LazyPath {
     // The native permission AIDL lib (AttributionSourceState, IAppOpsCallback,
     // IPermissionChecker) is staged into the compat root rather than added as
@@ -357,8 +359,7 @@ fn aidlJava(
 
     // Mainline Bluetooth's socket AIDL refers to the SDK parcelable by its
     // short name. Supply the same preprocessed SDK declaration Soong sees.
-    const sdk_parcelables = b.addRunArtifact(runner);
-    sdk_parcelables.addFileArg(aosp.path("prebuilts/sdk/tools/linux/bin/aidl"));
+    const sdk_parcelables = b.addRunArtifact(aidl_tool);
     sdk_parcelables.addArg("--preprocess");
     const sdk_preprocessed = sdk_parcelables.addOutputFileArg("framework-parcelables.aidl");
     sdk_parcelables.addFileArg(aosp.path("frameworks/base/core/java/android/content/AttributionSource.aidl"));
@@ -366,8 +367,7 @@ fn aidlJava(
     var files: std.ArrayList(LazyPath) = .empty;
     var index: usize = 0;
     for (declarations.aidl) |input| {
-        const run = b.addRunArtifact(runner);
-        run.addFileArg(aosp.path("prebuilts/sdk/tools/linux/bin/aidl"));
+        const run = b.addRunArtifact(aidl_tool);
         if (input.source == .aosp and
             (std.mem.startsWith(u8, input.path, "hardware/interfaces/") or
                 std.mem.startsWith(u8, input.path, "system/hardware/interfaces/")))
@@ -490,14 +490,13 @@ const CppAidlResult = struct { headers: []const LazyPath, sources: []const LazyP
 fn aidlCpp(
     b: *std.Build,
     aosp: *std.Build.Dependency,
-    runner: *std.Build.Step.Compile,
+    aidl_tool: *std.Build.Step.Compile,
 ) CppAidlResult {
     var roots: std.ArrayList(LazyPath) = .empty;
     var files: std.ArrayList(LazyPath) = .empty;
     for (declarations.cpp_aidl, 0..) |entry, index| {
         const root = aosp.path(entry.root);
-        const run = b.addRunArtifact(runner);
-        run.addFileArg(aosp.path("prebuilts/sdk/tools/linux/bin/aidl"));
+        const run = b.addRunArtifact(aidl_tool);
         run.addArgs(&.{ b.fmt("--lang={s}", .{@tagName(entry.backend)}), "-I" });
         run.addDirectoryArg(root);
         // Native interfaces import types owned by other selected AIDL packages.
@@ -1278,8 +1277,10 @@ fn cronetJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Ste
 
 pub fn build(b: *std.Build, o: Options) Result {
     const runner = hostTool(b, "aosp-tool-runner", "artzig/tools/aosp-tool-runner.zig");
-    var gui = @import("graphics.zig").generate(b, o.aosp.path(""), runner, o.sysprop_cpp_tool);
-    const renderengine = @import("renderengine.zig").generate(b, o.aosp.path(""), runner, o.sysprop_cpp_tool);
+    const aidl_tool = @import("aidl.zig").build(b, .{ .vendor = o.aosp.path(""), .target = b.graph.host });
+    _ = expose(b, "aidl-tool", "Build the pinned AIDL compiler with the Zig backend", &b.addInstallArtifact(aidl_tool, .{}).step);
+    var gui = @import("graphics.zig").generate(b, o.aosp.path(""), runner, aidl_tool, o.sysprop_cpp_tool);
+    const renderengine = @import("renderengine.zig").generate(b, o.aosp.path(""), runner, aidl_tool, o.sysprop_cpp_tool);
     const perfetto = @import("perfetto.zig").generate(b, o.aosp.path(""), o.protobuf, o.protoc, o.perfetto_headers);
     const filter = hostTool(b, "filter-flagged-api", "tools/filter-flagged-api.zig");
     const package_rewriter = hostTool(b, "rewrite-java-package", "tools/rewrite-java-package.zig");
@@ -1290,7 +1291,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         .protoc = o.protoc,
     });
     _ = expose(b, "stats-tool", "Build stats-log-api-gen", &stats_tool.step);
-    const surfaceflinger = @import("surfaceflinger.zig").generate(b, o.aosp.path(""), runner, o.protoc, perfetto, stats_tool);
+    const surfaceflinger = @import("surfaceflinger.zig").generate(b, o.aosp.path(""), runner, aidl_tool, o.protoc, perfetto, stats_tool);
     const accounts = b.addSystemCommand(&.{ "python3", "-B" });
     accounts.addFileArg(o.aosp.path(declarations.android_accounts.generator));
     accounts.addArg("aidarray");
@@ -1322,15 +1323,14 @@ pub fn build(b: *std.Build, o: Options) Result {
     for (declarations.media_native_protos) |file|
         media_proto.addFileArg(o.aosp.path(b.fmt("frameworks/av/drm/libmediadrm/{s}", .{file})));
     const media = @import("graphics.zig").Generated{ .headers = media_proto_output, .sources = media_proto_output };
-    const aidl_java = aidlJava(b, o.aosp, runner);
+    const aidl_java = aidlJava(b, o.aosp, aidl_tool);
     const hidl_java = hidlJava(b, o.aosp, runner);
     const hidl_cpp = hidlCpp(b, o.aosp, runner);
     gui.hidl_headers = hidl_cpp.headers;
-    const aidl_cpp = aidlCpp(b, o.aosp, runner);
-    const input = @import("input.zig").generate(b, o.aosp.path(""), runner, gui, aidl_cpp.headers);
-    const input_dispatcher = @import("input_dispatcher.zig").generate(b, o.aosp.path(""), runner, o.protoc, stats_tool);
-    const graphics = b.addRunArtifact(runner);
-    graphics.addFileArg(o.aosp.path("prebuilts/sdk/tools/linux/bin/aidl"));
+    const aidl_cpp = aidlCpp(b, o.aosp, aidl_tool);
+    const input = @import("input.zig").generate(b, o.aosp.path(""), runner, aidl_tool, gui, aidl_cpp.headers);
+    const input_dispatcher = @import("input_dispatcher.zig").generate(b, o.aosp.path(""), runner, aidl_tool, o.protoc, stats_tool);
+    const graphics = b.addRunArtifact(aidl_tool);
     graphics.addArgs(&.{ "--lang=cpp", "-I" });
     graphics.addDirectoryArg(o.aosp.path("frameworks/native/libs/gui/aidl"));
     graphics.addArg("-h");
@@ -1388,6 +1388,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     for (fixtures.all()) |path| path.addStepDependencies(aggregate);
 
     return .{
+        .aidl_tool = aidl_tool,
         .jvm = .{
             .sources = java_files.toOwnedSlice(b.allocator) catch @panic("OOM"),
             .cronet_sources = cronet_java,

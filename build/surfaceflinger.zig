@@ -4,7 +4,7 @@ const re = @import("renderengine.zig");
 const declarations = @import("generator_sources.zig");
 pub const Generated = re.Generated;
 
-pub fn generate(b: *std.Build, aosp: std.Build.LazyPath, runner: *std.Build.Step.Compile, protoc: *std.Build.Step.Compile, perfetto: Generated, stats_tool: *std.Build.Step.Compile) Generated {
+pub fn generate(b: *std.Build, aosp: std.Build.LazyPath, runner: *std.Build.Step.Compile, aidl_tool: *std.Build.Step.Compile, protoc: *std.Build.Step.Compile, perfetto: Generated, stats_tool: *std.Build.Step.Compile) Generated {
     const headers = b.addWriteFiles();
     const sources = b.addWriteFiles();
     const stats = b.addRunArtifact(stats_tool);
@@ -32,8 +32,7 @@ pub fn generate(b: *std.Build, aosp: std.Build.LazyPath, runner: *std.Build.Step
         _ = headers.addCopyDirectory(output, "", .{});
     }
     for (declarations.surfaceflinger_ndk_aidl) |file| {
-        const run = b.addRunArtifact(runner);
-        run.addFileArg(aosp.path(b, "prebuilts/sdk/tools/linux/bin/aidl"));
+        const run = b.addRunArtifact(aidl_tool);
         run.addArgs(&.{ "--lang=ndk", "--structured" });
         if (std.mem.startsWith(u8, file, "hardware/")) run.addArg("--stability=vintf");
         // Pinned power/aidl/Android.bp selects android.hardware.power-V6. Its
@@ -57,8 +56,7 @@ pub fn generate(b: *std.Build, aosp: std.Build.LazyPath, runner: *std.Build.Step
         _ = sources.addCopyFile(perfetto.headers.path(b, output), output);
     }
     for (declarations.surfaceflinger_stats_aidl) |file| {
-        const run = b.addRunArtifact(runner);
-        run.addFileArg(aosp.path(b, "prebuilts/sdk/tools/linux/bin/aidl"));
+        const run = b.addRunArtifact(aidl_tool);
         run.addArgs(&.{ "--lang=cpp", "--structured" });
         run.addPrefixedDirectoryArg("-I", aosp.path(b, "frameworks/base/core/java"));
         run.addArg("-h");

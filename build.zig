@@ -824,6 +824,53 @@ pub fn build(b: *std.Build) void {
     ndk_test_run.addFileArg(binder_broker.getEmittedBin());
     b.step("ndk-test", "Run the native binder ABI self-test").dependOn(&ndk_test_run.step);
 
+    // Zig AIDL backend self-test: tests/aidl-zig compiled by `aidl --lang=zig`
+    // and, as the wire oracle, by the pinned NDK backend into one process.
+    const aidl_zig = @import("build/aidl.zig");
+    const aidl_runtime = b.createModule(.{ .root_source_file = b.path("src/binder/aidl.zig"), .target = target, .optimize = optimize });
+    const probe_files = [_][]const u8{ "Choice", "IProbe", "IProbeCallback", "Kind", "Point", "Shape" };
+    var probe_aidl: [probe_files.len][]const u8 = undefined;
+    for (probe_files, &probe_aidl) |name, *file| file.* = b.fmt("dev/artzig/probe/{s}.aidl", .{name});
+    const aidl_zig_test = b.addExecutable(.{
+        .name = "azk-aidl-zig-test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/binder/aidl_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .link_libcpp = true,
+            .imports = &.{
+                .{ .name = "aidl", .module = aidl_runtime },
+                .{ .name = "probe", .module = aidl_zig.zigModule(b, generated.aidl_tool, .{
+                    .root = b.path("tests/aidl-zig"),
+                    .files = &probe_aidl,
+                    .runtime = aidl_runtime,
+                    .target = target,
+                    .optimize = optimize,
+                }) },
+            },
+        }),
+    });
+    const probe_ndk = b.addRunArtifact(generated.aidl_tool);
+    probe_ndk.addArgs(&.{ "--lang=ndk", "--structured" });
+    probe_ndk.addPrefixedDirectoryArg("-I", b.path("tests/aidl-zig"));
+    probe_ndk.addArg("-h");
+    const probe_ndk_headers = probe_ndk.addOutputDirectoryArg("probe-ndk-headers");
+    probe_ndk.addArg("-o");
+    const probe_ndk_sources = probe_ndk.addOutputDirectoryArg("probe-ndk-sources");
+    for (probe_aidl) |file| probe_ndk.addFileArg(b.path(b.fmt("tests/aidl-zig/{s}", .{file})));
+    const probe_ndk_flags = [_][]const u8{ "-std=gnu++23", "-D__ANDROID_HOST__", "-D__INTRODUCED_IN(x)=", "-D__ANDROID_API_U__=34", "-D__ANDROID_API_S__=31", "-Wno-deprecated-declarations" };
+    for ([_][]const u8{ "include_ndk", "include_platform", "include_cpp" }) |include|
+        aidl_zig_test.root_module.addIncludePath(aosp.path(b, b.fmt("frameworks/native/libs/binder/ndk/{s}", .{include})));
+    aidl_zig_test.root_module.addIncludePath(probe_ndk_headers);
+    for (probe_files) |name|
+        aidl_zig_test.root_module.addCSourceFile(.{ .file = probe_ndk_sources.path(b, b.fmt("dev/artzig/probe/{s}.cpp", .{name})), .flags = &probe_ndk_flags });
+    aidl_zig_test.root_module.addCSourceFile(.{ .file = b.path("tests/aidl-zig/ProbeNdk.cpp"), .flags = &probe_ndk_flags });
+    aidl_zig_test.root_module.linkLibrary(binder_ndk);
+    const aidl_zig_test_run = b.addRunArtifact(aidl_zig_test);
+    aidl_zig_test_run.addFileArg(binder_broker.getEmittedBin());
+    b.step("aidl-zig-test", "Round-trip the Zig AIDL backend against itself and the NDK backend").dependOn(&aidl_zig_test_run.step);
+
     // Cross-language system-test client: links the ABI and, connecting to the
     // shared session broker via inherited env, calls a Java-registered service.
     // Installed to bin so the system-test driver can spawn it as a peer.

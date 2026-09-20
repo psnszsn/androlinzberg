@@ -13,6 +13,10 @@ dependencies during a build. The development shell supplies bindgen and sets
 standard Linux installation the loader can normally find zlib without that
 override.
 
+The AIDL compiler is compiled from `system/tools/aidl` by `build/aidl.zig`
+with flex and bison from the development shell; the package no longer carries
+the `prebuilts/sdk/tools/linux/bin/aidl` executable.
+
 The host Looper patch exposes a borrowed epoll descriptor and the next native
 message deadline to native/Java integration tests. APK processes run the stock
 Java Looper; Wayland runs in the separate task presenter. The application compiles

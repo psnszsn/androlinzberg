@@ -73,6 +73,51 @@ The Zig declarations are the source of truth for build inputs and outputs:
 - `build/application.zig` owns the cacheable application layout; installation
   publishes that layout without becoming an input to another step.
 
+### AIDL compiler and the Zig backend
+
+`build/aidl.zig` compiles the pinned AOSP AIDL compiler (`system/tools/aidl`)
+from source; flex and bison come from the development shell. Every backend the
+build uses (Java, cpp, ndk, rust) runs this executable, so generated code
+follows the pinned Android 16 generators rather than the older generic-linux
+SDK prebuilt. `zig build -j10 aidl-tool` installs it as `zig-out/bin/aidl`.
+
+The same executable accepts `--lang=zig`. That backend is repository-owned
+(`tools/aidl-zig`) and is linked beside the unmodified compiler rather than
+patched into it: `main.cpp` selects it, the pinned front end parses and
+validates, and `generate_zig.cpp` walks the resulting AST. It emits data types
+and codec tables only. `src/binder/aidl.zig`, imported by generated code as
+`aidl`, implements parcelable framing, nullability, status headers, proxy
+calls and server dispatch once, through comptime reflection, on top of the
+`libbinder_ndk` C ABI. Generated Zig is therefore wire-compatible with the
+other backends by construction.
+
+`aidl.zigModule` in `build/aidl.zig` turns a list of AIDL files into a module
+that exposes each type under its canonical name:
+
+```zig
+const IProbe = @import("probe").@"dev.artzig.probe.IProbe";
+
+var server: IProbe.Server(Implementation) = undefined;
+server.init(gpa, io, &implementation);          // serve
+const client = try IProbe.Client.fromBinder(binder); // call
+const sum = try client.add(40, 2);
+```
+
+A server method is `fn name(self, call: *aidl.Call, <in arguments>...) !Result`;
+`Result` is the return value, or `method.<name>.Reply` when the method also has
+`out` parameters. Reply allocations use `call.arena`. Decoded Binder and
+descriptor arguments are released when the method returns, so a method that
+keeps one clones or duplicates it. `aidl.decodeArgs`/`encodeReply` serve a
+transaction that must hop threads before it is answered. An unstructured
+parcelable such as `android.view.Surface` is supplied by an `aidl_custom`
+module as `@"<canonical name>"` with `writeToParcel`/`readFromParcel`. Generic
+parcelables, `ParcelableHolder`, `@nullable` fixed-size arrays and the
+`getInterfaceVersion`/`getInterfaceHash` meta-transactions are not generated.
+
+`zig build -j10 aidl-zig-test` compiles `tests/aidl-zig` with both the Zig and
+the pinned NDK backend and drives Zig→Zig, Zig→NDK and NDK→Zig across a real
+broker.
+
 Cross-module paths are `std.Build.LazyPath` values. Known generated files stay
 individual files; directory outputs are reserved for artifacts that are
 actually trees, such as class directories, include roots, system modules, and

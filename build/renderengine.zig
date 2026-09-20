@@ -4,7 +4,7 @@ const graphics = @import("graphics.zig");
 const declarations = @import("generator_sources.zig");
 pub const Generated = graphics.Generated;
 
-pub fn generate(b: *std.Build, aosp: std.Build.LazyPath, runner: *std.Build.Step.Compile, sysprop: *std.Build.Step.Compile) Generated {
+pub fn generate(b: *std.Build, aosp: std.Build.LazyPath, runner: *std.Build.Step.Compile, aidl_tool: *std.Build.Step.Compile, sysprop: *std.Build.Step.Compile) Generated {
     const headers = b.addWriteFiles();
     const sources = b.addWriteFiles();
     for (declarations.renderengine_flag_packages) |package| {
@@ -32,8 +32,7 @@ pub fn generate(b: *std.Build, aosp: std.Build.LazyPath, runner: *std.Build.Step
         } else @panic("missing RenderEngine aconfig declaration");
     }
     for (declarations.renderengine_ndk_aidl) |file| {
-        const run = b.addRunArtifact(runner);
-        run.addFileArg(aosp.path(b, "prebuilts/sdk/tools/linux/bin/aidl"));
+        const run = b.addRunArtifact(aidl_tool);
         run.addArgs(&.{ "--lang=ndk", "--structured", "--stability=vintf" });
         for ([_][]const u8{ "graphics/composer/aidl", "graphics/common/aidl", "common/aidl" }) |root|
             run.addPrefixedDirectoryArg("-I", aosp.path(b, b.fmt("hardware/interfaces/{s}", .{root})));

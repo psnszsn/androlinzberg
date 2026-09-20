@@ -4,13 +4,12 @@ const declarations = @import("generator_sources.zig");
 const binder = @import("binder_cpp.zig");
 pub const Generated = struct { headers: std.Build.LazyPath, sources: std.Build.LazyPath, hidl_headers: []const std.Build.LazyPath = &.{} };
 
-pub fn generate(b: *std.Build, aosp: std.Build.LazyPath, runner: *std.Build.Step.Compile, sysprop: *std.Build.Step.Compile) Generated {
+pub fn generate(b: *std.Build, aosp: std.Build.LazyPath, runner: *std.Build.Step.Compile, aidl_tool: *std.Build.Step.Compile, sysprop: *std.Build.Step.Compile) Generated {
     const headers = b.addWriteFiles();
     const sources = b.addWriteFiles();
     inline for (.{ declarations.gui_cpp_aidl, declarations.graphics_ndk_aidl }, .{ "cpp", "ndk" }) |files, language| {
         for (files) |file| {
-            const run = b.addRunArtifact(runner);
-            run.addFileArg(aosp.path(b, "prebuilts/sdk/tools/linux/bin/aidl"));
+            const run = b.addRunArtifact(aidl_tool);
             run.addArg(b.fmt("--lang={s}", .{language}));
             if (comptime std.mem.eql(u8, language, "ndk")) run.addArgs(&.{ "--structured", "--stability=vintf" });
             for (aidl_roots) |root| run.addPrefixedDirectoryArg("-I", aosp.path(b, root));
