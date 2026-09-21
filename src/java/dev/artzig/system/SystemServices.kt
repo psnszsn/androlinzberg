@@ -122,10 +122,11 @@ internal object SystemServices {
         stockWindows.startTasks(manager)
         android.os.ServiceManager.addService("hosted_installer", HostedInstallerService(packageManager, activityManager))
         if (dev.artzig.testing.ProcessInspection.enabled) {
-            android.os.ServiceManager.addService(dev.artzig.testing.ProcessInspection.SERVICE,
-                HostedInspectionRegistry(activityManager, { sequence -> stockWindows.testInputIdle(sequence) == true }) { token, uid, pid ->
-                    stockWindows.taskForObservedWindow(token, uid, pid)
-                })
+            val inspection = HostedInspectionRegistry(activityManager, { sequence -> stockWindows.testInputIdle(sequence) == true }) { token, uid, pid ->
+                stockWindows.taskForObservedWindow(token, uid, pid)
+            }
+            android.os.ServiceManager.addService(dev.artzig.testing.ProcessInspection.SERVICE, inspection)
+            android.os.ServiceManager.addService("dev.artzig.testing.diagnostics", inspection.sessionDiagnostics)
         }
         // Observer registry and the settings provider, registered before any
         // service that reads settings during startup.

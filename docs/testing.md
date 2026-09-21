@@ -171,6 +171,14 @@ the main looper running while the test executes.
 zig build -j10 ui-test -- --class WindowInputUiTest --method clickingButtonUpdatesStatus
 ```
 
+A test passes only with the expected UI state and an empty runtime issue
+journal. The runner reads `dev.artzig.testing.ISessionDiagnostics` (typed
+`RuntimeIssue`/`RuntimeLog` parcelables: the system server's records merged with
+every attached app's) before and after the test and fails on any new issue,
+printing each as `UiTest: ISSUE <kind> <owner>.<member> [process:pid] <detail>`.
+A test that deliberately inventories a known gap calls
+`UiTest.allowRuntimeIssues()`.
+
 Artifacts are retained under `zig-out/test-results/ui/<class>.<method>/`
 (`app.log` for the session, `test.log` for the runner). Add a test by listing
 its source and `Class#method` in `build/ui_tests.zig`. This path replaces the

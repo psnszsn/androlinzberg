@@ -8,6 +8,10 @@ import android.os.IBinder
 import android.os.Process
 import dev.artzig.testing.IInspectionRegistry
 import dev.artzig.testing.IProcessInspection
+import dev.artzig.testing.ISessionDiagnostics
+import dev.artzig.testing.RuntimeIssue
+import dev.artzig.testing.RuntimeJournal
+import dev.artzig.testing.RuntimeLog
 import dev.artzig.testing.SessionJournal
 import org.json.JSONObject
 
@@ -159,6 +163,60 @@ class HostedInspectionRegistry(
             journal.snapshot(afterLog, afterIssue).toString()
         }
     }
+
+    /**
+     * The typed journal for host test tools. Unlike [diagnostics], it gathers the
+     * attached processes' records itself, through their thread-safe journal
+     * endpoint, so a reader needs no per-process observation loop.
+     */
+    val sessionDiagnostics: ISessionDiagnostics.Stub = object : ISessionDiagnostics.Stub() {
+        override fun read(afterLog: Long, afterIssue: Long): RuntimeJournal {
+            val caller = Binder.getCallingUid()
+            if (caller != Process.SYSTEM_UID && caller != Process.SHELL_UID)
+                throw SecurityException("Session diagnostics require the system or shell identity")
+            val entries = synchronized(lock) { processes.values.toList() }
+            val snapshot = synchronized(journal) {
+                val system = journal.cursor(systemSource)
+                journal.ingest(systemSource, JSONObject(dev.artzig.ArtzigTestDiagnostics.snapshot(system.logs, system.issues)))
+                for (entry in entries) {
+                    val source = source(entry)
+                    val cursor = journal.cursor(source)
+                    try {
+                        journal.ingest(source, JSONObject(entry.endpoint.runtimeDiagnostics(cursor.logs, cursor.issues)))
+                    } catch (_: android.os.RemoteException) {
+                        // The process died; its death recipient retires the entry.
+                    }
+                }
+                journal.snapshot(afterLog, afterIssue)
+            }
+            return RuntimeJournal().apply {
+                logCursor = snapshot.getLong("log_cursor")
+                issueCursor = snapshot.getLong("issue_cursor")
+                logsDroppedThrough = snapshot.getLong("logs_dropped_through")
+                issuesDroppedThrough = snapshot.getLong("issues_dropped_through")
+                logs = records(snapshot.getJSONArray("logs")) { record, process ->
+                    RuntimeLog().apply {
+                        sequence = record.getLong("seq"); monotonicMs = record.optLong("monotonic_ms")
+                        priority = record.optInt("priority"); tag = record.optString("tag")
+                        message = record.optString("message"); thread = record.optString("thread")
+                        pid = process?.optInt("pid") ?: 0; this.process = process?.optString("name") ?: ""
+                    }
+                }.toTypedArray()
+                issues = records(snapshot.getJSONArray("issues")) { record, process ->
+                    RuntimeIssue().apply {
+                        sequence = record.getLong("seq"); monotonicMs = record.optLong("monotonic_ms")
+                        kind = record.optString("kind"); owner = record.optString("owner")
+                        member = record.optString("member"); detail = record.optString("detail")
+                        thread = record.optString("thread")
+                        pid = process?.optInt("pid") ?: 0; this.process = process?.optString("name") ?: ""
+                    }
+                }.toTypedArray()
+            }
+        }
+    }
+
+    private fun <T> records(array: org.json.JSONArray, convert: (JSONObject, JSONObject?) -> T): List<T> =
+        (0 until array.length()).map { index -> array.getJSONObject(index).let { convert(it, it.optJSONObject("process")) } }
 
     private fun gone() = Bundle().apply { putBoolean("gone", true) }
 

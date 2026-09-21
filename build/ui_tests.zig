@@ -9,11 +9,13 @@ const command = @import("command.zig");
 pub const sources = [_][]const u8{
     "tests/ui/kotlin/dev/artzig/uitest/HostInstrumentation.kt",
     "tests/ui/kotlin/dev/artzig/uitest/UiTestMain.kt",
+    "tests/ui/kotlin/dev/artzig/uitest/SessionDiagnosticsUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/WindowInputUiTest.kt",
 };
 
 /// `Class#method` per line; the orchestrator's default selection.
 pub const tests = [_][]const u8{
+    "dev.artzig.uitest.SessionDiagnosticsUiTest#unsupportedFrameworkCallIsJournalled",
     "dev.artzig.uitest.WindowInputUiTest#clickingButtonUpdatesStatus",
     "dev.artzig.uitest.WindowInputUiTest#twoClicksCountTwice",
 };
