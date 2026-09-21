@@ -1655,32 +1655,6 @@ pub fn build(b: *std.Build) void {
     webview_smoke.run.addFileArg(java.fixtures.example);
     webview_smoke.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
     b.step("webview-test", "Run stock WebView against the bundled Android Chromium provider").dependOn(&webview_smoke.run.step);
-    inline for (.{
-        .{ .step = "webview-ui-test", .directory = "webview", .overlay = false, .description = "Render and interact with stock WebView through ApkHost and Cage" },
-        .{ .step = "webview-overlay-test", .directory = "webview-overlay", .overlay = true, .description = "Verify Chromium platform decoding, overlay transactions and retained video pixels" },
-    }) |fixture| {
-        const ui = @import("build/command.zig").create(b);
-        setApplicationEnvironment(ui, application_tree);
-        ui.setEnvironment("WLR_RENDERER", "gles2");
-        ui.setEnvironment("SHOT_ISOLATED_DATA", "1");
-        ui.setPathEnvironment("AZK_TESTKIT_ROOT", testkit_tree.getDirectory());
-        ui.setPathEnvironment("AZK_TEST_SEAT", surface_server.getEmittedBin());
-        if (fixture.overlay) {
-            ui.setEnvironment("AZK_WEBVIEW_VIDEO_SOURCE", "avc");
-            ui.setEnvironment("AZK_WEBVIEW_TRACE_OUT", b.fmt("zig-out/test-results/{s}/rendering-trace.json", .{fixture.directory}));
-            ui.setEnvironment("AZK_WEBVIEW_REQUIRE_OVERLAY", "1");
-            ui.setEnvironment("AZK_WEBVIEW_CONFIGURE_OVERLAYS", "1");
-        }
-        ui.addArg("bash");
-        ui.addFileArg(b.path("tools/shot.sh"));
-        ui.addArg(b.fmt("zig-out/test-results/{s}/screenshot.png", .{fixture.directory}));
-        ui.addArg("--test");
-        ui.addFileArg(b.path("tests/webview-ui"));
-        ui.addArg("--");
-        ui.addFileArg(application_tree.path(b, "bin/androlinzberg"));
-        ui.addFileArg(java.fixtures.webview);
-        b.step(fixture.step, fixture.description).dependOn(&ui.run.step);
-    }
     const framework_compat_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(framework_compat_smoke, application_tree);
     framework_compat_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));
@@ -1836,10 +1810,52 @@ pub fn build(b: *std.Build) void {
     ui_test_run.addFileArg(presenter_probe.getEmittedBin());
     ui_test_run.addArgs(&.{ "--artifacts", "zig-out/test-results/ui" });
     ui_test_run.addArgs(&ui_tests.pinned_apks);
+    ui_test_run.addArg("--named-apk");
+    ui_test_run.addPrefixedFileArg("webview=", java.fixtures.webview);
     ui_test_run.addArgs(&ui_tests.tests);
     ui_test_run.addPassthruArgs();
     ui_test_run.run.setName("run UiAutomator tests on ART, one session per test");
     b.step("ui-test", "Run JUnit/UiAutomator UI tests on ART under Cage").dependOn(&ui_test_run.run.step);
+
+    // Stock WebView through the same runner. The overlay variant also enables
+    // Chromium's SurfaceControl overlays and checks its rendering trace.
+    inline for (.{
+        .{ .step = "webview-ui-test", .directory = "webview", .overlay = false, .description = "Render and interact with stock WebView through UiAutomator under Cage" },
+        .{ .step = "webview-overlay-test", .directory = "webview-overlay", .overlay = true, .description = "Verify Chromium platform decoding, overlay transactions and retained video pixels" },
+    }) |fixture| {
+        const ui = @import("build/command.zig").create(b);
+        setApplicationEnvironment(ui, application_tree);
+        ui.setEnvironment("WLR_RENDERER", "gles2");
+        const trace = b.fmt("zig-out/test-results/{s}/rendering-trace.json", .{fixture.directory});
+        if (fixture.overlay) {
+            ui.setEnvironment("AZK_WEBVIEW_VIDEO_SOURCE", "avc");
+            ui.setEnvironment("AZK_WEBVIEW_TRACE_OUT", b.pathResolve(&.{trace}));
+            ui.setEnvironment("AZK_WEBVIEW_CONFIGURE_OVERLAYS", "1");
+        }
+        ui.addArg("bash");
+        ui.addFileArg(b.path("tools/shot.sh"));
+        ui.addArgs(&.{ b.fmt("zig-out/test-results/{s}/suite.png", .{fixture.directory}), "--runner", "--" });
+        ui.addFileArg(ui_test_runner.getEmittedBin());
+        ui.addArg("--launcher");
+        ui.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+        ui.addArg("--apk");
+        ui.addFileArg(java.fixtures.webview);
+        ui.addArg("--dex");
+        ui.addFileArg(ui_tests_dex);
+        ui.addArg("--probe");
+        ui.addFileArg(presenter_probe.getEmittedBin());
+        ui.addArgs(&.{ "--artifacts", b.fmt("zig-out/test-results/{s}", .{fixture.directory}), "dev.artzig.uitest.WebViewUiTest#rendersInteractsAndPlaysVideo" });
+        ui.run.setName(b.fmt("run {s} on ART", .{fixture.step}));
+        const step = b.step(fixture.step, fixture.description);
+        if (fixture.overlay) {
+            const check = b.addSystemCommand(&.{ "python3", "-B" });
+            check.addFileArg(b.path("tests/webview-overlay-check.py"));
+            check.addArg(trace);
+            check.step.dependOn(&ui.run.step);
+            check.has_side_effects = true;
+            step.dependOn(&check.step);
+        } else step.dependOn(&ui.run.step);
+    }
 
     // A host ART process joins the session as the broker's inspector role and
     // drives the fixture through stock UiAutomation and AccessibilityManagerService.

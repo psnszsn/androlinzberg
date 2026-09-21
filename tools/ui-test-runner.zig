@@ -10,10 +10,12 @@
 //! (tests/ui/probe) against the session instead of an ART runner.
 //!
 //! A test is `Class#method[@WxH[@apk]]`: its session's launch size and the
-//! name of a pinned external APK to run instead of the default one.
+//! name of an APK to run instead of the default one, either built by the
+//! repository (`--named-apk`) or supplied by the operator (`--pinned-apk`).
 //!
 //! Usage: ui-test-runner --launcher <androlinzberg> --apk <apk> --dex <ui-tests.jar>
 //!            --probe <presenter-probe> --artifacts <dir> [--size WxH]
+//!            [--named-apk <name>=<path>]...
 //!            [--pinned-apk <name>=<ENVIRONMENT VARIABLE>=<sha256>]...
 //!            [--class <suffix>] [--method <name>] <Class#method>...
 const std = @import("std");
@@ -44,6 +46,7 @@ pub fn main(init: std.process.Init) !void {
     var options: Options = .{};
     var tests: std.ArrayList([]const u8) = .empty;
     var pinned: std.ArrayList(PinnedApk) = .empty;
+    var named: std.ArrayList([2][]const u8) = .empty;
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
@@ -52,6 +55,11 @@ pub fn main(init: std.process.Init) !void {
             index += 1;
             if (index == args.len) return error.MissingOptionValue;
             destination.* = args[index];
+        } else if (std.mem.eql(u8, arg, "--named-apk")) {
+            index += 1;
+            if (index == args.len) return error.MissingOptionValue;
+            const equals = std.mem.indexOfScalar(u8, args[index], '=') orelse return error.InvalidNamedApk;
+            try named.append(arena, .{ args[index][0..equals], args[index][equals + 1 ..] });
         } else if (std.mem.eql(u8, arg, "--pinned-apk")) {
             index += 1;
             if (index == args.len) return error.MissingOptionValue;
@@ -88,7 +96,10 @@ pub fn main(init: std.process.Init) !void {
         if (options.method) |wanted| if (!std.mem.eql(u8, method, wanted)) continue;
         run += 1;
         const passed = passed: {
-            if (apk_name) |wanted| test_options.apk = pinnedApk(init, arena, pinned.items, wanted) catch |failure| {
+            const built = for (named.items) |candidate| {
+                if (apk_name != null and std.mem.eql(u8, candidate[0], apk_name.?)) break candidate[1];
+            } else null;
+            if (built) |path| test_options.apk = path else if (apk_name) |wanted| test_options.apk = pinnedApk(init, arena, pinned.items, wanted) catch |failure| {
                 std.debug.print("ui-test: {s}: APK {s}: {s}\n", .{ name, wanted, @errorName(failure) });
                 break :passed false;
             };
