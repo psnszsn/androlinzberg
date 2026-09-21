@@ -1835,6 +1835,7 @@ pub fn build(b: *std.Build) void {
     ui_test_run.addArg("--probe");
     ui_test_run.addFileArg(presenter_probe.getEmittedBin());
     ui_test_run.addArgs(&.{ "--artifacts", "zig-out/test-results/ui" });
+    ui_test_run.addArgs(&ui_tests.pinned_apks);
     ui_test_run.addArgs(&ui_tests.tests);
     ui_test_run.addPassthruArgs();
     ui_test_run.run.setName("run UiAutomator tests on ART, one session per test");

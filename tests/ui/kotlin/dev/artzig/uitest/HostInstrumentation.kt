@@ -16,7 +16,9 @@ import android.os.HandlerThread
  */
 class HostInstrumentation : Instrumentation() {
     private val thread = HandlerThread("UiAutomation").apply { start() }
-    private val automation = UiAutomation(thread.looper, UiAutomationConnection()).apply { connect() }
+    /** The stock connection; also used directly for a cropped screenshot. */
+    val connection = UiAutomationConnection()
+    private val automation = UiAutomation(thread.looper, connection).apply { connect() }
 
     override fun getUiAutomation(): UiAutomation = automation
     override fun getUiAutomation(flags: Int): UiAutomation = automation

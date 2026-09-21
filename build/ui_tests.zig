@@ -8,18 +8,45 @@ const command = @import("command.zig");
 
 pub const sources = [_][]const u8{
     "tests/ui/kotlin/dev/artzig/uitest/HostInstrumentation.kt",
+    "tests/ui/kotlin/dev/artzig/uitest/NewPipeUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/UiTestMain.kt",
     "tests/ui/kotlin/dev/artzig/uitest/SessionDiagnosticsUiTest.kt",
+    "tests/ui/kotlin/dev/artzig/uitest/UiApp.kt",
+    "tests/ui/kotlin/dev/artzig/uitest/WindowFixtureUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/WindowInputUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/host/WaylandInputUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/host/WaylandSeat.kt",
 };
 
-/// `Class#method` per line; the orchestrator's default selection.
+/// `Class#method[@WxH]`: the orchestrator's default selection. A size suffix is
+/// the launch size and headless output mode of that test's session.
 pub const tests = [_][]const u8{
     "dev.artzig.uitest.SessionDiagnosticsUiTest#unsupportedFrameworkCallIsJournalled",
+    "dev.artzig.uitest.WindowFixtureUiTest#launchesAndUpdatesState@412x915",
+    "dev.artzig.uitest.WindowFixtureUiTest#dialogRemainsAttachedToTheActivity@412x915",
+    "dev.artzig.uitest.WindowFixtureUiTest#dialogLifecycleRestoresStateAndPreservesCallbackOrder@412x915",
+    "dev.artzig.uitest.WindowFixtureUiTest#sharedBackCallbackRemainsScopedToEachDialogWindow@412x915",
+    "dev.artzig.uitest.WindowFixtureUiTest#activityPendingIntentsLaunchAndDeliverResults@412x915",
+    "dev.artzig.uitest.WindowFixtureUiTest#visibleActivityReceivesAudioFocusCallbacks@412x915",
+    "dev.artzig.uitest.WindowFixtureUiTest#recreationRestoresSavedCounter@412x915",
+    "dev.artzig.uitest.WindowFixtureUiTest#permissionRequestReturnsConfiguredGrants@412x915",
+    "dev.artzig.uitest.WindowFixtureUiTest#textureViewRendersResizesAndReleases@412x915",
+    "dev.artzig.uitest.WindowFixtureUiTest#frameCallbacksFollowSubmissionAndResume@412x915",
+    "dev.artzig.uitest.WindowFixtureUiTest#layoutSchedulingAndNonModalPopupInput@412x915",
+    "dev.artzig.uitest.WindowFixtureUiTest#surfaceViewFollowsAttachmentVisibilityAndDetach@412x915",
+    "dev.artzig.uitest.WindowFixtureUiTest#virtualAccessibilityNodeIsReachableAndActionable@412x915",
+    "dev.artzig.uitest.WindowFixtureUiTest#windowRegistryPreservesLayoutAndDefersRemoval@412x915",
     "dev.artzig.uitest.WindowInputUiTest#clickingButtonUpdatesStatus",
     "dev.artzig.uitest.WindowInputUiTest#twoClicksCountTwice",
+    // NewPipe needs network access and the pinned APK (AZK_APK_NEWPIPE_0_29_1).
+    "dev.artzig.uitest.NewPipeUiTest#launchesHomeWithoutRuntimeIssues@412x915@newpipe",
+    "dev.artzig.uitest.NewPipeUiTest#backHonorsNonCancelableKeepAndroidOpenDialog@412x915@newpipe",
+    "dev.artzig.uitest.NewPipeUiTest#opensAndEditsSearch@412x915@newpipe",
+    "dev.artzig.uitest.NewPipeUiTest#hamburgerOpensNavigationDrawer@412x915@newpipe",
+    "dev.artzig.uitest.NewPipeDesktopUiTest#hamburgerOpensNavigationDrawer@1600x900@newpipe",
+    "dev.artzig.uitest.NewPipeDesktopUiTest#revealingVideoControlsKeepsCompositorFullscreen@1600x900@newpipe",
+    "dev.artzig.uitest.NewPipeDesktopUiTest#fullscreenButtonExitsAndRestoresVideoDetails@1600x900@newpipe",
+    "dev.artzig.uitest.NewPipeDesktopUiTest#videoButtonEntersCompositorFullscreen@1600x900@newpipe",
     // Host path: real Wayland input through the presenter and InputDispatcher.
     "dev.artzig.uitest.host.WaylandInputUiTest#tapReachesTheView",
     "dev.artzig.uitest.host.WaylandInputUiTest#overlappingChildrenInterceptionAndRemoval",
@@ -29,6 +56,9 @@ pub const tests = [_][]const u8{
     "probe#presentedFramesAdvance",
     "probe#resourcesAreAccounted",
 };
+
+/// tests/apks.json: `--pinned-apk` arguments of the orchestrator.
+pub const pinned_apks = [_][]const u8{ "--pinned-apk", "newpipe=AZK_APK_NEWPIPE_0_29_1=18447bfb1e06d113edc88df93f471827280de06f6f3d4dc42f56f28b9c1bab79" };
 
 const androidx = "prebuilts/sdk/current/androidx/m2repository/androidx/";
 

@@ -1,0 +1,91 @@
+package dev.artzig.uitest
+
+import android.graphics.Bitmap
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.BySelector
+import androidx.test.uiautomator.UiObject2
+import androidx.test.uiautomator.Until
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+
+/**
+ * The verbs the app tests are written in, over androidx UiAutomator and the
+ * session's typed journal. Everything observed comes from Android APIs:
+ * accessibility nodes, UiAutomation screenshots (SurfaceFlinger's composition)
+ * and the processes' log records.
+ */
+object UiApp {
+    private const val TIMEOUT = 30_000L
+    private val device get() = UiTest.device
+    private var logCursor = 0L
+    private val logs = ArrayList<String>()
+
+    fun text(value: String): BySelector = By.text(value)
+    fun description(value: String): BySelector = By.desc(value)
+
+    fun waitFor(selector: BySelector): UiObject2 =
+        checkNotNull(device.wait(Until.findObject(selector), TIMEOUT)) { "no node matches $selector" }
+
+    fun expectVisible(text: String): UiObject2 = waitFor(By.text(text))
+
+    fun waitUntilGone(selector: BySelector) =
+        assertTrue("still present: $selector", device.wait(Until.gone(selector), TIMEOUT))
+
+    fun click(selector: BySelector) = waitFor(selector).click()
+    fun click(text: String) = click(By.text(text))
+
+    /** UiDevice.pressBack() reports whether a window-content event followed in
+     * time, not whether the key was delivered; the caller's next expectation
+     * is the assertion. */
+    fun pressBack() {
+        device.pressBack()
+    }
+
+    /** A log record of any session process with this tag containing `fragment`. */
+    fun assertLog(tag: String, fragment: String) {
+        val deadline = android.os.SystemClock.uptimeMillis() + TIMEOUT
+        while (true) {
+            val journal = UiTest.diagnostics.read(logCursor, Long.MAX_VALUE)
+            logCursor = journal.logCursor
+            for (record in journal.logs) if (record.tag == tag) logs += record.message
+            if (logs.any { fragment in it }) return
+            assertTrue("no $tag log contains: $fragment", android.os.SystemClock.uptimeMillis() < deadline)
+            Thread.sleep(100)
+        }
+    }
+
+    /**
+     * SurfaceFlinger's composition of the active window's area, through the
+     * stock UiAutomation screenshot path (WindowManager.captureDisplay). The
+     * hosted display is a large synthetic desktop that tasks occupy regions of,
+     * so the capture is cropped to the window instead of covering the display,
+     * which `UiAutomation.takeScreenshot()` would request.
+     */
+    fun screenshot(): Bitmap {
+        val root = assertNotNullValue(UiTest.instrumentation.uiAutomation.rootInActiveWindow, "active window")
+        val crop = android.graphics.Rect().also(root::getBoundsInScreen)
+        val listener = android.window.ScreenCapture.createSyncCaptureListener()
+        assertTrue(UiTest.instrumentation.connection.takeScreenshot(crop, listener, android.view.Display.DEFAULT_DISPLAY))
+        val buffer = assertNotNullValue(listener.buffer, "screen capture of $crop")
+        return assertNotNullValue(buffer.asBitmap(), "capture bitmap").copy(Bitmap.Config.ARGB_8888, false)
+    }
+
+    fun assertColorArea(color: Int, minimumPixels: Int, maximumPixels: Int = Int.MAX_VALUE) {
+        val deadline = android.os.SystemClock.uptimeMillis() + TIMEOUT
+        while (true) {
+            val image = screenshot()
+            val pixels = IntArray(image.width * image.height).also { image.getPixels(it, 0, image.width, 0, 0, image.width, image.height) }
+            val count = pixels.count { it == color }
+            if (count in minimumPixels..maximumPixels) return
+            // A frame committed just after the UI state changed may still be in flight.
+            assertTrue("screenshot has $count pixels of ${color.toUInt().toString(16)}, expected $minimumPixels..$maximumPixels",
+                android.os.SystemClock.uptimeMillis() < deadline)
+            Thread.sleep(100)
+        }
+    }
+
+    private fun <T> assertNotNullValue(value: T?, what: String): T {
+        assertNotNull(what, value)
+        return value!!
+    }
+}

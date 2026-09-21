@@ -9,8 +9,12 @@
 //! A test named `probe#<check>` runs the native presenter probe
 //! (tests/ui/probe) against the session instead of an ART runner.
 //!
+//! A test is `Class#method[@WxH[@apk]]`: its session's launch size and the
+//! name of a pinned external APK to run instead of the default one.
+//!
 //! Usage: ui-test-runner --launcher <androlinzberg> --apk <apk> --dex <ui-tests.jar>
 //!            --probe <presenter-probe> --artifacts <dir> [--size WxH]
+//!            [--pinned-apk <name>=<ENVIRONMENT VARIABLE>=<sha256>]...
 //!            [--class <suffix>] [--method <name>] <Class#method>...
 const std = @import("std");
 const Io = std.Io;
@@ -30,11 +34,16 @@ const Options = struct {
     method: ?[]const u8 = null,
 };
 
+/// An APK supplied by the operator (tests/apks.json): found through an
+/// environment variable and accepted only with the pinned SHA-256.
+const PinnedApk = struct { name: []const u8, environment: []const u8, sha256: []const u8 };
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
     var options: Options = .{};
     var tests: std.ArrayList([]const u8) = .empty;
+    var pinned: std.ArrayList(PinnedApk) = .empty;
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
@@ -43,6 +52,15 @@ pub fn main(init: std.process.Init) !void {
             index += 1;
             if (index == args.len) return error.MissingOptionValue;
             destination.* = args[index];
+        } else if (std.mem.eql(u8, arg, "--pinned-apk")) {
+            index += 1;
+            if (index == args.len) return error.MissingOptionValue;
+            var fields = std.mem.splitScalar(u8, args[index], '=');
+            try pinned.append(arena, .{
+                .name = fields.next() orelse return error.InvalidPinnedApk,
+                .environment = fields.next() orelse return error.InvalidPinnedApk,
+                .sha256 = fields.next() orelse return error.InvalidPinnedApk,
+            });
         } else if (std.mem.eql(u8, arg, "--class") or std.mem.eql(u8, arg, "--method")) {
             index += 1;
             if (index == args.len) return error.MissingOptionValue;
@@ -57,11 +75,25 @@ pub fn main(init: std.process.Init) !void {
     for (tests.items) |name| {
         const separator = std.mem.indexOfScalar(u8, name, '#') orelse return error.InvalidTestName;
         const class = name[0..separator];
-        const method = name[separator + 1 ..];
+        const size_at = std.mem.indexOfScalar(u8, name, '@');
+        const method = name[separator + 1 .. size_at orelse name.len];
+        var test_options = options;
+        var apk_name: ?[]const u8 = null;
+        if (size_at) |at| {
+            var fields = std.mem.splitScalar(u8, name[at + 1 ..], '@');
+            test_options.size = fields.next().?;
+            apk_name = fields.next();
+        }
         if (options.class) |wanted| if (!std.mem.endsWith(u8, class, wanted)) continue;
         if (options.method) |wanted| if (!std.mem.eql(u8, method, wanted)) continue;
         run += 1;
-        const passed = runTest(init, options, class, method) catch |failure| passed: {
+        const passed = passed: {
+            if (apk_name) |wanted| test_options.apk = pinnedApk(init, arena, pinned.items, wanted) catch |failure| {
+                std.debug.print("ui-test: {s}: APK {s}: {s}\n", .{ name, wanted, @errorName(failure) });
+                break :passed false;
+            };
+            break :passed runTest(init, test_options, class, method);
+        } catch |failure| passed: {
             std.debug.print("ui-test: {s}: {s}\n", .{ name, @errorName(failure) });
             break :passed false;
         };
@@ -71,6 +103,20 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("ui-test: {d} run, {d} failed\n", .{ run, failed });
     if (run == 0) return error.NoTestsSelected;
     if (failed != 0) return error.UiTestsFailed;
+}
+
+fn pinnedApk(init: std.process.Init, arena: std.mem.Allocator, pinned: []const PinnedApk, name: []const u8) ![]const u8 {
+    const apk = for (pinned) |candidate| {
+        if (std.mem.eql(u8, candidate.name, name)) break candidate;
+    } else return error.UnknownPinnedApk;
+    const path = init.minimal.environ.getPosix(apk.environment) orelse return error.PinnedApkEnvironmentNotSet;
+    if (!std.fs.path.isAbsolute(path)) return error.PinnedApkPathMustBeAbsolute;
+    const bytes = try Io.Dir.cwd().readFileAlloc(init.io, path, arena, .limited(1024 * 1024 * 1024));
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
+    const hex = try std.fmt.allocPrint(arena, "{x}", .{&digest});
+    if (!std.mem.eql(u8, hex, apk.sha256)) return error.PinnedApkChecksumMismatch;
+    return path;
 }
 
 fn runTest(init: std.process.Init, options: Options, class: []const u8, method: []const u8) !bool {
@@ -111,6 +157,15 @@ fn runTest(init: std.process.Init, options: Options, class: []const u8, method: 
     try session_env.put("ARTZIG_DATA_DIR", data);
     try session_env.put("ARTZIG_NATIVE_LIB_DIR", native_libraries);
     _ = session_env.swapRemove("AZK_TEST_SOCKET");
+
+    // The kiosk compositor's output is the launch size (as the task placement
+    // above assumes); AZK_HEADLESS_OUTPUT names it when the harness made one.
+    if (init.minimal.environ.getPosix("AZK_HEADLESS_OUTPUT")) |output| {
+        const mode = try std.process.run(gpa, io, .{ .argv = &.{ "wlr-randr", "--output", output, "--custom-mode", options.size } });
+        defer gpa.free(mode.stdout);
+        defer gpa.free(mode.stderr);
+        if (mode.term != .exited or mode.term.exited != 0) return error.HeadlessOutputModeFailed;
+    }
 
     const log_file = try Io.Dir.cwd().createFile(io, app_log, .{});
     defer log_file.close(io);
