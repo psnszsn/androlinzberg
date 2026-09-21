@@ -17,15 +17,27 @@ object HostSession {
         }
     }
 
+    /** Where this test's artifacts are retained. */
+    val artifacts: File get() = log.absoluteFile.parentFile
+
     /**
      * Runs a desktop tool (wl-copy, wl-paste, ...) beside the session, on its
-     * compositor. argv never passes through a shell. Returns its stdout.
+     * compositor. argv never passes through a shell. Returns its stdout, or
+     * nothing with [capture] off: a tool that leaves a daemon behind (wl-copy
+     * serving its selection) would hold a captured stream open.
      */
-    fun run(vararg argv: String, input: ByteArray? = null, timeoutMillis: Long = 10_000): ByteArray {
-        val process = ProcessBuilder(*argv).redirectError(ProcessBuilder.Redirect.INHERIT).start()
+    fun run(vararg argv: String, capture: Boolean = true, timeoutMillis: Long = 10_000): ByteArray {
+        val nowhere = File("/dev/null")
+        val builder = ProcessBuilder(*argv).redirectInput(ProcessBuilder.Redirect.from(nowhere))
+        if (capture) {
+            builder.redirectError(ProcessBuilder.Redirect.INHERIT)
+        } else {
+            // The daemon would also hold this runner's own stderr open.
+            builder.redirectOutput(ProcessBuilder.Redirect.to(nowhere)).redirectError(ProcessBuilder.Redirect.to(nowhere))
+        }
+        val process = builder.start()
         try {
-            process.outputStream.use { stream -> if (input != null) stream.write(input) }
-            val output = process.inputStream.readBytes()
+            val output = if (capture) process.inputStream.readBytes() else ByteArray(0)
             check(process.waitFor(timeoutMillis, TimeUnit.MILLISECONDS)) { "${argv.first()} timed out" }
             check(process.exitValue() == 0) { "${argv.joinToString(" ")} exited ${process.exitValue()}" }
             return output

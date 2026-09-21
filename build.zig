@@ -1820,6 +1820,7 @@ pub fn build(b: *std.Build) void {
     // Desktop (labwc) scenarios: one window fixture launched through ATMS as a
     // task window, with the protocol under test enabled in the session.
     inline for (.{
+        .{ .step = "ui-desktop-clipboard-test", .directory = "stock-clipboard", .environment = "AZK_TEST_CLIPBOARD", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopClipboardUiTest#representationsCrossTheDesktopSelectionInBothDirections"} },
         .{ .step = "ui-desktop-ime-test", .directory = "stock-ime", .environment = "AZK_TEST_IME", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopImeUiTest#unicodeCompositionSurvivesFocusAndProtocolChanges"} },
     }) |scenario| {
         const ui = @import("build/command.zig").create(b);
