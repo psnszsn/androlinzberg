@@ -78,11 +78,12 @@ object UiApp {
      * stock UiAutomation screenshot path (WindowManager.captureDisplay). The
      * hosted display is a large synthetic desktop that tasks occupy regions of,
      * so the capture is cropped to the window instead of covering the display,
-     * which `UiAutomation.takeScreenshot()` would request.
+     * which `UiAutomation.takeScreenshot()` would request. `area` narrows the
+     * capture further, to one view's screen bounds.
      */
-    fun screenshot(): Bitmap {
-        val root = assertNotNullValue(UiTest.instrumentation.uiAutomation.rootInActiveWindow, "active window")
-        val crop = android.graphics.Rect().also(root::getBoundsInScreen)
+    fun screenshot(area: android.graphics.Rect? = null): Bitmap {
+        val crop = area ?: android.graphics.Rect().also(
+            assertNotNullValue(UiTest.instrumentation.uiAutomation.rootInActiveWindow, "active window")::getBoundsInScreen)
         val listener = android.window.ScreenCapture.createSyncCaptureListener()
         assertTrue(UiTest.instrumentation.connection.takeScreenshot(crop, listener, android.view.Display.DEFAULT_DISPLAY))
         val buffer = assertNotNullValue(listener.buffer, "screen capture of $crop")

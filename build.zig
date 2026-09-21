@@ -1822,6 +1822,7 @@ pub fn build(b: *std.Build) void {
     inline for (.{
         .{ .step = "ui-desktop-clipboard-test", .directory = "stock-clipboard", .environment = "AZK_TEST_CLIPBOARD", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopClipboardUiTest#representationsCrossTheDesktopSelectionInBothDirections"} },
         .{ .step = "ui-desktop-drag-test", .directory = "stock-drag", .environment = "AZK_TEST_CLIPBOARD", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopDragUiTest#dragsCrossTasksAndTheDesktopInBothDirections"} },
+        .{ .step = "ui-desktop-video-test", .directory = "stock-video", .environment = "", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopVideoUiTest#decodedFramesFollowTheirSurface"} },
         .{ .step = "ui-desktop-ime-test", .directory = "stock-ime", .environment = "AZK_TEST_IME", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopImeUiTest#unicodeCompositionSurvivesFocusAndProtocolChanges"} },
     }) |scenario| {
         const ui = @import("build/command.zig").create(b);
@@ -1831,7 +1832,7 @@ pub fn build(b: *std.Build) void {
         ui.setEnvironment("WLR_RENDERER", "gles2");
         ui.setEnvironment("SHOT_COMPOSITOR", "labwc");
         ui.setEnvironment("XKB_DEFAULT_LAYOUT", "us");
-        ui.setEnvironment(scenario.environment, "1");
+        if (scenario.environment.len != 0) ui.setEnvironment(scenario.environment, "1");
         ui.setFileEnvironment("SHOT_LABWC_BINARY", suspension_labwc.path(b, "bin/labwc"));
         ui.addArg("env");
         ui.addPrefixedFileArg("SHOT_LABWC_CONFIG=", b.path("testdata/wayland/launcher-desktop.xml"));
