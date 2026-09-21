@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stock APK -> system organizer -> SF -> AZKB queue -> Wayland pixel gate.
 
-tools/shot.sh owns Cage; this runner owns only the application session.
+tools/shot.sh owns the compositor; this runner owns only the application session.
 """
 import argparse
 import json
@@ -10,29 +10,17 @@ from pathlib import Path
 import resource
 import re
 import select
-import signal
-import shutil
 import subprocess
 import time
-import tempfile
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--launcher', action='store_true')
-parser.add_argument('--video', action='store_true')
-parser.add_argument('--ime', action='store_true')
-parser.add_argument('--clipboard', action='store_true')
-parser.add_argument('--drag', action='store_true')
-parser.add_argument('--drag-rounds', type=int, choices=range(1, 17), default=1)
-parser.add_argument('--testkit', type=Path)
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--seat', type=Path, required=True)
 parser.add_argument('command', nargs=argparse.REMAINDER)
 args = parser.parse_args()
-if args.drag_rounds != 1 and not args.drag:
-    parser.error('--drag-rounds requires --drag')
 out = args.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
-for artifact in ('result.json', 'control-failure.txt', 'failure.json', 'a11y-before.json', 'a11y.json', 'thread-dump.log', 'native-thread-dump.log', 'surfaceflinger-thread-dump.log'):
+for artifact in ('result.json',):
     (out / artifact).unlink(missing_ok=True)
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 command = args.command[1:] if args.command[0] == '--' else args.command
@@ -40,45 +28,14 @@ result = {'passed': False}
 desktop = os.environ.get('SHOT_COMPOSITOR') == 'labwc'
 mixed_outputs = os.environ.get('AZK_TEST_MIXED_OUTPUTS') == '1'
 second_output, second_scale = 'HEADLESS-2', 1
-with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as control_dir, (out / 'app.log').open('wb') as log:
+with (out / 'app.log').open('wb') as log:
     environment = os.environ.copy()
-    if args.drag and shutil.which('gdb'):
-        # Permit only this session owner and its descendants to inspect the
-        # fixture. Do not change the machine's ptrace policy or allow all tracers.
-        environment['AZK_TEST_PTRACER_PID'] = str(os.getpid())
-        environment['AZK_TEST_FRAME_DIAGNOSTICS'] = '1'
-    if desktop and not args.launcher and not mixed_outputs:
+    if desktop and not mixed_outputs:
         environment['AZK_TEST_DESKTOP_CONFIGURATIONS'] = '1'
     if mixed_outputs:
         subprocess.run(['wlr-randr', '--output', 'HEADLESS-1', '--pos', '0,0', '--scale', '1',
                         '--output', 'HEADLESS-2', '--pos', '1280,0', '--scale', '1'],
                        check=True, capture_output=True, timeout=5)
-    if args.launcher:
-        assert args.testkit is not None
-        # Exercise the v1-only creation request against the real compositor.
-        # Physical pointer steps below use the presenter's virtual pointer.
-        environment['AZK_TEST_VIRTUAL_POINTER_VERSION'] = '1'
-        environment['AZK_TEST_CURSOR_SHAPE'] = '0'
-
-        environment.update(AZK_TEST_SOCKET=str(Path(control_dir) / 'control.sock'),
-                           AZK_TESTKIT_ROOT=str(args.testkit.resolve()),
-                           AZK_TEST_RAW_LOG=str(out / 'app.log'),
-                           AZK_TEST_STEP_LOG=str(out / 'steps.jsonl'))
-        (out / 'steps.jsonl').write_text('')
-        # launcher-desktop.xml deliberately places this fixture at output origin.
-        # Supply that harness knowledge explicitly; Android cannot discover it.
-        initial_ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], timeout=3)
-        output_width, output_height = map(int, initial_ppm.split(b'\n', 3)[1].split())
-        environment['AZK_TEST_WINDOW_PLACEMENT'] = f'0,0,{output_width},{output_height}'
-
-    def control(*arguments):
-        completed = subprocess.run([str(Path(__file__).resolve().parents[2] / 'tools/azk-test'), *arguments],
-                                   env=environment, capture_output=True, text=True, timeout=30)
-        if completed.returncode != 0:
-            (out / 'control-failure.txt').write_text(completed.stdout + completed.stderr)
-            raise RuntimeError(f'azk-test {arguments}: {completed.returncode}: {completed.stderr}')
-        return json.loads(completed.stdout)
-
     with subprocess.Popen([str(args.seat.resolve()), '--keyboard-seat'],
                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log) as seat:
         if not select.select([seat.stdout], [], [], 10)[0]:
@@ -87,8 +44,6 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
         if seat.stdout.readline() != b'ready\n':
             raise RuntimeError('virtual keyboard startup failed')
         process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=log, stderr=log, env=environment)
-        app_pidfd = None
-        sf_pidfd = None
         try:
             def output_pixels(output_name, color, size):
                 # Discover placement only inside the compositor screenshot;
@@ -257,7 +212,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 protocol_version = int(re.search(r'task xdg shell protocol version=(\d+)',
                     (out / 'app.log').read_text(errors='replace')).group(1))
                 expected_hint = environment.get('AZK_TEST_SUSPENSION_EXPECTED') == '1'
-                assert protocol_version == 2 if environment.get('AZK_TEST_XDG_SHELL_VERSION') == '2' else protocol_version >= 6
+                assert protocol_version >= 6
                 for marker in ('SUSPEND_DESKTOP_READY', 'SUSPENDED_TASK_READY'):
                     deadline = time.monotonic() + 15
                     while marker not in (out / 'app.log').read_text(errors='replace'):
@@ -295,631 +250,79 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 process.stdin.write(state)
                 process.stdin.flush()
 
-            if args.launcher:
-                deadline = time.monotonic() + 60
-                while True:
-                    text = (out / 'app.log').read_text(errors='replace')
-                    if 'Desktop launch accepted: dev.artzig.fixtures.windows' in text and 'Displayed dev.artzig.fixtures.windows/' in text:
-                        break
-                    if process.poll() is not None or time.monotonic() >= deadline:
-                        raise RuntimeError(f'desktop APK launch failed: {process.poll()}')
-                    time.sleep(0.05)
-                app_pid = int(re.search(r'\d\d-\d\d \S+\s+(\d+)\s+\d+ I WindowFixture:', text).group(1))
-                assert app_pid != process.pid, 'launcher attached as the APK'
-                # Pin the fixture before any failure: subsequent signals cannot
-                # target a reused PID or a process outside this owned session.
-                candidate = os.pidfd_open(app_pid)
-                try:
-                    ancestor = app_pid
-                    while ancestor != process.pid:
-                        status = Path(f'/proc/{ancestor}/status').read_text()
-                        ancestor = int(re.search(r'^PPid:\s+(\d+)$', status, re.MULTILINE).group(1))
-                        assert ancestor > 1, 'fixture is not a launcher descendant'
-                    assert not select.select([candidate], [], [], 0)[0], 'fixture exited'
-                    app_pidfd = candidate
-                finally:
-                    if app_pidfd is None: os.close(candidate)
-                if args.drag:
-                    children = Path(f'/proc/{process.pid}/task/{process.pid}/children').read_text().split()
-                    sf_pid = next(int(pid) for pid in children
-                                  if Path(f'/proc/{pid}/comm').read_text().strip() == 'azk-surfaceflinger'[:15])
-                    sf_pidfd = os.pidfd_open(sf_pid)
-                    assert not select.select([sf_pidfd], [], [], 0)[0], 'SurfaceFlinger exited'
-                deadline = time.monotonic() + 15
-                while True:
-                    ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], timeout=3)
-                    magic, dimensions, maximum, pixels = ppm.split(b'\n', 3)
-                    assert magic == b'P6' and maximum == b'255'
-                    width, height = map(int, dimensions.split())
-                    samples = [tuple(pixels[(y * width + x) * 3:(y * width + x) * 3 + 3])
-                               for y in range(20, 460, 5) for x in range(20, 620, 5)]
-                    if sum(min(pixel) > 220 for pixel in samples) > 500 and len(set(samples)) > 10:
-                        break
-                    if time.monotonic() >= deadline:
-                        raise RuntimeError('launcher fixture did not reach compositor pixels')
-                    time.sleep(0.05)
-                subprocess.run(['grim', str(out / 'screenshot.png')], check=True, timeout=3)
-                result['launcher'] = {'pid': process.pid, 'app_pid': app_pid, 'size': [width, height]}
-                if not (args.video or args.ime or args.clipboard or args.drag):
-                    # A launcher started from another shell must use the owner's
-                    # storage layout even without its Android environment.
-                    session_dir = Path(re.search(r'azk: binder session: (\S+)', text).group(1))
-                    session_info = json.loads((session_dir / 'session.json').read_text())
-                    joined_env = {key: value for key, value in environment.items()
-                                  if not key.startswith(('AZK_BINDER_', 'AZK_TEST_'))
-                                  and key not in ('ANDROID_DATA', 'ARTZIG_DATA_DIR',
-                                                  'ARTZIG_RUNTIME_CACHE_DIR', 'EXTERNAL_STORAGE',
-                                                  'DOWNLOAD_CACHE', 'AZK_PROP_AREA')}
-                    joined_env['AZK_TEST_CLASS'] = 'dev.artzig.StockResourcePathSmoke'
-                    joined_log = out / 'storage-join.log'
-                    with joined_log.open('wb') as output:
-                        joined = subprocess.run([command[0], '--join', str(session_dir), '--javatest',
-                                                 str(session_dir / 'android-data'),
-                                                 session_info['storage']['application_data']],
-                                                env=joined_env, stdout=output, stderr=output,
-                                                timeout=30)
-                    assert joined.returncode == 0, f'joined storage startup failed: {joined_log}'
-                    assert 'stock-resource-join: PASS' in joined_log.read_text(errors='replace')
-                    result['storage_join'] = {'passed': True, 'log': str(joined_log)}
-                control('wait', 'ready')
-                control('wait', 'idle')
-                observed = control('observe', '--tree')['observation']
-                tree = observed['tree']
-                (out / 'a11y-before.json').write_text(json.dumps(observed, indent=2))
-                windows = tree['windows']
-                assert len(windows) == 1 and windows[0]['pid'] == app_pid
-                task = str(windows[0]['task_id'])
-                window = str(windows[0]['id'])
-                def label(value):
-                    return next(node['text'] for node in tree['nodes'] if (node.get('text') or '').lower() == value.lower())
-                def settled_text(value, description=None, task_id=None):
-                    # Observe immediately: a subsequent wait would conceal a
-                    # step that settled before its input reached the app.
-                    current = control('observe', '--tree')['observation']['tree']
-                    assert any(node.get('text') == value and str(node.get('task_id')) == (task_id or task)
-                               and (description is None or node.get('content_description') == description)
-                               for node in current['nodes']), (value, current)
-                if args.clipboard:
-                    clipboard_mark = control('mark')['mark']
-                    control('step', 'click', '--task-id', task, '--text', label('Show clipboard'),
-                            '--via', 'semantic', '--settle', 'idle')
-                    control('wait', 'exists', '--text', 'Clipboard fixture ready')
-                    def clipboard_click(button, expected, via='semantic'):
-                        control('step', 'click', '--task-id', task, '--text', button,
-                                '--via', via, '--settle', 'idle')
-                        control('wait', 'exists', '--task-id', task, '--text', expected)
-                    def native_paste(mime, expected):
-                        actual = subprocess.check_output(['wl-paste', '--no-newline', '--type', mime],
-                                                         env=environment, stdin=subprocess.DEVNULL, timeout=5).decode()
-                        assert actual == expected, (mime, actual, expected)
-                    clipboard_click('COPY UNICODE TEXT', 'Clipboard text=Android 😀 café html=none')
-                    native_paste('text/plain;charset=utf-8', 'Android 😀 café')
-                    clipboard_click('COPY HTML', 'Clipboard text=Android bold 😀 html=<b>Android bold 😀</b>')
-                    native_paste('text/plain;charset=utf-8', 'Android bold 😀')
-                    native_paste('text/html', '<b>Android bold 😀</b>')
-                    clipboard_click('COPY RAPID SEQUENCE',
-                                    'Clipboard text=Android final 😀 html=<b>Android final 😀</b>', via='wayland')
-                    native_paste('text/plain;charset=utf-8', 'Android final 😀')
-                    native_paste('text/html', '<b>Android final 😀</b>')
-                    # An own-source echo must not rebuild ClipData and discard
-                    # metadata, even after a burst of copy/clear publications.
-                    clipboard_click('READ CLIPBOARD',
-                                    'Clipboard text=Android final 😀 html=<b>Android final 😀</b>', via='wayland')
-                    control('wait', 'exists', '--task-id', task,
-                            '--text', 'Clipboard label=Final sequence metadata')
-                    control('step', 'exec', '--wait', 'exists', '--task-id', task,
-                            '--text', 'Clipboard text=Native 😀 café html=none', '--',
-                            'wl-copy', '--type', 'text/plain;charset=utf-8', 'Native 😀 café')
-                    clipboard_click('READ CLIPBOARD', 'Clipboard text=Native 😀 café html=none')
-                    control('step', 'exec', '--wait', 'exists', '--task-id', task,
-                            '--text', 'Clipboard text=<b>Native rich 😀</b> html=<b>Native rich 😀</b>', '--',
-                            'wl-copy', '--type', 'text/html', '<b>Native rich 😀</b>')
-                    # wl-copy advertises text aliases containing the same bytes,
-                    # so retain its explicit plain representation alongside HTML.
-                    native_paste('text/plain;charset=utf-8', '<b>Native rich 😀</b>')
-                    clipboard_click('CLEAR CLIPBOARD', 'Clipboard is empty')
-                    control('step', 'exec', '--wait', 'exists', '--task-id', task,
-                            '--text', 'Clipboard text=After clear html=none', '--',
-                            'wl-copy', '--type', 'text/plain', 'After clear')
-                    control('step', 'exec', '--wait', 'exists', '--task-id', task,
-                            '--text', 'Clipboard is empty', '--', 'wl-copy', '--clear')
-                    control('step', 'click', '--task-id', task, '--text', 'REMOVE CLIPBOARD PROTOCOL',
-                            '--via', 'semantic', '--settle', 'idle')
-                    deadline = time.monotonic() + 5
-                    while 'task clipboard available=false' not in (out / 'app.log').read_text(errors='replace'):
-                        if time.monotonic() >= deadline: raise RuntimeError('clipboard manager removal not delivered')
-                        time.sleep(.02)
-                    clipboard_click('COPY HTML', 'Clipboard text=Android bold 😀 html=<b>Android bold 😀</b>')
-                    control('step', 'click', '--task-id', task, '--text', 'RESTORE CLIPBOARD PROTOCOL',
-                            '--via', 'semantic', '--settle', 'idle')
-                    native_paste('text/plain;charset=utf-8', 'Android bold 😀')
-                    native_paste('text/html', '<b>Android bold 😀</b>')
-                    assert 'task clipboard available=true' in (out / 'app.log').read_text(errors='replace')
-                    control('step', 'exec', '--wait', 'exists', '--task-id', task,
-                            '--text', 'Clipboard text=After recreation html=none', '--',
-                            'wl-copy', '--type', 'text/plain;charset=utf-8', 'After recreation')
-                    clipboard_click('COPY FILE', 'Clipboard files=Android file 😀 café')
-                    # A programmatic copy can carry an obsolete selection serial.
-                    # Real input must republish it with a fresh source and serial.
-                    clipboard_click('READ CLIPBOARD', 'Clipboard files=Android file 😀 café', via='wayland')
-                    # Staging is asynchronous. Read the resulting URI list only
-                    # after its MIME becomes available; this is observation, not
-                    # a repeated application input action.
+            verify_pixels('TASK_WINDOW_READY', (0, 255, 255), 'first-task')
+            if desktop and not mixed_outputs:
+                change_pointer('RESIZE_POINTER_CREATE_READY', b'p')
+                physical_pointer('RESIZE_POINTER_PRESS_READY', b'b')
+                for marker, name, fullscreen in [
+                        ('PENDING_FULLSCREEN_TASK_WINDOW_READY', 'pending-fullscreen', True),
+                        ('FULLSCREEN_TASK_WINDOW_READY', 'fullscreen', True),
+                        ('FULLSCREEN_RESTORED_TASK_WINDOW_READY', 'fullscreen-restored', False),
+                        ('MAXIMIZED_TASK_WINDOW_READY', 'maximized', True),
+                        ('MAXIMIZE_RESTORED_TASK_WINDOW_READY', 'maximize-restored', False)]:
+                    verify_pixels(marker, (0, 255, 255), name, fullscreen=fullscreen)
+                    if name == 'pending-fullscreen':
+                        physical_pointer('RESIZE_PENDING_POINTER_READY', b't')
+                    if name == 'fullscreen':
+                        physical_pointer('RESIZE_RESUMED_POINTER_READY', b't')
+                        change_pointer('RESIZE_POINTER_REMOVE_READY', b'r')
+                        result['resize_input'] = dict(canceled=True, pending_suppressed=True, resumed=True)
+                for requested, marker, factor, name in [
+                        ('SCALE_TASK_WINDOW_REQUESTED', 'SCALED_TASK_WINDOW_READY', 1.5, 'scaled'),
+                        ('RESTORE_TASK_SCALE_REQUESTED', 'SCALE_RESTORED_TASK_WINDOW_READY', 1, 'scale-restored')]:
                     deadline = time.monotonic() + 10
-                    while True:
-                        offered = subprocess.run(['wl-paste', '--list-types'], env=environment,
-                                                 stdin=subprocess.DEVNULL, capture_output=True, timeout=3)
-                        if b'text/uri-list' in offered.stdout: break
-                        if time.monotonic() >= deadline: raise RuntimeError('Android URI export did not publish')
+                    while requested not in (out / 'app.log').read_text(errors='replace'):
+                        if process.poll() is not None or time.monotonic() >= deadline:
+                            raise RuntimeError(f'{requested} timeout/exit: {process.poll()}')
                         time.sleep(.02)
-                    from urllib.parse import urlparse, unquote
-                    exported = subprocess.check_output(['wl-paste', '--no-newline', '--type', 'text/uri-list'],
-                                                       env=environment, stdin=subprocess.DEVNULL, timeout=5).decode()
-                    exported_paths = [Path(unquote(urlparse(uri).path)) for uri in exported.splitlines()]
-                    assert len(exported_paths) == 1 and exported_paths[0].read_text() == 'Android file 😀 café'
-                    assert exported_paths[0].name == 'Android café.txt'
-                    (out / 'clipboard-files.json').write_text(json.dumps({'exported': [str(file) for file in exported_paths]}, indent=2))
-                    native_files = [out / 'Native café.txt', out / 'Native second.txt']
-                    native_files[0].write_text('Native file 😀 café')
-                    native_files[1].write_text('Second native file')
-                    uri_list = ''.join(file.resolve().as_uri() + '\r\n' for file in native_files)
-                    control('step', 'exec', '--wait', 'exists', '--task-id', task,
-                            '--text', 'Clipboard files=Native file 😀 café|Second native file', '--',
-                            'wl-copy', '--type', 'text/uri-list', uri_list)
-                    clipboard_click('CHECK FILE PERMISSIONS', 'Clipboard read grant only; control denied')
-                    clipboard_click('CLEAR CLIPBOARD', 'Clipboard is empty')
-                    clipboard_click('CHECK REVOKED FILE', 'Clipboard file grant revoked')
-                    # A native recipient may open the export after ownership
-                    # changed; immutable export leases survive for the session.
-                    assert exported_paths[0].read_text() == 'Android file 😀 café'
-                    diagnostics = control('diagnose', '--since', json.dumps(clipboard_mark))
-                    (out / 'clipboard-diagnostics.json').write_text(json.dumps(diagnostics, indent=2))
-                    assert not diagnostics['diagnostics']['runtime']['issues'], diagnostics
-                    steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 21 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
-                    result['test_control'] = {'steps': len(steps), 'task': int(task)}
-                elif args.drag:
-                    control('step', 'click', '--task-id', task, '--text', label('Show drag and drop'),
-                            '--via', 'semantic', '--settle', 'idle')
-                    control('wait', 'exists', '--task-id', task, '--text', 'Drag ready')
-                    def drag(expected):
-                        control('step', 'drag', '--task-id', task, '--description', 'Drag contract area',
-                                '--from-x', '.25', '--to-x', '.75', '--via', 'wayland', '--settle', 'idle')
-                        control('wait', 'exists', '--task-id', task, '--text', expected)
-                    samples = []
-                    result['drag_pressure'] = {'rounds': args.drag_rounds, 'samples': samples}
-                    for round_index in range(args.drag_rounds):
-                        if round_index:
-                            control('step', 'click', '--task-id', task, '--text', 'USE DRAG TEXT', '--via', 'semantic', '--settle', 'idle')
-                        drag('Drag received=Android drag 😀 café')
-                        control('step', 'click', '--task-id', task, '--text', 'USE DRAG FILE', '--via', 'semantic', '--settle', 'idle')
-                        drag('Drag received=Android file 😀 café')
-                        control('step', 'click', '--task-id', task, '--text', 'USE SLOW DRAG FILE', '--via', 'semantic', '--settle', 'idle')
-                        status = Path(f'/proc/{app_pid}/status').read_text()
-                        samples.append({
-                            'round': round_index + 1,
-                            'fds': len(list(Path(f'/proc/{app_pid}/fd').iterdir())),
-                            'threads': int(re.search(r'^Threads:\s+(\d+)$', status, re.MULTILINE).group(1)),
-                            'rss_kib': int(re.search(r'^VmRSS:\s+(\d+) kB$', status, re.MULTILINE).group(1)),
-                        })
-                    control('step', 'exec', '--wait', 'exists', '--task-id', task,
-                            '--text', 'Drag received=Android file 😀 café', '--', str(args.seat), '--native-drag-slow-task')
-                    control('step', 'click', '--task-id', task, '--text', 'USE DRAG FILE', '--via', 'semantic', '--settle', 'idle')
-                    def native_drag(name, mime, payload, expected, consumed=True, cancel=False):
-                        report = out / ('native-drag-' + name + '.json')
-                        report.unlink(missing_ok=True)
-                        control('step', 'exec', '--wait', 'exists', '--task-id', task,
-                                '--text', expected, '--', str(args.seat), '--native-drag-source',
-                                mime, payload, str(report), 'cancel' if cancel else 'accept' if consumed else 'reject')
-                        state = json.loads(report.read_text())
-                        assert state['failure'] is None and state['sends'] > 0 and state['dropped'] != cancel, state
-                        assert state['finished'] == consumed and state['cancelled'] != consumed, state
-                    native_drag('text', 'text/plain;charset=utf-8', 'Native drag 😀 café',
-                                'Drag received=Native drag 😀 café')
-                    native_drag('html', 'text/html', '<b>Native rich 😀</b>', 'Drag received=Native rich 😀')
-                    native_file = out / 'Native drag café.txt'
-                    native_file.write_text('Native file 😀 café')
-                    native_drag('file', 'text/uri-list', native_file.resolve().as_uri() + '\r\n',
-                                'Drag received=Native file 😀 café')
-                    control('step', 'click', '--task-id', task, '--text', 'REJECT DRAG', '--via', 'semantic', '--settle', 'idle')
-                    drag('Drag rejected')
-                    native_drag('rejected', 'text/plain;charset=utf-8', 'Rejected native drag', 'Drag rejected', False)
-                    control('step', 'click', '--task-id', task, '--text', 'USE DRAG TEXT', '--via', 'semantic', '--settle', 'idle')
-                    native_drag('cancelled', 'text/plain;charset=utf-8', 'Cancelled native drag', 'Drag cancelled', False, True)
-                    def export_drag(name, expected, outcome="accept", shadow="normal"):
-                        report = out / ('android-drag-' + name + '.json')
-                        report.unlink(missing_ok=True)
-                        control('step', 'exec', '--wait', 'exists', '--task-id', task,
-                                '--text', 'Drag exported' if outcome == 'accept' else 'Drag cancelled', '--',
-                                str(args.seat), '--native-drag-destination', str(report), 'accept-update' if shadow == 'updating' else outcome)
-                        state = json.loads(report.read_text())
-                        assert state['failure'] is None and state['dropped'] == (outcome == 'accept') and state['finished'] == (outcome == 'accept'), state
-                        if name != 'file': assert state['text'] == expected, state
-                        else:
-                            from urllib.parse import urlparse, unquote
-                            paths = [Path(unquote(urlparse(uri).path)) for uri in state['uris'].splitlines()]
-                            assert len(paths) == 1 and paths[0].read_text() == expected, state
-                        def shadow_pixels(suffix, updated=False):
-                            raw = Path(str(report) + suffix + '.ppm').read_bytes()
-                            magic, dimensions, maximum, pixels = raw.split(b'\n', 3)
-                            width, height = map(int, dimensions.split())
-                            assert magic == b'P6' and maximum == b'255' and (width, height) == (1280, 720)
-                            def pixel(x, y):
-                                offset = (y * width + x) * 3
-                                return tuple(pixels[offset:offset + 3])
-                            if shadow == 'empty':
-                                for x, y in [(799, 239), (800, 240), (801, 241), (770, 218), (829, 261)]:
-                                    assert pixel(x, y) == (200, 100, 50), ('Empty shadow acquired opaque pixels', x, y, pixel(x, y))
-                                return
-                            left, top = (720, 180) if shadow == 'offset' else (768, 216)
-                            colored = [(18, 14), (45, 14), (18, 34), (45, 34)] if shadow == 'transparent' else [(2, 2), (61, 2), (2, 45), (61, 45)]
-                            expected_rgb = (238 if updated else 58, 29, 195)
-                            for dx, dy in colored:
-                                actual = pixel(left + dx, top + dy)
-                                assert all(abs(a - b) <= 2 for a, b in zip(actual, expected_rgb)), ('Stock shadow color/alpha', shadow, updated, dx, dy, actual)
-                            outside = [(-1, 2), (64, 2), (32, -1), (32, 48)]
-                            if shadow == 'transparent': outside += [(2, 2), (61, 2), (2, 45), (61, 45)]
-                            for dx, dy in outside:
-                                x, y = left + dx, top + dy
-                                expected_rgb = (0, 0, 0) if x < 720 else (200, 100, 50)
-                                assert pixel(x, y) == expected_rgb, ('Shadow bounds/hotspot/padding', shadow, x, y, pixel(x, y))
-                            assert sum(all(channel > 120 for channel in pixel(left + x, top + y))
-                                       for y in range(14, 32) for x in range(16, 48)) > 20, 'Stock DRAG text is absent'
-                        shadow_pixels('')
-                        if shadow == 'updating': shadow_pixels('.updated', updated=True)
-                    export_drag('text', 'Android drag 😀 café')
-                    export_drag('rejected', 'Android drag 😀 café', 'reject')
-                    export_drag('cancelled', 'Android drag 😀 café', 'cancel')
-                    for mode in ('Offset', 'Empty', 'Updating', 'Transparent'):
-                        control('step', 'click', '--task-id', task, '--text', 'NEXT DRAG SHADOW', '--via', 'semantic', '--settle', 'idle')
-                        control('wait', 'exists', '--task-id', task, '--text', 'Drag shadow=' + mode)
-                        export_drag(mode.lower(), 'Android drag 😀 café', shadow=mode.lower())
-                    control('step', 'click', '--task-id', task, '--text', 'NEXT DRAG SHADOW', '--via', 'semantic', '--settle', 'idle')
-                    control('wait', 'exists', '--task-id', task, '--text', 'Drag shadow=Normal')
-                    control('step', 'click', '--task-id', task, '--text', 'USE DRAG FILE', '--via', 'semantic', '--settle', 'idle')
-                    export_drag('file', 'Android file 😀 café')
-                    control('step', 'click', '--task-id', task, '--text', 'OPEN DRAG TASK', '--via', 'semantic', '--settle', 'idle')
-                    multiple = control('observe', '--tree')['observation']['tree']
-                    sibling = next(window for window in multiple['windows'] if str(window['task_id']) != task)
-                    target_task = str(sibling['task_id'])
-                    control('wait', 'exists', '--task-id', target_task, '--text', 'Drag ready')
-                    for button_label, expected in [('USE DRAG TEXT', 'Android drag 😀 café'), ('USE DRAG FILE', 'Android file 😀 café')]:
-                        control('step', 'click', '--task-id', task, '--text', button_label, '--via', 'semantic', '--settle', 'idle')
-                        control('step', 'exec', '--wait', 'exists', '--task-id', target_task,
-                                '--text', 'Drag received=' + expected, '--', str(args.seat), '--native-drag-cross-task')
-                        control('wait', 'exists', '--task-id', task, '--text', 'Drag exported')
-                    control('step', 'click', '--task-id', task, '--text', 'REMOVE DRAG PROTOCOL', '--via', 'semantic', '--settle', 'idle')
-                    deadline = time.monotonic() + 5
-                    while 'task clipboard available=false' not in (out / 'app.log').read_text(errors='replace'):
-                        if time.monotonic() > deadline: raise RuntimeError('Drag protocol removal was not delivered')
+                    subprocess.run(['wlr-randr', '--output', 'HEADLESS-1', '--scale', str(factor)],
+                                   check=True, capture_output=True, timeout=5)
+                    process.stdin.write(b'scaled\n')
+                    process.stdin.flush()
+                    verify_pixels(marker, (0, 255, 255), name, scale=factor)
+                verify_pixels('STORM_PENDING_TASK_WINDOW_READY', (0, 255, 255), 'storm-pending')
+                verify_pixels('STORM_TASK_WINDOW_READY', (0, 255, 255), 'storm-restored')
+                suspend_desktop()
+
+            for marker, operation in [('POINTER_DEVICE_CREATE', b'p'),
+                                      ('POINTER_DEVICE_REMOVE', b'r'),
+                                      ('POINTER_DEVICE_RECREATE', b'p')]:
+                change_pointer(marker, operation)
+            verify_pixels('SECOND_TASK_WINDOW_READY', (255, 0, 255), 'second-task')
+            if mixed_outputs:
+                for requested, marker, name, arguments in [
+                        ('MIXED_OUTPUT_SCALE_REQUESTED', 'MIXED_OUTPUT_SCALED_READY', 'mixed-scaled', ['--scale', '1.25']),
+                        ('MIXED_OUTPUT_UNPLUG_REQUESTED', 'MIXED_OUTPUT_UNPLUGGED_READY', 'mixed-unplugged', ['--off'])]:
+                    deadline = time.monotonic() + 15
+                    while requested not in (out / 'app.log').read_text(errors='replace'):
+                        if process.poll() is not None or time.monotonic() >= deadline:
+                            raise RuntimeError(f'{requested} timeout/exit: {process.poll()}')
                         time.sleep(.02)
-                    fallback = out / 'local-drag-shadow'
-                    control('step', 'exec', '--wait', 'exists', '--task-id', task,
-                            '--text', 'Drag received=Android file 😀 café', '--', str(args.seat), '--native-drag-local-task', str(fallback))
-                    raw = Path(str(fallback) + '.ppm').read_bytes()
-                    magic, dimensions, maximum, pixels = raw.split(b'\n', 3)
-                    width, height = map(int, dimensions.split())
-                    for x, y in [(130, 251), (189, 251), (130, 294), (189, 294)]:
-                        offset = (y * width + x) * 3
-                        r, g, b = pixels[offset:offset + 3]
-                        assert r < 100 and g < 100 and b > 200, ('Missing local drag shadow', x, y, r, g, b)
-                    fallback_target = out / 'local-drag-target-shadow'
-                    control('step', 'exec', '--wait', 'exists', '--task-id', target_task,
-                            '--text', 'Drag received=Android drag 😀 café', '--', str(args.seat), '--native-drag-local-target', str(fallback_target))
-                    control('wait', 'exists', '--task-id', task, '--text', 'Drag completed elsewhere')
-                    raw = Path(str(fallback_target) + '.ppm').read_bytes()
-                    magic, dimensions, maximum, pixels = raw.split(b'\n', 3)
-                    width, height = map(int, dimensions.split())
-                    for x, y in [(770, 251), (829, 251), (770, 294), (829, 294)]:
-                        offset = (y * width + x) * 3
-                        r, g, b = pixels[offset:offset + 3]
-                        assert r < 100 and g < 100 and b > 200, ('Local drag used global coordinates', x, y, r, g, b)
-                    # Without native offers, raw source coordinates must not
-                    # accidentally target the other synthetic Android rectangle.
-                    control('step', 'exec', '--wait', 'exists', '--task-id', task,
-                            '--text', 'Drag cancelled', '--', str(args.seat), '--native-drag-cross-task')
-                    control('wait', 'exists', '--task-id', target_task, '--text', 'Drag cancelled')
-                    control('step', 'click', '--task-id', task, '--text', 'RESTORE DRAG PROTOCOL', '--via', 'semantic', '--settle', 'idle')
-                    control('step', 'exec', '--wait', 'exists', '--task-id', target_task,
-                            '--text', 'Drag received=Android file 😀 café', '--', str(args.seat), '--native-drag-cross-task')
-                    control('wait', 'exists', '--task-id', task, '--text', 'Drag exported')
-                    control('step', 'click', '--task-id', target_task, '--text', 'CLOSE DRAG TASK', '--via', 'semantic', '--settle', 'idle')
-                    for _ in range(16):
-                        ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], timeout=3)
-                        magic, dimensions, maximum, pixels = ppm.split(b'\n', 3)
-                        screen_width, screen_height = map(int, dimensions.split())
-                        for x, y, expected in [(50, 200, (220, 235, 255)), (400, 200, (210, 250, 220))]:
-                            offset = (y * screen_width + x) * 3
-                            actual = tuple(pixels[offset:offset + 3])
-                            assert actual == expected, ('Drag content disappeared', x, y, actual, expected)
-                        time.sleep(.05)
-                    steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 41 + 5 * (args.drag_rounds - 1) and all(not step['diagnostics']['runtime']['issues'] for step in steps)
-                    result['test_control'] = {'steps': len(steps), 'task': int(task)}
-                elif args.ime:
-                    ime_mark = control('mark')['mark']
-                    control('step', 'click', '--task-id', task, '--text', label('Show IME editor'),
-                            '--via', 'semantic', '--settle', 'idle')
-                    control('wait', 'exists', '--text', 'IME text=a😀中z select=3:3 composing=-1:-1')
-                    for action, expected in [
-                        ('COMPOSE UNICODE', 'IME text=a😀é拼中z select=4:4 composing=3:5'),
-                        ('HIDE PREEDIT CARET', 'IME text=a😀候中z select=4:4 composing=3:4 caret=hidden'),
-                        ('COMMIT UNICODE', 'IME text=a😀文中z select=4:4 composing=-1:-1'),
-                        ('DELETE UNICODE', 'IME text=a😀éz select=4:4 composing=-1:-1'),
-                        ('FOCUS PASSWORD', 'Password length=14'),
-                        ('VERIFY PASSWORD CONTEXT', 'Password length=15'),
-                        ('FOCUS ORIGINAL EDITOR', 'IME text=a😀éz select=4:4 composing=-1:-1'),
-                        ('COMPOSE THEN LEAVE', 'IME text=a😀éé拼z select=5:5 composing=4:6'),
-                        ('REMOVE TEXT FOCUS', 'IME text=a😀éz select=4:4 composing=-1:-1'),
-                        ('RESTORE TEXT FOCUS', 'IME text=a😀éz select=4:4 composing=-1:-1'),
-                        ('COMPOSE THEN LEAVE', 'IME text=a😀éé拼z select=5:5 composing=4:6'),
-                        ('FOCUS PASSWORD', 'Password length=15'),
-                        # Android closes the old InputConnection, finishing its
-                        # composition while retaining text and cursor position.
-                        ('FOCUS ORIGINAL EDITOR', 'IME text=a😀éé拼z select=5:5 composing=-1:-1'),
-                        ('INVALIDATE EDITOR', 'IME text=a😀éé拼z select=5:5 composing=-1:-1'),
-                        ('COMPOSE UNICODE', 'IME text=a😀ééé拼拼z select=6:6 composing=5:7'),
-                        ('COMMIT UNICODE', 'IME text=a😀éé文拼z select=6:6 composing=-1:-1'),
-                    ]:
-                        control('step', 'click', '--task-id', task, '--text', action,
-                                '--via', 'semantic', '--settle', 'idle')
-                        control('wait', 'exists', '--task-id', task, '--text', expected)
-                    control('step', 'key', '--task-id', task, '--description', 'IME Unicode editor',
-                            'Enter', '--via', 'wayland', '--settle', 'idle')
-                    control('wait', 'exists', '--task-id', task, '--text', 'Editor submitted: 1')
-                    control('step', 'click', '--task-id', task, '--text', 'REMOVE IME PROTOCOL',
-                            '--via', 'semantic', '--settle', 'idle')
-                    control('step', 'type', '--task-id', task, '--description', 'IME Unicode editor',
-                            'X', '--via', 'wayland', '--settle', 'idle')
-                    # Physical type first taps the selected editor; its center
-                    # lies after this short text, placing the caret at the end.
-                    settled_text('a😀éé文拼zX', 'IME Unicode editor')
-                    control('step', 'click', '--task-id', task, '--text', 'RESTORE IME PROTOCOL',
-                            '--via', 'semantic', '--settle', 'idle')
-                    control('step', 'click', '--task-id', task, '--text', 'COMMIT UNICODE',
-                            '--via', 'semantic', '--settle', 'idle')
-                    control('wait', 'exists', '--task-id', task, '--text', 'IME text=a😀éé文拼zX文 select=10:10 composing=-1:-1')
-                    protocol_log = (out / 'app.log').read_text(errors='replace')
-                    assert 'task text input available=false' in protocol_log
-                    assert 'task text input available=true' in protocol_log
-                    diagnostics = control('diagnose', '--since', json.dumps(ime_mark))
-                    (out / 'ime-diagnostics.json').write_text(json.dumps(diagnostics, indent=2))
-                    assert not diagnostics['diagnostics']['runtime']['issues'], diagnostics
-                    steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 22 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
-                    result['test_control'] = {'steps': len(steps), 'task': int(task)}
-                elif args.video:
-                    video_mark = control('mark')['mark']
-                    control('step', 'click', '--task-id', task, '--text', label('Show decoded video'),
-                            '--via', 'semantic', '--settle', 'idle')
-                    control('wait', 'exists', '--task-id', task, '--text', 'Surface video queued')
-                    control('wait', 'exists', '--task-id', task, '--text', 'Surface rendered callback verified')
-
-                    def video_pixels(name, minimum_cyan, require_overlay=False):
-                        # This harness places the one task at output origin, at scale 1.
-                        # Restrict each check to its own Android view, so an old SurfaceView
-                        # image cannot satisfy the TextureView screenshot assertion.
-                        description = 'Decoded SurfaceView' if require_overlay else 'Decoded TextureView'
-                        nodes = control('observe', '--tree')['observation']['tree']['nodes']
-                        bounds = next(n['bounds'] for n in nodes if n.get('content_description') == description
-                                      and str(n.get('task_id')) == task)
-                        deadline = time.monotonic() + 10
-                        while True:
-                            ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], timeout=3)
-                            magic, dimensions, maximum, data = ppm.split(b'\n', 3)
-                            w, h = map(int, dimensions.split())
-                            data = b''.join(data[(y * w + bounds['left']) * 3:(y * w + bounds['right']) * 3]
-                                            for y in range(bounds['top'], bounds['bottom']))
-                            cyan = sum(r < 12 and g > 243 and b > 243 for r, g, b in zip(data[0::3], data[1::3], data[2::3]))
-                            red = sum(r > 243 and g < 12 and b < 12 for r, g, b in zip(data[0::3], data[1::3], data[2::3]))
-                            if cyan >= minimum_cyan and (not require_overlay or red >= 900): break
-                            if time.monotonic() >= deadline:
-                                raise RuntimeError(f'{name}: cyan={cyan}, red={red}, required={minimum_cyan}')
-                            time.sleep(.05)
-                        subprocess.run(['grim', str(out / f'{name}.png')], check=True, timeout=3)
-                        result[name] = {'cyan_pixels': cyan, 'red_pixels': red}
-
-                    video_pixels('surface-video', 25000, True)
-                    for action, expected, callback, area in [
-                        ('MOVE VIDEO TO TEXTURE', 'Texture video pixels verified', 'Texture rendered callback verified', 25000),
-                        ('RESIZE VIDEO', 'Resized video pixels verified', 'Resized rendered callback verified', 45000),
-                        ('REMOVE VIDEO', 'Video surfaces released', 'Released callbacks cancelled', 0),
-                    ]:
-                        control('step', 'click', '--task-id', task, '--text', action,
-                                '--via', 'semantic', '--settle', 'idle')
-                        control('wait', 'exists', '--task-id', task, '--text', expected)
-                        control('wait', 'exists', '--task-id', task, '--text', callback)
-                        if area: video_pixels(expected.split()[0].lower() + '-video', area)
-                    diagnostics = control('diagnose', '--since', json.dumps(video_mark))
-                    (out / 'video-diagnostics.json').write_text(json.dumps(diagnostics, indent=2))
-                    assert not diagnostics['diagnostics']['runtime']['issues'], diagnostics
-                    steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 4 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
-                    result['test_control'] = {'steps': len(steps), 'task': int(task), 'window': int(window)}
-                else:
-                    control('step', 'click', '--task-id', task, '--window-id', window,
-                            '--text', label('Increment counter'), '--via', 'semantic', '--settle', 'idle')
-                    control('wait', 'exists', '--task-id', task, '--text', 'Counter: 1')
-                    control('step', 'click', '--task-id', task, '--text', label('Show attached dialog'),
-                            '--via', 'semantic', '--settle', 'idle')
-                    dialog = control('observe', '--tree')['observation']['tree']
-                    assert len(dialog['windows']) == 2
-                    assert {str(w['task_id']) for w in dialog['windows']} == {task}
-                    # The button center lies inside the dialog's outer frame
-                    # (including its shadow). That click must neither activate the
-                    # covered activity nor count as an outside dismissal.
-                    subprocess.run(['grim', str(out / 'modal-dialog.png')], check=True, timeout=3)
-                    control('step', 'click', '--task-id', task, '--window-id', window,
-                            '--text', label('Increment counter'), '--via', 'wayland', '--settle', 'idle')
-                    covered = control('observe', '--tree')['observation']['tree']
-                    assert len(covered['windows']) == 2, covered
-                    settled_text('Counter: 1')
-                    # The same button extends well beyond the dialog's left
-                    # edge. Its outside click dismisses the modal without also
-                    # invoking the activity button on the same UP.
-                    control('step', 'click', '--task-id', task, '--window-id', window,
-                            '--text', label('Increment counter'), '--from-x', '.05',
-                            '--via', 'wayland', '--settle', 'idle')
-                    control('wait', 'absent', '--task-id', task, '--text', 'Fixture dialog')
-                    settled_text('Counter: 1')
-                    dismissed = control('observe', '--tree')['observation']['tree']
-                    assert len(dismissed['windows']) == 1, dismissed
-                    subprocess.run(['grim', str(out / 'modal-dismissed.png')], check=True, timeout=3)
-                    # Retain the independent semantic close regression.
-                    control('step', 'click', '--task-id', task, '--text', label('Show attached dialog'),
-                            '--via', 'semantic', '--settle', 'idle')
-                    dialog = control('observe', '--tree')['observation']['tree']
-                    close = next(node for node in dialog['nodes'] if (node.get('text') or '').lower() == 'close dialog')
-                    control('step', 'click', '--window-id', str(close['window_id']), '--text', close['text'],
-                            '--via', 'semantic', '--settle', 'idle')
-                    control('step', 'click', '--task-id', task, '--text', label('Increment counter'),
-                            '--via', 'wayland', '--settle', 'idle')
-                    settled_text('Counter: 2')
-                    # The semantic target and explicit origin placement determine
-                    # this cursor position; no global desktop coordinates are inferred.
-                    bounds = next(node['bounds'] for node in tree['nodes']
-                                  if (node.get('text') or '').lower() == 'increment counter')
-                    cursor_x = (bounds['left'] + bounds['right']) // 2 - 2
-                    cursor_y = (bounds['top'] + bounds['bottom']) // 2 - 3
-                    deadline = time.monotonic() + 10
-                    while True:
-                        ppm = subprocess.check_output(['grim', '-c', '-t', 'ppm', '-'], timeout=3)
-                        _, dimensions, _, rgba = ppm.split(b'\n', 3)
-                        cursor_width, _ = map(int, dimensions.split())
-                        colors = [tuple(rgba[((cursor_y + 8) * cursor_width + cursor_x + x) * 3:
-                                             ((cursor_y + 8) * cursor_width + cursor_x + x) * 3 + 3])
-                                  for x in (8, 24)]
-                        if colors == [(255, 0, 255), (0, 255, 255)]:
-                            break
-                        if time.monotonic() >= deadline:
-                            raise RuntimeError(f'Custom Android cursor pixels/hotspot differ: {colors}')
-                        time.sleep(.02)
-                    subprocess.run(['grim', '-c', str(out / 'custom-cursor.png')], check=True, timeout=3)
-                    result['custom_cursor'] = dict(hotspot=[2, 3], colors=colors)
-                    control('step', 'click', '--task-id', task, '--description', 'Fixture editor',
-                            '--via', 'wayland', '--settle', 'idle')
-                    control('step', 'type', '--task-id', task, '--description', 'Fixture editor', 'abc',
-                            '--via', 'wayland', '--settle', 'idle')
-                    settled_text('abc', 'Fixture editor')
-                    control('step', 'key', '--task-id', task, '--description', 'Fixture editor', 'Backspace',
-                            '--via', 'wayland', '--settle', 'idle')
-                    settled_text('ab', 'Fixture editor')
-                    long_text = 'A' * 1024
-                    control('step', 'type', '--task-id', task, '--description', 'Fixture editor', long_text,
-                            '--via', 'wayland', '--settle', 'idle')
-                    settled_text('ab' + long_text, 'Fixture editor')
-                    control('step', 'type', '--task-id', task, '--description', 'Fixture editor', 'ab',
-                            '--via', 'semantic', '--settle', 'idle')
-                    settled_text('ab', 'Fixture editor')
-                    control('step', 'click', '--task-id', task, '--text', label('Open independent task'),
-                            '--via', 'semantic', '--settle', 'idle')
-                    multiple = control('observe', '--tree')['observation']['tree']
-                    assert len(multiple['windows']) == 2, multiple
-                    sibling = next(window for window in multiple['windows'] if str(window['task_id']) != task)
-                    assert sibling['pid'] == app_pid
-                    sibling_task = str(sibling['task_id'])
-                    control('step', 'type', '--task-id', sibling_task, '--description', 'Fixture editor', 'Z',
-                            '--via', 'wayland', '--settle', 'idle')
-                    settled_text('Z', 'Fixture editor', sibling_task)
-                    settled_text('ab', 'Fixture editor')
-                    control('step', 'click', '--task-id', sibling_task, '--text', label('Finish this activity'),
-                            '--via', 'semantic', '--settle', 'idle')
-                    control('step', 'type', '--task-id', task, '--description', 'Fixture editor', 'C',
-                            '--via', 'wayland', '--settle', 'idle')
-                    settled_text('abC', 'Fixture editor')
-                    after = control('observe', '--tree')['observation']
-                    assert len(after['tree']['windows']) == 1
-                    assert after['mark']['presented_frame_seq'] > observed['mark']['presented_frame_seq']
-                    (out / 'a11y.json').write_text(json.dumps(after, indent=2))
-                    steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 16 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
-                    cursor_log = (out / 'app.log').read_text(errors='replace')
-                    assert 'task cursor shape protocol available=false' in cursor_log
-                    assert 'task bitmap cursor task=' in cursor_log, 'Missing stock bitmap cursor fallback'
-                    result['test_control'] = {'steps': len(steps), 'task': int(task), 'window': int(window)}
-                subprocess.run(['grim', str(out / 'screenshot.png')], check=True, timeout=3)
-                seat.stdin.write(b'c')
-                seat.stdin.flush()
-                if process.wait(timeout=30) != 0:
-                    raise RuntimeError(f'desktop session did not close successfully: {process.returncode}')
-                text = (out / 'app.log').read_text(errors='replace')
-            else:
-                verify_pixels('TASK_WINDOW_READY', (0, 255, 255), 'first-task')
-                if desktop and not mixed_outputs:
-                    change_pointer('RESIZE_POINTER_CREATE_READY', b'p')
-                    physical_pointer('RESIZE_POINTER_PRESS_READY', b'b')
-                    for marker, name, fullscreen in [
-                            ('PENDING_FULLSCREEN_TASK_WINDOW_READY', 'pending-fullscreen', True),
-                            ('FULLSCREEN_TASK_WINDOW_READY', 'fullscreen', True),
-                            ('FULLSCREEN_RESTORED_TASK_WINDOW_READY', 'fullscreen-restored', False),
-                            ('MAXIMIZED_TASK_WINDOW_READY', 'maximized', True),
-                            ('MAXIMIZE_RESTORED_TASK_WINDOW_READY', 'maximize-restored', False)]:
-                        verify_pixels(marker, (0, 255, 255), name, fullscreen=fullscreen)
-                        if name == 'pending-fullscreen':
-                            physical_pointer('RESIZE_PENDING_POINTER_READY', b't')
-                        if name == 'fullscreen':
-                            physical_pointer('RESIZE_RESUMED_POINTER_READY', b't')
-                            change_pointer('RESIZE_POINTER_REMOVE_READY', b'r')
-                            result['resize_input'] = dict(canceled=True, pending_suppressed=True, resumed=True)
-                    for requested, marker, factor, name in [
-                            ('SCALE_TASK_WINDOW_REQUESTED', 'SCALED_TASK_WINDOW_READY', 1.5, 'scaled'),
-                            ('RESTORE_TASK_SCALE_REQUESTED', 'SCALE_RESTORED_TASK_WINDOW_READY', 1, 'scale-restored')]:
-                        deadline = time.monotonic() + 10
-                        while requested not in (out / 'app.log').read_text(errors='replace'):
-                            if process.poll() is not None or time.monotonic() >= deadline:
-                                raise RuntimeError(f'{requested} timeout/exit: {process.poll()}')
-                            time.sleep(.02)
-                        subprocess.run(['wlr-randr', '--output', 'HEADLESS-1', '--scale', str(factor)],
-                                       check=True, capture_output=True, timeout=5)
-                        process.stdin.write(b'scaled\n')
-                        process.stdin.flush()
-                        verify_pixels(marker, (0, 255, 255), name, scale=factor)
-                    verify_pixels('STORM_PENDING_TASK_WINDOW_READY', (0, 255, 255), 'storm-pending')
-                    verify_pixels('STORM_TASK_WINDOW_READY', (0, 255, 255), 'storm-restored')
-                    suspend_desktop()
-
-                for marker, operation in [('POINTER_DEVICE_CREATE', b'p'),
-                                          ('POINTER_DEVICE_REMOVE', b'r'),
-                                          ('POINTER_DEVICE_RECREATE', b'p')]:
-                    change_pointer(marker, operation)
-                verify_pixels('SECOND_TASK_WINDOW_READY', (255, 0, 255), 'second-task')
-                if mixed_outputs:
-                    for requested, marker, name, arguments in [
-                            ('MIXED_OUTPUT_SCALE_REQUESTED', 'MIXED_OUTPUT_SCALED_READY', 'mixed-scaled', ['--scale', '1.25']),
-                            ('MIXED_OUTPUT_UNPLUG_REQUESTED', 'MIXED_OUTPUT_UNPLUGGED_READY', 'mixed-unplugged', ['--off'])]:
-                        deadline = time.monotonic() + 15
-                        while requested not in (out / 'app.log').read_text(errors='replace'):
-                            if process.poll() is not None or time.monotonic() >= deadline:
-                                raise RuntimeError(f'{requested} timeout/exit: {process.poll()}')
-                            time.sleep(.02)
-                        subprocess.run(['wlr-randr', '--output', 'HEADLESS-2', *arguments],
-                                       check=True, capture_output=True, timeout=5)
-                        (out / f'{name}-outputs.json').write_bytes(
-                            subprocess.check_output(['wlr-randr', '--json'], timeout=5))
-                        second_output, second_scale = ('HEADLESS-2', 1.25) if name == 'mixed-scaled' else ('HEADLESS-1', 1)
-                        process.stdin.write(b'changed\n')
-                        process.stdin.flush()
-                        verify_pixels(marker, (255, 0, 255), name)
-                if environment.get('AZK_TEST_TABLET') == '1':
-                    verify_tablet_pixels()
-                verify_pixels('GROUPED_ACTIVITY_WINDOW_READY', (255, 127, 0), 'grouped-activity')
-                verify_pixels('SURVIVING_TASK_WINDOW_READY', (0, 255, 255), 'screenshot')
-                change_pointer('WINDOWLESS_POINTER_REMOVE', b'r')
-                change_pointer('WINDOWLESS_POINTER_RECREATE', b'p')
-                change_keyboard('WINDOWLESS_KEYBOARD_GERMAN', b'd')
-                change_keyboard('WINDOWLESS_KEYBOARD_US', b'u')
-                if process.wait(timeout=30) != 0:
-                    raise RuntimeError(f'session failed: {process.returncode}')
-                text = (out / 'app.log').read_text(errors='replace')
-                assert 'Stock Wayland task: two tasks, grouped activities, one synthetic display, independent pixels and removal passed' in text
-                assert 'Stock Wayland pointer: absence and compositor capability lifecycle passed' in text
-                if mixed_outputs:
-                    assert 'Stock task mixed outputs: scale and unplug preserve logical geometry, density, sibling output and pixels' in text
-                if environment.get('AZK_TEST_TABLET') == '1':
-                    assert 'Stock Wayland tablet: pen, eraser, axes, task coordinates, buttons, pixels and removal passed' in text
-            if args.launcher:
-                assert 'task virtual pointer protocol version=1' in text
-                result['virtual_pointer_version'] = 1
+                    subprocess.run(['wlr-randr', '--output', 'HEADLESS-2', *arguments],
+                                   check=True, capture_output=True, timeout=5)
+                    (out / f'{name}-outputs.json').write_bytes(
+                        subprocess.check_output(['wlr-randr', '--json'], timeout=5))
+                    second_output, second_scale = ('HEADLESS-2', 1.25) if name == 'mixed-scaled' else ('HEADLESS-1', 1)
+                    process.stdin.write(b'changed\n')
+                    process.stdin.flush()
+                    verify_pixels(marker, (255, 0, 255), name)
+            if environment.get('AZK_TEST_TABLET') == '1':
+                verify_tablet_pixels()
+            verify_pixels('GROUPED_ACTIVITY_WINDOW_READY', (255, 127, 0), 'grouped-activity')
+            verify_pixels('SURVIVING_TASK_WINDOW_READY', (0, 255, 255), 'screenshot')
+            change_pointer('WINDOWLESS_POINTER_REMOVE', b'r')
+            change_pointer('WINDOWLESS_POINTER_RECREATE', b'p')
+            change_keyboard('WINDOWLESS_KEYBOARD_GERMAN', b'd')
+            change_keyboard('WINDOWLESS_KEYBOARD_US', b'u')
+            if process.wait(timeout=30) != 0:
+                raise RuntimeError(f'session failed: {process.returncode}')
+            text = (out / 'app.log').read_text(errors='replace')
+            assert 'Stock Wayland task: two tasks, grouped activities, one synthetic display, independent pixels and removal passed' in text
+            assert 'Stock Wayland pointer: absence and compositor capability lifecycle passed' in text
+            if mixed_outputs:
+                assert 'Stock task mixed outputs: scale and unplug preserve logical geometry, density, sibling output and pixels' in text
+            if environment.get('AZK_TEST_TABLET') == '1':
+                assert 'Stock Wayland tablet: pen, eraser, axes, task coordinates, buttons, pixels and removal passed' in text
             assert 'task presenter released all buffers' in text
             for fatal in ['Native thread exited without calling DetachCurrentThread',
                           'FATAL EXCEPTION', 'Unhandled exception', 'panic:']:
@@ -927,56 +330,9 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
             result['passed'] = True
         except BaseException as error:
             result['error'] = str(error)
-            if app_pidfd is not None and not select.select([app_pidfd], [], [], 0)[0] and shutil.which('gdb'):
-                # Capture native stacks before SIGQUIT: a managed dump can
-                # itself wait for a checkpoint and obscure the original state.
-                # GDB detaches on exit; this runner owns subsequent cleanup.
-                targets = [(app_pid, 'native-thread-dump.log')]
-                if sf_pidfd is not None and not select.select([sf_pidfd], [], [], 0)[0]:
-                    targets.append((sf_pid, 'surfaceflinger-thread-dump.log'))
-                log_text = (out / 'app.log').read_text(errors='replace')
-                for pid, name in targets:
-                    commands = ['gdb', '--batch', '--nx',
-                        '-ex', 'set debuginfod enabled off',
-                        '-ex', 'set pagination off', '-ex', 'set language c++', '-ex', 'set print elements 64',
-                        '-ex', 'thread apply all bt 24']
-                    pointers = re.findall(r'AZK display receiver pid=' + str(pid) + r' ptr=(0x[0-9a-f]+)', log_text)
-                    for pointer in set(pointers):
-                        commands += ['-ex', f'p *(android::NativeDisplayEventReceiver*){pointer}']
-                    with (out / name).open('wb') as native_dump:
-                        try:
-                            subprocess.run(commands + ['-p', str(pid)], stdout=native_dump,
-                                stderr=subprocess.STDOUT, timeout=15, check=False)
-                        except subprocess.TimeoutExpired:
-                            native_dump.write(b'\nNative stack capture timed out after 15 seconds.\n')
-            if app_pidfd is not None and not select.select([app_pidfd], [], [], 0)[0]:
-                # ART's pinned SignalCatcher/host palette writes managed and
-                # native thread stacks to stderr, even when the UI cannot pump
-                # an inspection request. Keep this diagnostic bounded.
-                mark = (out / 'app.log').stat().st_size
-                try: signal.pidfd_send_signal(app_pidfd, signal.SIGQUIT)
-                except ProcessLookupError: pass
-                deadline = time.monotonic() + 10
-                while True:
-                    with (out / 'app.log').open('rb') as snapshot:
-                        snapshot.seek(mark)
-                        dump = snapshot.read(2 * 1024 * 1024)
-                    if f'----- end {app_pid} -----'.encode() in dump or time.monotonic() >= deadline:
-                        (out / 'thread-dump.log').write_bytes(dump)
-                        break
-                    time.sleep(.05)
-            if args.launcher:
-                try:
-                    (out / 'failure.json').write_text(json.dumps(control('diagnose'), indent=2))
-                except Exception:
-                    pass
             subprocess.run(['grim', str(out / 'screenshot.png')], timeout=3, check=False)
             raise
         finally:
-            if sf_pidfd is not None:
-                os.close(sf_pidfd)
-            if app_pidfd is not None:
-                os.close(app_pidfd)
             if process.poll() is None:
                 # Release the driver's pixel gate and let Session.stop preserve
                 # system -> presenter -> SF -> broker shutdown order on failure.

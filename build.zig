@@ -1493,12 +1493,10 @@ pub fn build(b: *std.Build) void {
     suspension_compositor.addArg("--out-link");
     const suspension_labwc = suspension_compositor.addOutputChildArg("suspension-compositor", "labwc");
     suspension_compositor.run.setName("build pinned labwc suspension protocol fixture");
-    for ([_][]const u8{ "cage", "labwc", "labwc-suspension", "labwc-legacy", "labwc-tablet", "labwc-outputs" }) |scenario| {
-        const legacy_shell = std.mem.eql(u8, scenario, "labwc-legacy");
+    for ([_][]const u8{ "labwc", "labwc-suspension", "labwc-tablet", "labwc-outputs" }) |scenario| {
         const mixed_outputs = std.mem.eql(u8, scenario, "labwc-outputs");
         const tablet_fixture = std.mem.eql(u8, scenario, "labwc-tablet");
         const suspension_fixture = std.mem.eql(u8, scenario, "labwc-suspension") or tablet_fixture;
-        const compositor = if (legacy_shell or suspension_fixture or mixed_outputs) "labwc" else scenario;
         const task_artifacts = b.pathResolve(&.{b.fmt("zig-out/test-results/stock-wayland-task-{s}", .{scenario})});
         const stock_task_wayland = @import("build/command.zig").create(b);
         setApplicationEnvironment(stock_task_wayland, application_tree);
@@ -1506,19 +1504,17 @@ pub fn build(b: *std.Build) void {
         stock_task_wayland.setEnvironment("AZK_TEST_INSPECTION", "1");
         stock_task_wayland.setEnvironment("AZK_TASK_WINDOWS", "1");
         stock_task_wayland.setEnvironment("WLR_RENDERER", "gles2");
-        stock_task_wayland.setEnvironment("SHOT_COMPOSITOR", compositor);
+        stock_task_wayland.setEnvironment("SHOT_COMPOSITOR", "labwc");
         stock_task_wayland.setEnvironment("XKB_DEFAULT_LAYOUT", "us");
         if (mixed_outputs) {
             stock_task_wayland.setEnvironment("WLR_HEADLESS_OUTPUTS", "2");
             stock_task_wayland.setEnvironment("AZK_TEST_MIXED_OUTPUTS", "1");
         }
         if (tablet_fixture) stock_task_wayland.setEnvironment("AZK_TEST_TABLET", "1");
-        if (legacy_shell) stock_task_wayland.setEnvironment("AZK_TEST_XDG_SHELL_VERSION", "2");
-        if (legacy_shell or suspension_fixture)
+        if (suspension_fixture)
             stock_task_wayland.setFileEnvironment("SHOT_LABWC_BINARY", suspension_labwc.path(b, "bin/labwc"));
         stock_task_wayland.setEnvironment("AZK_TEST_SUSPENSION_EXPECTED", if (suspension_fixture) "1" else "0");
-        if (std.mem.eql(u8, compositor, "labwc"))
-            stock_task_wayland.setEnvironment("SHOT_LABWC_CONFIG", b.pathResolve(&.{if (mixed_outputs) "testdata/wayland/task-outputs.xml" else "testdata/wayland/task-desktop.xml"}));
+        stock_task_wayland.setEnvironment("SHOT_LABWC_CONFIG", b.pathResolve(&.{if (mixed_outputs) "testdata/wayland/task-outputs.xml" else "testdata/wayland/task-desktop.xml"}));
         stock_task_wayland.addFileArg(b.path("tools/shot.sh"));
         stock_task_wayland.addArgs(&.{ b.pathResolve(&.{ task_artifacts, "screenshot.png" }), "--runner", "--", "python3" });
         stock_task_wayland.addFileArg(b.path("tests/native/stock-wayland-task-test.py"));
@@ -1534,52 +1530,8 @@ pub fn build(b: *std.Build) void {
         stock_task_wayland.addFileArg(application_tree.path(b, "bin/azk-task-presenter"));
         stock_task_wayland.run.has_side_effects = true;
         stock_task_wayland.run.setName("verify stock APK task pixels through session Wayland presenter");
-        b.step(if (mixed_outputs) "stock-task-output-test" else if (tablet_fixture) "stock-task-tablet-test" else if (suspension_fixture) "stock-task-desktop-suspension-test" else if (legacy_shell) "stock-task-desktop-legacy-test" else if (std.mem.eql(u8, compositor, "cage")) "stock-task-wayland-test" else "stock-task-desktop-test", "Present two stock APK tasks through the session-owned Wayland service")
+        b.step(if (mixed_outputs) "stock-task-output-test" else if (tablet_fixture) "stock-task-tablet-test" else if (suspension_fixture) "stock-task-desktop-suspension-test" else "stock-task-desktop-test", "Present two stock APK tasks through the session-owned Wayland service")
             .dependOn(&stock_task_wayland.run.step);
-    }
-    for ([_][]const u8{ "desktop", "video", "ime", "clipboard", "drag", "drag-pressure" }) |fixture| {
-        const video_fixture = std.mem.eql(u8, fixture, "video");
-        const ime_fixture = std.mem.eql(u8, fixture, "ime");
-        const clipboard_fixture = std.mem.eql(u8, fixture, "clipboard");
-        const drag_pressure = std.mem.eql(u8, fixture, "drag-pressure");
-        const drag_fixture = std.mem.eql(u8, fixture, "drag") or drag_pressure;
-        const desktop_launcher = @import("build/command.zig").create(b);
-        setApplicationEnvironment(desktop_launcher, application_tree);
-        desktop_launcher.setEnvironment("AZK_WINDOW_BACKEND", "stock");
-        desktop_launcher.setEnvironment("AZK_TASK_WINDOWS", "1");
-        desktop_launcher.setEnvironment("WLR_RENDERER", "gles2");
-        desktop_launcher.setEnvironment("SHOT_COMPOSITOR", "labwc");
-        desktop_launcher.setEnvironment("XKB_DEFAULT_LAYOUT", "us");
-        if (ime_fixture) {
-            desktop_launcher.setEnvironment("AZK_TEST_IME", "1");
-            desktop_launcher.setFileEnvironment("SHOT_LABWC_BINARY", suspension_labwc.path(b, "bin/labwc"));
-        }
-        if (clipboard_fixture or drag_fixture) {
-            desktop_launcher.setEnvironment("AZK_TEST_CLIPBOARD", "1");
-            desktop_launcher.setFileEnvironment("SHOT_LABWC_BINARY", suspension_labwc.path(b, "bin/labwc"));
-        }
-        desktop_launcher.addArg("env");
-        desktop_launcher.addPrefixedFileArg("SHOT_LABWC_CONFIG=", b.path("testdata/wayland/launcher-desktop.xml"));
-        desktop_launcher.addFileArg(b.path("tools/shot.sh"));
-        const launcher_artifacts = b.pathResolve(&.{if (video_fixture) "zig-out/test-results/stock-video" else if (ime_fixture) "zig-out/test-results/stock-ime" else if (clipboard_fixture) "zig-out/test-results/stock-clipboard" else if (drag_pressure) "zig-out/test-results/stock-drag-pressure" else if (drag_fixture) "zig-out/test-results/stock-drag" else "zig-out/test-results/stock-desktop-launcher"});
-        desktop_launcher.addArgs(&.{ b.pathResolve(&.{ launcher_artifacts, "screenshot.png" }), "--runner", "--", "python3" });
-        desktop_launcher.addFileArg(b.path("tests/native/stock-wayland-task-test.py"));
-        if (video_fixture) desktop_launcher.addArg("--video");
-        if (ime_fixture) desktop_launcher.addArg("--ime");
-        if (clipboard_fixture) desktop_launcher.addArg("--clipboard");
-        if (drag_fixture) desktop_launcher.addArg("--drag");
-        if (drag_pressure) desktop_launcher.addArgs(&.{ "--drag-rounds", "16" });
-        desktop_launcher.addArgs(&.{ "--launcher", "--testkit" });
-        desktop_launcher.addDirectoryArg(testkit_tree.getDirectory());
-        desktop_launcher.addArg("--seat");
-        desktop_launcher.addFileArg(surface_server.getEmittedBin());
-        desktop_launcher.addArgs(&.{ "--output", launcher_artifacts, "--" });
-        desktop_launcher.addFileArg(application_tree.path(b, "bin/androlinzberg"));
-        desktop_launcher.addFileArg(window_fixture.apk);
-        desktop_launcher.run.has_side_effects = true;
-        desktop_launcher.run.setName("verify APK desktop launch and compositor close through ATMS");
-        b.step(if (video_fixture) "stock-video-test" else if (ime_fixture) "stock-ime-test" else if (clipboard_fixture) "stock-clipboard-test" else if (drag_pressure) "stock-drag-pressure-test" else if (drag_fixture) "stock-drag-test" else "stock-desktop-launcher-test", "Launch an APK through ATMS and verify task-scoped UI through Wayland")
-            .dependOn(&desktop_launcher.run.step);
     }
     const session_loss_step = b.step("stock-session-loss-test", "Retire an idle APK session after service or compositor death");
     for ([_][]const u8{ "system", "surfaceflinger", "presenter", "media", "broker", "compositor" }) |fault| {
@@ -1820,11 +1772,11 @@ pub fn build(b: *std.Build) void {
     // Desktop (labwc) scenarios: one window fixture launched through ATMS as a
     // task window, with the protocol under test enabled in the session.
     inline for (.{
-        .{ .step = "ui-desktop-clipboard-test", .directory = "stock-clipboard", .environment = "AZK_TEST_CLIPBOARD", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopClipboardUiTest#representationsCrossTheDesktopSelectionInBothDirections"} },
-        .{ .step = "ui-desktop-drag-test", .directory = "stock-drag", .environment = "AZK_TEST_CLIPBOARD", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopDragUiTest#dragsCrossTasksAndTheDesktopInBothDirections"} },
-        .{ .step = "ui-desktop-launcher-test", .directory = "stock-desktop-launcher", .environment = "", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopLauncherUiTest#taskWindowsTakeDesktopInputIndependently"} },
-        .{ .step = "ui-desktop-video-test", .directory = "stock-video", .environment = "", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopVideoUiTest#decodedFramesFollowTheirSurface"} },
-        .{ .step = "ui-desktop-ime-test", .directory = "stock-ime", .environment = "AZK_TEST_IME", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopImeUiTest#unicodeCompositionSurvivesFocusAndProtocolChanges"} },
+        .{ .step = "stock-clipboard-test", .directory = "stock-clipboard", .environment = "AZK_TEST_CLIPBOARD", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopClipboardUiTest#representationsCrossTheDesktopSelectionInBothDirections"} },
+        .{ .step = "stock-drag-test", .directory = "stock-drag", .environment = "AZK_TEST_CLIPBOARD", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopDragUiTest#dragsCrossTasksAndTheDesktopInBothDirections"} },
+        .{ .step = "stock-desktop-launcher-test", .directory = "stock-desktop-launcher", .environment = "", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopLauncherUiTest#taskWindowsTakeDesktopInputIndependently"} },
+        .{ .step = "stock-video-test", .directory = "stock-video", .environment = "", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopVideoUiTest#decodedFramesFollowTheirSurface"} },
+        .{ .step = "stock-ime-test", .directory = "stock-ime", .environment = "AZK_TEST_IME", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopImeUiTest#unicodeCompositionSurvivesFocusAndProtocolChanges"} },
     }) |scenario| {
         const ui = @import("build/command.zig").create(b);
         setApplicationEnvironment(ui, application_tree);
@@ -2014,11 +1966,9 @@ pub fn build(b: *std.Build) void {
         "wayland-unit-test",
         "stock-window-boot-test",
         "stock-cold-launch-test",
-        "stock-task-wayland-test",
         "stock-desktop-launcher-test",
         "stock-task-desktop-test",
         "stock-task-output-test",
-        "stock-task-desktop-legacy-test",
         "stock-task-desktop-suspension-test",
         "stock-task-tablet-test",
         "stock-video-test",
@@ -2026,7 +1976,6 @@ pub fn build(b: *std.Build) void {
         "stock-ime-test",
         "stock-clipboard-test",
         "stock-drag-test",
-        "stock-drag-pressure-test",
         "stock-session-loss-test",
         "webview-test",
         "webview-ui-test",

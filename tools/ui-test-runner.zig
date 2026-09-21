@@ -311,6 +311,16 @@ fn placement(init: std.process.Init, arena: std.mem.Allocator, size: []const u8,
     return std.fmt.allocPrint(arena, "0,0,{s},{s}", .{ width, height });
 }
 
+/// Session processes share the log without line locking, so another record
+/// can follow the directory on its line. The name ends `binder-<pid>-<16 hex>`.
+fn sessionDirectory(line: []const u8) []const u8 {
+    const name = std.mem.lastIndexOf(u8, line, "/binder-") orelse return line;
+    var end = name + "/binder-".len;
+    while (end < line.len and std.ascii.isDigit(line[end])) end += 1;
+    if (end >= line.len or line[end] != '-') return line;
+    return line[0..@min(line.len, end + 1 + 16)];
+}
+
 /// The launcher prints its session directory once the broker is up; the session
 /// is joinable when `session.json` exists there.
 fn awaitSession(io: Io, arena: std.mem.Allocator, app_log: []const u8) ![]const u8 {
@@ -320,7 +330,7 @@ fn awaitSession(io: Io, arena: std.mem.Allocator, app_log: []const u8) ![]const 
         if (std.mem.lastIndexOf(u8, text, session_marker)) |start| {
             const rest = text[start + session_marker.len ..];
             if (std.mem.indexOfScalar(u8, rest, '\n')) |end| {
-                const directory = rest[0..end];
+                const directory = sessionDirectory(rest[0..end]);
                 const info = try std.fs.path.join(arena, &.{ directory, "session.json" });
                 if (Io.Dir.cwd().access(io, info, .{})) |_| return directory else |_| {}
             }
