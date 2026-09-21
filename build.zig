@@ -1822,6 +1822,7 @@ pub fn build(b: *std.Build) void {
     inline for (.{
         .{ .step = "ui-desktop-clipboard-test", .directory = "stock-clipboard", .environment = "AZK_TEST_CLIPBOARD", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopClipboardUiTest#representationsCrossTheDesktopSelectionInBothDirections"} },
         .{ .step = "ui-desktop-drag-test", .directory = "stock-drag", .environment = "AZK_TEST_CLIPBOARD", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopDragUiTest#dragsCrossTasksAndTheDesktopInBothDirections"} },
+        .{ .step = "ui-desktop-launcher-test", .directory = "stock-desktop-launcher", .environment = "", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopLauncherUiTest#taskWindowsTakeDesktopInputIndependently"} },
         .{ .step = "ui-desktop-video-test", .directory = "stock-video", .environment = "", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopVideoUiTest#decodedFramesFollowTheirSurface"} },
         .{ .step = "ui-desktop-ime-test", .directory = "stock-ime", .environment = "AZK_TEST_IME", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopImeUiTest#unicodeCompositionSurvivesFocusAndProtocolChanges"} },
     }) |scenario| {

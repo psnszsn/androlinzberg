@@ -229,6 +229,9 @@ fn runTest(init: std.process.Init, options: Options, class: []const u8, method: 
     try runner_env.put("AZK_TEST_DEX", options.dex);
     // Host-path tests also assert on what the session's native services logged.
     try runner_env.put("AZK_TEST_SESSION_LOG", try Io.Dir.cwd().realPathFileAlloc(io, app_log, arena));
+    // A host-path test may start a further process that joins the session.
+    try runner_env.put("AZK_TEST_LAUNCHER", try Io.Dir.cwd().realPathFileAlloc(io, options.launcher, arena));
+    try runner_env.put("AZK_TEST_SESSION_DIR", session_dir);
     if (options.seat) |helper| try runner_env.put("AZK_TEST_SEAT", try Io.Dir.cwd().realPathFileAlloc(io, helper, arena));
     _ = runner_env.swapRemove("AZK_TEST_SOCKET");
     const argv: []const []const u8 = if (std.mem.eql(u8, class, "probe"))

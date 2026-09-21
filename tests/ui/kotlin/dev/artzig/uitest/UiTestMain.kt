@@ -33,13 +33,27 @@ object UiTest {
         try {
             // Only what the test itself provokes counts: start after session boot.
             val before = diagnostics.read(Long.MAX_VALUE, Long.MAX_VALUE)
+            // The session collects each process's bounded history when it is
+            // read. Keep collecting while the test runs, so a burst of records
+            // is journalled instead of being reported as lost at the end.
+            val collector = kotlin.concurrent.thread(isDaemon = true, name = "journal-collector") {
+                try {
+                    while (true) {
+                        Thread.sleep(250)
+                        diagnostics.read(Long.MAX_VALUE, Long.MAX_VALUE)
+                    }
+                } catch (_: InterruptedException) {
+                }
+            }
             val result = JUnitCore().run(Request.method(Class.forName(args[0]), args[1]))
+            collector.interrupt()
+            collector.join()
             for (failure in result.failures) {
                 println("UiTest: FAILED ${failure.testHeader}")
                 println(failure.trace)
             }
             // A test passes only with the expected UI state and an empty issue journal.
-            val issues = diagnostics.read(before.logCursor, before.issueCursor).issues
+            val issues = diagnostics.read(Long.MAX_VALUE, before.issueCursor).issues
             for (issue in issues) println("UiTest: ISSUE ${describe(issue)}")
             println("UiTest: ${args[0]}#${args[1]} run=${result.runCount} failed=${result.failureCount} ignored=${result.ignoreCount} issues=${issues.size}")
             val clean = issues.isEmpty() || issuesAllowed

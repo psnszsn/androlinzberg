@@ -1,6 +1,7 @@
 package dev.artzig.uitest.host
 
 import android.os.SystemClock
+import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -15,6 +16,25 @@ object HostSession {
             check(SystemClock.uptimeMillis() < deadline) { "the session log never contained: $fragment" }
             SystemClock.sleep(100)
         }
+    }
+
+    /**
+     * Starts the launcher from a shell that has none of the session owner's
+     * Android environment, joins the session and runs `testClass` there.
+     * Returns its output.
+     */
+    fun joinFromForeignShell(testClass: String): String {
+        val directory = checkNotNull(System.getenv("AZK_TEST_SESSION_DIR")) { "AZK_TEST_SESSION_DIR is not set" }
+        val storage = JSONObject(File(directory, "session.json").readText()).getJSONObject("storage")
+        val owned = setOf("ANDROID_DATA", "ARTZIG_DATA_DIR", "ARTZIG_RUNTIME_CACHE_DIR", "EXTERNAL_STORAGE", "DOWNLOAD_CACHE", "AZK_PROP_AREA")
+        return String(run(
+            checkNotNull(System.getenv("AZK_TEST_LAUNCHER")), "--join", directory, "--javatest",
+            File(directory, "android-data").path, storage.getString("application_data"),
+            timeoutMillis = 30_000, mergeError = true,
+        ) { variables ->
+            variables.keys.removeAll { it.startsWith("AZK_BINDER_") || it.startsWith("AZK_TEST_") || it in owned }
+            variables["AZK_TEST_CLASS"] = testClass
+        })
     }
 
     /** Where this test's artifacts are retained. */
@@ -59,11 +79,18 @@ object HostSession {
      * nothing with [capture] off: a tool that leaves a daemon behind (wl-copy
      * serving its selection) would hold a captured stream open.
      */
-    fun run(vararg argv: String, capture: Boolean = true, timeoutMillis: Long = 10_000): ByteArray {
+    fun run(
+        vararg argv: String,
+        capture: Boolean = true,
+        timeoutMillis: Long = 10_000,
+        mergeError: Boolean = false,
+        environment: (MutableMap<String, String>) -> Unit = {},
+    ): ByteArray {
         val nowhere = File("/dev/null")
         val builder = ProcessBuilder(*argv).redirectInput(ProcessBuilder.Redirect.from(nowhere))
+        environment(builder.environment())
         if (capture) {
-            builder.redirectError(ProcessBuilder.Redirect.INHERIT)
+            if (mergeError) builder.redirectErrorStream(true) else builder.redirectError(ProcessBuilder.Redirect.INHERIT)
         } else {
             // The daemon would also hold this runner's own stderr open.
             builder.redirectOutput(ProcessBuilder.Redirect.to(nowhere)).redirectError(ProcessBuilder.Redirect.to(nowhere))
