@@ -171,6 +171,16 @@ the main looper running while the test executes.
 zig build -j10 ui-test -- --class WindowInputUiTest --method clickingButtonUpdatesStatus
 ```
 
+Ordinary tests inject input through `UiAutomation`. The host seam has its own
+coverage in the same suite: `dev.artzig.uitest.host` tests ask the task
+presenter's inspection methods (`WaylandSeat`) for real Wayland pointer and key
+events, so input crosses the compositor, the presenter's seat translation and
+the stock InputDispatcher, and they assert the app's reaction through the
+Android APIs; `probe#<check>` tests run `tests/ui/probe`, a native inspector on
+the Zig generated from the presenter's AIDL, for what needs no app state
+(presented frames advancing with Wayland frame callbacks, resource accounting).
+The presenter admits the shell identity for its inspection methods only.
+
 A test passes only with the expected UI state and an empty runtime issue
 journal. The runner reads `dev.artzig.testing.ISessionDiagnostics` (typed
 `RuntimeIssue`/`RuntimeLog` parcelables: the system server's records merged with

@@ -6,9 +6,12 @@
 //! one JUnit method through dev.artzig.testing.HostTestRunner. The compositor
 //! comes from the caller (tools/shot.sh --runner).
 //!
+//! A test named `probe#<check>` runs the native presenter probe
+//! (tests/ui/probe) against the session instead of an ART runner.
+//!
 //! Usage: ui-test-runner --launcher <androlinzberg> --apk <apk> --dex <ui-tests.jar>
-//!            --artifacts <dir> [--size WxH] [--class <suffix>] [--method <name>]
-//!            <Class#method>...
+//!            --probe <presenter-probe> --artifacts <dir> [--size WxH]
+//!            [--class <suffix>] [--method <name>] <Class#method>...
 const std = @import("std");
 const Io = std.Io;
 
@@ -20,6 +23,7 @@ const Options = struct {
     launcher: []const u8 = "",
     apk: []const u8 = "",
     dex: []const u8 = "",
+    probe: []const u8 = "",
     artifacts: []const u8 = "",
     size: []const u8 = "1280x720",
     class: ?[]const u8 = null,
@@ -34,7 +38,7 @@ pub fn main(init: std.process.Init) !void {
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
-        const value: ?*[]const u8 = if (std.mem.eql(u8, arg, "--launcher")) &options.launcher else if (std.mem.eql(u8, arg, "--apk")) &options.apk else if (std.mem.eql(u8, arg, "--dex")) &options.dex else if (std.mem.eql(u8, arg, "--artifacts")) &options.artifacts else if (std.mem.eql(u8, arg, "--size")) &options.size else null;
+        const value: ?*[]const u8 = if (std.mem.eql(u8, arg, "--launcher")) &options.launcher else if (std.mem.eql(u8, arg, "--apk")) &options.apk else if (std.mem.eql(u8, arg, "--dex")) &options.dex else if (std.mem.eql(u8, arg, "--probe")) &options.probe else if (std.mem.eql(u8, arg, "--artifacts")) &options.artifacts else if (std.mem.eql(u8, arg, "--size")) &options.size else null;
         if (value) |destination| {
             index += 1;
             if (index == args.len) return error.MissingOptionValue;
@@ -99,6 +103,11 @@ fn runTest(init: std.process.Init, options: Options, class: []const u8, method: 
     try session_env.put("AZK_TEST_INSPECTION", "1");
     try session_env.put("AZK_TEST_RUNNER_AUTOMATION", "1");
     try session_env.put("AZK_SIZE", options.size);
+    // Cage's single kiosk window fills the output. Host-path tests address
+    // Wayland input by Android coordinates, which the presenter projects with
+    // this placement; core Wayland exposes no global toplevel position.
+    const separator = std.mem.indexOfScalar(u8, options.size, 'x') orelse return error.InvalidSize;
+    try session_env.put("AZK_TEST_WINDOW_PLACEMENT", try std.fmt.allocPrint(arena, "0,0,{s},{s}", .{ options.size[0..separator], options.size[separator + 1 ..] }));
     try session_env.put("ARTZIG_DATA_DIR", data);
     try session_env.put("ARTZIG_NATIVE_LIB_DIR", native_libraries);
     _ = session_env.swapRemove("AZK_TEST_SOCKET");
@@ -127,8 +136,12 @@ fn runTest(init: std.process.Init, options: Options, class: []const u8, method: 
     try runner_env.put("AZK_TEST_CLASS", "dev.artzig.testing.HostTestRunner");
     try runner_env.put("AZK_TEST_DEX", options.dex);
     _ = runner_env.swapRemove("AZK_TEST_SOCKET");
+    const argv: []const []const u8 = if (std.mem.eql(u8, class, "probe"))
+        &.{ options.probe, session_dir, method }
+    else
+        &.{ options.launcher, "--join", session_dir, "--javatest", "dev.artzig.uitest.UiTest", class, method };
     const result = try std.process.run(gpa, io, .{
-        .argv = &.{ options.launcher, "--join", session_dir, "--javatest", "dev.artzig.uitest.UiTest", class, method },
+        .argv = argv,
         .environ_map = &runner_env,
         .stdout_limit = .limited(64 * 1024 * 1024),
         .stderr_limit = .limited(64 * 1024 * 1024),

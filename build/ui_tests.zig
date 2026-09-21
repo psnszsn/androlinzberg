@@ -11,6 +11,8 @@ pub const sources = [_][]const u8{
     "tests/ui/kotlin/dev/artzig/uitest/UiTestMain.kt",
     "tests/ui/kotlin/dev/artzig/uitest/SessionDiagnosticsUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/WindowInputUiTest.kt",
+    "tests/ui/kotlin/dev/artzig/uitest/host/WaylandInputUiTest.kt",
+    "tests/ui/kotlin/dev/artzig/uitest/host/WaylandSeat.kt",
 };
 
 /// `Class#method` per line; the orchestrator's default selection.
@@ -18,6 +20,14 @@ pub const tests = [_][]const u8{
     "dev.artzig.uitest.SessionDiagnosticsUiTest#unsupportedFrameworkCallIsJournalled",
     "dev.artzig.uitest.WindowInputUiTest#clickingButtonUpdatesStatus",
     "dev.artzig.uitest.WindowInputUiTest#twoClicksCountTwice",
+    // Host path: real Wayland input through the presenter and InputDispatcher.
+    "dev.artzig.uitest.host.WaylandInputUiTest#tapReachesTheView",
+    "dev.artzig.uitest.host.WaylandInputUiTest#overlappingChildrenInterceptionAndRemoval",
+    "dev.artzig.uitest.host.WaylandInputUiTest#seekBarDragPreservesTrackingCallbacks",
+    "dev.artzig.uitest.host.WaylandInputUiTest#hostF11EntersAndExitsCompositorFullscreen",
+    // Presenter-only checks by the native probe (tests/ui/probe).
+    "probe#presentedFramesAdvance",
+    "probe#resourcesAreAccounted",
 };
 
 const androidx = "prebuilts/sdk/current/androidx/m2repository/androidx/";

@@ -1793,6 +1793,32 @@ pub fn build(b: *std.Build) void {
         .target = b.graph.host,
         .optimize = .ReleaseSafe,
     }) });
+    // The presenter probe: a native inspector on the Zig generated from the
+    // presenter's AIDL. It never carries a Surface, so its aidl_custom is inert.
+    const probe_parcelables = b.createModule(.{
+        .root_source_file = b.path("tests/ui/probe/parcelables.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "aidl", .module = aidl_runtime }},
+    });
+    const presenter_probe = b.addExecutable(.{ .name = "presenter-probe", .root_module = b.createModule(.{
+        .root_source_file = b.path("tests/ui/probe/presenter_probe.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "aidl", .module = aidl_runtime },
+            .{ .name = "task_presenter_aidl", .module = aidl_zig.zigModule(b, generated.aidl_tool, .{
+                .root = b.path("aidl-compat"),
+                .files = &.{ "dev/artzig/window/IWaylandTaskEvents.aidl", "dev/artzig/window/IWaylandTaskPresenter.aidl" },
+                .runtime = aidl_runtime,
+                .custom = probe_parcelables,
+                .target = target,
+                .optimize = optimize,
+            }) },
+        },
+    }) });
+    presenter_probe.root_module.linkLibrary(binder_ndk);
     const ui_test_run = @import("build/command.zig").create(b);
     setApplicationEnvironment(ui_test_run, application_tree);
     ui_test_run.setEnvironment("WLR_RENDERER", "gles2");
@@ -1806,6 +1832,8 @@ pub fn build(b: *std.Build) void {
     ui_test_run.addFileArg(window_fixture.apk);
     ui_test_run.addArg("--dex");
     ui_test_run.addFileArg(ui_tests_dex);
+    ui_test_run.addArg("--probe");
+    ui_test_run.addFileArg(presenter_probe.getEmittedBin());
     ui_test_run.addArgs(&.{ "--artifacts", "zig-out/test-results/ui" });
     ui_test_run.addArgs(&ui_tests.tests);
     ui_test_run.addPassthruArgs();

@@ -55,6 +55,7 @@ const Entry = struct {
 const Request = struct {
     code: u32,
     pid: i32,
+    uid: u32,
     input: aidl.Parcel,
     output: aidl.Parcel,
     status: i32 = -32,
@@ -823,6 +824,9 @@ const Server = struct {
         const inspection = comptime isOneOf(name, &.{ "observeTestFrames", "testWindow", "testResources", "testHoldOutput", "testWindowState", "injectTestInput" });
         const drag_source = comptime isOneOf(name, &.{ "acceptNativeDrag", "finishNativeDrag", "claimNativeDrag", "startNativeDrag", "cancelNativeDragSource", "retireNativeDragIcon" });
         if (inspection and !self.inspection_enabled) return permission_denied;
+        // A host test tool (the broker's inspector, Android's shell uid) drives
+        // the inspection methods only; everything else is the system server's.
+        if (request.uid != system_uid and !inspection) return permission_denied;
         if (!inspection and comptime !std.mem.eql(u8, name, "connectSeat")) {
             if (self.owner_pid != 0 and self.owner_pid != request.pid) return permission_denied;
             if (drag_source and self.owner == null) return permission_denied;
@@ -840,6 +844,9 @@ const Server = struct {
     }
 };
 const M = Presenter.method;
+/// android.os.Process.SYSTEM_UID and SHELL_UID.
+const system_uid: u32 = 1000;
+const shell_uid: u32 = 2000;
 /// STATUS_PERMISSION_DENIED; the Java proxy raises SecurityException.
 const permission_denied: i32 = -1;
 fn isOneOf(comptime name: []const u8, comptime names: []const []const u8) bool {
@@ -865,9 +872,10 @@ fn transact(_: *anyopaque, code: u32, input: aidl.Parcel, output: aidl.Parcel) i
     _ = callbacks.fetchAdd(1, .acq_rel);
     defer _ = callbacks.fetchSub(1, .acq_rel);
     if (!accepting.load(.acquire)) return aidl.status_dead_object;
-    if (aidl.callingUid() != 1000) return permission_denied;
+    const uid = aidl.callingUid();
+    if (uid != system_uid and uid != shell_uid) return permission_denied;
     const io = server.io;
-    var request: Request = .{ .code = code, .pid = aidl.callingPid(), .input = input, .output = output };
+    var request: Request = .{ .code = code, .pid = aidl.callingPid(), .uid = uid, .input = input, .output = output };
     server.mutex.lockUncancelable(io);
     if (!accepting.load(.acquire) or server.request_count == server.requests.len) {
         server.mutex.unlock(io);
