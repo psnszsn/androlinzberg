@@ -108,7 +108,9 @@ pub const Options = struct {
     cookie: []const u8,
     system_cookie: []const u8,
     /// Present only when the session was started for inspection. A peer that
-    /// presents it joins as `inspector` (see `inspector_services`).
+    /// presents it joins as `inspector`: Android's shell uid, which may look up
+    /// services as `adb shell` can (each service enforces its own permissions
+    /// against that uid) but registers none.
     inspector_cookie: ?[]const u8 = null,
     /// File every session process maps read-only for `SystemProperties`.
     prop_area_path: []const u8,
@@ -915,20 +917,6 @@ fn handleRevokeLaunch(peer: *Peer, header: Client.Message.Header, body: []const 
 /// android.os.Process.SHELL_UID.
 const shell_uid: u32 = 2000;
 
-/// What an inspector may look up: the services android.app.UiAutomation and
-/// UiAutomationConnection obtain, plus the hosted inspection journal and the
-/// task presenter's test methods. It registers nothing.
-const inspector_services = [_][]const u8{
-    "accessibility",               "window", "permissionmgr",
-    "activity",                    "user",   "dev.artzig.testing.inspection",
-    "dev.artzig.window.presenter",
-};
-
-fn inspectorMaySee(name: []const u8) bool {
-    for (inspector_services) |allowed| if (std.mem.eql(u8, name, allowed)) return true;
-    return false;
-}
-
 /// Registry policy: the system process may claim any name; an app may only
 /// claim its own package name or names beneath it.
 fn mayRegister(peer: *const Peer, name: []const u8) bool {
@@ -1429,8 +1417,7 @@ const Service = struct {
     allow_isolated: bool,
     dump_priority: u32,
 
-    fn permits(service: Service, peer: *const Peer, name: []const u8) bool {
-        if (peer.role == .inspector) return inspectorMaySee(name);
+    fn permits(service: Service, peer: *const Peer) bool {
         return service.allow_isolated or !isIsolated(peer.android_uid);
     }
 };
@@ -1478,7 +1465,7 @@ fn registerService(b: *Broker, peer: *Peer, object: *Object, name: []const u8, a
         if (b.peers.get(w.peer)) |waiter| {
             waiter.service_waiters -= 1;
             if (waiter.alive) {
-                const allowed = service.permits(waiter, name);
+                const allowed = service.permits(waiter);
                 const ref = if (allowed) try b.deliverRef(waiter, object) else ObjectRef.null_ref;
                 waiter.enqueue(try b.encode(Server.serveServiceResult, .{ w.request_id, @as(Server.Message.ServiceResult.Status, if (allowed) .ok else .not_found), ref, "" }));
             }
@@ -1579,7 +1566,7 @@ fn handleLookup(peer: *Peer, header: Client.Message.Header, body: []const u8) Se
     b.mutex.lockUncancelable(io);
     defer b.mutex.unlock(io);
     if (b.services.get(name)) |service| {
-        if (!service.permits(peer, name)) {
+        if (!service.permits(peer)) {
             peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .not_found, ObjectRef.null_ref, "" }));
             return;
         }
@@ -1739,7 +1726,7 @@ fn handleServiceManagerTransact(
 /// is absent or not visible to that peer.
 fn smServiceBinder(b: *Broker, peer: *Peer, name: []const u8) ServeError!?aidl.Binder {
     const service = b.services.get(name) orelse return null;
-    if (!service.permits(peer, name)) return null;
+    if (!service.permits(peer)) return null;
     return parcelBinder(try b.deliverRef(peer, b.objects.get(service.object_id).?));
 }
 

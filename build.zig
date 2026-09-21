@@ -1784,6 +1784,34 @@ pub fn build(b: *std.Build) void {
     integration_run.run.setName("run APK integration tests under Cage");
     b.step("integration-test", "Run Kotlin APK integration tests under Cage").dependOn(&integration_run.run.step);
 
+    // UI tests on ART: JUnit + androidx UiAutomator over stock UiAutomation,
+    // one session per test, orchestrated by tools/ui-test-runner.zig under Cage.
+    const ui_tests = @import("build/ui_tests.zig");
+    const ui_tests_dex = ui_tests.build(b, aosp_dep, java, testkit.jars.junit_hamcrest);
+    const ui_test_runner = b.addExecutable(.{ .name = "ui-test-runner", .root_module = b.createModule(.{
+        .root_source_file = b.path("tools/ui-test-runner.zig"),
+        .target = b.graph.host,
+        .optimize = .ReleaseSafe,
+    }) });
+    const ui_test_run = @import("build/command.zig").create(b);
+    setApplicationEnvironment(ui_test_run, application_tree);
+    ui_test_run.setEnvironment("WLR_RENDERER", "gles2");
+    ui_test_run.addArg("bash");
+    ui_test_run.addFileArg(b.path("tools/shot.sh"));
+    ui_test_run.addArgs(&.{ "zig-out/test-results/ui/suite.png", "--runner", "--" });
+    ui_test_run.addFileArg(ui_test_runner.getEmittedBin());
+    ui_test_run.addArg("--launcher");
+    ui_test_run.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    ui_test_run.addArg("--apk");
+    ui_test_run.addFileArg(window_fixture.apk);
+    ui_test_run.addArg("--dex");
+    ui_test_run.addFileArg(ui_tests_dex);
+    ui_test_run.addArgs(&.{ "--artifacts", "zig-out/test-results/ui" });
+    ui_test_run.addArgs(&ui_tests.tests);
+    ui_test_run.addPassthruArgs();
+    ui_test_run.run.setName("run UiAutomator tests on ART, one session per test");
+    b.step("ui-test", "Run JUnit/UiAutomator UI tests on ART under Cage").dependOn(&ui_test_run.run.step);
+
     // A host ART process joins the session as the broker's inspector role and
     // drives the fixture through stock UiAutomation and AccessibilityManagerService.
     const uiautomation_run = @import("build/command.zig").create(b);

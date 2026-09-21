@@ -148,3 +148,32 @@ python3 tools/binder-facade-test.py \
 The harness checks remote pixel mutation, buffer metadata, sync-file transfer
 and peer death. `run/results.json` records library hashes and results. Use the
 normal graphics and APK gates to verify production rendering.
+
+## UI tests on ART (UiAutomator)
+
+`zig build -j10 ui-test` runs JUnit tests written against the pinned androidx
+UiAutomator (`tests/ui/kotlin`) on the hosted ART itself. They reach apps the
+way instrumentation does on a device: stock `UiAutomation` registered with the
+session's real `AccessibilityManagerService`, node queries through each app's
+`AccessibilityInteractionController`, and input through
+`IInputManager.injectInputEventToTarget` into the stock InputDispatcher.
+
+`tools/ui-test-runner.zig` orchestrates them under the Cage harness. An ART
+process authenticates to one session's broker when it starts, so every test
+method gets a fresh session running the app and a fresh runner process. The
+runner joins with `AZK_BINDER_ROLE=inspector`: the broker admits it as Android's
+shell uid (only in a session started for inspection), which holds the
+permissions the pinned Shell manifest requests and may register no service.
+`dev.artzig.testing.HostTestRunner` loads the test dex (`AZK_TEST_DEX`) and keeps
+the main looper running while the test executes.
+
+```sh
+zig build -j10 ui-test -- --class WindowInputUiTest --method clickingButtonUpdatesStatus
+```
+
+Artifacts are retained under `zig-out/test-results/ui/<class>.<method>/`
+(`app.log` for the session, `test.log` for the runner). Add a test by listing
+its source and `Class#method` in `build/ui_tests.zig`. This path replaces the
+Varlink test-control protocol; the legacy `integration-test` suite remains
+until its tests have been ported.
+

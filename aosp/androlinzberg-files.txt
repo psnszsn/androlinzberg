@@ -4569,6 +4569,9 @@ F aosp frameworks/base/core/java/com/android/internal/accessibility/dialog/OnTar
 F aosp frameworks/base/core/java/com/android/internal/accessibility/dialog/OnTargetSelectedListener.java
 F aosp frameworks/base/core/java/com/android/internal/accessibility/dialog/TargetAdapter.java
 F aosp frameworks/base/core/java/com/android/internal/accessibility/dialog/TargetOperations.java
+# androidx UiAutomator and its one runtime dependency, for UI tests on ART.
+F aosp prebuilts/sdk/current/androidx/m2repository/androidx/test/uiautomator/uiautomator/2.4.0-alpha01/uiautomator-2.4.0-alpha01.aar
+F aosp prebuilts/sdk/current/androidx/m2repository/androidx/tracing/tracing-android/1.3.0-beta01/tracing-android-1.3.0-beta01.aar
 # Permissions of android.uid.shell, the broker inspector's identity.
 F aosp frameworks/base/packages/Shell/AndroidManifest.xml
 # Stock AccessibilityManagerService closure (see build/java_sources.zig).

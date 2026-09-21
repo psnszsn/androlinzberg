@@ -28,7 +28,9 @@ import android.view.KeyCharacterMap
 internal class HostedInputManagerService(private val handler: Handler = Handler(Looper.getMainLooper()),
     private val devicesChanged: () -> Unit = {},
     private val captureRequest: ((IBinder, Boolean) -> Unit)? = null,
-    private val pointerIconRequest: ((android.view.PointerIcon, Int, Int, Int, IBinder?) -> Boolean)? = null) :
+    private val pointerIconRequest: ((android.view.PointerIcon, Int, Int, Int, IBinder?) -> Boolean)? = null,
+    private val injectRequest: ((android.view.InputEvent, Int, Int) -> Int)? = null,
+    private val hasPermission: (String) -> Boolean = { false }) :
     IInputManager.Stub(HostedBootstrapPermissionEnforcer()),
     IInputManager by unsupported<IInputManager>() {
     // Interface delegation must not shadow the Binder identity.
@@ -210,6 +212,40 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
             } else {
                 for (i in keyCodes.indices) keyExists[i] = keyCodes[i] in keyboardKeys
                 true
+            }
+        }
+    }
+
+    override fun injectInputEvent(event: android.view.InputEvent?, mode: Int): Boolean =
+        injectInputEventToTarget(event, mode, android.os.Process.INVALID_UID)
+
+    /** Pinned InputManagerService.injectInputEventToTarget: INJECT_EVENTS allows
+     * injection into any window; the stock dispatcher performs it and its result
+     * maps to the same return values and exceptions. */
+    override fun injectInputEventToTarget(event: android.view.InputEvent?, mode: Int, targetUid: Int): Boolean {
+        if (Binder.getCallingUid() != android.os.Process.SYSTEM_UID && !hasPermission(android.Manifest.permission.INJECT_EVENTS)) {
+            throw SecurityException("Injecting input events requires the caller (or the source of the " +
+                "instrumentation, if any) to have the INJECT_EVENTS permission.")
+        }
+        java.util.Objects.requireNonNull(event, "event must not be null")
+        require(mode in 0..2) { "mode is invalid" }
+        val inject = injectRequest ?: throw dev.artzig.ArtzigTestDiagnostics.unsupported(
+            "InputManagerService", "injectInputEventToTarget", "No stock input dispatcher is attached")
+        val pid = Binder.getCallingPid()
+        val identity = Binder.clearCallingIdentity()
+        val result = try { inject(event!!, targetUid, mode) } finally { Binder.restoreCallingIdentity(identity) }
+        return when (result) {
+            // android.os.InputEventInjectionResult (native input AIDL): SUCCEEDED, TARGET_MISMATCH.
+            0 -> true
+            1 -> {
+                check(targetUid != android.os.Process.INVALID_UID) {
+                    "Injection should not result in TARGET_MISMATCH when it is not targeted into to a specific uid."
+                }
+                throw IllegalArgumentException("Targeted input event injection from pid $pid was not directed at a window owned by uid $targetUid.")
+            }
+            else -> {
+                android.util.Slog.w("InputManager", "Input event injection from pid $pid did not succeed: $result")
+                false
             }
         }
     }

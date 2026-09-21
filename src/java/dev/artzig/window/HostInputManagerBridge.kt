@@ -134,6 +134,9 @@ class HostInputManagerBridge(private val context: Context, private val desktop: 
         dispatcher.displayRemoved(displayId)
     }
     fun requestPointerCapture(token: IBinder, enabled: Boolean) = dispatcher.requestPointerCapture(token, enabled)
+    /** InputManagerService.INJECTION_TIMEOUT_MILLIS and its FLAG_DISABLE_KEY_REPEAT policy flag. */
+    fun injectInputEvent(event: android.view.InputEvent, targetUid: Int, mode: Int): Int =
+        dispatcher.injectInputEvent(event, targetUid, mode, 30_000, com.android.server.policy.WindowManagerPolicy.FLAG_DISABLE_KEY_REPEAT)
     fun notifyPointerCaptureChanged(token: IBinder?, sequence: Int) = dispatcher.notifyPointerCaptureChanged(token, sequence)
     fun setDisplayEligibilityForPointerCapture(displayId: Int, eligible: Boolean) = dispatcher.setDisplayEligibilityForPointerCapture(displayId, eligible)
     fun pilferPointers(token: IBinder) = dispatcher.pilferPointers(token)

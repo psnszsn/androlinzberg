@@ -198,6 +198,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/system/HostedApexService.kt",
     "src/java/dev/artzig/system/HostedSafetyCenterService.kt",
     "src/java/dev/artzig/testing/UiAutomationInspectorSmoke.kt",
+    "src/java/dev/artzig/testing/HostTestRunner.kt",
     "src/java/com/android/server/pm/HostedApexPackages.kt",
     "src/java/com/android/server/pm/HostedPackageObservers.kt",
     "src/java/com/android/server/pm/HostedPackageProperties.kt",

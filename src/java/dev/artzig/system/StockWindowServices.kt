@@ -39,6 +39,10 @@ internal class StockWindowServices private constructor() {
         input.requestPointerCapture(token, enabled)
     }, pointerIconRequest = { icon, displayId, deviceId, pointerId, token ->
         setPointerIcon(icon, displayId, deviceId, pointerId, token)
+    }, injectRequest = { event, targetUid, mode ->
+        input.injectInputEvent(event, targetUid, mode)
+    }, hasPermission = { permission ->
+        context.checkCallingPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED
     })
     private lateinit var tasks: ActivityTaskManagerService
     private lateinit var windows: WindowManagerService

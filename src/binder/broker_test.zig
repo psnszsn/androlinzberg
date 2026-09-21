@@ -1984,7 +1984,7 @@ test "declared AIDL instances survive service startup and death independently of
     try expectManifestReply(&client, 10, interface, &.{ "alpha", "zeta" });
 }
 
-test "inspector joins as shell and sees only the automation services" {
+test "inspector joins as shell, looks services up and registers none" {
     const io = testing.io;
     const gpa = testing.allocator;
     const h = try Harness.start(gpa, io);
@@ -2007,9 +2007,8 @@ test "inspector joins as shell and sees only the automation services" {
 
     try inspector.client.serveLookupService(1, "accessibility", false);
     try expectServiceStatus(&inspector, 1, .ok);
-    // A registered service outside the allow-list is indistinguishable from an absent one.
     try inspector.client.serveLookupService(2, "package", false);
-    try expectServiceStatus(&inspector, 2, .not_found);
+    try expectServiceStatus(&inspector, 2, .ok);
     try inspector.client.serveRegisterService(3, ObjectRef.local(1), "dev.artzig.testing.inspection");
     try expectServiceStatus(&inspector, 3, .denied);
 }
