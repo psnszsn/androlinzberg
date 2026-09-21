@@ -1817,6 +1817,43 @@ pub fn build(b: *std.Build) void {
     ui_test_run.run.setName("run UiAutomator tests on ART, one session per test");
     b.step("ui-test", "Run JUnit/UiAutomator UI tests on ART under Cage").dependOn(&ui_test_run.run.step);
 
+    // Desktop (labwc) scenarios: one window fixture launched through ATMS as a
+    // task window, with the protocol under test enabled in the session.
+    inline for (.{
+        .{ .step = "ui-desktop-ime-test", .directory = "stock-ime", .environment = "AZK_TEST_IME", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopImeUiTest#unicodeCompositionSurvivesFocusAndProtocolChanges"} },
+    }) |scenario| {
+        const ui = @import("build/command.zig").create(b);
+        setApplicationEnvironment(ui, application_tree);
+        ui.setEnvironment("AZK_WINDOW_BACKEND", "stock");
+        ui.setEnvironment("AZK_TASK_WINDOWS", "1");
+        ui.setEnvironment("WLR_RENDERER", "gles2");
+        ui.setEnvironment("SHOT_COMPOSITOR", "labwc");
+        ui.setEnvironment("XKB_DEFAULT_LAYOUT", "us");
+        ui.setEnvironment(scenario.environment, "1");
+        ui.setFileEnvironment("SHOT_LABWC_BINARY", suspension_labwc.path(b, "bin/labwc"));
+        ui.addArg("env");
+        ui.addPrefixedFileArg("SHOT_LABWC_CONFIG=", b.path("testdata/wayland/launcher-desktop.xml"));
+        ui.addFileArg(b.path("tools/shot.sh"));
+        ui.addArgs(&.{ b.fmt("zig-out/test-results/{s}/suite.png", .{scenario.directory}), "--runner", "--" });
+        ui.addFileArg(ui_test_runner.getEmittedBin());
+        ui.addArg("--launcher");
+        ui.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+        ui.addArg("--apk");
+        ui.addFileArg(window_fixture.apk);
+        ui.addArg("--dex");
+        ui.addFileArg(ui_tests_dex);
+        ui.addArg("--probe");
+        ui.addFileArg(presenter_probe.getEmittedBin());
+        ui.addArg("--seat");
+        ui.addFileArg(surface_server.getEmittedBin());
+        ui.addArgs(&.{ "--artifacts", b.fmt("zig-out/test-results/{s}", .{scenario.directory}) });
+        ui.addArgs(scenario.tests);
+        ui.addPassthruArgs();
+        ui.run.has_side_effects = true;
+        ui.run.setName(b.fmt("run {s} on ART under labwc", .{scenario.step}));
+        b.step(scenario.step, "Desktop protocol scenario through UiAutomator on ART").dependOn(&ui.run.step);
+    }
+
     // Stock WebView through the same runner. The overlay variant also enables
     // Chromium's SurfaceControl overlays and checks its rendering trace.
     inline for (.{

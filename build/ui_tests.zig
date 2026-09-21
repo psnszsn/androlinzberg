@@ -15,6 +15,8 @@ pub const sources = [_][]const u8{
     "tests/ui/kotlin/dev/artzig/uitest/UiApp.kt",
     "tests/ui/kotlin/dev/artzig/uitest/WindowFixtureUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/WindowInputUiTest.kt",
+    "tests/ui/kotlin/dev/artzig/uitest/host/DesktopImeUiTest.kt",
+    "tests/ui/kotlin/dev/artzig/uitest/host/HostSession.kt",
     "tests/ui/kotlin/dev/artzig/uitest/host/WaylandInputUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/host/WaylandSeat.kt",
 };

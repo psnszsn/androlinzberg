@@ -116,7 +116,9 @@ SESSION
 }
 run_compositor sh -c '
   if [ -n "${SHOT_RUNNER_MODE:-}" ]; then
-    "$@"
+    # labwc starts its session without a stdin. A runner that spawns children
+    # with pipes needs descriptors 0-2 occupied, or a pipe end lands on one.
+    "$@" </dev/null
     exit $?
   fi
   if [ -n "${SHOT_TEST_EXECUTABLE:-}" ]; then

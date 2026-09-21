@@ -15,6 +15,7 @@
 //!
 //! Usage: ui-test-runner --launcher <androlinzberg> --apk <apk> --dex <ui-tests.jar>
 //!            --probe <presenter-probe> --artifacts <dir> [--size WxH]
+//!            [--seat <wayland-surface-server>]
 //!            [--named-apk <name>=<path>]...
 //!            [--pinned-apk <name>=<ENVIRONMENT VARIABLE>=<sha256>]...
 //!            [--class <suffix>] [--method <name>] <Class#method>...
@@ -30,6 +31,9 @@ const Options = struct {
     apk: []const u8 = "",
     dex: []const u8 = "",
     probe: []const u8 = "",
+    /// Started with `--keyboard-seat` for each session: a desktop compositor
+    /// grants keyboard focus only once a real keyboard device exists.
+    seat: ?[]const u8 = null,
     artifacts: []const u8 = "",
     size: []const u8 = "1280x720",
     class: ?[]const u8 = null,
@@ -55,6 +59,10 @@ pub fn main(init: std.process.Init) !void {
             index += 1;
             if (index == args.len) return error.MissingOptionValue;
             destination.* = args[index];
+        } else if (std.mem.eql(u8, arg, "--seat")) {
+            index += 1;
+            if (index == args.len) return error.MissingOptionValue;
+            options.seat = args[index];
         } else if (std.mem.eql(u8, arg, "--named-apk")) {
             index += 1;
             if (index == args.len) return error.MissingOptionValue;
@@ -159,41 +167,59 @@ fn runTest(init: std.process.Init, options: Options, class: []const u8, method: 
     // registration to the runner.
     try session_env.put("AZK_TEST_INSPECTION", "1");
     try session_env.put("AZK_TEST_RUNNER_AUTOMATION", "1");
-    try session_env.put("AZK_SIZE", options.size);
     // Cage's single kiosk window fills the output. Host-path tests address
     // Wayland input by Android coordinates, which the presenter projects with
     // this placement; core Wayland exposes no global toplevel position.
-    const separator = std.mem.indexOfScalar(u8, options.size, 'x') orelse return error.InvalidSize;
-    try session_env.put("AZK_TEST_WINDOW_PLACEMENT", try std.fmt.allocPrint(arena, "0,0,{s},{s}", .{ options.size[0..separator], options.size[separator + 1 ..] }));
+    const desktop = std.mem.eql(u8, init.minimal.environ.getPosix("SHOT_COMPOSITOR") orelse "", "labwc");
+    try session_env.put("AZK_TEST_WINDOW_PLACEMENT", try placement(init, arena, options.size, desktop));
+    // A kiosk session takes its launch size from the test; a desktop session
+    // leaves window geometry to the compositor and the task organizer.
+    if (!desktop) try session_env.put("AZK_SIZE", options.size);
     try session_env.put("ARTZIG_DATA_DIR", data);
     try session_env.put("ARTZIG_NATIVE_LIB_DIR", native_libraries);
     _ = session_env.swapRemove("AZK_TEST_SOCKET");
 
     // The kiosk compositor's output is the launch size (as the task placement
     // above assumes); AZK_HEADLESS_OUTPUT names it when the harness made one.
-    if (init.minimal.environ.getPosix("AZK_HEADLESS_OUTPUT")) |output| {
+    if (desktop) {
+        // The desktop configuration owns its outputs and window placement.
+    } else if (init.minimal.environ.getPosix("AZK_HEADLESS_OUTPUT")) |output| {
         const mode = try std.process.run(gpa, io, .{ .argv = &.{ "wlr-randr", "--output", output, "--custom-mode", options.size } });
         defer gpa.free(mode.stdout);
         defer gpa.free(mode.stderr);
         if (mode.term != .exited or mode.term.exited != 0) return error.HeadlessOutputModeFailed;
     }
 
-    const log_file = try Io.Dir.cwd().createFile(io, app_log, .{});
-    defer log_file.close(io);
+    var seat: ?std.process.Child = null;
+    defer if (seat) |*helper| {
+        if (helper.stdin) |stdin| stdin.close(io);
+        helper.stdin = null;
+        helper.kill(io);
+    };
+    if (options.seat) |helper| {
+        seat = try std.process.spawn(io, .{ .argv = &.{ helper, "--keyboard-seat" }, .stdin = .pipe, .stdout = .pipe, .stderr = .inherit });
+        var line: [16]u8 = undefined;
+        const count = try seat.?.stdout.?.readStreaming(io, &.{&line});
+        if (!std.mem.startsWith(u8, line[0..count], "ready")) return error.KeyboardSeatNotReady;
+    }
+
+    // The shell only redirects and then becomes the launcher, so the child's
+    // pid and stdin are the session's.
+    (try Io.Dir.cwd().createFile(io, app_log, .{})).close(io);
+    try session_env.put("AZK_UI_TEST_SESSION_LOG", app_log);
     var session = try std.process.spawn(io, .{
-        .argv = &.{ options.launcher, options.apk },
+        .argv = &.{ "sh", "-c", "exec \"$0\" \"$@\" >\"$AZK_UI_TEST_SESSION_LOG\" 2>&1", options.launcher, options.apk },
         .environ_map = &session_env,
         .stdin = .pipe,
-        .stdout = .{ .file = log_file },
-        .stderr = .{ .file = log_file },
+        .stdout = .inherit,
+        .stderr = .inherit,
     });
-    defer {
-        // Session services watch their supervisor; closing stdin and ending the
-        // launcher retires the whole tree.
+    var session_running = true;
+    defer if (session_running) {
         if (session.stdin) |stdin| stdin.close(io);
         session.stdin = null;
         session.kill(io);
-    }
+    };
 
     const session_dir = try awaitSession(io, arena, app_log);
 
@@ -201,6 +227,8 @@ fn runTest(init: std.process.Init, options: Options, class: []const u8, method: 
     try runner_env.put("AZK_BINDER_ROLE", "inspector");
     try runner_env.put("AZK_TEST_CLASS", "dev.artzig.testing.HostTestRunner");
     try runner_env.put("AZK_TEST_DEX", options.dex);
+    // Host-path tests also assert on what the session's native services logged.
+    try runner_env.put("AZK_TEST_SESSION_LOG", try Io.Dir.cwd().realPathFileAlloc(io, app_log, arena));
     _ = runner_env.swapRemove("AZK_TEST_SOCKET");
     const argv: []const []const u8 = if (std.mem.eql(u8, class, "probe"))
         &.{ options.probe, session_dir, method }
@@ -219,10 +247,64 @@ fn runTest(init: std.process.Init, options: Options, class: []const u8, method: 
     defer output.close(io);
     try output.writeStreamingAll(io, result.stdout);
     try output.writeStreamingAll(io, result.stderr);
-    return switch (result.term) {
+    const test_passed = switch (result.term) {
         .exited => |code| code == 0,
         else => false,
     };
+
+    // Closing stdin lets Session.stop keep its system -> presenter ->
+    // SurfaceFlinger -> broker order; a session that ignores it is killed.
+    if (session.stdin) |stdin| stdin.close(io);
+    session.stdin = null;
+    var waited: u32 = 0;
+    while (waited < 10_000 and !exited(io, arena, session.id.?)) : (waited += 50) {
+        // A desktop session lives until its last task window closes. The seat
+        // sends the compositor's close shortcut to each focused window in turn.
+        if (seat) |helper| if (waited % 500 == 0) helper.stdin.?.writeStreamingAll(io, "c") catch {};
+        try Io.sleep(io, .fromMilliseconds(50), .awake);
+    }
+    session.kill(io);
+    session_running = false;
+
+    // Every session must end without leaked graphics buffers or fatal output.
+    const log = try Io.Dir.cwd().readFileAlloc(io, app_log, arena, .limited(256 * 1024 * 1024));
+    // Only a desktop session presents task windows through the presenter.
+    var clean = !desktop or std.mem.indexOf(u8, log, "task presenter released all buffers") != null;
+    if (!clean) std.debug.print("ui-test: {s}#{s}: the task presenter did not report releasing its buffers\n", .{ class, method });
+    for ([_][]const u8{ "Native thread exited without calling DetachCurrentThread", "FATAL EXCEPTION", "Unhandled exception", "panic:" }) |fatal| {
+        if (std.mem.indexOf(u8, log, fatal) == null) continue;
+        std.debug.print("ui-test: {s}#{s}: session log contains \"{s}\"\n", .{ class, method, fatal });
+        clean = false;
+    }
+    return test_passed and clean;
+}
+
+/// A child that has exited is a zombie until it is reaped.
+fn exited(io: Io, arena: std.mem.Allocator, pid: std.process.Child.Id) bool {
+    const path = std.fmt.allocPrint(arena, "/proc/{d}/stat", .{pid}) catch return false;
+    const stat = Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(4096)) catch return true;
+    const after_name = std.mem.lastIndexOfScalar(u8, stat, ')') orelse return false;
+    return after_name + 2 < stat.len and stat[after_name + 2] == 'Z';
+}
+
+/// Where the task's window is on its output, which Android cannot discover.
+/// The kiosk compositor fills an output of the launch size; the desktop test
+/// configuration places the window at the origin of its own output, whose size
+/// the compositor's screenshot reports.
+fn placement(init: std.process.Init, arena: std.mem.Allocator, size: []const u8, desktop: bool) ![]const u8 {
+    if (!desktop) {
+        const separator = std.mem.indexOfScalar(u8, size, 'x') orelse return error.InvalidSize;
+        return std.fmt.allocPrint(arena, "0,0,{s},{s}", .{ size[0..separator], size[separator + 1 ..] });
+    }
+    const capture = try std.process.run(init.gpa, init.io, .{ .argv = &.{ "grim", "-t", "ppm", "-" }, .stdout_limit = .limited(256 * 1024 * 1024) });
+    defer init.gpa.free(capture.stdout);
+    defer init.gpa.free(capture.stderr);
+    var lines = std.mem.splitScalar(u8, capture.stdout, '\n');
+    if (!std.mem.eql(u8, lines.next() orelse "", "P6")) return error.InvalidOutputCapture;
+    var dimensions = std.mem.splitScalar(u8, lines.next() orelse return error.InvalidOutputCapture, ' ');
+    const width = dimensions.next() orelse return error.InvalidOutputCapture;
+    const height = dimensions.next() orelse return error.InvalidOutputCapture;
+    return std.fmt.allocPrint(arena, "0,0,{s},{s}", .{ width, height });
 }
 
 /// The launcher prints its session directory once the broker is up; the session

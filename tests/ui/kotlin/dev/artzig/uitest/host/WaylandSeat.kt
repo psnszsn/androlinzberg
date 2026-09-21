@@ -43,6 +43,8 @@ object WaylandSeat {
 
     fun tap(at: Point) = inject(TAP, at, at, "")
     fun drag(from: Point, to: Point) = inject(DRAG, from, to, "")
+    /** Taps `at` for keyboard focus, then types `text` on the Wayland keyboard. */
+    fun tapThenType(at: Point, text: String) = inject(TAP_THEN_TEXT, at, at, text)
     /** Taps `at` for keyboard focus, then presses the named key (e.g. "F11"). */
     fun tapThenKey(at: Point, key: String) = inject(TAP_THEN_KEY, at, at, key)
 
@@ -62,6 +64,7 @@ object WaylandSeat {
 
     private const val TAP = 0
     private const val DRAG = 1
+    private const val TAP_THEN_TEXT = 4
     private const val TAP_THEN_KEY = 5
     private const val TIMEOUT = 30_000L
 }
