@@ -25,8 +25,6 @@ out = a.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 env = os.environ.copy()
-for key in ('AZK_TEST_SOCKET', 'AZK_TEST_STEP_LOG', 'AZK_TEST_RAW_LOG'):
-    env.pop(key, None)
 report = {'passed': False, 'fault': a.fault}
 owned = {}
 owner = None

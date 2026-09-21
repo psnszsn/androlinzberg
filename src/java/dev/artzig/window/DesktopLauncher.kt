@@ -54,8 +54,6 @@ object DesktopLauncher {
         val listener = object : TaskStackListener() {
             override fun onTaskStackChanged() { changed.set(true) }
         }
-        val testControl = owner && System.getenv("AZK_TEST_SOCKET") != null
-        if (testControl) dev.artzig.testing.SessionTestControl.start()
         try {
             if (owner) {
                 // Task callbacks stop when a service dies. Watch each identity
@@ -90,7 +88,6 @@ object DesktopLauncher {
                     sessionLost(deadService)
                     break
                 }
-                if (testControl) dev.artzig.testing.SessionTestControl.tick()
                 if (changed.getAndSet(false)) {
                     val live = tasks.getTasks(128, false, true, android.view.Display.DEFAULT_DISPLAY)
                         .any { it.baseActivity != null && it.numActivities > 0 &&

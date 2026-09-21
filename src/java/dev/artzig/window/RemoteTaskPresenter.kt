@@ -72,7 +72,6 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
         }
     })
     @Volatile private var queuedTestInput = 0L
-    fun testInputQueued(sequence: Long): Boolean = sequence > 0 && queuedTestInput >= sequence
     fun toggleFullscreen(token: android.os.IBinder) {
         check(Looper.myLooper() === handler.looper)
         val window = taskForToken(token)?.let(windows::get) ?: return

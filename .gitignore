@@ -8,3 +8,6 @@ aosp/
 vendor/*
 javac.*.args
 __pycache__/
+
+# SurfaceFlinger/ART aborts during GPU-less test runs
+core.*

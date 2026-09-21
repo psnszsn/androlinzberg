@@ -102,23 +102,30 @@ than private shim state. For adapted lifecycle code, explicitly test callback
 ordering, handled versus unhandled configuration changes, saved-state restore,
 and the absence of application-specific branches.
 
-## APK integration tests
+## APK UI tests
 
 `zig build -j10 jvm-test` exercises framework and class-loading smokes, but it
 does not launch an APK through `ApkHost`. Changes to `ApkHost`, activity or
 application startup, input services, class loading, resources, windows, HWUI,
-or lifecycle behavior must also run the APK integration tests. Do not treat a
-passing `jvm-test` or built-in `ViewHost` test as a substitute.
+or lifecycle behavior must also run the UI tests. Do not treat a passing
+`jvm-test` or built-in `ViewHost` test as a substitute.
 
-The pinned APKs and their environment variables are declared in
-`tests/apks.json`. For NewPipe, provide the APK by absolute path; the testkit
-checks its SHA-256 before launch. From outside the development shell, run the
-complete suite with:
+The UI tests are JUnit tests written against androidx UiAutomator
+(`tests/ui/kotlin`) and run on the hosted ART. `tools/ui-test-runner.zig` starts
+a fresh session and a fresh runner process for every test method, under the
+existing `tools/shot.sh` harness with `WLR_RENDERER=gles2`. The runner joins the
+session as the broker's inspector (Android's shell uid) and reaches apps the way
+instrumentation does on a device: stock `UiAutomation`, the session's real
+`AccessibilityManagerService`, and `IInputManager` injection. There is no
+private test-control protocol; do not add one.
+
+NewPipe is pinned by SHA-256 in `build/ui_tests.zig`; provide it by absolute
+path. From outside the development shell, run the complete suite with:
 
 ```sh
 nix develop ./artzig -c env \
   AZK_APK_NEWPIPE_0_29_1=/absolute/path/to/NewPipe_v0.29.1.apk \
-  zig build -j10 integration-test
+  zig build -j10 ui-test
 ```
 
 During development, run the smallest relevant test first. The launch test is
@@ -127,99 +134,80 @@ the minimum regression for changes that can affect `ApkHost.init`:
 ```sh
 nix develop ./artzig -c env \
   AZK_APK_NEWPIPE_0_29_1=/absolute/path/to/NewPipe_v0.29.1.apk \
-  zig build -j10 integration-test -- \
-  --class NewPipeTest --method launchesHomeWithoutRuntimeIssues
+  zig build -j10 ui-test -- \
+  --class NewPipeUiTest --method launchesHomeWithoutRuntimeIssues
 ```
 
 Before merging such changes, run the complete suite without `--class` or
-`--method`. The integration target already uses `WLR_RENDERER=gles2` and the
-existing `tools/shot.sh` Cage harness. It also runs the testkit unit tests; run
-them alone with `zig build -j10 testkit-test` when changing the testkit.
+`--method`. Changes to the Wayland presenter, seat translation, clipboard, drag
+and drop, text input or task windows must also run the desktop scenarios, which
+run the same way under labwc: `stock-desktop-launcher-test`, `stock-ime-test`,
+`stock-clipboard-test`, `stock-drag-test` and `stock-video-test`.
 
 Per-test artifacts are retained under
-`zig-out/test-results/integration/<class>.<method>/`. Inspect `steps.jsonl` and
-`app.log` on every failure; `screenshot.png`, `a11y.json`, and `failure.json`
-are additionally retained for failed tests. A regression is fixed only when
-the expected UI state is reached and every step has an empty
-`diagnostics.runtime.issues` list.
+`zig-out/test-results/ui/<class>.<method>/` (`zig-out/test-results/stock-*/` for
+the desktop scenarios): `app.log` is the session's complete stdout/stderr and
+`test.log` is the runner's, including the JUnit failure trace and one
+`UiTest: ISSUE <kind> <owner>.<member> [process:pid] <detail>` line per runtime
+issue. Inspect both on every failure. A regression is fixed only when the
+expected UI state is reached and the test ends with `issues=0`.
 
-## Headless Wayland UI testing
+## Writing UI tests
 
-- Use the existing `tools/shot.sh` headless Cage harness for Wayland UI work.
-  Extend it when necessary; do not create a second Cage/headless runner.
-- Use `WLR_RENDERER=gles2` for the hosted Android/HWUI application.
-- Put UI interactions that are meant to discover framework gaps behind
-  `tools/azk-test step`. A step captures a mark, performs one action, waits for
-  its requested settle condition, and collects only the logs, issues,
-  accessibility events, and tree state produced after that mark.
+- Add a test by listing its source and `Class#method[@WxH[@apk]]` in
+  `build/ui_tests.zig`. Do not create a second runner or a second
+  Cage/labwc harness; extend `tools/ui-test-runner.zig` and `tools/shot.sh`.
+- Write tests in the verbs of `dev.artzig.uitest.UiApp` over UiAutomator.
+  Prefer semantic selectors (`By.res`, `By.text`, `By.desc`) over coordinates so
+  a finding identifies the affected Android UI element.
+- Assert through Android APIs: accessibility nodes, `UiApp.screenshot()`
+  (SurfaceFlinger's composition, cropped to a window or view) and
+  `UiApp.assertLog`. Only `dev.artzig.uitest.host` tests touch the desktop:
+  `WaylandSeat` asks the task presenter for real Wayland pointer and key events,
+  and `HostSession` runs desktop tools (`wl-copy`, `grim`, the native drag peer)
+  for what Android cannot observe, such as the compositor's drag icon.
+- Every test fails on any new runtime issue. Call
+  `UiTest.allowRuntimeIssues()` only when deliberately inventorying an already
+  known gap; never in a regression test intended to prove the gap is fixed.
 
-Example test executable:
+Example:
 
-```sh
-#!/usr/bin/env bash
-set -euo pipefail
-tools/azk-test wait ready >/dev/null
-tools/azk-test step click --text "Sign in" --settle idle >/dev/null
-tools/azk-test step type --id com.example:id/email user@example.com \
-  --settle idle >/dev/null
-tools/azk-test wait exists --text "Welcome" >/dev/null
+```kotlin
+class SignInUiTest {
+    @Test
+    fun signingInShowsTheWelcomeScreen() {
+        click("Sign in")
+        waitFor(By.res("com.example:id/email")).text = "user@example.com"
+        expectVisible("Welcome")
+    }
+}
 ```
-
-Run it through the repository harness:
-
-```sh
-WLR_RENDERER=gles2 tools/shot.sh /tmp/login.png \
-  --test ./tests/login-ui -- \
-  ./zig-out/bin/androlinzberg app.apk
-```
-
-For an output such as `/tmp/login.png`, inspect:
-
-- `/tmp/login.steps.jsonl`: one complete JSON record per `step`.
-- `/tmp/login.log`: the complete application stdout/stderr stream.
-- `/tmp/login.failure.json`: final diagnostics and accessibility tree when the
-  test failed.
-- `/tmp/login.a11y.json`: final accessibility observation.
-- `/tmp/login.png`: final rendered frame.
 
 ## Discovering missing Android functionality
 
-1. Reproduce the behavior with the smallest possible `azk-test step` action.
-   Prefer semantic selectors (`--id`, `--text`, `--description`, `--role`) over
-   coordinates so the finding identifies the affected Android UI element.
-2. Read `diagnostics.runtime.issues` in that step's JSONL record first. This is
-   the authoritative missing-functionality journal:
+1. Reproduce the behavior with the smallest possible UI test: one action and
+   the expectation that follows it.
+2. Read the `UiTest: ISSUE` lines in that test's `test.log` first. They come
+   from the session's typed journal (`dev.artzig.testing.ISessionDiagnostics`:
+   the system server's records merged with every attached app's), which is the
+   authoritative missing-functionality journal:
    - `kind: "unimplemented"` identifies an explicit hosted-framework stub;
      use its `owner`, `member`, and `detail` fields to locate the implementation
      seam.
    - `kind: "runtime_exception"` identifies linkage, class-loading, verification,
      native-link, or generated `Stub!` failures observed in Android logging.
-3. Use `diagnostics.runtime.logs`, `diagnostics.android.events`, `raw_log`, and
-   the before/after accessibility trees to explain what led to the issue. Raw
-   stderr is supporting evidence, not the source of truth for classifying a
-   framework method as unimplemented.
+3. Use `app.log` and the accessibility state at the failure to explain what led
+   to the issue. Raw stderr is supporting evidence, not the source of truth for
+   classifying a framework method as unimplemented.
 4. Do not classify the launcher's optional host capability probes as missing
    functionality merely because the process log contains `NoSuchMethodError`.
    These probes are expected for hosts that omit optional methods and are
    deliberately excluded from structured issues. Report them only when there
    is separate evidence of broken requested behavior.
-5. By default, `azk-test step` exits nonzero when it observes a new structured
-   issue. Use `--allow-missing` only when deliberately inventorying an already
-   known gap; do not use it in regression tests intended to prove the gap is
-   fixed.
-6. After implementing a missing method, rerun the same step and require all of:
-   the action succeeds, `diagnostics.runtime.issues` is empty, the expected UI
-   state is present, and the Cage screenshot is correct.
-
-For a manual sequence outside `step`, use cursor-based diagnosis so startup
-noise is not attributed to the action:
-
-```sh
-tools/azk-test mark > /tmp/before.json
-tools/azk-test click --text "Continue" --settle idle
-tools/azk-test diagnose --since @/tmp/before.json
-```
+5. After implementing a missing method, rerun the same test and require all of:
+   the action succeeds, the test ends with `issues=0`, the expected UI state is
+   present, and the retained screenshot or capture is correct.
 
 When reporting a discovered gap, include the exact action, issue `owner` and
-`member`, relevant log lines, before/after UI state, and paths to the retained
-`.steps.jsonl`, `.failure.json`, and screenshot artifacts.
+`member`, relevant log lines, the UI state before and after, and the paths to
+the retained `app.log` and `test.log`.

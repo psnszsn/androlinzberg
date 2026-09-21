@@ -3,7 +3,6 @@
 const std = @import("std");
 const binder_session = @import("binder/session.zig");
 const fonts = @import("platform/fonts.zig");
-const test_control = @import("test_control.zig");
 const host_natives = @import("host_natives");
 const apk_optimizer = @import("apk_optimizer");
 extern "c" fn azk_art_prepare_signals() c_int;
@@ -39,7 +38,7 @@ const usage =
     \\  ARTZIG_FRAMEWORK_RES,
     \\  ARTZIG_FONT_FALLBACK_XML (skip fontconfig font discovery),
     \\  ARTZIG_VAAPI_DEVICE=/dev/dri/renderDNNN,
-    \\  AZK_TEST_SOCKET=/path/to/control.sock (private Varlink test service),
+    \\  AZK_TEST_INSPECTION=1 (admit a UiAutomation inspector to the session),
     \\  F11 toggles xdg-shell fullscreen mode.
     \\
 ;
@@ -359,8 +358,6 @@ fn run(init: std.process.Init) !void {
     try ensureSession(init, &binder, join_dir, present_tasks);
     if (apk != null and present_tasks) {
         if (frames_limit != null or fullscreen) return error.TaskWindowPresentationOptionsUnavailable;
-        const test_address = init.minimal.environ.getPosix("AZK_TEST_SOCKET");
-        if (test_address != null and binder == null) return error.TaskWindowTestControllerRequiresSessionOwner;
         const arena = init.arena.allocator();
         const path = if (std.fs.path.isAbsolute(apk.?)) apk.? else try std.fs.path.join(arena, &.{ init.minimal.environ.getPosix("PWD") orelse ".", apk.? });
         _ = setenv("ARTZIG_APK", try arena.dupeSentinel(u8, path, 0), 1);
@@ -372,15 +369,6 @@ fn run(init: std.process.Init) !void {
         var headless = try bootHeadlessApk(init, path, if (binder != null) .system else .app);
         defer headless.rt.releaseProcessState();
         if (binder) |*session| try session.awaitSystemReady();
-        var desktop_control: ?test_control.Server = null;
-        defer {
-            @import("desktop_test_control.zig").deinit();
-            if (desktop_control) |*server| server.deinit();
-        }
-        if (test_address) |address| {
-            desktop_control = try test_control.Server.init(init.gpa, init.io, address);
-            try @import("desktop_test_control.zig").register(@ptrCast(headless.rt.env), &desktop_control.?);
-        }
         try runFrameworkMain(&headless.rt, "dev.artzig.window.DesktopLauncher", &.{if (binder != null) "owner" else "joined"});
         const e = art.Env{ .env = headless.rt.env };
         const cls = try e.findClass("dev/artzig/window/DesktopLauncher");
@@ -453,8 +441,7 @@ fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_
             null,
         .environ = init.minimal.environ,
         .storage = storage,
-        .inspection = init.minimal.environ.getPosix("AZK_TEST_SOCKET") != null or
-            std.mem.eql(u8, init.minimal.environ.getPosix("AZK_TEST_INSPECTION") orelse "", "1"),
+        .inspection = std.mem.eql(u8, init.minimal.environ.getPosix("AZK_TEST_INSPECTION") orelse "", "1"),
     });
     _ = setenv(binder_session.socket_env, try arena.dupeSentinel(u8, binder.*.?.socket_path, 0), 1);
     _ = setenv(binder_session.cookie_env, try arena.dupeSentinel(u8, binder.*.?.cookie, 0), 1);

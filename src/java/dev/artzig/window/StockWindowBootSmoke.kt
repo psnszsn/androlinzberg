@@ -51,13 +51,6 @@ object StockWindowBootSmoke {
             .exceptionOrNull() is IllegalStateException)
         check(dev.artzig.BinderSession.assignedUid() == packages.getApplicationInfo(packageName, 0L, 0)!!.uid)
         val application = dev.artzig.HostedServiceClient.attachApplication(packageName)
-        if (dev.artzig.testing.ProcessInspection.enabled) {
-            val registry = dev.artzig.testing.IInspectionRegistry.Stub.asInterface(
-                ServiceManager.getService(dev.artzig.testing.ProcessInspection.SERVICE))
-            check(runCatching { registry.listProcesses() }.exceptionOrNull() is SecurityException)
-            check(runCatching { registry.observe(android.os.Process.myPid(), 1, 0, 0, 0) }
-                .exceptionOrNull() is SecurityException)
-        }
         check(application.packageName == packageName)
         check(application.checkSelfPermission(android.Manifest.permission.SYSTEM_ALERT_WINDOW) ==
             android.content.pm.PackageManager.PERMISSION_DENIED)
@@ -116,7 +109,7 @@ object StockWindowBootSmoke {
         }
         println("Stock AppOps: windowless access rejected, resumed activity access allowed")
         println("Stock ATMS resumed application task: ${resumed!!.taskId}")
-        if (dev.artzig.testing.HostedRootFrames.stockClients) verifyAccessibility(resumed!!)
+        if (dev.artzig.testing.HostedRootFrames.stockClients) verifyPictureInPictureUnavailable(resumed!!)
         verifyClientWindow(session, resumed!!)
         resumed!!.finish()
         val backgroundDeadline = android.os.SystemClock.uptimeMillis() + 10_000
@@ -265,83 +258,13 @@ object StockWindowBootSmoke {
         dev.artzig.BoundedLooper.drain()
     }
 
-    /** Exercise the actual session contract before switching the ViewRootImpl client.
-     * The test window has no view hierarchy; BLAST owns its submitted frame. */
-    private fun verifyAccessibility(activity: android.app.Activity) {
-        val bridge = dev.artzig.ArtzigAccessibilityBridge
-        fun snapshot() = org.json.JSONObject(bridge.snapshot())
-        fun node(tree: org.json.JSONObject, text: String): org.json.JSONObject {
-            val nodes = tree.getJSONArray("nodes")
-            return (0 until nodes.length()).map { nodes.getJSONObject(it) }
-                .singleOrNull { it.optString("text").equals(text, ignoreCase = true) }
-                ?: error("Missing or ambiguous accessibility text '$text': $tree")
-        }
-        fun click(tree: org.json.JSONObject, target: org.json.JSONObject) = bridge.perform(
-            tree.getLong("revision"), target.getLong("window_id"), target.getInt("view_id"),
-            target.getInt("virtual_id"), android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK, null)
-        fun settle() {
-            val deadline = android.os.SystemClock.uptimeMillis() + 5_000
-            do {
-                drainDueMessages()
-                if (bridge.isIdle()) return
-                android.os.SystemClock.sleep(1)
-            } while (android.os.SystemClock.uptimeMillis() < deadline)
-            error("Stock accessibility roots did not settle")
-        }
-        settle()
-        // Core Wayland does not supply a task-spanning PiP placement policy.
-        // Preserve Activity's stock feature-gated false return, without creating
-        // a hidden pinned task or changing the current activity's lifecycle.
+    /** Core Wayland supplies no task-spanning PiP placement policy. Activity keeps
+     * its stock feature-gated false return, without a hidden pinned task or a
+     * lifecycle change. */
+    private fun verifyPictureInPictureUnavailable(activity: android.app.Activity) {
         check(!activity.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE))
         check(!activity.enterPictureInPictureMode(android.app.PictureInPictureParams.Builder().build()))
         check(!activity.isInPictureInPictureMode)
-        val initial = snapshot()
-        check(initial.getJSONArray("windows").length() == 1)
-        val initialNodes = initial.getJSONArray("nodes")
-        check((0 until initialNodes.length()).any {
-            initialNodes.getJSONObject(it).optString("resource_id") == "android:id/edit"
-        }) { "Stock accessibility omitted resource identifiers" }
-        val increment = node(initial, "Increment counter")
-        check(click(initial, increment))
-        check(!click(initial, increment)) { "A stale accessibility revision accepted a second action" }
-        settle()
-        val updated = snapshot()
-        node(updated, "Counter: 1")
-        check(node(updated, "Increment counter").getLong("window_id") == increment.getLong("window_id"))
-        check(click(updated, node(updated, "Show attached dialog")))
-        check(!bridge.isIdle()) { "A registered dialog with its first traversal pending reported idle" }
-        settle()
-        val dialog = snapshot()
-        check(dialog.getJSONArray("windows").length() == 2) {
-            "Dialog roots=${dev.artzig.testing.HostedRootFrames.managedRoots().map { root ->
-                "${root.view}: stopped=${dev.artzig.testing.HostedRootFrames.stopped(root)}, shown=${root.view?.isShown}"
-            }}; tree=$dialog"
-        }
-        val close = node(dialog, "Close dialog")
-        check(close.getLong("window_id") != increment.getLong("window_id"))
-        val roots = dev.artzig.testing.HostedRootFrames.managedRoots()
-        val host = roots.mapNotNull { it.view?.findViewByAccessibilityIdTraversal<android.view.View>(close.getInt("view_id")) }
-            .single()
-        val info = host.createAccessibilityNodeInfo()
-        try {
-            val expected = android.graphics.Rect()
-            info.getBoundsInScreen(expected)
-            val actual = close.getJSONObject("bounds")
-            check(expected.left != 0 || expected.top != 0) { "Dialog bounds did not exercise a screen offset" }
-            check(actual.getInt("left") == expected.left && actual.getInt("top") == expected.top &&
-                actual.getInt("right") == expected.right && actual.getInt("bottom") == expected.bottom) {
-                "Stock dialog accessibility bounds were translated twice: $actual versus $expected"
-            }
-        } finally { info.recycle() }
-        check(click(dialog, close))
-        settle()
-        val dismissed = snapshot()
-        check(dismissed.getJSONArray("windows").length() == 1)
-        check(!bridge.perform(dismissed.getLong("revision"), close.getLong("window_id"),
-            close.getInt("view_id"), close.getInt("virtual_id"),
-            android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK, null))
-        check(activity.window.decorView.viewRootImpl in dev.artzig.testing.HostedRootFrames.managedRoots())
-        println("Stock accessibility: activity/dialog roots, actions, screen bounds and stale/removed targets verified")
     }
 
     private fun verifyClientWindow(session: android.view.IWindowSession, activity: android.app.Activity) {

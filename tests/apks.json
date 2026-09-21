@@ -1,9 +1,0 @@
-{
-  "newpipe-0.29.1": {
-    "environment": "AZK_APK_NEWPIPE_0_29_1",
-    "sha256": "18447bfb1e06d113edc88df93f471827280de06f6f3d4dc42f56f28b9c1bab79",
-    "package": "org.schabi.newpipe",
-    "versionCode": 1015,
-    "versionName": "0.29.1"
-  }
-}

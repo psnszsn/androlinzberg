@@ -961,8 +961,7 @@ fn run(init: std.process.Init) !void {
     if (std.os.linux.errno(raw) != .SUCCESS) return error.EventfdFailed;
     const wake: Io.File = .{ .handle = @intCast(raw), .flags = .{ .nonblocking = true } };
     defer wake.close(io);
-    const inspection_enabled = init.minimal.environ.getPosix("AZK_TEST_SOCKET") != null or
-        std.mem.eql(u8, init.minimal.environ.getPosix("AZK_TEST_INSPECTION") orelse "", "1");
+    const inspection_enabled = std.mem.eql(u8, init.minimal.environ.getPosix("AZK_TEST_INSPECTION") orelse "", "1");
     const pointer_version: u32 = if (inspection_enabled)
         try std.fmt.parseInt(u32, init.minimal.environ.getPosix("AZK_TEST_VIRTUAL_POINTER_VERSION") orelse "2", 10)
     else

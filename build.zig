@@ -819,25 +819,7 @@ pub fn build(b: *std.Build) void {
         .generated = generated,
         .source_audit = &jvm_source_audit.step,
     });
-    const testkit = @import("build/testkit.zig").build(b, aosp_dep);
     const window_fixture = @import("build/window_fixtures.zig").build(b, aosp_dep, java);
-    const testkit_jars = testkit.jars.all();
-    const testkit_tree = b.addWriteFiles();
-    inline for (.{
-        .{ testkit.jars.testkit, "azk-test/testkit.jar" },
-        .{ testkit.jars.tests, "azk-test/tests.jar" },
-        .{ testkit.jars.junit_hamcrest, "azk-test/junit-hamcrest.jar" },
-        .{ testkit.jars.gson, "azk-test/gson.jar" },
-        .{ testkit.jars.kotlin_stdlib, "azk-test/kotlin-stdlib.jar" },
-        .{ testkit.jars.kotlin_stdlib_jdk7, "azk-test/kotlin-stdlib-jdk7.jar" },
-        .{ testkit.jars.kotlin_stdlib_jdk8, "azk-test/kotlin-stdlib-jdk8.jar" },
-        .{ testkit.jars.kotlin_test, "azk-test/kotlin-test.jar" },
-        .{ testkit.jars.kotlin_test_junit, "azk-test/kotlin-test-junit.jar" },
-    }) |entry| {
-        b.getInstallStep().dependOn(&b.addInstallFileWithDir(entry[0], .lib, entry[1]).step);
-        _ = testkit_tree.addCopyFile(entry[0], std.fs.path.basename(entry[1]));
-    }
-    b.installBinFile("tools/azk-test", "azk-test");
 
     // ABI-conformance check: the emitted .so must export every A* symbol the
     // prebuilt libbinder_ndk.so does, so unmodified NDK/AIDL clients resolve.
@@ -1043,17 +1025,6 @@ pub fn build(b: *std.Build) void {
     dexopt_transaction_test.addFileInput(b.path("tools/test-dexopt-apk.sh"));
     dexopt_transaction_test.addFileInput(b.path("tools/dexopt-apk.sh"));
     dexopt_transaction_test.addFileInput(b.path("testdata/dexopt/fake-dex2oat64"));
-    const test_control_check = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/test_control.zig"),
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-            .imports = &.{ .{ .name = "art", .module = art_mod }, .{ .name = "event_fd", .module = event_fd_mod } },
-        }),
-    });
-    const run_test_control = b.addRunArtifact(test_control_check);
-    b.step("test-control-test", "Verify bounded test-control socket ownership and framing").dependOn(&run_test_control.step);
     const platform_abi_test_mod = b.createModule(.{
         .root_source_file = b.path("src/native/platform_abi.zig"),
         .target = target,
@@ -1306,7 +1277,6 @@ pub fn build(b: *std.Build) void {
     native_test_step.dependOn(&codec_work_tests.step);
     native_test_step.dependOn(&run_apk_optimizer_tests.step);
     native_test_step.dependOn(&dexopt_transaction_test.step);
-    native_test_step.dependOn(&run_test_control.step);
     const input_placement_test = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("src/platform/test_input_placement.zig"),
         .target = target,
@@ -1669,51 +1639,11 @@ pub fn build(b: *std.Build) void {
     b.step("jvm-exit-test", "Verify ART exits without libc cleanup")
         .dependOn(&jvm_exit_smoke.run.step);
 
-    const testkit_step = b.step("testkit", "Build the host Kotlin testkit jars");
-    for (testkit_jars) |path| path.addStepDependencies(testkit_step);
-
-    const azk_test_run = @import("build/command.zig").create(b);
-    azk_test_run.addArgs(&.{ "java", "-cp" });
-    azk_test_run.addJoinedPaths(":", &testkit_jars);
-    azk_test_run.addArg("dev.artzig.testkit.AzkTestCli");
-    azk_test_run.addPassthruArgs();
-    azk_test_run.run.setName("run Kotlin azk-test client");
-    b.step("azk-test", "Run the Kotlin test-control CLI").dependOn(&azk_test_run.run.step);
-
-    const testkit_unit_run = @import("build/command.zig").create(b);
-    testkit_unit_run.addArgs(&.{ "java", "-cp" });
-    testkit_unit_run.addJoinedPaths(":", &testkit_jars);
-    testkit_unit_run.addArg("dev.artzig.testkit.TestkitUnitTestMain");
-    testkit_unit_run.run.setName("run Kotlin testkit unit tests");
-    const testkit_test_step = b.step("testkit-test", "Run host Kotlin testkit unit tests");
-    testkit_test_step.dependOn(&testkit_unit_run.run.step);
-
-    const integration_run = @import("build/command.zig").create(b);
-    integration_run.setFileEnvironment("AZK_LAUNCHER", application_tree.path(b, "bin/androlinzberg"));
-    setApplicationEnvironment(integration_run, application_tree);
-    // Through the wrapper, not Step.Run.setEnvironmentVariable: the harness must
-    // inherit the invoking shell's live environment (Mesa for Cage, the APK paths).
-    integration_run.setEnvironment("WLR_RENDERER", "gles2");
-    integration_run.setFileEnvironment("AZK_APK_REGISTRY", window_fixture.registry);
-    integration_run.setFileEnvironment("AZK_APK_WINDOW_FIXTURE", window_fixture.apk);
-    integration_run.setEnvironment("AZK_ARTIFACT_ROOT", "zig-out/test-results/integration");
-    integration_run.setEnvironment("AZK_SHARED_CACHE", "zig-out/test-cache/integration");
-    integration_run.addArg("bash");
-    integration_run.addFileArg(b.path("tools/shot.sh"));
-    integration_run.addArgs(&.{ "zig-out/test-results/integration/suite.png", "--runner", "--" });
-    integration_run.addFileArg(@import("build/command.zig").executable(b).getEmittedBin());
-    integration_run.addArgs(&.{ "--arg", "java", "--arg", "-cp", "--join", ":", b.fmt("{d}", .{testkit_jars.len}) });
-    for (testkit_jars) |jar| integration_run.addFileArg(jar);
-    integration_run.addArgs(&.{ "--arg", "dev.artzig.testkit.IntegrationTestMain", "--passthru" });
-    integration_run.addPassthruArgs();
-    integration_run.run.step.dependOn(&testkit_unit_run.run.step);
-    integration_run.run.setName("run APK integration tests under Cage");
-    b.step("integration-test", "Run Kotlin APK integration tests under Cage").dependOn(&integration_run.run.step);
 
     // UI tests on ART: JUnit + androidx UiAutomator over stock UiAutomation,
     // one session per test, orchestrated by tools/ui-test-runner.zig under Cage.
     const ui_tests = @import("build/ui_tests.zig");
-    const ui_tests_dex = ui_tests.build(b, aosp_dep, java, testkit.jars.junit_hamcrest);
+    const ui_tests_dex = ui_tests.build(b, aosp_dep, java, @import("build/junit.zig").build(b, aosp_dep));
     const ui_test_runner = b.addExecutable(.{ .name = "ui-test-runner", .root_module = b.createModule(.{
         .root_source_file = b.path("tools/ui-test-runner.zig"),
         .target = b.graph.host,
@@ -1850,20 +1780,6 @@ pub fn build(b: *std.Build) void {
         } else step.dependOn(&ui.run.step);
     }
 
-    // A host ART process joins the session as the broker's inspector role and
-    // drives the fixture through stock UiAutomation and AccessibilityManagerService.
-    const uiautomation_run = @import("build/command.zig").create(b);
-    uiautomation_run.setFileEnvironment("AZK_LAUNCHER", application_tree.path(b, "bin/androlinzberg"));
-    setApplicationEnvironment(uiautomation_run, application_tree);
-    uiautomation_run.setEnvironment("WLR_RENDERER", "gles2");
-    uiautomation_run.setFileEnvironment("AZK_APK_WINDOW_FIXTURE", window_fixture.apk);
-    uiautomation_run.addArg("bash");
-    uiautomation_run.addFileArg(b.path("tools/shot.sh"));
-    uiautomation_run.addArgs(&.{ "zig-out/test-results/uiautomation/suite.png", "--runner", "--" });
-    uiautomation_run.addFileArg(b.path("tests/uiautomation/inspector-smoke"));
-    uiautomation_run.run.setName("drive the window fixture through stock UiAutomation as inspector");
-    b.step("uiautomation-test", "Drive an APK from a host process through stock UiAutomation").dependOn(&uiautomation_run.run.step);
-
     const run = @import("build/command.zig").create(b);
     setApplicationEnvironment(run, application_tree);
     run.addFileArg(application_tree.path(b, "bin/androlinzberg"));
@@ -1941,7 +1857,6 @@ pub fn build(b: *std.Build) void {
     acceptance.dependOn(&acceptance_environment.step);
     for ([_][]const u8{
         "install",
-        "integration-test",
         "jvm-test",
         "native-test",
         "system-test",
@@ -1977,6 +1892,8 @@ pub fn build(b: *std.Build) void {
         "stock-clipboard-test",
         "stock-drag-test",
         "stock-session-loss-test",
+        "ui-test",
+        "aidl-zig-test",
         "webview-test",
         "webview-ui-test",
         "webview-overlay-test",

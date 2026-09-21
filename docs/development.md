@@ -163,7 +163,6 @@ zig build -j10 native-test
 zig build -j10 jvm-test
 zig build -j10 binder-test
 zig build -j10 system-test
-zig build -j10 testkit-test
 zig build -j10 cpp-audit
 zig build -j10 graph-audit
 ```

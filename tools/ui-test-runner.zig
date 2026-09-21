@@ -177,7 +177,6 @@ fn runTest(init: std.process.Init, options: Options, class: []const u8, method: 
     if (!desktop) try session_env.put("AZK_SIZE", options.size);
     try session_env.put("ARTZIG_DATA_DIR", data);
     try session_env.put("ARTZIG_NATIVE_LIB_DIR", native_libraries);
-    _ = session_env.swapRemove("AZK_TEST_SOCKET");
 
     // The kiosk compositor's output is the launch size (as the task placement
     // above assumes); AZK_HEADLESS_OUTPUT names it when the harness made one.
@@ -233,7 +232,6 @@ fn runTest(init: std.process.Init, options: Options, class: []const u8, method: 
     try runner_env.put("AZK_TEST_LAUNCHER", try Io.Dir.cwd().realPathFileAlloc(io, options.launcher, arena));
     try runner_env.put("AZK_TEST_SESSION_DIR", session_dir);
     if (options.seat) |helper| try runner_env.put("AZK_TEST_SEAT", try Io.Dir.cwd().realPathFileAlloc(io, helper, arena));
-    _ = runner_env.swapRemove("AZK_TEST_SOCKET");
     const argv: []const []const u8 = if (std.mem.eql(u8, class, "probe"))
         &.{ options.probe, session_dir, method }
     else

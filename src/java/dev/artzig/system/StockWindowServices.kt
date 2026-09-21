@@ -49,8 +49,6 @@ internal class StockWindowServices private constructor() {
     private lateinit var input: HostInputManagerBridge
     @Volatile private var shell: dev.artzig.window.SessionTaskShell.Controller? = null
 
-    fun testInputIdle(sequence: Long): Boolean = shell?.testInputQueued(sequence) == true && input.waitForIdle()
-
     fun attachContext(value: Context) { context.bind(value) }
 
     fun startTasks(manager: SystemServiceManager) {
@@ -186,9 +184,6 @@ internal class StockWindowServices private constructor() {
         synchronized(cursorLock) { pendingCursors.clear(); handler.removeCallbacks(applyCursors) }
         shell?.close(); shell = null
     }
-    fun taskForObservedWindow(token: android.os.IBinder, uid: Int, pid: Int): Int? =
-        com.android.server.wm.HostedTaskInputTargets.windowTask(windows, token, uid, pid)
-
     fun verifyStartup() {
         val diagnostics = org.json.JSONObject(dev.artzig.ArtzigTestDiagnostics.snapshot(Long.MAX_VALUE, 0L))
         val issues = diagnostics.getJSONArray("issues")

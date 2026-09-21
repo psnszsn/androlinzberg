@@ -25,16 +25,16 @@ Use at most `max(1, nproc - 2)` jobs and lower the limit for memory or load.
 The acceptance target requires GPU checks, default backend selection and the
 complete suite; it rejects test filters. For focused development, run the
 individual targets documented in [AGENTS.md](../AGENTS.md), such as
-`integration-test -- --class NewPipeTest --method launchesHomeWithoutRuntimeIssues`.
+`ui-test -- --class NewPipeUiTest --method launchesHomeWithoutRuntimeIssues`.
 
-UI checks launch real APKs using the existing `tools/shot.sh` Cage/labwc harness
-and Kotlin testkit. Passing requires expected UI state and empty
-`diagnostics.runtime.issues` for each action. Graphics checks also require
+UI checks launch real APKs under the existing `tools/shot.sh` Cage/labwc harness
+and drive them with UiAutomator tests running on ART. Passing requires expected
+UI state and an empty runtime issue journal for each test. Graphics checks also require
 rendered pixels, buffer/fence ownership and transaction callbacks.
 
 Artifacts are retained under `zig-out/test-results/`. On APK failures, inspect
-the case's `steps.jsonl`, `app.log`, `failure.json`, accessibility tree and
-screenshot. Inspect rendering screenshots when changing graphics or UI behavior.
+the case's `test.log` (JUnit trace and `UiTest: ISSUE` lines) and `app.log`.
+Inspect rendering screenshots when changing graphics or UI behavior.
 
 ## Source identity
 

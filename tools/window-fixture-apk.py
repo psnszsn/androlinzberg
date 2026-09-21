@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Package a compiled fixture and add its exact artifact hash to testkit inputs."""
-import hashlib
-import json
-from pathlib import Path
+"""Package a compiled fixture: its resources APK plus the dex of its code."""
 import sys
 import zipfile
 
@@ -15,15 +12,5 @@ if mode == 'package':
                     if source == second and not info.filename.endswith('.dex'):
                         continue
                     target.writestr(info, archive.read(info))
-elif mode == 'registry':
-    registry = json.loads(Path(first).read_text())
-    registry['window-contracts'] = {
-        'environment': 'AZK_APK_WINDOW_FIXTURE',
-        'sha256': hashlib.sha256(Path(second).read_bytes()).hexdigest(),
-        'package': 'dev.artzig.fixtures.windows',
-        'versionCode': 1,
-        'versionName': '1',
-    }
-    Path(output).write_text(json.dumps(registry, indent=2) + '\n')
 else:
     raise SystemExit('unknown fixture operation: ' + mode)

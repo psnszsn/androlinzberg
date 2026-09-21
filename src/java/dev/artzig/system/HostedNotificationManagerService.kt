@@ -23,7 +23,7 @@ import android.util.Log
  * channel, importance). The AOSP service is inseparable from the ranking,
  * listener and zen machinery and from SystemUI's shade, none of which exist
  * on this host: notifications are recorded in the same per-package tables the
- * AOSP service keeps and surfaced through the testkit and one log line per
+ * AOSP service keeps and surfaced through dumps and one log line per
  * post/cancel. Zen, listeners, assistants and bubbles answer with the AOSP
  * "nothing configured" values. Anything else stays unsupported at the
  * service boundary.
@@ -191,7 +191,7 @@ class HostedNotificationManagerService : android.app.INotificationManager.Stub()
         return synchronized(lock) { notifications.values.map { it.clone() }.toTypedArray() }
     }
 
-    /** Every posted notification, for the launcher's testkit observation and dumps. */
+    /** Every posted notification, for dumps. */
     fun activeNotifications(): List<StatusBarNotification> = synchronized(lock) { notifications.values.map { it.clone() } }
 
     override fun getHistoricalNotifications(callingPkg: String?, count: Int, includeSnoozed: Boolean): Array<StatusBarNotification?>? = arrayOfNulls(0)

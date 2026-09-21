@@ -1,8 +1,8 @@
 //! A real Kotlin APK for task/window lifecycle regressions, compiled separately
-//! from the hosted framework. Its checksum is recorded in the testkit registry.
+//! from the hosted framework.
 const std = @import("std");
 const command = @import("command.zig");
-pub const Result = struct { apk: std.Build.LazyPath, registry: std.Build.LazyPath };
+pub const Result = struct { apk: std.Build.LazyPath };
 pub fn build(b: *std.Build, aosp: *std.Build.Dependency, framework: @import("java.zig").Result) Result {
     const kotlinc = command.create(b);
     kotlinc.addFileArg(aosp.path("external/kotlinc/bin/kotlinc"));
@@ -18,7 +18,6 @@ pub fn build(b: *std.Build, aosp: *std.Build.Dependency, framework: @import("jav
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/AccessibilityFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/WindowRegistryFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/InputRoutingFixtureActivity.kt"));
-    kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/InspectionFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/VideoFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/ImeFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/ClipboardFixtureActivity.kt"));
@@ -52,13 +51,7 @@ pub fn build(b: *std.Build, aosp: *std.Build.Dependency, framework: @import("jav
     package.addFileArg(dex);
     const unsigned = package.addOutputFileArg("window-fixture-unsigned.apk");
     const signed = @import("generators.zig").signApk(b, aosp, unsigned, "window-fixture.apk", true, "azk-platform");
-    const registry = b.addSystemCommand(&.{"python3"});
-    registry.addFileArg(b.path("tools/window-fixture-apk.py"));
-    registry.addArg("registry");
-    registry.addFileArg(b.path("tests/apks.json"));
-    registry.addFileArg(signed);
-    const metadata = registry.addOutputFileArg("apks.json");
     const install = b.addInstallFile(signed, "test-fixtures/window-fixture.apk");
     b.step("window-fixture", "Build the Kotlin task/window contract APK").dependOn(&install.step);
-    return .{ .apk = signed, .registry = metadata };
+    return .{ .apk = signed };
 }

@@ -156,15 +156,6 @@ class ColdHandledConfigurationActivity : ColdProcessActivity()
 
 open class ColdProcessProvider : ContentProvider() {
     override fun onCreate(): Boolean {
-        // The cold-launch inspection gate creates this file before starting us.
-        // Holding provider startup also holds AMS.finishAttachApplication, without
-        // relying on a race against a fast Application.onCreate.
-        val gate = java.io.File(checkNotNull(context).filesDir, "inspection-startup-gate")
-        val deadline = android.os.SystemClock.uptimeMillis() + 15_000
-        while (gate.exists()) {
-            check(android.os.SystemClock.uptimeMillis() < deadline) { "Inspection startup gate was not released" }
-            android.os.SystemClock.sleep(5)
-        }
         ColdLifecycle.record("provider")
         return true
     }

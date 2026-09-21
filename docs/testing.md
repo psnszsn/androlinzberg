@@ -23,28 +23,6 @@ Run the framework and class-loading tests:
 zig build -j10 jvm-test
 ```
 
-Run the testkit tests:
-
-```sh
-zig build -j10 testkit-test
-```
-
-Run the native test-control transport tests without booting ART:
-
-```sh
-zig build -j10 test-control-test
-```
-
-These exercise fragmented and pipelined Varlink messages, reconnects, blocked
-accept cancellation, descriptor cleanup, private socket publication, long Unix
-paths and stalled peers. The transport accepts one client at a time through a
-bounded `std.Io` accept task. Android actions and observations remain on the ART
-main thread. Requests are limited to 1 MiB and queued replies to 16 MiB;
-incomplete requests and blocked replies have a five-second transfer deadline.
-Complete Android wait requests retain their requested settle timeout. Socket
-publication sets mode 0600 before exposing the requested path and never replaces
-an existing endpoint.
-
 Run the multi-process hosted Binder tests. `native-test` already covers the
 broker with in-process Zig peers; this target starts the broker and three ART
 processes that talk through it:
@@ -67,62 +45,7 @@ system process and their code loads from framework.jar:
 zig build -j10 system-test
 ```
 
-These tests do not replace an APK integration test.
-
-## APK integration tests
-
-`tests/apks.json` identifies each test APK and its SHA-256 value. Set the
-environment variable for each APK that the selected test uses.
-
-Run one NewPipe launch test:
-
-```sh
-AZK_APK_NEWPIPE_0_29_1=/absolute/path/to/NewPipe_v0.29.1.apk \
-  zig build -j10 integration-test -- \
-  --class NewPipeTest --method launchesHomeWithoutRuntimeIssues
-```
-
-Run the complete registered suite:
-
-```sh
-AZK_APK_NEWPIPE_0_29_1=/absolute/path/to/NewPipe_v0.29.1.apk \
-  zig build -j10 integration-test
-```
-
-The testkit checks the APK checksum before it starts the application.
-
-Each test writes artifacts to
-`zig-out/test-results/integration/<class>.<method>/`. Inspect `steps.jsonl` and
-`app.log` after a failure. A failed test can also contain `screenshot.png`,
-`a11y.json`, and `failure.json`.
-
-## Headless UI tests
-
-Use `tools/shot.sh` for a reproducible Wayland test. The script starts the
-existing headless Cage environment.
-
-```sh
-WLR_RENDERER=gles2 tools/shot.sh result.png --test /path/to/test-script -- \
-  ./zig-out/bin/androlinzberg /absolute/path/to/app.apk
-```
-
-The test program can use `tools/azk-test` to select Android UI elements. Prefer
-resource ID, text, description, or role selectors. Do not use screen
-coordinates when a semantic selector is available.
-
-Use `step` for each action that can expose a framework gap:
-
-```sh
-tools/azk-test wait ready
-tools/azk-test step click --text "Sign in" --settle idle
-```
-
-`step` records new logs, accessibility events, framework issues, and the final
-accessibility tree. It returns a failure when the action fails or reports a new
-framework issue.
-
-Use `--allow-missing` only when you record a known issue. A regression test must
-finish with an empty `diagnostics.runtime.issues` list.
+These tests do not replace an APK UI test.
 
 ## Optional Binder graphics probe
 
@@ -191,7 +114,24 @@ A test that deliberately inventories a known gap calls
 
 Artifacts are retained under `zig-out/test-results/ui/<class>.<method>/`
 (`app.log` for the session, `test.log` for the runner). Add a test by listing
-its source and `Class#method` in `build/ui_tests.zig`. This path replaces the
-Varlink test-control protocol; the legacy `integration-test` suite remains
-until its tests have been ported.
+its source and `Class#method` in `build/ui_tests.zig`.
+
+### Desktop scenarios
+
+The same runner drives labwc desktop sessions, where the APK is launched
+through ATMS as task windows: `stock-desktop-launcher-test` (modal hit-testing,
+the custom pointer icon, Wayland keyboard text, two independent tasks, a
+foreign shell joining the session), `stock-ime-test` (text-input protocol),
+`stock-clipboard-test` and `stock-drag-test` (selection and drag and drop in
+both directions, against `wl-copy`/`wl-paste` and the native drag peer;
+`AZK_TEST_DRAG_ROUNDS` sets the repeat count, 16 by default) and
+`stock-video-test` (MediaCodec output per view, on SurfaceFlinger captures).
+The orchestrator starts the keyboard seat, takes the window placement from the
+compositor's output, closes the task windows through the seat at teardown and
+fails a session whose log lacks `task presenter released all buffers` or
+contains fatal output. Artifacts are under `zig-out/test-results/stock-*/`.
+
+The `stock-task-*` steps remain native pixel gates
+(`tests/native/stock-wayland-task-test.py`): they synchronize a system-test
+driver with compositor screenshots and use no UI automation.
 

@@ -48,7 +48,6 @@ fn allowedJvmPath(path: []const u8) bool {
         "src/framework-stubs/",
         "src/java/",
         "src/annotation-runtime/",
-        "src/testkit/",
         "tests/",
         "testdata/kotlin-shadow/",
     }) |prefix| if (std.mem.startsWith(u8, path, prefix)) return true;
