@@ -31,6 +31,25 @@ object UiApp {
     fun waitUntilGone(selector: BySelector) =
         assertTrue("still present: $selector", device.wait(Until.gone(selector), TIMEOUT))
 
+    /**
+     * Waits for `text` in a window of one task. A selector searches every
+     * window, which cannot tell two tasks showing the same activity apart.
+     */
+    fun expectVisibleInTask(taskId: Int, text: String) {
+        val deadline = android.os.SystemClock.uptimeMillis() + TIMEOUT
+        while (true) {
+            val found = UiTest.instrumentation.uiAutomation.windows.any { window ->
+                window.taskId == taskId && window.root?.let { shows(it, text) } == true
+            }
+            if (found) return
+            check(android.os.SystemClock.uptimeMillis() < deadline) { "task $taskId never showed: $text" }
+            android.os.SystemClock.sleep(50)
+        }
+    }
+
+    private fun shows(node: android.view.accessibility.AccessibilityNodeInfo, text: String): Boolean =
+        node.text?.toString() == text || (0 until node.childCount).any { index -> node.getChild(index)?.let { shows(it, text) } == true }
+
     fun click(selector: BySelector) = waitFor(selector).click()
     fun click(text: String) = click(By.text(text))
 

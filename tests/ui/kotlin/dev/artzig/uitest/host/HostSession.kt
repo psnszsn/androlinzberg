@@ -21,6 +21,39 @@ object HostSession {
     val artifacts: File get() = log.absoluteFile.parentFile
 
     /**
+     * The repository's native Wayland peer (tests/native/wayland_surface_server.zig)
+     * in one of its drag-and-drop roles, as a second client of the compositor.
+     */
+    fun peer(vararg arguments: String): ByteArray =
+        run(checkNotNull(System.getenv("AZK_TEST_SEAT")) { "AZK_TEST_SEAT is not set" }, *arguments, timeoutMillis = 60_000)
+
+    /** A binary PPM, as grim and the native peer write compositor captures. */
+    class Capture(bytes: ByteArray) {
+        val width: Int
+        val height: Int
+        private val pixels: ByteArray
+
+        init {
+            var offset = 0
+            val header = List(3) {
+                val end = (offset until bytes.size).first { bytes[it] == '\n'.code.toByte() }
+                String(bytes, offset, end - offset).also { offset = end + 1 }
+            }
+            check(header[0] == "P6" && header[2] == "255") { "not a PPM capture: $header" }
+            val (columns, rows) = header[1].split(' ').map(String::toInt)
+            width = columns
+            height = rows
+            pixels = bytes.copyOfRange(offset, bytes.size)
+        }
+
+        /** Red, green, blue. */
+        fun pixel(x: Int, y: Int) = List(3) { pixels[(y * width + x) * 3 + it].toInt() and 0xff }
+    }
+
+    /** What the compositor currently shows. */
+    fun capture() = Capture(run("grim", "-t", "ppm", "-"))
+
+    /**
      * Runs a desktop tool (wl-copy, wl-paste, ...) beside the session, on its
      * compositor. argv never passes through a shell. Returns its stdout, or
      * nothing with [capture] off: a tool that leaves a daemon behind (wl-copy
