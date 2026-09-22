@@ -1,0 +1,19 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] icu jni: initialize the status passed to Locale::forLanguageTag
+
+ScopedIcuLocale passes an uninitialized UErrorCode to forLanguageTag, which
+returns early on a failure code it finds already set. On this host the stack
+slot holds a nonzero value, so every locale is bogus and CaseMapperNative
+returns null: String.toLowerCase of any text with a surrogate pair, or under
+a Turkic locale, becomes null. The AOSP source relies on the slot being zero.
+--- a/android_icu4j/libcore_bridge/src/native/ScopedIcuLocale.h
++++ b/android_icu4j/libcore_bridge/src/native/ScopedIcuLocale.h
+@@ -36,7 +36,7 @@
+       return;
+     }
+ 
+-    UErrorCode err;
++    UErrorCode err = U_ZERO_ERROR;
+     icu::Locale locale = icu::Locale::forLanguageTag(languageTag.c_str(), err);
+     if (U_FAILURE(err)) {
+       return;

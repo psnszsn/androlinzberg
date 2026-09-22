@@ -31,6 +31,11 @@ internal object StockIcuSmoke {
         check(UCharacter.toLowerCase(0x1c89) == 0x1c8a)
         check(Collator.getInstance(ULocale.GERMAN).compare("a", "b") < 0)
         check(NumberFormat.getInstance(ULocale.US).format(1234.5) == "1,234.5")
+        // String case mapping punts surrogate pairs and Turkic locales to the
+        // ICU4C JNI (CaseMapperNative), whose locale must resolve.
+        check("Drag 😀 CAFÉ İ".lowercase(java.util.Locale.US) == "drag 😀 café i̇")
+        check("i".uppercase(java.util.Locale.forLanguageTag("tr")) == "İ")
+        check("Straße".uppercase(java.util.Locale.GERMANY) == "STRASSE")
         // Exercise the original JNI converter and regular-expression implementations too.
         val text = "Grüße 東京"
         check(String(text.toByteArray(charset("UTF-16LE")), charset("UTF-16LE")) == text)

@@ -60,7 +60,32 @@ pub fn native(b: *std.Build, vendor: Sources.Root, target: std.Build.ResolvedTar
 
 pub fn jni(b: *std.Build, vendor: Sources.Root, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, n: Native, arts: art.Artifacts) *std.Build.Step.Compile {
     const lib = library(b, vendor, target, optimize, "icu_jni");
-    addSources(b, lib, vendor, "external/icu/android_icu4j/libcore_bridge/src/native", common_flags ++ &[_][]const u8{ "-std=c++23", "-DU_USING_ICU_NAMESPACE=0" });
+    // ScopedIcuLocale passes an uninitialized UErrorCode to ICU. The sources
+    // name their sibling headers by quotes, so build the module from a copy
+    // of the pinned directory that carries the header patched at build time.
+    const bridge = "external/icu/android_icu4j/libcore_bridge/src/native";
+    const locale_status = b.addSystemCommand(&.{ "patch", "--batch", "--forward", "--fuzz=0" });
+    locale_status.addFileArg(vendor.path.path(b, bridge ++ "/ScopedIcuLocale.h"));
+    locale_status.addArg("-i");
+    locale_status.addFileArg(b.path("patches/host/0002-icu-jni-initialize-locale-status.patch"));
+    locale_status.addArg("-o");
+    const tree = b.addWriteFiles();
+    _ = tree.addCopyFile(locale_status.addOutputFileArg("ScopedIcuLocale.h"), "ScopedIcuLocale.h");
+    for ([_][]const u8{ "IcuUtilities.h", "JniConstants.h", "MatcherState.h", "ScopedJavaUnicodeString.h" }) |header|
+        _ = tree.addCopyFile(vendor.path.path(b, b.fmt("{s}/{s}", .{ bridge, header })), header);
+    // libicu_jni's srcs in the pinned external/icu Android.bp.
+    const jni_sources = [_][]const u8{
+        "com_android_i18n_timezone_internal_Memory.cpp", "com_android_i18n_util_ATrace.cpp",
+        "com_android_i18n_util_Log.cpp",                 "com_android_icu_charset_NativeConverter.cpp",
+        "com_android_icu_text_TimeZoneNamesNative.cpp",  "com_android_icu_util_CaseMapperNative.cpp",
+        "com_android_icu_util_ICU4CMetadata.cpp",        "com_android_icu_util_LocaleNative.cpp",
+        "com_android_icu_util_regex_MatcherNative.cpp",  "com_android_icu_util_regex_PatternNative.cpp",
+        "com_android_icu_util_UResourceBundleNative.cpp", "IcuUtilities.cpp",
+        "JniConstants.cpp",                              "MatcherState.cpp",
+        "Register.cpp",
+    };
+    for (jni_sources) |source| _ = tree.addCopyFile(vendor.path.path(b, b.fmt("{s}/{s}", .{ bridge, source })), source);
+    lib.root_module.addCSourceFiles(.{ .root = tree.getDirectory(), .files = &jni_sources, .flags = common_flags ++ &[_][]const u8{ "-std=c++23", "-DU_USING_ICU_NAMESPACE=0" } });
     // libcutils' original host tracing implementation, as selected by its Android.bp.
     // JNI uses C++23 so the host libc++ accepts cutils' C atomics with JNI's C++ atomics.
     lib.root_module.addCSourceFile(.{ .file = vendor.path.path(b, "system/core/libcutils/trace-host.cpp"), .flags = common_flags });
