@@ -81,13 +81,16 @@ class NewPipeDesktopUiTest {
         assertEquals(Rect(0, 0, 1600, 900).width() to 900, bounds.width() to bounds.height())
         val capture = UiApp.screenshot()
         assertEquals(1600 to 900, capture.width to capture.height)
-        NewPipe.tapPlayerSurface()
-        val deadline = SystemClock.uptimeMillis() + 2_000
-        while (SystemClock.uptimeMillis() < deadline) {
+        // The controls auto-hide about two seconds after they appear: assert
+        // while they are showing, not after a fixed wait.
+        NewPipe.revealPlayerControls()
+        var observed = 0
+        while (UiTest.device.hasObject(NewPipe.ORIENTATION)) {
             assertTrue("compositor fullscreen was lost", WaylandSeat.window().fullscreen)
+            observed += 1
             SystemClock.sleep(200)
         }
-        waitFor(NewPipe.ORIENTATION)
+        assertTrue("the controls hid before fullscreen could be observed", observed > 0)
     }
 
     @Test
