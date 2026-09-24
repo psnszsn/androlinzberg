@@ -139,6 +139,9 @@ checkout's umask. `build-tools-test` checks these archive contracts.
 From a worktree without its own Repo checkout, point the Artzig packager at the
 shared pinned checkout with `ARTZIG_AOSP_ROOT=/absolute/path/to/aosp`.
 
+After regenerating an archive for the Nix package, register it in the store
+and update its hashes as described in [packaging](../docs/packaging.md).
+
 Do not run the packagers concurrently: their patch sets overlap. Each script:
 
 1. refuses to run when relevant tracked AOSP files are modified;

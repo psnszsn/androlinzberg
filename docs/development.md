@@ -12,7 +12,8 @@ nix develop ./artzig
 ```
 
 The shell contains the supported Zig compiler, OpenJDK 21, build tools, and
-native library headers.
+native library headers. The list is `artzig/nix/host-packages.nix`, which the
+Nix package in [packaging](packaging.md) shares.
 
 It also builds the isolated glibc runtime used by hosted ART. Chromium's Android
 sandbox denies CPU-affinity queries, so ART uses a private stack-only query

@@ -617,6 +617,7 @@ pub fn build(b: *std.Build) void {
     task_presenter.root_module.linkLibrary(gui_host);
     task_presenter.root_module.linkLibrary(binder_cpp);
     task_presenter.root_module.linkLibrary(binder_ndk);
+    task_presenter.root_module.addRPathSpecial("$ORIGIN/../lib/art");
     task_presenter.root_module.linkSystemLibrary("wayland-client", .{});
     task_presenter.root_module.linkSystemLibrary("xkbcommon", .{});
     const install_task_presenter = b.addInstallArtifact(task_presenter, .{});
@@ -903,6 +904,9 @@ pub fn build(b: *std.Build) void {
         }),
     });
     ndk_system_client.root_module.linkLibrary(binder_ndk);
+    // Installed executables find the session's libbinder next to ART, like
+    // azk-surfaceflinger; the build-cache runpath is only valid in-tree.
+    ndk_system_client.root_module.addRPathSpecial("$ORIGIN/../lib/art");
     b.getInstallStep().dependOn(&b.addInstallArtifact(ndk_system_client, .{}).step);
 
     // --- artzig runtime (ART) module

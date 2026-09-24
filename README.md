@@ -81,6 +81,9 @@ zig build -j10 -Doptimize=fast
 The first build compiles ART, the Android framework, HWUI, and Skia. It can take
 a long time and use much disk space.
 
+To build the complete install tree as a Nix package, or to install it on
+another computer, see [packaging and installation](docs/packaging.md).
+
 ## Run an APK
 
 Applications run with ordinary user permissions. An optional
@@ -125,6 +128,7 @@ See [Architecture](docs/architecture.md) for more information.
 ## Development
 
 - [Build and development](docs/development.md)
+- [Packaging and installation](docs/packaging.md)
 - [Testing](docs/testing.md)
 - [Kotlin source policy](docs/kotlin.md)
 - [Native language boundary](docs/native-boundary.md)
