@@ -510,8 +510,42 @@ int azk_register_runtime_jni(JNIEnv* env) {
 static thread_local bool javaLogWrite;
 static jclass diagnosticLogClass;
 static jmethodID diagnosticRecordLog;
+// stderr shows the log the way logcat does: AZK_LOG_LEVEL (v, d, i, w, e, f
+// or s; warnings when unset) selects the entries, and each entry is cut at
+// logd's payload limit, so a Throwable's stack trace does not turn one warning
+// into a screenful. The Java diagnostics journal still sees every message in
+// full. This is deliberately not ANDROID_LOG_TAGS: the pinned runtime reads
+// that one too and lowers the framework's own loggable threshold with it.
+static int stderrMinimumPriority = ANDROID_LOG_WARN;
+static constexpr size_t kLogEntryMaxPayload = 4068;  // liblog's LOGGER_ENTRY_MAX_PAYLOAD
+static int parseStderrMinimumPriority() {
+    const char* level = getenv("AZK_LOG_LEVEL");
+    if (!level) return ANDROID_LOG_WARN;
+    switch (level[0]) {
+        case 'v': return ANDROID_LOG_VERBOSE;
+        case 'd': return ANDROID_LOG_DEBUG;
+        case 'i': return ANDROID_LOG_INFO;
+        case 'w': return ANDROID_LOG_WARN;
+        case 'e': return ANDROID_LOG_ERROR;
+        case 'f': return ANDROID_LOG_FATAL;
+        case 's': return ANDROID_LOG_SILENT;
+        default: return ANDROID_LOG_WARN;
+    }
+}
 static void diagnosticLogger(const __android_log_message* message) {
-    __android_log_stderr_logger(message);
+    if (message->priority >= stderrMinimumPriority) {
+        const size_t length = message->message ? strlen(message->message) : 0;
+        if (length < kLogEntryMaxPayload) {
+            __android_log_stderr_logger(message);
+        } else {
+            static thread_local char payload[kLogEntryMaxPayload];
+            memcpy(payload, message->message, kLogEntryMaxPayload - 1);
+            payload[kLogEntryMaxPayload - 1] = 0;
+            __android_log_message cut = *message;
+            cut.message = payload;
+            __android_log_stderr_logger(&cut);
+        }
+    }
     static thread_local bool recording = false;
     if (!javaLogWrite || recording) return;
     JNIEnv* env = android::AndroidRuntime::getJNIEnv();
@@ -551,6 +585,7 @@ static int installDiagnosticLogger(JNIEnv* env) {
     diagnosticLogClass = static_cast<jclass>(env->NewGlobalRef(cls));
     env->DeleteLocalRef(cls);
     if (!diagnosticLogClass) return -1;
+    stderrMinimumPriority = parseStderrMinimumPriority();
     __android_log_set_logger(diagnosticLogger);
     return 0;
 }
@@ -771,11 +806,14 @@ int azk_register_graphics_jni(JNIEnv* env) {
     size_t limit = sizeof(entries) / sizeof(entries[0]);
     if (const char* n = getenv("AZK_REG_N")) limit = (size_t)atoi(n);
     const char* only = getenv("AZK_REG_ONLY");
+    // Per-registrar trace while bisecting a registration crash (AZK_REG_TRACE=1,
+    // or whenever AZK_REG_N/AZK_REG_ONLY narrow the set); a failure is always named.
+    const bool trace = getenv("AZK_REG_TRACE") || getenv("AZK_REG_N") || only;
     size_t idx = 0;
     for (const Entry& e : entries) {
         if (idx++ >= limit) break;
         if (only && !strstr(e.name, only)) continue;
-        fprintf(stderr, "azk: registering %s\n", e.name);
+        if (trace) fprintf(stderr, "azk: registering %s\n", e.name);
         if (e.fn(env) < 0) {
             fprintf(stderr, "azk: JNI registration failed: %s\n", e.name);
             if (env->ExceptionCheck()) env->ExceptionDescribe();

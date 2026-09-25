@@ -167,6 +167,9 @@ fn runTest(init: std.process.Init, options: Options, class: []const u8, method: 
     // registration to the runner.
     try session_env.put("AZK_TEST_INSPECTION", "1");
     try session_env.put("AZK_TEST_RUNNER_AUTOMATION", "1");
+    // app.log is the session's complete log; the launcher's default shows
+    // warnings only.
+    if (session_env.get("AZK_LOG_LEVEL") == null) try session_env.put("AZK_LOG_LEVEL", "v");
     // Cage's single kiosk window fills the output. Host-path tests address
     // Wayland input by Android coordinates, which the presenter projects with
     // this placement; core Wayland exposes no global toplevel position.

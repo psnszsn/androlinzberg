@@ -23,6 +23,8 @@ export WLR_RENDERER=${WLR_RENDERER:-pixman}
 # Integration sessions use wlr-output-management to make LaunchSize the
 # compositor's real output size rather than an ignored xdg_toplevel hint.
 export AZK_HEADLESS_OUTPUT=${AZK_HEADLESS_OUTPUT:-HEADLESS-1}
+# Retain the complete Android log; the launcher's default shows warnings only.
+export AZK_LOG_LEVEL=${AZK_LOG_LEVEL:-v}
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 unset DISPLAY
 WARMUP=${SHOT_WARMUP:-3}

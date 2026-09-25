@@ -100,7 +100,16 @@ fn listener(proxy: *wp.PresentationFeedback, event: wp.PresentationFeedback.Even
             };
             self.observed += 1;
             if (self.last == null or sample.submission > self.last.?.submission) self.last = sample;
-            std.log.info("surface-presentation submission={d} configuration={d} frame={d} clock={d} seconds={d} nanoseconds={d} refresh_ns={d} sequence={d} flags={d} output={any}", .{ sample.submission, sample.configuration, sample.frame, sample.clock_id, sample.seconds, sample.nanoseconds, sample.refresh_ns, sample.sequence, sample.flags, sample.output_global });
+            if (traceEnabled()) std.log.info("surface-presentation submission={d} configuration={d} frame={d} clock={d} seconds={d} nanoseconds={d} refresh_ns={d} sequence={d} flags={d} output={any}", .{ sample.submission, sample.configuration, sample.frame, sample.clock_id, sample.seconds, sample.nanoseconds, sample.refresh_ns, sample.sequence, sample.flags, sample.output_global });
         },
     }
+}
+
+// Per-frame trace for the native surface tests (AZK_SURFACE_TRACE=1); off by
+// default because it prints for every submitted frame.
+extern "c" fn getenv([*:0]const u8) ?[*:0]const u8;
+var trace_state: enum { unknown, off, on } = .unknown;
+fn traceEnabled() bool {
+    if (trace_state == .unknown) trace_state = if (getenv("AZK_SURFACE_TRACE") != null) .on else .off;
+    return trace_state == .on;
 }

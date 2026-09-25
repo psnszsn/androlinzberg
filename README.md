@@ -108,6 +108,12 @@ session directory. Add a second app to the same session with `--join`:
 ./zig-out/bin/androlinzberg --join /run/user/1000/androlinzberg/binder-<pid>-<id> /absolute/path/to/other.apk
 ```
 
+The session prints Android log entries of warning level and above to
+stderr, each cut at logd's entry size like logcat. `AZK_LOG_LEVEL` selects
+the level, for example `AZK_LOG_LEVEL=v` for everything the runtime emits or
+`AZK_LOG_LEVEL=e` for errors only. `AZK_SURFACE_TRACE=1` adds the task
+presenter's per-frame submission and presentation trace.
+
 Show all launcher options:
 
 ```sh

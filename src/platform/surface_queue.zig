@@ -287,7 +287,7 @@ fn presentFrame(self: *Self, window: anytype, frame: *Frame) !void {
             return error.InvalidOutputBufferSize;
         }
     }
-    std.log.info("surface-frame number={d} buffer={d} width={d} height={d}", .{ frame.number, info.id, info.width, info.height });
+    if (traceEnabled()) std.log.info("surface-frame number={d} buffer={d} width={d} height={d}", .{ frame.number, info.id, info.width, info.height });
     try window.pushUiDmabuf(.{
         .frame_number = frame.number,
         .context = frame,
@@ -307,4 +307,13 @@ fn presentFrame(self: *Self, window: anytype, frame: *Frame) !void {
     self.presented_height = info.height;
     self.presented_number = frame.number;
     self.submitted_frames += 1;
+}
+
+// Per-frame trace for the native surface tests (AZK_SURFACE_TRACE=1); off by
+// default because it prints for every submitted frame.
+extern "c" fn getenv([*:0]const u8) ?[*:0]const u8;
+var trace_state: enum { unknown, off, on } = .unknown;
+fn traceEnabled() bool {
+    if (trace_state == .unknown) trace_state = if (getenv("AZK_SURFACE_TRACE") != null) .on else .off;
+    return trace_state == .on;
 }

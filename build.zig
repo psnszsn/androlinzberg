@@ -643,7 +643,7 @@ pub fn build(b: *std.Build) void {
     var previous_surface_run: ?*std.Build.Step = null;
     for ([_][]const u8{ "normal", "producer-crash", "consumer-crash", "broker-loss", "backpressure", "pointer-capture-unavailable", "pointer-capture", "cursor-animation", "delayed-fence", "fence-shutdown", "fence-timeout", "paced", "paced-fallback", "drag-icon", "drag-icon-v4", "drag-icon-offset", "drag-icon-v4-offset" }) |scenario| {
         const output = b.pathResolve(&.{ "zig-out/test-results/wayland-surface", scenario });
-        const surface_run = b.addSystemCommand(&.{ "env", "WLR_RENDERER=gles2" });
+        const surface_run = b.addSystemCommand(&.{ "env", "WLR_RENDERER=gles2", "AZK_SURFACE_TRACE=1" });
         if (std.mem.eql(u8, scenario, "pointer-capture") or std.mem.startsWith(u8, scenario, "drag-icon")) {
             surface_run.addArg("SHOT_COMPOSITOR=labwc");
             surface_run.addPrefixedFileArg("SHOT_LABWC_CONFIG=", b.path("testdata/wayland/surface-capture.xml"));
@@ -1518,6 +1518,7 @@ pub fn build(b: *std.Build) void {
         run.setEnvironment("AZK_TASK_WINDOWS", "1");
         run.setEnvironment("WLR_RENDERER", "gles2");
         run.setEnvironment("SHOT_COMPOSITOR", "labwc");
+        run.setEnvironment("AZK_SURFACE_TRACE", "1");
         if (std.mem.eql(u8, fault, "compositor")) run.setEnvironment("SHOT_EXPECT_COMPOSITOR_LOSS", "1");
         run.addArg("env");
         run.addPrefixedFileArg("SHOT_LABWC_CONFIG=", b.path("testdata/wayland/launcher-desktop.xml"));
