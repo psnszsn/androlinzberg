@@ -1099,6 +1099,8 @@ pub fn build(b: *std.Build) void {
         }),
     });
     webview_support.root_module.addObjectFile(island.file);
+    // Installed under lib/art; the island it links is lib/libandroid_platform.so.
+    webview_support.root_module.addRPathSpecial("$ORIGIN/..");
     const egl_support = b.addLibrary(.{
         .name = "azk_egl",
         .linkage = .dynamic,
@@ -1109,6 +1111,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     egl_support.root_module.addObjectFile(island.file);
+    egl_support.root_module.addRPathSpecial("$ORIGIN/..");
     const application_tree = @import("build/application.zig").build(b, .{
         .shell_manifest = aosp.path(b, "frameworks/base/packages/Shell/AndroidManifest.xml"),
         .pdfclient = island.pdfclient,

@@ -1093,7 +1093,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     const output = link.addOutputFileArg("libandroid_platform.so");
     // Original libpdfclient is a separate JNI library with private PDFium
     // globals, preserving the original jni.lds lifetime boundary.
-    const pdf_link = b.addSystemCommand(&.{ b.graph.zig_exe, "c++", "-fuse-ld=bfd", "-shared", "-Wl,-z,defs", "-Wl,--gc-sections", "-Wl,-soname,libpdfclient.so", "-Wl,-rpath,$ORIGIN/..", "-Wl,--wrap=fopen,--wrap=stat,--wrap=opendir,--wrap=FT_Open_Face" });
+    const pdf_link = b.addSystemCommand(&.{ b.graph.zig_exe, "c++", "-fuse-ld=bfd", "-shared", "-Wl,-z,defs", "-Wl,--gc-sections", "-Wl,-soname,libpdfclient.so", "-Wl,-rpath,$ORIGIN", "-Wl,-rpath,$ORIGIN/..", "-Wl,--wrap=fopen,--wrap=stat,--wrap=opendir,--wrap=FT_Open_Face" });
     pdf_link.step.name = "link original libpdfclient.so";
     pdf_link.removeEnvironmentVariable("NIX_LDFLAGS");
     pdf_link.addPrefixedFileArg("-Wl,--version-script,", pdf_root.path(b, "jni.lds"));

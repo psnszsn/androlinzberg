@@ -67,8 +67,12 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     // Original AudioEffect/Visualizer JNI is registered from that same island.
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libaudioeffect_jni.so");
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libcom_android_net_module_util_jni.so");
-    _ = tree.addCopyFile(options.libart, "lib/art/libart.so");
-    _ = tree.addCopyFile(options.libjavacrypto, "lib/art/libjavacrypto.so");
+    // The overlays are the runtime's own artifacts, whose $ORIGIN runpaths
+    // describe bin/art/lib64. Installed under lib/art they must still find
+    // libartbase, liblog and the other runtime libraries there; the build
+    // cache runpaths that hid this in-tree are not part of an installation.
+    _ = tree.addCopyFile(relocateOverlay(b, options.libart, "libart.so"), "lib/art/libart.so");
+    _ = tree.addCopyFile(relocateOverlay(b, options.libjavacrypto, "libjavacrypto.so"), "lib/art/libjavacrypto.so");
     for (options.bionic) |library| {
         _ = tree.addCopyFile(library.file, b.pathJoin(&.{ "lib/art", library.name }));
     }
@@ -89,4 +93,11 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     _ = tree.addCopyFile(b.path("tools/dexopt-apk.sh"), "share/androlinzberg/dexopt-apk.sh");
     _ = tree.addCopyFile(b.path("src/bionic_translation.cfg"), "share/bionic_translation/cfg.d/bionic_translation.cfg");
     return tree.getDirectory();
+}
+
+fn relocateOverlay(b: *std.Build, library: LazyPath, name: []const u8) LazyPath {
+    const patch = b.addSystemCommand(&.{ "patchelf", "--add-rpath", "$ORIGIN/../../bin/art/lib64", "--output" });
+    const relocated = patch.addOutputFileArg(name);
+    patch.addFileArg(library);
+    return relocated;
 }
