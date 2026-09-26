@@ -240,6 +240,8 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
             }
         override fun suspended(taskId: Int, generation: Long, suspended: Boolean) =
             deliver(taskId, generation) { it.events.suspended(suspended) }
+        override fun fullscreen(taskId: Int, generation: Long, fullscreen: Boolean) =
+            deliver(taskId, generation) { it.events.fullscreen(fullscreen) }
         override fun closeRequested(taskId: Int, generation: Long) =
             deliver(taskId, generation) { it.events.closeRequested() }
         override fun keyboardFocus(taskId: Int, generation: Long, gained: Boolean, heldScanCodes: IntArray) =
@@ -332,8 +334,8 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
         override fun metadata(appId: String, title: String) {
             if (!closed) remote.setMetadata(task.id, task.generation, appId, title)
         }
-        override fun immersive(enabled: Boolean) {
-            if (!closed) check(remote.requestFullscreen(task.id, task.generation, if (enabled) 1 else 0))
+        override fun leaveFullscreen() {
+            if (!closed) check(remote.requestFullscreen(task.id, task.generation, 0))
         }
         override fun committed(bounds: TaskGeometry.Bounds, size: WaylandTaskShell.Size) {
             if (!closed) {

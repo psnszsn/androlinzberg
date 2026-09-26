@@ -52,11 +52,14 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
         fun configure(size: Size)
         fun closeRequested()
         fun suspended(suspended: Boolean)
+        /** The compositor's effective fullscreen state (F11, compositor action or request). */
+        fun fullscreen(fullscreen: Boolean)
     }
     interface Window : AutoCloseable {
         val size: Size
         fun metadata(appId: String, title: String)
-        fun immersive(enabled: Boolean)
+        /** Ask the compositor to leave fullscreen; the state change arrives as an event. */
+        fun leaveFullscreen()
         fun committed(bounds: TaskGeometry.Bounds, size: Size)
         fun rejected(reason: TaskGeometry.Rejection)
     }
@@ -67,6 +70,9 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
         var presentationSize: Size? = null
         var closing = false
         var suspended = false
+        /** Fullscreen the user chose while the app requested immersive: the
+         * counterpart of desktop mode's full immersive state. */
+        var immersiveFullscreen = false
     }
     private val entries = linkedMapOf<Int, Entry>()
     private var generation = 0L
@@ -134,6 +140,10 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
                         android.suspended(entry.info.token, suspended)
                         entry.suspended = suspended
                     }
+                    override fun fullscreen(fullscreen: Boolean) {
+                        if (!current(entry)) return
+                        entry.immersiveFullscreen = fullscreen && entry.info.immersive
+                    }
                     override fun closeRequested() {
                         if (!current(entry) || entry.closing) return
                         entry.closing = true
@@ -141,7 +151,6 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
                         catch (failure: Throwable) { entry.closing = false; throw failure }
                     }
                 })
-            if (info.immersive) entry.window?.immersive(true)
             resize(entry, entry.desired ?: checkNotNull(entry.window).size)
         } catch (failure: Throwable) {
             try { retire(entry) } catch (cleanup: Throwable) { failure.addSuppressed(cleanup) }
@@ -153,12 +162,18 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
         val entry = entries[info.id] ?: return
         if (entry.info.token != info.token) return
         if (!info.application) { retire(entry); return }
-        val immersiveChanged = entry.info.immersive != info.immersive
+        val leftImmersive = entry.info.immersive && !info.immersive
         entry.info = info
         entry.window?.metadata(info.appId, info.title)
-        // Only application intent changes issue requests. An unrelated title or
-        // geometry update must not undo a user's F11/compositor fullscreen choice.
-        if (immersiveChanged && !entry.closing) entry.window?.immersive(info.immersive)
+        // Desktop mode (DesktopTasksController.onTaskInfoChanged, pinned
+        // android-16.0.0_r1): an app's immersive request alone never resizes
+        // its freeform task; the user enters full immersive through the window
+        // menu, here F11 or a compositor action. Only when the app stops
+        // requesting immersive does the shell leave that state for it.
+        if (leftImmersive && entry.immersiveFullscreen && !entry.closing) {
+            entry.immersiveFullscreen = false
+            entry.window?.leaveFullscreen()
+        }
         val bounds = geometry.bounds(entry.key)
         if (bounds != null && entry.pending == null && !entry.closing &&
             (bounds.left != info.left || bounds.top != info.top ||

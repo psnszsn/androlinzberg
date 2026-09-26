@@ -284,6 +284,7 @@ const Server = struct {
                     }
                 },
                 .close => try entry.events.closeRequested(entry.key.id, entry.key.generation),
+                .fullscreen_changed => |fullscreen| try entry.events.fullscreen(entry.key.id, entry.key.generation, fullscreen),
                 .keyboard_focus => |focused| if (!focused.active or (!entry.suspended and !entry.window.suspended)) try sendFocus(entry, focused),
                 .keyboard_reset => try entry.events.keyboardFocus(entry.key.id, entry.key.generation, false, &.{}),
                 .pointer_motion => |p| try pointer(entry, 0, 0, false, p.x, p.y),

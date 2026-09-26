@@ -14,7 +14,7 @@ or fallback to the removed global renderer.
 | Area | Behavior and limits |
 | --- | --- |
 | Windows | Independent task toplevels, attached dialogs/popups, Android layer transforms and video. Taskless system windows are rejected after the Android permission checks. |
-| Fullscreen and resize | F11 and application window attributes control fullscreen. Resize and output scale changes update task configuration; activities receive callbacks or saved-state relaunch according to their manifest. |
+| Fullscreen and resize | As in Android desktop mode, an application's immersive request hides its system bars inside its current window and never resizes it. F11 or the compositor makes a task fullscreen; a fullscreen entered while the application was immersive ends when the application leaves immersive. Resize and output scale changes update task configuration; activities receive callbacks or saved-state relaunch according to their manifest. |
 | Coordinates | Android uses synthetic display/task coordinates. They are not physical global desktop positions. Input and inspection explicitly translate between Android, task and surface coordinates. |
 | Input | Mouse, keyboard, scroll, touch and advertised tablet devices use stock InputDispatcher and input channels. Keyboard layout follows the compositor. Pointer capture and other optional features require the corresponding compositor protocols. |
 | Text editing | Physical keyboard/editor actions and compositor text-input-v3 preedit/commit are supported. No Android software-IME service is installed: Android panel show/hide return false, the service inventory is empty and IME height is zero. A compositor input method owns its own panel UI. |

@@ -16,9 +16,9 @@ object WaylandTaskShellSmoke {
         val commits = mutableListOf<Pair<TaskGeometry.Bounds, WaylandTaskShell.Size>>()
         val rejections = mutableListOf<TaskGeometry.Rejection>()
         var title = ""
-        val immersiveRequests = mutableListOf<Boolean>()
+        var fullscreenExits = 0
         override fun metadata(appId: String, title: String) { this.title = title }
-        override fun immersive(enabled: Boolean) { immersiveRequests.add(enabled) }
+        override fun leaveFullscreen() { fullscreenExits++ }
         override fun committed(bounds: TaskGeometry.Bounds, size: WaylandTaskShell.Size) {
             check(closes == 0); commits.add(bounds to size)
         }
@@ -81,11 +81,31 @@ object WaylandTaskShellSmoke {
         check(duplicate.leash.releases == 1 && first.leash.releases == 0 && desktop.windows.size == 2)
         android.events.changed(first.info.copy(title = "updated"))
         check(one.title == "updated")
+        // Desktop mode: an immersive request alone never changes the window.
         android.events.changed(first.info.copy(immersive = true))
         android.events.changed(first.info.copy(immersive = true, title = "immersive title"))
-        check(one.immersiveRequests == listOf(true) && two.immersiveRequests.isEmpty())
         android.events.changed(first.info.copy(immersive = false))
-        check(one.immersiveRequests == listOf(true, false))
+        check(one.fullscreenExits == 0 && two.fullscreenExits == 0)
+        // Fullscreen the user chose while the app was immersive ends with it.
+        android.events.changed(first.info.copy(immersive = true))
+        one.events.fullscreen(true)
+        android.events.changed(first.info.copy(immersive = true, title = "still immersive"))
+        check(one.fullscreenExits == 0)
+        android.events.changed(first.info.copy(immersive = false))
+        check(one.fullscreenExits == 1 && two.fullscreenExits == 0)
+        one.events.fullscreen(false)
+        // A user fullscreen chosen outside immersive belongs to the user.
+        one.events.fullscreen(true)
+        android.events.changed(first.info.copy(immersive = true))
+        android.events.changed(first.info.copy(immersive = false))
+        check(one.fullscreenExits == 1)
+        one.events.fullscreen(false)
+        // Leaving fullscreen first clears the state: no later exit request.
+        android.events.changed(first.info.copy(immersive = true))
+        one.events.fullscreen(true)
+        one.events.fullscreen(false)
+        android.events.changed(first.info.copy(immersive = false))
+        check(one.fullscreenExits == 1)
         one.events.configure(WaylandTaskShell.Size(200, 120))
         one.events.configure(WaylandTaskShell.Size(240, 180))
         check(android.configurations.size == 2)

@@ -42,4 +42,6 @@ oneway interface IWaylandTaskEvents {
     /** Source identity survives per-surface offer identities: accepted=0, copy=1,
      * drop-performed=2, terminal=3; only terminal's value denotes consumption. */
     void nativeDragSourceEvent(long sourceToken, int kind, boolean value);
+    /** The compositor's effective xdg-toplevel fullscreen state, after each change. */
+    void fullscreen(int taskId, long generation, boolean fullscreen);
 }

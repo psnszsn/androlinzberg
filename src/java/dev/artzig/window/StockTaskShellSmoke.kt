@@ -90,7 +90,7 @@ internal object StockTaskShellSmoke {
             }, handler)
         }
         override fun metadata(appId: String, title: String) { }
-        override fun immersive(enabled: Boolean) { check(!enabled) { "Unexpected immersive fixture request" } }
+        override fun leaveFullscreen() { error("Unexpected fullscreen exit request") }
         override fun committed(bounds: TaskGeometry.Bounds, size: WaylandTaskShell.Size) {
             check(!closed && bounds.width == 320 && bounds.height == 240)
             committed = true

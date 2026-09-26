@@ -54,7 +54,8 @@ pub const tests = [_][]const u8{
     "dev.artzig.uitest.NewPipeDesktopUiTest#hamburgerOpensNavigationDrawer@1600x900@newpipe",
     "dev.artzig.uitest.NewPipeDesktopUiTest#revealingVideoControlsKeepsCompositorFullscreen@1600x900@newpipe",
     "dev.artzig.uitest.NewPipeDesktopUiTest#fullscreenButtonExitsAndRestoresVideoDetails@1600x900@newpipe",
-    "dev.artzig.uitest.NewPipeDesktopUiTest#videoButtonEntersCompositorFullscreen@1600x900@newpipe",
+    "dev.artzig.uitest.NewPipeDesktopUiTest#videoButtonFillsItsWindowWithoutCompositorFullscreen@1600x900@newpipe",
+    "dev.artzig.uitest.NewPipeDesktopUiTest#userFullscreenEndsWhenThePlayerLeavesFullscreen@1600x900@newpipe",
     // Host path: real Wayland input through the presenter and InputDispatcher.
     "dev.artzig.uitest.host.WaylandInputUiTest#tapReachesTheView",
     "dev.artzig.uitest.host.WaylandInputUiTest#overlappingChildrenInterceptionAndRemoval",

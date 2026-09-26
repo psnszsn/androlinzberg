@@ -1,6 +1,7 @@
 package dev.artzig.uitest
 
 import android.graphics.Bitmap
+import android.graphics.Point
 import android.graphics.Rect
 import android.os.SystemClock
 import android.view.KeyEvent
@@ -59,7 +60,8 @@ class NewPipeUiTest {
 }
 
 /** NewPipe 0.29.1 in its desktop layout (1600x900): drawer and the player's
- * immersive presentation, which becomes compositor fullscreen. */
+ * immersive presentation. As in Android desktop mode, the app's immersive
+ * request fills its own window; F11 is the user's full-immersive action. */
 class NewPipeDesktopUiTest {
     @Test
     fun hamburgerOpensNavigationDrawer() = NewPipe.assertDrawerOpens(1600, 900)
@@ -67,18 +69,56 @@ class NewPipeDesktopUiTest {
     // In its narrow phone UI, NewPipe requests screen rotation for this button.
     // Stock Android ignores orientation requests from resizable freeform tasks
     // (DesktopActivityOrientationChangeHandler handles only non-resizable ones).
-    // Desktop UI requests immersive presentation directly; exercise its complete
-    // enter/reveal/exit contract without synthesizing an Android rotation.
+    // Desktop UI requests immersive presentation directly.
+    @Test
+    fun videoButtonFillsItsWindowWithoutCompositorFullscreen() {
+        NewPipe.openFirstLiveVideo()
+        NewPipe.awaitFullscreen(false)
+        NewPipe.startPlayback()
+        NewPipe.revealPlayerControls()
+        // Exercise presentation changes without continuous video frames.
+        NewPipe.pausePlayer()
+        NewPipe.enterPlayerFullscreen()
+        // Desktop mode never resizes a freeform task for an immersive request.
+        SystemClock.sleep(1_000)
+        assertTrue("an immersive request entered compositor fullscreen", !WaylandSeat.window().fullscreen)
+        val bounds = waitFor(NewPipe.PLAYER).visibleBounds
+        assertEquals(1600 to 900, bounds.width() to bounds.height())
+    }
+
+    // DesktopTasksController.onTaskInfoChanged: a task the user put into full
+    // immersive leaves it when the app stops requesting immersive.
+    @Test
+    fun userFullscreenEndsWhenThePlayerLeavesFullscreen() {
+        NewPipe.openFirstLiveVideo()
+        val title = waitFor(By.res("org.schabi.newpipe:id/detail_video_title_view")).text
+        NewPipe.startPlayback()
+        NewPipe.revealPlayerControls()
+        NewPipe.enterPlayerFullscreen()
+        NewPipe.pressF11()
+        NewPipe.awaitFullscreen(true)
+
+        NewPipe.revealPlayerControls()
+        click(NewPipe.ORIENTATION)
+        NewPipe.awaitFullscreen(false)
+        waitFor(By.res("org.schabi.newpipe:id/detail_video_title_view").text(title))
+        waitFor(description("Comments"))
+    }
+
+    // Visible controls keep only LAYOUT_* flags; that must not count as the app
+    // leaving immersive, or the user's fullscreen would end with every tap.
     @Test
     fun revealingVideoControlsKeepsCompositorFullscreen() {
         NewPipe.openFirstLiveVideo()
         NewPipe.startPlayback()
         NewPipe.revealPlayerControls()
         NewPipe.enterPlayerFullscreen()
+        NewPipe.pressF11()
+        NewPipe.awaitFullscreen(true)
         // Live footage may legitimately be almost black: assert the fullscreen
         // player geometry, not its content.
         val bounds = waitFor(NewPipe.PLAYER).visibleBounds
-        assertEquals(Rect(0, 0, 1600, 900).width() to 900, bounds.width() to bounds.height())
+        assertEquals(1600 to 900, bounds.width() to bounds.height())
         val capture = UiApp.screenshot()
         assertEquals(1600 to 900, capture.width to capture.height)
         // The controls auto-hide about two seconds after they appear: assert
@@ -110,25 +150,13 @@ class NewPipeDesktopUiTest {
 
         NewPipe.tapPlayerSurface()
         waitFor(NewPipe.ORIENTATION)
-        NewPipe.awaitFullscreen(true)
         click(NewPipe.ORIENTATION)
 
-        NewPipe.awaitFullscreen(false)
         waitFor(NewPipe.PLAYER)
         waitFor(By.res("org.schabi.newpipe:id/detail_video_title_view").text(title))
         waitFor(description("Comments"))
         expectVisible("Background")
-    }
-
-    @Test
-    fun videoButtonEntersCompositorFullscreen() {
-        NewPipe.openFirstLiveVideo()
-        NewPipe.awaitFullscreen(false)
-        NewPipe.startPlayback()
-        NewPipe.revealPlayerControls()
-        // Exercise presentation changes without continuous video frames.
-        NewPipe.pausePlayer()
-        NewPipe.enterPlayerFullscreen()
+        assertTrue("an immersive request entered compositor fullscreen", !WaylandSeat.window().fullscreen)
     }
 }
 
@@ -181,13 +209,22 @@ private object NewPipe {
 
     /** Visible controls can retain only LAYOUT_* flags when the player expands.
      * Finish that layout transition, then hide the controls so the app actually
-     * requests hidden bars: layout flags alone are not a fullscreen request. */
+     * requests hidden bars: layout flags alone are not an immersive request. */
     fun enterPlayerFullscreen() {
         click(ORIENTATION)
         waitUntilGone(description("Comments"))
         if (device.hasObject(ORIENTATION)) tapPlayerSurface()
         waitUntilGone(ORIENTATION)
-        awaitFullscreen(true)
+    }
+
+    /** The user's full-immersive action: F11 on the real Wayland keyboard. The
+     * focusing tap lands low on the player, away from its play/pause button. */
+    fun pressF11() {
+        val bounds = waitFor(PLAYER).visibleBounds
+        WaylandSeat.tapThenKey(Point(bounds.left + bounds.width() / 8, bounds.bottom - bounds.height() / 8), "F11")
+        SystemClock.sleep(500)
+        if (device.hasObject(ORIENTATION)) tapPlayerSurface()
+        waitUntilGone(ORIENTATION)
     }
 
     fun pausePlayer() {
