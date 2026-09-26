@@ -7,6 +7,7 @@
 #include "GpuBufferRenderer.h"
 #include <cassert>
 #include <condition_variable>
+#include <cerrno>
 #include <fcntl.h>
 #include <mutex>
 #include <iostream>
@@ -137,15 +138,27 @@ int main() {
                                           "HostComposerTarget");
     assert(buffer->initCheck() == OK);
     auto acquire = renderer.render(buffer, 0xff123456);
-    const int borrowed = acquire->get();
-    assert(borrowed >= 0);
-    assert(composer->setClientTarget(1, 64, buffer, borrowed, Dataspace::SRGB,
+    assert(acquire->isValid());
+    // Like HWC2::Display::setClientTarget, hand over a duplicate; the composer
+    // owns it on every path, including rejected calls.
+    int handed = acquire->dup();
+    assert(handed >= 0);
+    assert(composer->setClientTarget(1, 64, buffer, handed, Dataspace::SRGB,
                                      {}, 1) == Error::BAD_PARAMETER);
+    assert(fcntl(handed, F_GETFD) < 0 && errno == EBADF);
     assert(composer->setClientTarget(1, 3, nullptr, -1, Dataspace::SRGB, {},
                                      1) == Error::BAD_PARAMETER);
-    assert(composer->setClientTarget(1, 3, buffer, borrowed, Dataspace::SRGB,
+    const int layerHanded = acquire->dup();
+    assert(layerHanded >= 0);
+    assert(composer->setLayerBuffer(1, 0, 0, buffer, layerHanded) !=
+           Error::NONE);
+    assert(fcntl(layerHanded, F_GETFD) < 0 && errno == EBADF);
+    handed = acquire->dup();
+    assert(handed >= 0);
+    assert(composer->setClientTarget(1, 3, buffer, handed, Dataspace::SRGB,
                                      {}, 1) == Error::NONE);
-    assert(fcntl(borrowed, F_GETFD) >= 0);
+    // Accepted: the composer keeps the fence until the target is replaced.
+    assert(fcntl(handed, F_GETFD) >= 0);
     acquire.clear();
     buffer.clear();
     int completed = -1;
@@ -156,6 +169,8 @@ int main() {
     // Reuse the retained slot after releasing the caller's GraphicBuffer.
     assert(composer->setClientTarget(1, 3, nullptr, -1, Dataspace::SRGB, {},
                                      1) == Error::NONE);
+    // The replaced target's fence is closed with it.
+    assert(fcntl(handed, F_GETFD) < 0 && errno == EBADF);
     assert(composer->validateDisplay(1, 0, 5'000'000, &count, &requests) ==
                Error::NONE &&
            count == 0);

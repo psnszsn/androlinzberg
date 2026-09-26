@@ -234,6 +234,13 @@ public:
                         Dataspace dataspace,
                         const std::vector<IComposerClient::Rect> &damage,
                         float hdrSdrRatio) override {
+    // HWC2::Display::setClientTarget hands over Fence::dup() of the client
+    // target's acquire fence, and a composer HAL owns every fence FD it is
+    // given (HidlComposer's command writer closes them). Adopt it on every
+    // path, including errors, or SurfaceFlinger leaks one sync_file per
+    // composited frame.
+    sp<Fence> fence =
+        acquireFence >= 0 ? sp<Fence>::make(acquireFence) : Fence::NO_FENCE;
     if (display != 1)
       return Error::BAD_DISPLAY;
     if (slot >= targets_.size() || hdrSdrRatio != 1.0f)
@@ -246,15 +253,6 @@ public:
       return Error::BAD_PARAMETER;
     if (buffer->getUsage() & GraphicBuffer::USAGE_PROTECTED)
       return Error::UNSUPPORTED;
-    // Fence::dup in the pinned API duplicates a borrowed FD without consuming
-    // it.
-    sp<Fence> fence = Fence::NO_FENCE;
-    if (acquireFence >= 0) {
-      int owned = ::fcntl(acquireFence, F_DUPFD_CLOEXEC, 0);
-      if (owned < 0)
-        return Error::NO_RESOURCES;
-      fence = sp<Fence>::make(owned);
-    }
     targets_[slot] = buffer;
     currentTarget_ = buffer;
     currentFence_ = fence;
@@ -274,6 +272,8 @@ public:
   }
   Error setOutputBuffer(Display display, const native_handle_t *buffer,
                         int releaseFence) override {
+    if (releaseFence >= 0)
+      sp<Fence>::make(releaseFence).clear();  // owned, like every HAL fence
     if (display != 1)
       return Error::BAD_DISPLAY;
     return Error::UNSUPPORTED;
@@ -327,6 +327,8 @@ public:
   Error setLayerBuffer(Display display, Layer layer, uint32_t slot,
                        const sp<GraphicBuffer> &buffer,
                        int acquireFence) override {
+    if (acquireFence >= 0)
+      sp<Fence>::make(acquireFence).clear();  // owned, like every HAL fence
     return layerStatus(display, layer, false);
   }
   Error setLayerBufferSlotsToClear(Display display, Layer layer,
