@@ -139,6 +139,11 @@ pub fn build(b: *std.Build, o: Options) Result {
         "-std=gnu++23",            "-fno-exceptions",             "-fno-rtti", "-w",                                          "-D_GNU_SOURCE", "-DNDEBUG",
         // zig enables UBSan for C/C++ in Debug; AOSP code trips it (null memcpy of 0 bytes)
         "-fno-sanitize=undefined",
+        // Soong's device default since Android 13: platform code relies on
+        // zero-filled locals (e.g. libaudioclient's AidlConversion ORs flags
+        // into an uninitialized audio_port_config, so AudioManager.getDevices
+        // read a stale gain index on some hosts).
+        "-ftrivial-auto-var-init=zero",
         // AOSP's half type intentionally specializes this standard trait.
         "-Wno-invalid-specialization",
         // Keep the LazyPath include root below as the dependency identity. Zig's
@@ -147,7 +152,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         "-include",  b.pathResolve(&.{"src/native/azk_prelude.h"}), "-include",      b.pathResolve(&.{"src/native/graphics/include/azk/graphics_compat.h"}),
     }) catch @panic("oom");
     var cc = std.ArrayList([]const u8).empty;
-    cc.appendSlice(b.allocator, &.{ "-std=gnu17", "-w", "-D_GNU_SOURCE", "-DNDEBUG", "-fno-sanitize=undefined" }) catch @panic("oom");
+    cc.appendSlice(b.allocator, &.{ "-std=gnu17", "-w", "-D_GNU_SOURCE", "-DNDEBUG", "-fno-sanitize=undefined", "-ftrivial-auto-var-init=zero" }) catch @panic("oom");
     for (gen.defines) |d| {
         cxx.append(b.allocator, b.fmt("-D{s}", .{d})) catch @panic("oom");
         cc.append(b.allocator, b.fmt("-D{s}", .{d})) catch @panic("oom");

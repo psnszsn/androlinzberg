@@ -133,7 +133,7 @@ pub fn configure(b: *std.Build, mod: *std.Build.Module, aosp: std.Build.LazyPath
 }
 
 pub fn cppFlags(b: *std.Build) []const []const u8 {
-    return b.allocator.dupe([]const u8, &.{ "-std=c++23", "-DRUST_CXX_NO_EXCEPTIONS", "-DNDEBUG", "-fno-exceptions", "-fno-rtti", "-ffunction-sections", "-fdata-sections", "-D_GNU_SOURCE", "-D__ANDROID_HOST__", "-DARTZIG_HOST_THREAD_PRIORITY", "-DANDROID_UTILS_CALLSTACK_ENABLED=0", "-Wno-invalid-specialization", "-Wno-deprecated-declarations", "-Wno-deprecated-literal-operator", "-Wno-character-conversion", "-include", b.pathResolve(&.{"src/native/azk_prelude.h"}), "-include", b.pathResolve(&.{"src/native/graphics/include/azk/graphics_compat.h"}) }) catch @panic("oom");
+    return b.allocator.dupe([]const u8, &.{ "-std=c++23", "-DRUST_CXX_NO_EXCEPTIONS", "-ftrivial-auto-var-init=zero", "-DNDEBUG", "-fno-exceptions", "-fno-rtti", "-ffunction-sections", "-fdata-sections", "-D_GNU_SOURCE", "-D__ANDROID_HOST__", "-DARTZIG_HOST_THREAD_PRIORITY", "-DANDROID_UTILS_CALLSTACK_ENABLED=0", "-Wno-invalid-specialization", "-Wno-deprecated-declarations", "-Wno-deprecated-literal-operator", "-Wno-character-conversion", "-include", b.pathResolve(&.{"src/native/azk_prelude.h"}), "-include", b.pathResolve(&.{"src/native/graphics/include/azk/graphics_compat.h"}) }) catch @panic("oom");
 }
 
 pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, aosp: std.Build.LazyPath, gui: graphics.Generated, input: Generated, aidl: []const std.Build.LazyPath, gui_lib: *std.Build.Step.Compile, binder: *std.Build.Step.Compile, ndk: *std.Build.Step.Compile, broker: *std.Build.Step.Compile) Library {
