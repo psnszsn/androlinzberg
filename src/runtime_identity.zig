@@ -48,6 +48,15 @@ pub fn prepare(init: std.process.Init, library: *std.DynLib, role: Role, apk: ?[
 }
 
 fn inspectPackage(init: std.process.Init, apk: []const u8) ![]const u8 {
+    return metadata(init, "--inspect-apk-package", apk);
+}
+
+/// Import a distribution envelope before native-library and process setup.
+pub fn importXapk(init: std.process.Init, path: []const u8) ![]const u8 {
+    return metadata(init, "--import-xapk", path);
+}
+
+fn metadata(init: std.process.Init, operation: []const u8, apk: []const u8) ![]const u8 {
     const a = init.arena.allocator();
     var environment = try init.minimal.environ.createMap(a);
     defer environment.deinit();
@@ -56,15 +65,20 @@ fn inspectPackage(init: std.process.Init, apk: []const u8) ![]const u8 {
     // Build/ABI properties are public OS metadata. Preserve their read-only
     // area while withholding every Binder credential and the session socket.
     try environment.put("AZK_PROP_AREA", env("AZK_PROP_AREA") orelse return error.MissingRuntimeProperties);
+    for ([_][]const u8{ "ARTZIG_DATA_DIR", "EXTERNAL_STORAGE", "DOWNLOAD_CACHE", "ARTZIG_RUNTIME_CACHE_DIR" }) |name| {
+        const key = try a.dupeSentinel(u8, name, 0);
+        if (env(key)) |value| try environment.put(name, value);
+    }
     const result = try std.process.run(a, init.io, .{
-        .argv = &.{ try std.process.executablePathAlloc(init.io, a), "--inspect-apk-package", apk },
+        .argv = &.{ try std.process.executablePathAlloc(init.io, a), operation, apk },
         .environ_map = &environment,
         .stdout_limit = .limited(4096),
         .stderr_limit = .limited(1024 * 1024),
-        .timeout = .{ .duration = .{ .clock = .awake, .raw = .fromSeconds(60) } },
+        .timeout = .{ .duration = .{ .clock = .awake, .raw = .fromSeconds(300) } },
     });
     defer a.free(result.stdout);
     defer a.free(result.stderr);
+    if (!result.term.success()) try std.Io.File.stderr().writeStreamingAll(init.io, result.stderr);
     switch (result.term) {
         .exited => |code| if (code != 0) return error.ApkPackageInspectionFailed,
         else => return error.ApkPackageInspectionFailed,
@@ -77,11 +91,19 @@ fn inspectPackage(init: std.process.Init, apk: []const u8) ![]const u8 {
 /// Metadata-only launcher entry: no application classes, Binder session or
 /// fabricated package parser. JNI can call ApkHost's existing private helper.
 pub fn printPackage(runtime: *art.Runtime, io: std.Io, apk: []const u8) !void {
+    return printMetadata(runtime, io, apk, "dev/artzig/ApkHost", "parseApkLitePackageName");
+}
+
+pub fn printImportedPackage(runtime: *art.Runtime, io: std.Io, path: []const u8) !void {
+    return printMetadata(runtime, io, path, "dev/artzig/HostedAppPackage", "importXapk");
+}
+
+fn printMetadata(runtime: *art.Runtime, io: std.Io, apk: []const u8, class_name: [:0]const u8, method_name: [:0]const u8) !void {
     const a = runtime.arena.allocator();
     const e = art.Env{ .env = runtime.env };
-    const cls = try e.findClass("dev/artzig/ApkHost");
+    const cls = try e.findClass(class_name);
     defer runtime.env.*.*.DeleteLocalRef.?(runtime.env, cls);
-    const method = try e.getStaticMethodID(cls, "parseApkLitePackageName", "(Ljava/lang/String;)Ljava/lang/String;");
+    const method = try e.getStaticMethodID(cls, method_name, "(Ljava/lang/String;)Ljava/lang/String;");
     const path = try e.newString(try a.dupeSentinel(u8, apk, 0));
     defer runtime.env.*.*.DeleteLocalRef.?(runtime.env, path);
     const value: art.jni.jstring = @ptrCast(runtime.env.*.*.CallStaticObjectMethod.?(runtime.env, cls, method, path));

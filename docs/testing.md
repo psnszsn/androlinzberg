@@ -45,6 +45,19 @@ system process and their code loads from framework.jar:
 zig build -j10 system-test
 ```
 
+`zig build -j10 xapk-test` exercises archive validation, signed split-package
+imports, monolithic envelopes and rejected incomplete or inconsistent packages.
+The UI suite also includes `XapkUiTest`, whose activity code and asset live only
+in a feature split and whose expansion data is imported from the XAPK. It retains
+`screenshot.png` beside its logs.
+
+`zig build -j10 ui-test-build` installs the runner, test dex, presenter probe and
+APK/XAPK fixtures under `zig-out/test-fixtures/` without starting a compositor.
+This supports building on a Nix remote builder and running the resulting artifacts
+through the same `tools/shot.sh --runner` harness on a machine with EGL access.
+Keep `test-fixtures/` beside the matching runtime's `lib/` directory so the
+presenter probe can load Binder through its relative library path.
+
 These tests do not replace an APK UI test.
 
 ## Optional Binder graphics probe
@@ -134,4 +147,3 @@ contains fatal output. Artifacts are under `zig-out/test-results/stock-*/`.
 The `stock-task-*` steps remain native pixel gates
 (`tests/native/stock-wayland-task-test.py`): they synchronize a system-test
 driver with compositor screenshots and use no UI automation.
-

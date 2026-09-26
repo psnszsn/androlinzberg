@@ -71,7 +71,7 @@ class ApkHost private constructor() {
             // NativeLibraryHelper owns ABI filtering, CRC/timestamp reuse,
             // permissions, temporary-file cleanup and atomic replacement.
             com.android.internal.content.NativeLibraryHelper.Handle.create(
-                listOf(apkPath), false, true, false, false,
+                HostedAppPackage.parse(apkPath).allApkPaths, false, true, false, false,
             ).use { handle ->
                 val result = com.android.internal.content.NativeLibraryHelper.copyNativeBinariesForSupportedAbi(
                     handle, dir, arrayOf("x86_64"), false, false,
@@ -129,14 +129,17 @@ class ApkHost private constructor() {
             }
             val installed = installer.installPackage(apkPath, nativeLibraryDir)
             check(installed == pkg) { "installed as " + installed + ", expected " + pkg }
+            HostedAppPackage.installExpansionFiles(apkPath, installed)
         }
 
         /** Install an APK for ATMS to launch in its own process. The desktop
          * controller has already selected its Binder identity before this call. */
         @JvmStatic fun installForDesktop(): String {
             val path = checkNotNull(System.getenv("ARTZIG_APK"))
-            return checkNotNull(HostedServiceClient.installerOrNull())
+            val installed = checkNotNull(HostedServiceClient.installerOrNull())
                 .installPackage(path, extractNativeLibraries(path))
+            HostedAppPackage.installExpansionFiles(path, installed)
+            return installed
         }
 
         /** AOSP bindApplication supplies resources, class loading and application

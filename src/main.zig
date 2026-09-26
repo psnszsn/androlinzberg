@@ -23,7 +23,7 @@ const runtime_identity = @import("runtime_identity.zig");
 const usage =
     \\androlinzberg — run an Android APK on artzig (ART + Skia + Wayland)
     \\
-    \\usage: androlinzberg [options] <app.apk>
+    \\usage: androlinzberg [options] <app.apk|app.xapk>
     \\  --join <session-dir>   add this app to a running session (see session.json)
     \\Every launch runs inside a hosted Binder session (broker + system process);
     \\`--system-server` is the launcher's own headless system-process entry.
@@ -313,6 +313,12 @@ fn run(init: std.process.Init) !void {
             defer headless.rt.releaseProcessState();
             try runFrameworkMain(&headless.rt, "dev.artzig.RuntimeProcess", &.{setup});
             return;
+        } else if (std.mem.eql(u8, args[i], "--import-xapk")) {
+            if (i + 2 != args.len) return error.InvalidXapkImportArguments;
+            var headless = try bootHeadless(init, .metadata);
+            defer headless.rt.releaseProcessState();
+            try runtime_identity.printImportedPackage(&headless.rt, init.io, args[i + 1]);
+            return;
         } else if (std.mem.eql(u8, args[i], "--inspect-apk-package")) {
             if (i + 2 != args.len) return error.InvalidApkPackageInspectionArguments;
             var headless = try bootHeadless(init, .metadata);
@@ -359,7 +365,11 @@ fn run(init: std.process.Init) !void {
     if (apk != null and present_tasks) {
         if (frames_limit != null or fullscreen) return error.TaskWindowPresentationOptionsUnavailable;
         const arena = init.arena.allocator();
-        const path = if (std.fs.path.isAbsolute(apk.?)) apk.? else try std.fs.path.join(arena, &.{ init.minimal.environ.getPosix("PWD") orelse ".", apk.? });
+        const supplied_path = if (std.fs.path.isAbsolute(apk.?)) apk.? else try std.fs.path.join(arena, &.{ init.minimal.environ.getPosix("PWD") orelse ".", apk.? });
+        const path = if (std.ascii.endsWithIgnoreCase(supplied_path, ".xapk"))
+            try runtime_identity.importXapk(init, supplied_path)
+        else
+            supplied_path;
         _ = setenv("ARTZIG_APK", try arena.dupeSentinel(u8, path, 0), 1);
         // Only the session owner holds the privileged cookie. APK processes are
         // spawned by the system service with app credentials, as on cold launch.

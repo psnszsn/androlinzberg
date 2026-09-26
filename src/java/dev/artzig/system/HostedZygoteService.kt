@@ -298,6 +298,10 @@ internal class HostedZygoteService(
         environment.remove("AZK_BINDER_SYSTEM_COOKIE")
         environment.remove("AZK_BINDER_COOKIE")
         environment.remove("AZK_TEST_CLASS")
+        // Cluster launches may reach this seam via either the package directory
+        // or sourceDir (the base APK). Use the installed package's library path.
+        packages?.getApplicationInfo(packageName, 0, UserHandle.getUserId(grant.uid))
+            ?.nativeLibraryDir?.let { environment["ARTZIG_NATIVE_LIB_DIR"] = it }
         environment.remove("AZK_RUNTIME_MASK_APP_DATA")
         if (kind == BinderSession.LaunchKind.WEBVIEW_CONTROLLER)
             environment["AZK_RUNTIME_MASK_APP_DATA"] = "1"

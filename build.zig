@@ -821,6 +821,7 @@ pub fn build(b: *std.Build) void {
         .source_audit = &jvm_source_audit.step,
     });
     const window_fixture = @import("build/window_fixtures.zig").build(b, aosp_dep, java);
+    const xapk_fixture = @import("build/xapk_fixtures.zig").build(b, aosp_dep, java, window_fixture.dex);
 
     // ABI-conformance check: the emitted .so must export every A* symbol the
     // prebuilt libbinder_ndk.so does, so unmodified NDK/AIDL clients resolve.
@@ -1535,6 +1536,17 @@ pub fn build(b: *std.Build) void {
         run.run.setName(b.fmt("verify desktop session retirement after {s} loss", .{fault}));
         session_loss_step.dependOn(&run.run.step);
     }
+    const xapk_smoke = @import("build/command.zig").create(b);
+    setApplicationEnvironment(xapk_smoke, application_tree);
+    xapk_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    xapk_smoke.addArg("--javatest");
+    xapk_smoke.setEnvironment("AZK_TEST_CLASS", "dev.artzig.HostedAppPackageSmoke");
+    xapk_smoke.setEnvironment("AZK_BINDER_PACKAGE", "org.example");
+    for ([_]std.Build.LazyPath{ xapk_fixture.xapk, xapk_fixture.base, xapk_fixture.split, xapk_fixture.wrong_signer, java.fixtures.example }) |fixture|
+        xapk_smoke.addFileArg(fixture);
+    b.step("xapk-test", "Test XAPK import and signed APK cluster contracts").dependOn(&xapk_smoke.run.step);
+    jvm_test_step.dependOn(&xapk_smoke.run.step);
+
     const framework_module_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(framework_module_smoke, application_tree);
     framework_module_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));
@@ -1647,7 +1659,6 @@ pub fn build(b: *std.Build) void {
     b.step("jvm-exit-test", "Verify ART exits without libc cleanup")
         .dependOn(&jvm_exit_smoke.run.step);
 
-
     // UI tests on ART: JUnit + androidx UiAutomator over stock UiAutomation,
     // one session per test, orchestrated by tools/ui-test-runner.zig under Cage.
     const ui_tests = @import("build/ui_tests.zig");
@@ -1683,6 +1694,24 @@ pub fn build(b: *std.Build) void {
         },
     }) });
     presenter_probe.root_module.linkLibrary(binder_ndk);
+    presenter_probe.root_module.addRPathSpecial("$ORIGIN/../lib/art");
+    // Build once (including on a Nix remote builder), then run the existing
+    // harness against these artifacts on a host with Wayland/EGL access.
+    const ui_artifacts = b.step("ui-test-build", "Install UI test artifacts without launching a compositor");
+    for ([_]struct { source: std.Build.LazyPath, name: []const u8 }{
+        .{ .source = ui_test_runner.getEmittedBin(), .name = "ui-test-runner" },
+        .{ .source = presenter_probe.getEmittedBin(), .name = "presenter-probe" },
+        .{ .source = ui_tests_dex, .name = "ui-tests.jar" },
+        .{ .source = window_fixture.apk, .name = "window-fixture.apk" },
+        .{ .source = xapk_fixture.xapk, .name = "split-fixture.xapk" },
+        .{ .source = xapk_fixture.base, .name = "base.apk" },
+        .{ .source = xapk_fixture.split, .name = "feature.apk" },
+        .{ .source = xapk_fixture.wrong_signer, .name = "wrong-signer.apk" },
+        .{ .source = java.fixtures.example, .name = "example.apk" },
+        .{ .source = java.fixtures.webview, .name = "webview.apk" },
+    }) |artifact| {
+        ui_artifacts.dependOn(&b.addInstallFile(artifact.source, b.fmt("test-fixtures/{s}", .{artifact.name})).step);
+    }
     const ui_test_run = @import("build/command.zig").create(b);
     setApplicationEnvironment(ui_test_run, application_tree);
     ui_test_run.setEnvironment("WLR_RENDERER", "gles2");
@@ -1702,6 +1731,8 @@ pub fn build(b: *std.Build) void {
     ui_test_run.addArgs(&ui_tests.pinned_apks);
     ui_test_run.addArg("--named-apk");
     ui_test_run.addPrefixedFileArg("webview=", java.fixtures.webview);
+    ui_test_run.addArg("--named-apk");
+    ui_test_run.addPrefixedFileArg("xapk=", xapk_fixture.xapk);
     ui_test_run.addArgs(&ui_tests.tests);
     ui_test_run.addPassthruArgs();
     ui_test_run.run.setName("run UiAutomator tests on ART, one session per test");

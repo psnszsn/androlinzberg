@@ -2,7 +2,7 @@
 //! from the hosted framework.
 const std = @import("std");
 const command = @import("command.zig");
-pub const Result = struct { apk: std.Build.LazyPath };
+pub const Result = struct { apk: std.Build.LazyPath, dex: std.Build.LazyPath };
 pub fn build(b: *std.Build, aosp: *std.Build.Dependency, framework: @import("java.zig").Result) Result {
     const kotlinc = command.create(b);
     kotlinc.addFileArg(aosp.path("external/kotlinc/bin/kotlinc"));
@@ -27,6 +27,7 @@ pub fn build(b: *std.Build, aosp: *std.Build.Dependency, framework: @import("jav
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/DialogFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/AudioFocusFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/PendingIntentFixtureActivity.kt"));
+    kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/SplitFixtureActivity.kt"));
     const d8 = b.addSystemCommand(&.{ "java", "-Xmx512M", "-cp" });
     d8.addFileArg(aosp.path("prebuilts/r8/r8.jar"));
     d8.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", "35", "--lib" });
@@ -53,5 +54,5 @@ pub fn build(b: *std.Build, aosp: *std.Build.Dependency, framework: @import("jav
     const signed = @import("generators.zig").signApk(b, aosp, unsigned, "window-fixture.apk", true, "azk-platform");
     const install = b.addInstallFile(signed, "test-fixtures/window-fixture.apk");
     b.step("window-fixture", "Build the Kotlin task/window contract APK").dependOn(&install.step);
-    return .{ .apk = signed };
+    return .{ .apk = signed, .dex = dex };
 }

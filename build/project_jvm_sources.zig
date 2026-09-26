@@ -58,6 +58,8 @@ pub const framework = [_][]const u8{
     "src/java/com/android/server/am/HostActivityPendingIntents.kt",
     "src/java/com/android/server/am/HostedUidObservers.kt",
     "src/java/dev/artzig/ApkHost.kt",
+    "src/java/dev/artzig/HostedAppPackage.kt",
+    "src/java/dev/artzig/HostedAppPackageSmoke.kt",
     "src/java/dev/artzig/ArtzigTestDiagnostics.kt",
     "src/java/dev/artzig/AppProcess.kt",
     "src/java/dev/artzig/window/DesktopLauncher.kt",

@@ -13,6 +13,7 @@ pub const sources = [_][]const u8{
     "tests/ui/kotlin/dev/artzig/uitest/WebViewUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/SessionDiagnosticsUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/UiApp.kt",
+    "tests/ui/kotlin/dev/artzig/uitest/XapkUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/WindowFixtureUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/WindowInputUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/host/DesktopClipboardUiTest.kt",
@@ -28,6 +29,7 @@ pub const sources = [_][]const u8{
 /// `Class#method[@WxH]`: the orchestrator's default selection. A size suffix is
 /// the launch size and headless output mode of that test's session.
 pub const tests = [_][]const u8{
+    "dev.artzig.uitest.XapkUiTest#loadsSplitCodeAssetsAndExpansionData@412x915@xapk",
     "dev.artzig.uitest.SessionDiagnosticsUiTest#unsupportedFrameworkCallIsJournalled",
     "dev.artzig.uitest.WindowFixtureUiTest#launchesAndUpdatesState@412x915",
     "dev.artzig.uitest.WindowFixtureUiTest#dialogRemainsAttachedToTheActivity@412x915",

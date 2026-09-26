@@ -152,7 +152,8 @@ class HostedPackageManagerService(private val userManager: UserManagerInternal, 
         // The launcher resolves its APK path before exec. Retain the same
         // canonical file identity when an installer supplied a relative path.
         val file = File(apkPath).canonicalFile
-        require(file.isFile) { "no APK at $apkPath" }
+        require(file.isFile || file.isDirectory) { "no APK or APK cluster at $apkPath" }
+        dev.artzig.HostedAppPackage.parse(file.path)
         // Parse outside the lock (I/O + signature verification).
         val parsed = PackageParser2(null, null, null, parserCallback).use { parser ->
             parser.parsePackage(file, 0, false)
