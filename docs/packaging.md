@@ -1,5 +1,9 @@
 # Packaging and installation
 
+For planned system-service installation and continued standalone support, see
+the [process design plan](process-design.md). The instructions below describe
+current packaging.
+
 The repository root is a Nix flake whose default package is the complete
 install tree that `zig build` publishes to `zig-out/`: the launcher, the ART
 runtime, the hosted framework, resources and the bundled apps. The package
@@ -11,6 +15,18 @@ The launcher resolves its tree relative to its own executable, so the result
 is one relocatable store path. Every binary carries a Nix store RUNPATH,
 including the patched glibc from `artzig/host-libc.nix`, so a plain copy of
 `zig-out/` to another machine does not run; the Nix closure does.
+
+The public `bin/androlinzberg` dispatches to private executables under
+`libexec/androlinzberg`: `azk-standalone`, `azk-system-server`, `azk-app-process`,
+`azk-desktop-controller`, `azk-metadata`, and `azk-jvm-test`. ART and native library
+payloads retain their existing locations during the process migration. Private
+entry points resolve the same image and explicitly supply its ART root.
+
+`--standalone` selects the currently supported private session mode. `--system`
+is reserved for the shared-system deployment and currently returns an error.
+Development runs outside an installed tree must supply an absolute
+`ARTZIG_INSTALL_ROOT`; there is no working-directory `zig-out` fallback.
+The run/test build steps supply their generated application tree explicitly.
 
 ## Requirements
 

@@ -1,8 +1,15 @@
 # Architecture
 
-androlinzberg runs Android applications in a shared desktop session. The launcher
-supervises a Binder broker, SurfaceFlinger, a hosted system process, a native
-media service and a Wayland task presenter. ATMS starts separate ART application processes. This is a host
+The [process design plan](process-design.md) proposes a shared machine-wide
+Android system while retaining standalone single-user mode. This page describes
+the current implementation.
+
+androlinzberg runs Android applications in a shared desktop session. The public
+launcher dispatches to a private standalone supervisor, which owns a Binder
+broker, SurfaceFlinger, a hosted system process, a native media service and a
+Wayland task presenter. A separate ART desktop controller requests activity
+launch and observes task/session lifetime; the supervisor remains outside ART.
+ATMS starts separate ART application processes. This is a host
 adaptation of selected Android services, without booting an Android device.
 
 ## Main components
@@ -10,7 +17,9 @@ adaptation of selected Android services, without booting an Android device.
 ### Runtime
 
 `artzig` builds ART, libcore, Conscrypt, and the boot class path from pinned AOSP
-sources. The launcher starts ART in the application process.
+sources. Private system, application, desktop-controller, metadata and JVM-test
+entry points share `src/runtime_bootstrap.zig`. They are installed under
+`libexec/androlinzberg`; the public command does not load ART.
 
 ### Android framework
 
@@ -50,7 +59,7 @@ assets, the "android" ApplicationInfo and the font map. The session display
 registry supplies display metrics; each task receives its own configuration and
 synthetic bounds without becoming another Android display.
 
-The launcher owns the session's Android data root and exports it to every
+The standalone supervisor owns the session's Android data root and exports it to every
 process it starts: `ARTZIG_DATA_DIR` (default `$XDG_DATA_HOME/artzig`, else
 `~/.local/share/artzig`) is `Environment.getDataDirectory()`, with
 `DOWNLOAD_CACHE` and `EXTERNAL_STORAGE` (the one emulated volume) beneath it.
@@ -144,8 +153,8 @@ or socket recipients are retired. Failed death-link registration preserves the N
 request admission precedes publication of a new service export.
 
 Local `Binder.transact` calls `onTransact` directly, as on Android. Every
-launch is a session: the launcher starts one `azk-binder-broker` process and
-one headless system process (`androlinzberg --system-server`, uid 1000), and
+standalone launch is a session: the supervisor starts one `azk-binder-broker`
+process and one headless system process (`azk-system-server`, Android uid 1000), and
 `ServiceManager` names live in the broker. Every ART process launched within
 that session (or added with `--join <session-dir>`) connects to the broker
 over a private Unix socket and joins one object graph; each package gets its
@@ -166,6 +175,13 @@ NDK callers. Java, generated AIDL, native C++ and NDK callers share identity,
 callbacks, death notification and descriptor passing across processes. This
 restores the JNI boundary while libbinder and AZKB remain host adaptations;
 see [native boundaries](native-boundary.md).
+
+System startup supplies an explicit `azk-app-process` executable to the hosted
+zygote. The existing one-use launch grants, namespace identity and pre-ART
+release gate remain in place. `androlinzberg --system-server`, `--runtime-process`
+and `--javatest` remain compatibility dispatches for older drivers; new UI runner
+invocations use `azk-jvm-test` directly. Machine-wide `--system` deployment is
+not implemented yet and fails explicitly instead of starting a private instance.
 
 System properties are session-wide. The broker owns a shared property area
 that Java and native clients map read-only. Reads use the bionic serial protocol;

@@ -57,7 +57,7 @@ stdenv.mkDerivation {
     for link in ${zigDeps}/*; do buildOnly+=( "$(readlink -f "$link")" ); done
     prune='^/build/'
     for p in "''${buildOnly[@]}"; do prune="$prune|^$p"; done
-    find $out/bin $out/lib -type f | while read -r f; do
+    find $out/bin $out/lib $out/libexec -type f | while read -r f; do
       rpath=$(patchelf --print-rpath "$f" 2>/dev/null) || continue
       kept=$(printf '%s' "$rpath" | tr ':' '\n' | { grep -Ev "$prune" || true; } | paste -sd: -)
       [ "$kept" = "$rpath" ] || patchelf --set-rpath "$kept" "$f"
@@ -66,7 +66,7 @@ stdenv.mkDerivation {
     # the APKs, jars and resources are compressed archives.
     args=()
     for p in "''${buildOnly[@]}"; do args+=( -t "$p" ); done
-    find $out/bin $out/lib -type f -print0 \
+    find $out/bin $out/lib $out/libexec -type f -print0 \
       | xargs -0 -n 8 -P "$NIX_BUILD_CORES" remove-references-to "''${args[@]}"
   '';
 
@@ -80,6 +80,8 @@ stdenv.mkDerivation {
   doInstallCheck = true;
   installCheckPhase = ''
     for f in bin/.androlinzberg-wrapped bin/azk-binder-broker bin/azk-surfaceflinger bin/azk-task-presenter \
+        libexec/androlinzberg/azk-standalone libexec/androlinzberg/azk-system-server \
+        libexec/androlinzberg/azk-desktop-controller libexec/androlinzberg/azk-app-process libexec/androlinzberg/azk-metadata libexec/androlinzberg/azk-jvm-test \
         bin/azk-media-service bin/azk-ndk-system-client bin/art/bin/dalvikvm64 bin/art/lib64/libart.so \
         lib/libandroid_platform.so framework/framework.jar res/framework-res.apk share/androlinzberg/dexopt-apk.sh; do
       [ -e "$out/$f" ] || { echo "missing $f in the install tree" >&2; exit 1; }

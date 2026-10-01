@@ -13,7 +13,7 @@
 //! name of an APK to run instead of the default one, either built by the
 //! repository (`--named-apk`) or supplied by the operator (`--pinned-apk`).
 //!
-//! Usage: ui-test-runner --launcher <androlinzberg> --apk <apk> --dex <ui-tests.jar>
+//! Usage: ui-test-runner --launcher <androlinzberg> --jvm-runner <azk-jvm-test> --apk <apk> --dex <ui-tests.jar>
 //!            --probe <presenter-probe> --artifacts <dir> [--size WxH]
 //!            [--seat <wayland-surface-server>]
 //!            [--named-apk <name>=<path>]...
@@ -28,6 +28,7 @@ const session_marker = "azk: binder session: ";
 
 const Options = struct {
     launcher: []const u8 = "",
+    jvm_runner: []const u8 = "",
     apk: []const u8 = "",
     dex: []const u8 = "",
     probe: []const u8 = "",
@@ -54,7 +55,7 @@ pub fn main(init: std.process.Init) !void {
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
-        const value: ?*[]const u8 = if (std.mem.eql(u8, arg, "--launcher")) &options.launcher else if (std.mem.eql(u8, arg, "--apk")) &options.apk else if (std.mem.eql(u8, arg, "--dex")) &options.dex else if (std.mem.eql(u8, arg, "--probe")) &options.probe else if (std.mem.eql(u8, arg, "--artifacts")) &options.artifacts else if (std.mem.eql(u8, arg, "--size")) &options.size else null;
+        const value: ?*[]const u8 = if (std.mem.eql(u8, arg, "--launcher")) &options.launcher else if (std.mem.eql(u8, arg, "--jvm-runner")) &options.jvm_runner else if (std.mem.eql(u8, arg, "--apk")) &options.apk else if (std.mem.eql(u8, arg, "--dex")) &options.dex else if (std.mem.eql(u8, arg, "--probe")) &options.probe else if (std.mem.eql(u8, arg, "--artifacts")) &options.artifacts else if (std.mem.eql(u8, arg, "--size")) &options.size else null;
         if (value) |destination| {
             index += 1;
             if (index == args.len) return error.MissingOptionValue;
@@ -83,7 +84,7 @@ pub fn main(init: std.process.Init) !void {
             if (std.mem.eql(u8, arg, "--class")) options.class = args[index] else options.method = args[index];
         } else try tests.append(arena, arg);
     }
-    if (options.launcher.len == 0 or options.apk.len == 0 or options.dex.len == 0 or options.artifacts.len == 0)
+    if (options.launcher.len == 0 or options.jvm_runner.len == 0 or options.apk.len == 0 or options.dex.len == 0 or options.artifacts.len == 0)
         return error.MissingRequiredOption;
 
     var run: usize = 0;
@@ -238,7 +239,7 @@ fn runTest(init: std.process.Init, options: Options, class: []const u8, method: 
     const argv: []const []const u8 = if (std.mem.eql(u8, class, "probe"))
         &.{ options.probe, session_dir, method }
     else
-        &.{ options.launcher, "--join", session_dir, "--javatest", "dev.artzig.uitest.UiTest", class, method };
+        &.{ options.jvm_runner, "--join", session_dir, "dev.artzig.uitest.UiTest", class, method };
     const result = try std.process.run(gpa, io, .{
         .argv = argv,
         .environ_map = &runner_env,

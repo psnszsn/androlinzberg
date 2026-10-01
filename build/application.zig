@@ -4,6 +4,7 @@ const LazyPath = std.Build.LazyPath;
 
 pub const Options = struct {
     launcher: LazyPath,
+    processes: [6]LazyPath,
     broker: LazyPath,
     surfaceflinger: LazyPath,
     media_service: LazyPath,
@@ -42,6 +43,8 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     const tree = b.addWriteFiles();
     _ = tree.addCopyDirectory(b.path("src/native/codec2/config"), "", .{});
     _ = tree.addCopyFile(options.launcher, "bin/androlinzberg");
+    for (options.processes, [_][]const u8{ "azk-standalone", "azk-system-server", "azk-app-process", "azk-metadata", "azk-jvm-test", "azk-desktop-controller" }) |process, name|
+        _ = tree.addCopyFile(process, b.pathJoin(&.{ "libexec", "androlinzberg", name }));
     _ = tree.addCopyFile(options.shell_manifest, "etc/shell/AndroidManifest.xml");
     _ = tree.addCopyFile(options.broker, "bin/azk-binder-broker");
     _ = tree.addCopyFile(options.surfaceflinger, "bin/azk-surfaceflinger");

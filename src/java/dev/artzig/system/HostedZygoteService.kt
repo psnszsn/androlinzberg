@@ -30,7 +30,8 @@ internal class HostedZygoteService(
     private val controller: HostedWebViewZygote? = null,
 ) : AutoCloseable {
     private val session = checkNotNull(System.getenv("AZK_BINDER_SESSION_DIR"))
-    private val executable = checkNotNull(System.getenv("AZK_LAUNCHER_EXE"))
+    private val executable = System.getenv("AZK_APP_PROCESS_EXE")
+        ?: checkNotNull(System.getenv("AZK_LAUNCHER_EXE"))
     private val children = CopyOnWriteArrayList<Child>()
     private val prepared = ConcurrentHashMap<Long, Prepared>()
     private val peers = CopyOnWriteArrayList<LocalSocket>()

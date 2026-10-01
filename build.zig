@@ -919,15 +919,19 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .link_libc = true,
-            .imports = &.{
-                .{ .name = "art", .module = art_mod },
-            },
         }),
     });
-    exe.root_module.addCSourceFile(.{ .file = b.path("src/native/LauncherSignals.c"), .flags = &.{ "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror" } });
-    exe.root_module.addCSourceFile(.{ .file = b.path("src/native/ProcessAppData.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
+    const process_entry_mod = b.createModule(.{
+        .root_source_file = b.path("src/process_entry.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{.{ .name = "art", .module = art_mod }},
+    });
+    process_entry_mod.addCSourceFile(.{ .file = b.path("src/native/LauncherSignals.c"), .flags = &.{ "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror" } });
+    process_entry_mod.addCSourceFile(.{ .file = b.path("src/native/ProcessAppData.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     if (host_libc) |root| exe.root_module.addRPath(b.graph.cwdRelativePath(b.fmt("{s}/lib", .{root})));
-    exe.root_module.linkSystemLibrary("fontconfig", .{ .needed = true }); // platform/fonts.zig
+    process_entry_mod.linkSystemLibrary("fontconfig", .{ .needed = true }); // platform/fonts.zig
 
     // --- azk_codec: MediaCodec backend over system FFmpeg. The system build
     // includes VA-API and DRM hwcontexts, which the minimal vendored build does
@@ -972,7 +976,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    exe.root_module.addImport("event_fd", event_fd_mod);
+    process_entry_mod.addImport("event_fd", event_fd_mod);
     surface_queue_mod.addImport("event_fd", event_fd_mod);
     const message_queue_mod = b.createModule(.{
         .root_source_file = b.path("src/platform/message_queue.zig"),
@@ -995,9 +999,33 @@ pub fn build(b: *std.Build) void {
             .{ .name = "message_queue", .module = message_queue_mod },
         },
     });
-    exe.root_module.addImport("host_natives", host_natives_mod);
-    exe.root_module.addImport("apk_optimizer", apk_optimizer_mod);
-    exe.rdynamic = true;
+    process_entry_mod.addImport("host_natives", host_natives_mod);
+    const process_names = [_][]const u8{ "azk-standalone", "azk-system-server", "azk-app-process", "azk-metadata", "azk-jvm-test", "azk-desktop-controller" };
+    const process_sources = [_][]const u8{ "src/standalone_main.zig", "src/system_server_main.zig", "src/app_process_main.zig", "src/metadata_main.zig", "src/jvm_test_main.zig", "src/desktop_controller_main.zig" };
+    const process_build = b.step("process-build", "Compile public and private process entry points");
+    process_build.dependOn(&exe.step);
+    var process_bins: [process_names.len]std.Build.LazyPath = undefined;
+    for (process_names, process_sources, &process_bins) |name, source, *bin| {
+        const process = b.addExecutable(.{
+            .name = name,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(source),
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+                .imports = &.{.{ .name = "process_entry", .module = process_entry_mod }},
+            }),
+        });
+        if (host_libc) |root| process.root_module.addRPath(b.graph.cwdRelativePath(b.fmt("{s}/lib", .{root})));
+        process.rdynamic = true;
+        bin.* = process.getEmittedBin();
+        process_build.dependOn(&process.step);
+    }
+
+    const process_entry_test = b.addSystemCommand(&.{"python3"});
+    process_entry_test.addFileArg(b.path("tools/test_process_entry.py"));
+    process_entry_test.addFileArg(exe.getEmittedBin());
+    b.step("process-entry-test", "Verify installed CLI dispatch and explicit image selection").dependOn(&process_entry_test.step);
 
     const wayland_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -1116,6 +1144,7 @@ pub fn build(b: *std.Build) void {
         .shell_manifest = aosp.path(b, "frameworks/base/packages/Shell/AndroidManifest.xml"),
         .pdfclient = island.pdfclient,
         .launcher = exe.getEmittedBin(),
+        .processes = process_bins,
         .broker = binder_broker.getEmittedBin(),
         .surfaceflinger = sf_service.getEmittedBin(),
         .media_service = media_service.getEmittedBin(),
@@ -1294,6 +1323,8 @@ pub fn build(b: *std.Build) void {
     native_test_step.dependOn(&ndk_abi_check.step);
     native_test_step.dependOn(&platform_abi_check.step);
     native_test_step.dependOn(&launcher_check.step);
+    native_test_step.dependOn(process_build);
+    native_test_step.dependOn(&process_entry_test.step);
     native_test_step.dependOn(&cpp_audit.step);
 
     // Compile the library-version fixture through the same projected/stored
@@ -1647,7 +1678,6 @@ pub fn build(b: *std.Build) void {
     b.step("jvm-exit-test", "Verify ART exits without libc cleanup")
         .dependOn(&jvm_exit_smoke.run.step);
 
-
     // UI tests on ART: JUnit + androidx UiAutomator over stock UiAutomation,
     // one session per test, orchestrated by tools/ui-test-runner.zig under Cage.
     const ui_tests = @import("build/ui_tests.zig");
@@ -1692,6 +1722,8 @@ pub fn build(b: *std.Build) void {
     ui_test_run.addFileArg(ui_test_runner.getEmittedBin());
     ui_test_run.addArg("--launcher");
     ui_test_run.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    ui_test_run.addArg("--jvm-runner");
+    ui_test_run.addFileArg(application_tree.path(b, "libexec/androlinzberg/azk-jvm-test"));
     ui_test_run.addArg("--apk");
     ui_test_run.addFileArg(window_fixture.apk);
     ui_test_run.addArg("--dex");
@@ -1732,6 +1764,8 @@ pub fn build(b: *std.Build) void {
         ui.addFileArg(ui_test_runner.getEmittedBin());
         ui.addArg("--launcher");
         ui.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+        ui.addArg("--jvm-runner");
+        ui.addFileArg(application_tree.path(b, "libexec/androlinzberg/azk-jvm-test"));
         ui.addArg("--apk");
         ui.addFileArg(window_fixture.apk);
         ui.addArg("--dex");
@@ -1769,6 +1803,8 @@ pub fn build(b: *std.Build) void {
         ui.addFileArg(ui_test_runner.getEmittedBin());
         ui.addArg("--launcher");
         ui.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+        ui.addArg("--jvm-runner");
+        ui.addFileArg(application_tree.path(b, "libexec/androlinzberg/azk-jvm-test"));
         ui.addArg("--apk");
         ui.addFileArg(java.fixtures.webview);
         ui.addArg("--dex");

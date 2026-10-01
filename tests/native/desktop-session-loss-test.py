@@ -64,7 +64,7 @@ def collect():
             executable = Path(os.fsdecode(argv[0])).name
             # Stock Process.setArgV0 replaces the exec argument block once the
             # server enters Java; retain the exec flag for early-start cleanup.
-            role = ('system' if argv[0] == b'system_server' or b'--system-server' in argv else
+            role = ('system' if argv[0] == b'system_server' or executable == 'azk-system-server' or b'--system-server' in argv else
                     'surfaceflinger' if executable == 'azk-surfaceflinger' else
                     'presenter' if executable == 'azk-task-presenter' else
                     'media' if executable == 'azk-media-service' else

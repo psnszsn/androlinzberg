@@ -28,6 +28,7 @@ pub fn main(init: std.process.Init) !void {
     try map.put("AZK_SESSION_FIXTURE_LOG", log);
     const cases = [_]struct { mode: []const u8, failure: ?anyerror, expected: []const u8 }{
         .{ .mode = "normal", .failure = null, .expected = "broker start\nsf start\nsystem start\nsystem stop\nsf stop\nbroker stop\n" },
+        .{ .mode = "explicit-processes", .failure = null, .expected = "broker start\nsf start\nsystem start\nsystem stop\nsf stop\nbroker stop\n" },
         .{ .mode = "media-normal", .failure = null, .expected = "broker start\nsf start\nsystem start\nmedia start\nmedia stop\nsystem stop\nsf stop\nbroker stop\n" },
         .{ .mode = "media-spawn", .failure = error.MediaServiceNotReady, .expected = "broker start\nsf start\nsystem start\nsystem stop\nsf stop\nbroker stop\n" },
         .{ .mode = "media-eof", .failure = error.MediaServiceNotReady, .expected = "broker start\nsf start\nsystem start\nmedia start\nsystem stop\nsf stop\nbroker stop\n" },
@@ -61,9 +62,13 @@ pub fn main(init: std.process.Init) !void {
         var failure: ?anyerror = null;
         if (Session.start(gpa, io, .{
             .broker_exe = exe,
-            .launcher_exe = if (std.mem.eql(u8, case.mode, "system-spawn"))
+            .launcher_exe = if (std.mem.eql(u8, case.mode, "explicit-processes"))
+                "/fixture/public-launcher"
+            else if (std.mem.eql(u8, case.mode, "system-spawn"))
                 "/azk-no-such-system-executable"
             else if (std.mem.eql(u8, case.mode, "system-exec-format")) invalid_exe else exe,
+            .system_exe = if (std.mem.eql(u8, case.mode, "explicit-processes")) exe else null,
+            .app_exe = if (std.mem.eql(u8, case.mode, "explicit-processes")) "/fixture/private-app-process" else null,
             .surfaceflinger_exe = if (std.mem.eql(u8, case.mode, "sf-spawn")) "/azk-no-such-compositor-executable" else exe,
             .task_presenter_exe = if (std.mem.eql(u8, case.mode, "presenter-spawn")) "/azk-no-such-presenter-executable" else if (std.mem.startsWith(u8, case.mode, "presenter-")) exe else null,
             .media_service_exe = if (std.mem.eql(u8, case.mode, "media-spawn")) "/azk-no-such-media-executable" else if (std.mem.startsWith(u8, case.mode, "media-")) exe else null,
@@ -79,7 +84,8 @@ pub fn main(init: std.process.Init) !void {
             .shutdown_timeout = .{ .nanoseconds = 100 * std.time.ns_per_ms },
         })) |value| {
             var session = value;
-            defer session.stop();
+            var stopped = false;
+            defer if (!stopped) session.stop();
             const joined = try @import("session.zig").SessionInfo.read(arena, io, session.dir);
             try std.testing.expectEqualStrings(session.socket_path, joined.socket);
             try std.testing.expectEqualStrings(session.prop_area_path, joined.prop_area);
@@ -90,10 +96,26 @@ pub fn main(init: std.process.Init) !void {
             try std.testing.expectEqualStrings("/fixture/runtime-cache", joined.storage.?.runtime_cache);
             if (std.mem.eql(u8, case.mode, "normal"))
                 try std.testing.expectEqualStrings(exe, joined.launcher);
+            if (std.mem.eql(u8, case.mode, "explicit-processes"))
+                try std.testing.expectEqualStrings("/fixture/public-launcher", joined.launcher);
             session.awaitSystemReady() catch |err| {
                 failure = err;
             };
             if (failure == null) try session.awaitSystemReady();
+            const children = [_]?std.process.Child.Id{
+                session.child.id,
+                if (session.system) |child| child.id else null,
+                if (session.surfaceflinger) |child| child.id else null,
+                if (session.presenter) |child| child.id else null,
+                if (session.media) |child| child.id else null,
+            };
+            session.stop();
+            stopped = true;
+            for (children) |maybe_pid| {
+                const pid = maybe_pid orelse continue;
+                const proc_path = try std.fmt.allocPrint(arena, "/proc/{d}", .{pid});
+                try std.testing.expectError(error.FileNotFound, Io.Dir.accessAbsolute(io, proc_path, .{}));
+            }
         } else |err| failure = err;
         try std.testing.expectEqual(case.failure, failure);
         try std.testing.expectEqual(std.heap.Check.ok, debug.deinit());
@@ -146,6 +168,10 @@ fn fixture(init: std.process.Init, args: []const [:0]const u8) !void {
     else if (std.mem.eql(u8, args[1], "--socket")) "broker" else "system";
     const mode = init.minimal.environ.getPosix("AZK_SESSION_FIXTURE_MODE").?;
     try std.testing.expect(init.minimal.environ.getPosix("AZK_BINDER_SYSTEM_COOKIE") != null);
+    if (std.mem.eql(u8, role, "system") and std.mem.eql(u8, mode, "explicit-processes")) {
+        try std.testing.expectEqualStrings("/fixture/private-app-process", init.minimal.environ.getPosix("AZK_APP_PROCESS_EXE") orelse "");
+        try std.testing.expectEqualStrings("/fixture/public-launcher", init.minimal.environ.getPosix("AZK_LAUNCHER_EXE") orelse "");
+    }
     try event(init, role, "start");
     if (std.mem.eql(u8, role, "media")) {
         try std.testing.expectEqualStrings("/fixture/platform", init.minimal.environ.getPosix("ARTZIG_PLATFORM_ROOT") orelse "");

@@ -92,8 +92,10 @@ pub const Session = struct {
 
     pub const Options = struct {
         broker_exe: []const u8,
-        /// The launcher itself, re-executed as `--system-server`.
+        /// Public launcher path recorded for clients and legacy fixtures.
         launcher_exe: []const u8,
+        system_exe: ?[]const u8 = null,
+        app_exe: ?[]const u8 = null,
         /// Alternative framework entry for system-process fixtures. Session
         /// identity, metadata and supervision remain identical to production.
         system_args: []const []const u8 = &.{"--system-server"},
@@ -285,7 +287,7 @@ pub const Session = struct {
         try s.drain.concurrent(s.io, drainPipe, .{ s.io, s.media.?.stdout.? });
     }
 
-    /// Spawns `androlinzberg --system-server` with the trusted service cookie.
+    /// Spawns the configured system entry point with the trusted service cookie.
     fn startSystemProcess(s: *Session, options: Options) !void {
         const io = s.io;
         var child_env = try options.environ.createMap(s.gpa);
@@ -299,10 +301,11 @@ pub const Session = struct {
             for (storage.environment()) |entry| try child_env.put(entry.name, entry.value);
         }
         try child_env.put("AZK_LAUNCHER_EXE", options.launcher_exe);
+        if (options.app_exe) |exe| try child_env.put("AZK_APP_PROCESS_EXE", exe);
         if (options.task_presenter_exe != null) try child_env.put("AZK_TASK_WINDOWS", "1");
         const argv = try s.gpa.alloc([]const u8, options.system_args.len + 1);
         defer s.gpa.free(argv);
-        argv[0] = options.launcher_exe;
+        argv[0] = options.system_exe orelse options.launcher_exe;
         @memcpy(argv[1..], options.system_args);
         s.system = try spawnService(s.gpa, io, .{
             .argv = argv,
@@ -349,7 +352,9 @@ pub const Session = struct {
         if (s.surfaceflinger) |*surfaceflinger| stopChild(io, surfaceflinger, s.shutdown_timeout);
         s.surfaceflinger = null;
         stopChild(io, &s.child, s.shutdown_timeout);
-        Io.Dir.cwd().deleteTree(io, s.dir) catch {};
+        Io.Dir.cwd().deleteTree(io, s.dir) catch |err| {
+            std.log.err("session directory cleanup failed for {s}: {s}", .{ s.dir, @errorName(err) });
+        };
         s.gpa.free(s.dir);
         s.gpa.free(s.socket_path);
         s.gpa.free(s.prop_area_path);
@@ -415,9 +420,20 @@ fn stopChild(io: Io, child: *std.process.Child, timeout: Io.Duration) void {
     // Cancel wait before kill touches the child. kill also reaps and closes pipes.
     defer child.kill(io);
     defer select.cancelDiscard();
-    select.concurrent(.exited, std.process.Child.wait, .{ child, io }) catch return;
+    select.concurrent(.exited, waitOwnedChild, .{ child, io }) catch return;
     select.concurrent(.timeout, Io.sleep, .{ io, timeout, .awake }) catch return;
     _ = select.await() catch return;
+}
+
+fn waitOwnedChild(child: *std.process.Child, io: Io) std.process.Child.WaitError!std.process.Child.Term {
+    const id = child.id;
+    return child.wait(io) catch |err| {
+        // The pinned std.Io.Threaded clears Child.id even when wait is canceled
+        // before reaping. Retain ownership in that case so the timeout path can
+        // terminate and reap the child. A successful wait must never restore it.
+        if (err == error.Canceled) child.id = id;
+        return err;
+    };
 }
 
 /// `$XDG_RUNTIME_DIR/androlinzberg/binder-<pid>-<random>` when the private

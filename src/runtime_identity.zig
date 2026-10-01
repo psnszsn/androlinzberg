@@ -57,7 +57,7 @@ fn inspectPackage(init: std.process.Init, apk: []const u8) ![]const u8 {
     // area while withholding every Binder credential and the session socket.
     try environment.put("AZK_PROP_AREA", env("AZK_PROP_AREA") orelse return error.MissingRuntimeProperties);
     const result = try std.process.run(a, init.io, .{
-        .argv = &.{ try std.process.executablePathAlloc(init.io, a), "--inspect-apk-package", apk },
+        .argv = &.{ try @import("install_tree.zig").executable(init, "azk-metadata"), apk },
         .environ_map = &environment,
         .stdout_limit = .limited(4096),
         .stderr_limit = .limited(1024 * 1024),
