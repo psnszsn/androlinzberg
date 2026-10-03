@@ -22,85 +22,75 @@ generated sources in Java, and do not copy or translate an AOSP class merely to
 make it Kotlin. Follow `docs/kotlin.md` for compiler, interoperability, and
 migration requirements.
 
-## AOSP reuse policy
+## AOSP code policy
 
-Treat the pinned AOSP checkout described by `aosp/README.md` and selected by
-`aosp/androlinzberg-files.txt` as the reference implementation for Android
-framework behavior. For work in `android.*` or `com.android.internal.*`, do not
-begin with a new shim method.
+The pinned AOSP checkout described by `aosp/README.md` and selected by
+`aosp/androlinzberg-files.txt` is the implementation of Android, not a
+reference to imitate. All Android Java runs as AOSP source: the framework
+(`android.*`, `com.android.internal.*`) and the system server's services
+(`com.android.server.*`). Repository-owned code implements what Android places
+below that Java: native libraries and JNI, native daemons reached over AIDL,
+HALs, and kernel and device interfaces, mapped onto Linux, Wayland, EGL,
+PipeWire and FFmpeg.
 
-1. Locate the corresponding class and method in the pinned AOSP version and
-   trace the behavior far enough to identify its ordering, state, collaborators,
-   and observable failure modes. Use the vendored version, not an arbitrary
-   newer Android branch.
-2. Check `build/java_sources.zig` to determine whether the AOSP class is already
-   compiled, deliberately excluded, or replaced by a file in `src/framework`
-   or `src/framework-stubs`. Never compile both the AOSP class and a replacement
+1. Start from the pinned AOSP class and method. Trace its ordering, state,
+   collaborators and failure modes in the vendored version, not in a newer
+   Android branch.
+2. Compile it directly by adding it and its closure to
+   `aosp/androlinzberg-files.txt` and `build/java_sources.zig`. Run
+   `tools/aosp-closure.py closure --classes <framework-classes.jar> <fqn>`
+   against a live build: it prints the manifest, `build/java_sources.zig` and
+   `build/generator_sources.zig` entries the class needs and names any blocker
+   (JNI natives, an unvendored module tree, an AIDL file outside the include
+   roots, an unwired generator). Never compile an AOSP class and a replacement
    with the same fully-qualified name.
-3. Reuse the AOSP source directly when its dependency closure is already
-   available or can be added without importing an unavailable Android process,
-   daemon, or hardware stack. Prefer changing the curated source list and
-   deleting the replacement over copying AOSP code into a shim.
-4. When direct reuse would require absent infrastructure such as
-   `system_server`, AMS, PackageManagerService, Binder services, SurfaceFlinger,
-   or a native daemon, adapt the AOSP control flow behind a small host seam.
-   Preserve AOSP data types, lifecycle ordering, configuration masks, state
-   transitions, return values, and exceptions. Keep the unavailable interaction
-   in a host adapter; do not spread host checks through framework callers.
-5. Write new behavior only when it is genuinely host-specific, such as the
-   Wayland/EGL presentation adapter, desktop input translation, bionic bridging,
-   or an in-process substitute for a service that does not exist in this host.
-   Host-specific implementation belongs at that seam, not in application-aware
-   branches inside Android framework classes.
+3. When the closure reaches something the host lacks, implement it where
+   Android does: below the Java, in Zig or C++, at the daemon, HAL, JNI or
+   kernel boundary, keeping the stock interface (AIDL, JNI signatures, socket
+   protocols). Do not patch, wrap or reimplement AOSP Java to avoid that work.
+4. Do not hand-write a class that Soong generates. aconfig
+   `Flags`/`FeatureFlags`, logtags `EventLogTags`, `*Proto` message classes,
+   sysprop accessors and `FrameworkStatsLog` come from the Run steps wired
+   through `build/generators.zig` and `build/java.zig`, driven by the
+   declarations in `build/generator_sources.zig`. Add the package to the
+   generator's inputs there; do not add build-consumed text manifests.
 
-For an AOSP adaptation, add a short source note naming the AOSP class/method
-being followed and why the source cannot currently be compiled directly. Do
-not special-case an application package, class, or workflow when an Android
-framework contract explains the behavior.
+Repository-owned Kotlin is limited to:
 
-Before replacing a stub with the real AOSP class, run
-`tools/aosp-closure.py closure --classes <framework-classes.jar> <fqn>` against
-a live build: it prints the manifest, `build/java_sources.zig` and
-`build/generator_sources.zig` entries the real class needs and names any blocker (JNI
-natives, an unvendored module tree, an AIDL file outside the include roots, an
-unwired generator). Every stub is listed in `tools/stub-audit.txt` with the
-family it is pending replacement in or a `survivor:` reason; regenerate it with
-`tools/aosp-closure.py audit --update tools/stub-audit.txt --markdown docs/stubs.md`
-after a replacement, delete the stub's line together with the stub, and lower
-the `pending-budget` line. The `jvm-source` mode of `tools/build-audit.zig`
-rejects an unlisted stub and a pending count above the budget.
+- process entry and bootstrap glue that `init`, zygote and `app_process` would
+  provide on a device, such as `SystemServer`, `RuntimeProcess`, `ApkHost` and
+  `DesktopLauncher`;
+- tests, fixtures and smokes;
+- stand-ins that implement a native daemon's stock AIDL interface where the
+  daemon's work does not apply under one host user: `HostedInstalld` and
+  `HostedArtd`.
 
-Do not hand-write a class that Soong generates. aconfig `Flags`/`FeatureFlags`,
-logtags `EventLogTags`, `*Proto` message classes, sysprop accessors, and
-`FrameworkStatsLog` come from the Run steps wired through `build/generators.zig`
-and `build/java.zig`, driven by the declarations in `build/generator_sources.zig`.
-Add the package to the generator's input list there rather than writing a
-placeholder;
-The `jvm-source` mode of `tools/build-audit.zig`, fed by the exact Zig
-`SourceSet`, rejects a repo-owned class whose package matches a generated
-artifact (`.java` and `.kt`). A package whose declaration is not yet in a
-vendored tree may stay hand-stubbed until its module tree is imported. The
-`.aosp` dependency hash in `build.zig.zon` pins the extracted AOSP package
-contents. Generator declarations and expected outputs live in
-`build/generator_sources.zig`; do not add build-consumed text manifests.
+The `jvm-source` mode of `tools/build-audit.zig` rejects any repository-owned
+class declared in `android.*` or `com.android.internal.*`.
 
-Prefer deep modules at the AOSP/host seam: callers should provide an Android
-operation such as “apply this configuration” or “launch this activity,” while
-the module owns parsing, lifecycle decisions, saved-state handling, and callback
-ordering. A production host adapter and an in-memory test adapter justify the
-seam; avoid layers that merely rename individual AOSP calls.
+Existing exceptions predate this rule: the `Hosted*` services in
+`src/java/dev/artzig/system/`, the host classes in `src/java/com/android/server/`
+and `dev.artzig.window`, and the Java patches in
+`artzig/patches/frameworks-base`. Do not add more. When a task needs new
+behavior from one, replace it with the stock service and delete it, as
+`StockPackageServices` replaced the hosted package manager. Extend one only when
+the replacement is blocked, and name the blocker in a source note. A fix that
+keeps existing behavior working is fine.
 
-When closing an API linkage gap such as `NoSuchMethodError`, match the exact
-AOSP signature and semantics, including overloads and mutation/return behavior.
-A no-op is acceptable only when AOSP defines the operation as observationally
-irrelevant in the hosted environment; otherwise implement the behavior or emit
-a structured unsupported diagnostic.
+Do not special-case an application package, class or workflow when an Android
+framework contract explains the behavior. When closing an API linkage gap such
+as `NoSuchMethodError`, match the exact AOSP signature and semantics, including
+overloads and mutation/return behavior. A no-op is acceptable only when AOSP
+defines the operation as observationally irrelevant in the hosted environment;
+otherwise implement the behavior or emit a structured unsupported diagnostic.
 
-Verify changes at the module interface and, when UI-visible, through the
-existing headless harness. Tests should cover AOSP-observable behavior rather
-than private shim state. For adapted lifecycle code, explicitly test callback
-ordering, handled versus unhandled configuration changes, saved-state restore,
-and the absence of application-specific branches.
+Prefer deep modules at the host seam: callers provide an Android operation,
+such as "start this user" or "present this task," while the module owns the
+Linux-side decisions. A production host adapter and an in-memory test adapter
+justify a seam; avoid layers that merely rename individual calls.
+
+Verify changes at the module interface and, when UI-visible, through the UI
+tests. Tests cover AOSP-observable behavior rather than private host state.
 
 ## APK UI tests
 

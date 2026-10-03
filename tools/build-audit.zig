@@ -1,14 +1,13 @@
 //! Build-graph audits for source provenance and native ABI boundaries.
 const std = @import("std");
 const Io = std.Io;
-const generator_sources = @import("generator_sources");
 
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     if (args.len < 2) return usage(init.io);
     if (std.mem.eql(u8, args[1], "jvm-source")) {
-        if (args.len < 6) return usage(init.io);
-        try jvmSource(init, args[2], args[3], args[4], args[5..]);
+        if (args.len < 4) return usage(init.io);
+        try jvmSource(init, args[2], args[3..]);
     } else if (std.mem.eql(u8, args[1], "cpp-boundary")) {
         try cppBoundary(init.io, args[2..]);
     } else if (std.mem.eql(u8, args[1], "ndk-abi")) {
@@ -21,7 +20,7 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn usage(io: Io) error{InvalidArguments}!void {
-    Io.File.stderr().writeStreamingAll(io, "usage: build-audit jvm-source <repo> <aosp> <stub-audit> <files...> | cpp-boundary <files...> | ndk-abi <library> <reference> | graph <build-files...>\n") catch {};
+    Io.File.stderr().writeStreamingAll(io, "usage: build-audit jvm-source <repo> <files...> | cpp-boundary <files...> | ndk-abi <library> <reference> | graph <build-files...>\n") catch {};
     return error.InvalidArguments;
 }
 
@@ -44,87 +43,12 @@ fn allowedJvmPath(path: []const u8) bool {
     inline for (.{
         "artzig/src/gen/",
         "artzig/examples/",
-        "src/framework/",
-        "src/framework-stubs/",
         "src/java/",
         "src/annotation-runtime/",
         "tests/",
         "testdata/kotlin-shadow/",
     }) |prefix| if (std.mem.startsWith(u8, path, prefix)) return true;
     return false;
-}
-
-fn putForbidden(set: *std.StringHashMapUnmanaged(void), allocator: std.mem.Allocator, path: []const u8) !void {
-    try set.put(allocator, try allocator.dupe(u8, path), {});
-    if (std.mem.endsWith(u8, path, ".java")) {
-        const kotlin = try std.mem.concat(allocator, u8, &.{ path[0 .. path.len - ".java".len], ".kt" });
-        try set.put(allocator, kotlin, {});
-    }
-}
-
-fn generatedClasses(io: Io, allocator: std.mem.Allocator, aosp_root: []const u8) !std.StringHashMapUnmanaged(void) {
-    var result: std.StringHashMapUnmanaged(void) = .empty;
-    for (generator_sources.aconfig) |entry| {
-        const package_path = try std.mem.replaceOwned(u8, allocator, entry.package, ".", "/");
-        inline for (.{ "Flags", "FeatureFlags", "FeatureFlagsImpl", "CustomFeatureFlags", "FakeFeatureFlagsImpl" }) |class| {
-            try putForbidden(&result, allocator, try std.fmt.allocPrint(allocator, "{s}/{s}.java", .{ package_path, class }));
-        }
-    }
-    for (generator_sources.hidl) |entry| {
-        for (entry.outputs) |output| try putForbidden(&result, allocator, output);
-    }
-    for (generator_sources.xsd) |entry| {
-        if (entry.backend != .java) continue;
-        for (entry.outputs) |output| try putForbidden(&result, allocator, output);
-    }
-    for (generator_sources.cronet.enum_outputs) |output| try putForbidden(&result, allocator, output);
-    for (generator_sources.cronet.proto_outputs) |output| try putForbidden(&result, allocator, output);
-    for (generator_sources.cronet.jni_outputs) |output| try putForbidden(&result, allocator, output);
-    for (generator_sources.cronet.jni_final_outputs) |output| try putForbidden(&result, allocator, output);
-    try putForbidden(&result, allocator, generator_sources.cronet.api_version_output);
-    try putForbidden(&result, allocator, generator_sources.cronet.impl_version_output);
-    try putForbidden(&result, allocator, generator_sources.cronet.switches_output);
-    try putForbidden(&result, allocator, generator_sources.cronet.preload.output);
-    inline for (generator_sources.cronet.templates) |entry| try putForbidden(&result, allocator, entry.output);
-    for (generator_sources.logtags) |entry| try putForbidden(&result, allocator, entry.output);
-    for (generator_sources.proto_outputs) |output| try putForbidden(&result, allocator, output);
-    for (generator_sources.nano) |entry| {
-        for (entry.outputs) |output| try putForbidden(&result, allocator, output);
-    }
-    try putForbidden(&result, allocator, generator_sources.aconfig_device_paths.output);
-    try putForbidden(&result, allocator, generator_sources.system_features.output);
-    try putForbidden(&result, allocator, generator_sources.system_features.metadata_output);
-    inline for (generator_sources.stats_java) |entry| {
-        const package_path = try std.mem.replaceOwned(u8, allocator, entry.package, ".", "/");
-        defer allocator.free(package_path);
-        const output = try std.fmt.allocPrint(allocator, "{s}/{s}.java", .{ package_path, entry.class });
-        defer allocator.free(output);
-        try putForbidden(&result, allocator, output);
-    }
-    try putForbidden(&result, allocator, "android/os/UserManagerCache.java");
-    try putForbidden(&result, allocator, "com/android/modules/expresslog/MetricIds.java");
-    for (generator_sources.sysprop) |entry| {
-        if (entry.input.source != .aosp) continue;
-        const path = try std.fs.path.join(allocator, &.{ aosp_root, entry.input.path });
-        const contents = try Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1024 * 1024));
-        if (moduleName(contents)) |name| {
-            const class_path = try std.mem.replaceOwned(u8, allocator, name, ".", "/");
-            try putForbidden(&result, allocator, try std.mem.concat(allocator, u8, &.{ class_path, ".java" }));
-        }
-    }
-    return result;
-}
-
-fn moduleName(contents: []const u8) ?[]const u8 {
-    var lines = std.mem.splitScalar(u8, contents, '\n');
-    while (lines.next()) |line| {
-        const marker = "module:";
-        const start = std.mem.indexOf(u8, line, marker) orelse continue;
-        const quote = std.mem.indexOfScalarPos(u8, line, start + marker.len, '"') orelse continue;
-        const end = std.mem.indexOfScalarPos(u8, line, quote + 1, '"') orelse continue;
-        return line[quote + 1 .. end];
-    }
-    return null;
 }
 
 fn jvmPackage(contents: []const u8) ?[]const u8 {
@@ -160,9 +84,8 @@ fn isClientPackage(package: []const u8) bool {
         std.mem.startsWith(u8, package, "com.android.internal.");
 }
 
-fn jvmSource(init: std.process.Init, repo_root: []const u8, aosp_root: []const u8, stub_audit: []const u8, files: []const []const u8) !void {
-    var forbidden = try generatedClasses(init.io, init.arena.allocator(), aosp_root);
-    var failed = !(try stubAudit(init, repo_root, stub_audit, files));
+fn jvmSource(init: std.process.Init, repo_root: []const u8, files: []const []const u8) !void {
+    var failed = false;
     for (files) |file| {
         const relative = relativeTo(repo_root, file) orelse {
             std.debug.print("JVM source is outside repository root: {s}\n", .{file});
@@ -175,132 +98,17 @@ fn jvmSource(init: std.process.Init, repo_root: []const u8, aosp_root: []const u
         }
         // Use the declared package, not a directory convention: moving a shim
         // into src/java/dev/artzig must not evade the stock-client boundary.
-        // The only remaining client replacements are tracked by stubAudit.
-        const source_contents = try readFile(init, file);
-        if (jvmPackage(source_contents)) |package| {
+        if (jvmPackage(try readFile(init, file))) |package| {
             // These generated SDK headers are compile-only inputs owned by
             // Artzig's boot API generator, not runtime framework replacements.
             const boot_headers = std.mem.startsWith(u8, relative, "artzig/src/gen/java/core-all/");
-            if (isClientPackage(package) and !boot_headers and
-                !std.mem.startsWith(u8, relative, "src/framework-stubs/"))
-            {
+            if (isClientPackage(package) and !boot_headers) {
                 std.debug.print("repository-owned Android client class: {s} (package {s}); reuse pinned AOSP or move host behavior to dev.artzig\n", .{ relative, package });
-                failed = true;
-            }
-        }
-        const framework_relative = if (std.mem.startsWith(u8, relative, "src/framework/"))
-            relative["src/framework/".len..]
-        else if (std.mem.startsWith(u8, relative, "src/framework-stubs/"))
-            relative["src/framework-stubs/".len..]
-        else
-            continue;
-        if (forbidden.contains(framework_relative)) {
-            std.debug.print("hand-written class shadows a generated one: {s}\n", .{relative});
-            failed = true;
-        }
-        if (!std.mem.startsWith(u8, framework_relative, "android/") and
-            !std.mem.startsWith(u8, framework_relative, "com/android/")) continue;
-        if (try aospDuplicate(init, aosp_root, framework_relative)) {
-            const contents = try Io.Dir.cwd().readFileAlloc(init.io, file, init.arena.allocator(), .limited(2 * 1024 * 1024));
-            const first_lines = firstLines(contents, 20);
-            if (std.mem.indexOf(u8, first_lines, "artzig") == null and
-                std.mem.indexOf(u8, first_lines, "Hosted adaptation of AOSP") == null)
-            {
-                std.debug.print("unmarked duplicate of a vendored AOSP class: {s}\n", .{relative});
                 failed = true;
             }
         }
     }
     if (failed) return error.AuditFailed;
-}
-
-/// The stub ratchet: every stub under src/framework-stubs is listed in
-/// tools/stub-audit.txt with a family it is pending replacement in or a
-/// `survivor:` reason, every listed path still exists, and the number of
-/// pending (non-survivor) entries stays within the file's `pending-budget`.
-/// The budget only goes down as stubs are replaced by the real AOSP classes.
-fn stubAudit(init: std.process.Init, repo_root: []const u8, audit_path: []const u8, files: []const []const u8) !bool {
-    const allocator = init.arena.allocator();
-    const contents = try Io.Dir.cwd().readFileAlloc(init.io, audit_path, allocator, .limited(4 * 1024 * 1024));
-    var listed: std.StringHashMapUnmanaged(void) = .empty;
-    var budget: ?usize = null;
-    var pending: usize = 0;
-    var ok = true;
-    var lines = std.mem.splitScalar(u8, contents, '\n');
-    while (lines.next()) |raw| {
-        const line = std.mem.trimEnd(u8, raw, "\r");
-        if (line.len == 0) continue;
-        if (line[0] == '#') {
-            const marker = "# pending-budget:";
-            if (std.mem.startsWith(u8, line, marker))
-                budget = std.fmt.parseInt(usize, std.mem.trim(u8, line[marker.len..], " \t"), 10) catch null;
-            continue;
-        }
-        var fields = std.mem.splitScalar(u8, line, '|');
-        const path = fields.next() orelse continue;
-        _ = fields.next();
-        const family = fields.next() orelse "";
-        try listed.put(allocator, path, {});
-        const full = try std.fs.path.join(allocator, &.{ repo_root, path });
-        const exists = if (std.fs.path.isAbsolute(full)) blk: {
-            Io.Dir.accessAbsolute(init.io, full, .{}) catch break :blk false;
-            break :blk true;
-        } else blk: {
-            Io.Dir.cwd().access(init.io, full, .{}) catch break :blk false;
-            break :blk true;
-        };
-        if (!exists) {
-            std.debug.print("stub audit names a file that no longer exists (remove the line): {s}\n", .{path});
-            ok = false;
-        }
-        if (family.len == 0) {
-            std.debug.print("stub audit entry has no family or survivor reason: {s}\n", .{path});
-            ok = false;
-        }
-        if (!std.mem.startsWith(u8, family, "survivor:")) pending += 1;
-    }
-    if (budget == null) {
-        std.debug.print("{s}: missing \"# pending-budget:\" line\n", .{audit_path});
-        ok = false;
-    }
-    for (files) |file| {
-        const relative = relativeTo(repo_root, file) orelse continue;
-        if (!std.mem.startsWith(u8, relative, "src/framework-stubs/")) continue;
-        if (!std.mem.endsWith(u8, relative, ".java") and !std.mem.endsWith(u8, relative, ".kt")) continue;
-        if (listed.contains(relative)) continue;
-        std.debug.print("stub is not in {s} (run tools/aosp-closure.py audit --update {s} and assign a family or survivor reason): {s}\n", .{ audit_path, audit_path, relative });
-        ok = false;
-    }
-    if (budget) |limit| if (pending > limit) {
-        std.debug.print("{s}: {d} pending stubs exceed the budget of {d} (replace stubs; never raise the budget)\n", .{ audit_path, pending, limit });
-        ok = false;
-    };
-    return ok;
-}
-
-fn firstLines(contents: []const u8, count: usize) []const u8 {
-    var end: usize = 0;
-    var lines: usize = 0;
-    while (end < contents.len and lines < count) : (end += 1) {
-        if (contents[end] == '\n') lines += 1;
-    }
-    return contents[0..end];
-}
-
-fn aospDuplicate(init: std.process.Init, root: []const u8, relative: []const u8) !bool {
-    for ([_][]const u8{
-        "frameworks/base",
-        "frameworks/libs/modules-utils",
-        "packages/modules/StatsD",
-    }) |prefix| {
-        const path = try std.fs.path.join(init.arena.allocator(), &.{ root, prefix, relative });
-        if (std.fs.path.isAbsolute(path))
-            Io.Dir.accessAbsolute(init.io, path, .{}) catch continue
-        else
-            Io.Dir.cwd().access(init.io, path, .{}) catch continue;
-        return true;
-    }
-    return false;
 }
 
 fn cppBoundary(io: Io, files: []const []const u8) !void {
@@ -457,7 +265,7 @@ fn graph(init: std.process.Init, files: []const []const u8) !void {
 }
 
 test "JVM allowlist rejects arbitrary locations" {
-    try std.testing.expect(allowedJvmPath("src/framework/android/View.java"));
+    try std.testing.expect(allowedJvmPath("src/java/dev/artzig/Host.kt"));
     try std.testing.expect(!allowedJvmPath("tools/Accidental.java"));
 }
 
@@ -470,10 +278,6 @@ test "client namespace audit follows Java and Kotlin packages instead of file lo
     try std.testing.expect(!isClientPackage("androidx.annotation"));
     try std.testing.expect(!isClientPackage("com.android.server.wm"));
     try std.testing.expect(!isClientPackage("dev.artzig"));
-}
-
-test "firstLines is bounded" {
-    try std.testing.expectEqualStrings("a\nb\n", firstLines("a\nb\nc\n", 2));
 }
 
 test "graph audit accepts LazyPath interfaces and rejects regressions" {

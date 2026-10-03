@@ -3143,9 +3143,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/os/FileUriExposedException.java");
     try c.add("$CJ/android/os/strictmode", .{});
     // Real android.net.Uri + android.content.Intent (one unit: Intent parcels its
-    // data Uri through Uri.writeToParcel) and Intent's import closure. Service
-    // Facades without a host service (ContactsContract and PhoneAccount) are
-    // stubs in src/framework-stubs.
+    // data Uri through Uri.writeToParcel) and Intent's import closure.
     try c.file("$CJ/android/net/Uri.java");
     try c.file("$CJ/android/net/UriCodec.java");
     try c.file("$CJ/android/content/Intent.java");

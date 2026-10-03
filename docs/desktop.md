@@ -23,6 +23,7 @@ or fallback to the removed global renderer.
 | Secure layers | Private task composition outputs preserve SurfaceFlinger's secure-layer exclusion policy. Secure content is not exported as ordinary desktop pixels. |
 | Video | FFmpeg/VA-API frames pass through separately allocated RGBX buffers into stock Android surfaces. Supported SDR conversion preserves color metadata; unsupported HDR conversion is rejected. |
 | PiP | Picture-in-picture is not advertised; the Activity entry point returns false. |
+| Wallpaper | WallpaperService is available to apps; desktop-wide live-wallpaper presentation is unsupported. |
 | Service loss | Fatal broker, graphics, presenter, system or compositor loss retires the affected session and its clients with bounded cleanup. Old Binder objects and surface IDs are not reconnected to a replacement service. |
 
 The allocator, Binder transport, imported frames and desktop transfers have

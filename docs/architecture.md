@@ -31,8 +31,8 @@ not need Linux-specific branches.
 
 `android.os` is the real AOSP package (Parcel, Binder, ServiceManager, Looper,
 MessageQueue, Process, SystemProperties, SystemClock, Build, StrictMode,
-Environment, …) over the native runtime; `src/framework/android/os/` holds no
-replacements. The application context core is real as well: `Context`,
+Environment, …) over the native runtime, with no repository replacements.
+The application context core is real as well: `Context`,
 `ContextWrapper`, `ContextImpl`, `Application`, `Service`, `ContentResolver`,
 `ContentProvider`, `LoadedApk`, `ResourcesManager`, `SharedPreferencesImpl`,
 `Uri`, `Intent`, and `BroadcastReceiver` are the verbatim AOSP classes, so

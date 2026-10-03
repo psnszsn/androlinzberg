@@ -51,8 +51,8 @@ and vold, and for unavailable hardware.
 The UI test suite runs NewPipe 0.29.1 and F-Droid 2.0.1 end to end. See
 [desktop behavior and limits](docs/desktop.md) for task windows, input,
 media, desktop integration and recovery, and
-[stock clients and hosted services](docs/stock-client.md) for the framework
-boundary.
+[native and service boundaries](docs/native-boundary.md) for what is stock and
+what the host adapts.
 
 androlinzberg does not provide a complete Android system. An app can fail when
 it needs an Android service that the host does not implement.
@@ -161,12 +161,11 @@ suite with build and source audits. See [testing](docs/testing.md) and
 ## Development
 
 - [Build and development](docs/development.md)
-- [Contributor and agent rules](AGENTS.md), including the AOSP reuse policy
+- [Contributor and agent rules](AGENTS.md), including the AOSP code policy
 - [Packaging and installation](docs/packaging.md)
 - [Testing](docs/testing.md) and [acceptance testing](docs/acceptance.md)
 - [Desktop behavior and limits](docs/desktop.md)
 - [Process design](docs/process-design.md)
-- [Remaining framework stubs](docs/stubs.md)
 - [Kotlin source policy](docs/kotlin.md)
 - [Native language boundary](docs/native-boundary.md)
 - [artzig build instructions](artzig/README.md)

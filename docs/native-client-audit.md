@@ -6,12 +6,7 @@ implementations, runtime libraries and process placement still contain substanti
 host adaptations.
 
 The agreed native client migration is complete within the boundaries documented
-here. The complete `acceptance-test` target passed on 2026-09-16: all 28 APK
-cases, 88 recorded actions, zero structured runtime issues and no new failure
-artifacts. Native, JVM, system, desktop, audio, video, source-provenance and build
-checks passed, including all six session-loss cases and original composer service
-reconnection. All three fresh video frames were inspected. Package pins and
-installed platform/PDF/Binder hashes match this checkpoint.
+here.
 
 This is a source and architecture audit, not an exhaustive per-method
 compatibility certification. The follow-up validation record distinguishes

@@ -67,9 +67,6 @@ pub fn build(b: *std.Build) void {
             .optimize = .Debug,
         }),
     });
-    audit_tests.root_module.addImport("generator_sources", b.createModule(.{
-        .root_source_file = b.path("build/generator_sources.zig"),
-    }));
     build_tools_test.dependOn(&b.addRunArtifact(audit_tests).step);
     const source_set_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -175,9 +172,6 @@ pub fn build(b: *std.Build) void {
             .optimize = .Debug,
         }),
     });
-    build_audit.root_module.addImport("generator_sources", b.createModule(.{
-        .root_source_file = b.path("build/generator_sources.zig"),
-    }));
     const SourceSet = @import("artzig").SourceSet;
     var project_jvm = SourceSet.Collector.init(b);
     inline for (.{ "artzig/src", "artzig/examples", "src", "tests", "testdata", "tools" }) |root| {
@@ -187,8 +181,6 @@ pub fn build(b: *std.Build) void {
     const jvm_source_audit = b.addRunArtifact(build_audit);
     jvm_source_audit.addArg("jvm-source");
     jvm_source_audit.addDirectoryArg(b.path(""));
-    jvm_source_audit.addDirectoryArg(aosp);
-    jvm_source_audit.addFileArg(b.path("tools/stub-audit.txt"));
     for (project_jvm_files.items) |file| jvm_source_audit.addFileArg(file.path);
     project_jvm_files.addInputs(jvm_source_audit);
     jvm_source_audit.setName("audit JVM source provenance");

@@ -513,9 +513,9 @@ it requires a later compatibility repair to restore standalone behavior.
 
 Before any framework changes, including the phase 2 prototype, trace the pinned AOSP methods and
 their collaborators, determine actual source inclusion in `build/java_sources.zig`,
-and prefer direct reuse. Run the required closure audit against a live framework
-JAR before replacing any stub; update the stub audit/budget and generator inputs
-as required by `AGENTS.md`. New JVM adapters are Kotlin; Zig I/O/process ownership
+and prefer direct reuse. Run `tools/aosp-closure.py closure` against a live
+framework JAR before replacing a hosted service, and update generator inputs as
+required by `AGENTS.md`. New JVM adapters are Kotlin; Zig I/O/process ownership
 uses explicitly supplied `std.Io`.
 
 Relevant pinned references already inspected for this plan are
