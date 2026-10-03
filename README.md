@@ -9,8 +9,9 @@ layer.
 > interfaces can change.
 
 > [!CAUTION]
-> androlinzberg does not isolate an APK from your Linux user account. Run only
-> APK files that you trust.
+> androlinzberg does not isolate an APK from your Linux user account. Each
+> package gets its own Android uid, but every app process runs with your Linux
+> user's permissions. Run only APK files that you trust.
 
 ## Relationship to ATL and Waydroid
 
@@ -21,19 +22,18 @@ and [Waydroid](https://github.com/waydroid/waydroid).
 androlinzberg is heavily inspired by ATL: an APK runs through a compatibility
 layer directly on the Linux host instead of inside a complete Android system.
 Where the projects differ is how they provide Android behavior. Rather than
-reimplementing the Android API surface wherever possible, androlinzberg builds
-and reuses pinned AOSP code for ART and libcore, selected Android framework
-classes, Android resources, HWUI, and Skia. Small host adapters are used at the
-boundaries that normally depend on unavailable Android services, daemons, or
-hardware.
+reimplementing the Android API surface, androlinzberg builds and reuses pinned
+AOSP code for ART and libcore, the Android framework, Android resources, HWUI,
+and Skia.
 
 Waydroid takes the other broad approach: it boots a complete Android system in
 a Linux container and integrates that system with a Wayland desktop.
 androlinzberg shares the direct Wayland presentation goal, but does not start an
-Android system image or `init`. A hosted system process runs selected stock
-services, including Android's window and activity task managers. APK processes
-connect to those services and Linux facilities through the compatibility runtime
-and focused host adapters.
+Android system image or `init`. A hosted system server starts stock Android
+services in `SystemServer` order, including the activity, window, package,
+package installer, user, clipboard and accessibility managers. Host adapters
+stand in for what Android runs outside `system_server`, such as installd, artd
+and vold, and for unavailable hardware.
 
 ## Current support
 
@@ -42,15 +42,17 @@ and focused host adapters.
 - The native-library bridge loads compatible Android libraries from the APK.
 - Apps can use mouse, keyboard, touch, tablet, and scroll input.
 - HWUI and Skia render through stock Android buffer queues; SurfaceFlinger composes task outputs for Wayland.
+- Apps can install other apps through the stock PackageInstaller, for example from F-Droid.
 - FFmpeg supplies audio and video codecs.
 - PipeWire supplies audio output.
 - Fontconfig supplies the Android font configuration.
 - Conscrypt uses the host certificate-authority bundle.
 
-See [desktop behavior and limits](docs/desktop.md) for task windows, input,
-media, desktop integration and recovery.
-See [stock clients and hosted services](docs/stock-client.md) for the framework
-boundary and [acceptance testing](docs/acceptance.md) for the complete test suite.
+The UI test suite runs NewPipe 0.29.1 and F-Droid 2.0.1 end to end. See
+[desktop behavior and limits](docs/desktop.md) for task windows, input,
+media, desktop integration and recovery, and
+[stock clients and hosted services](docs/stock-client.md) for the framework
+boundary.
 
 androlinzberg does not provide a complete Android system. An app can fail when
 it needs an Android service that the host does not implement.
@@ -95,18 +97,25 @@ Use an absolute path for the APK file:
 zig build -j10 run -- /absolute/path/to/app.apk
 ```
 
-APK launches use stock Android window services and one Wayland toplevel per task
-by default. Press `F11` to enter or leave
+Launching an APK installs it through Android's PackageManagerService, then
+starts its launcher activity. Installed packages, their Android uids and their
+application data persist in the data root, `$XDG_DATA_HOME/artzig` by default
+(`ARTZIG_DATA_DIR` selects another). Launching an installed app again installs
+it as a package update: its data is kept, and, as on a device, an APK signed
+with a different key or an older version is rejected.
+
+Each task gets its own Wayland toplevel. Press `F11` to enter or leave
 fullscreen mode. As in Android desktop mode, an application's own immersive
 request fills its current window, and a fullscreen entered with `F11` during
 that request ends when the application leaves immersive.
 
-Every launch runs inside a hosted Binder session: the launcher starts an
-`azk-binder-broker` router, SurfaceFlinger, system process and task presenter, and prints the
-session directory. Add a second app to the same session with `--join`:
+Every launch starts a private Android instance and prints its session
+directory, `$XDG_RUNTIME_DIR/androlinzberg/binder-<pid>-<id>`. Only one running
+instance can use a data root. Add another app to the running instance with
+`--join`:
 
 ```sh
-./zig-out/bin/androlinzberg --join /run/user/1000/androlinzberg/binder-<pid>-<id> /absolute/path/to/other.apk
+./zig-out/bin/androlinzberg --join "$XDG_RUNTIME_DIR"/androlinzberg/binder-<pid>-<id> /absolute/path/to/other.apk
 ```
 
 The session prints Android log entries of warning level and above to
@@ -123,20 +132,41 @@ Show all launcher options:
 
 ## How it works
 
-- The `artzig` component builds ART and libcore from pinned AOSP sources.
-- Selected AOSP framework code supplies Android behavior.
-- Small host adapters replace Android services that need a full Android system.
-- HWUI and Skia keep Android text layout and drawing behavior.
+- `androlinzberg` is a small dispatcher without ART. It starts a private
+  supervisor, `azk-standalone`, which owns the Binder broker, SurfaceFlinger,
+  the system server, the media service and the Wayland task presenter.
+- An ART desktop controller asks the activity task manager to launch the app.
+  The task manager starts each app process through `azk-app-process`, as zygote
+  would on a device.
+- `artzig` builds ART and libcore from pinned AOSP sources. The framework, HWUI
+  and Skia are compiled from the same AOSP version.
+- Processes talk over a hosted Binder broker. Stock Binder and Parcel JNI run on
+  top of it, and host interfaces are generated from AIDL with a Zig backend.
 - The Zig platform layer connects Android to Wayland, EGL, PipeWire, and FFmpeg.
 - The native-library bridge loads compatible x86_64 Android libraries.
 
-See [Architecture](docs/architecture.md) for more information.
+A machine-wide mode shared by several Linux users is planned but not
+implemented; `--system` fails rather than starting a private instance. See
+[Architecture](docs/architecture.md) for the current design and the
+[process design](docs/process-design.md) for the planned one.
+
+## Testing
+
+`zig build -j10 jvm-test` runs the framework and class-loading tests. UI tests
+are JUnit tests written against androidx UiAutomator and run on the hosted ART
+against real APKs. `ui-test` runs them, and `acceptance-test` runs the complete
+suite with build and source audits. See [testing](docs/testing.md) and
+[acceptance testing](docs/acceptance.md).
 
 ## Development
 
 - [Build and development](docs/development.md)
+- [Contributor and agent rules](AGENTS.md), including the AOSP reuse policy
 - [Packaging and installation](docs/packaging.md)
-- [Testing](docs/testing.md)
+- [Testing](docs/testing.md) and [acceptance testing](docs/acceptance.md)
+- [Desktop behavior and limits](docs/desktop.md)
+- [Process design](docs/process-design.md)
+- [Remaining framework stubs](docs/stubs.md)
 - [Kotlin source policy](docs/kotlin.md)
 - [Native language boundary](docs/native-boundary.md)
 - [artzig build instructions](artzig/README.md)
