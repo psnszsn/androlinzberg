@@ -32,7 +32,7 @@ class HostedNotificationManagerService : android.app.INotificationManager.Stub()
     override fun asBinder(): android.os.IBinder = this
 
     /** The package manager resolves uids to packages (NMS.checkCallerIsSameApp). */
-    @Volatile var packageService: HostedPackageManagerService? = null
+    @Volatile var packageService: android.content.pm.IPackageManager? = null
 
     private val lock = Any()
 
@@ -65,11 +65,16 @@ class HostedNotificationManagerService : android.app.INotificationManager.Stub()
     private fun uidOf(pkg: String?): Int {
         val uid = Binder.getCallingUid()
         if (uid != Process.SYSTEM_UID) return uid
-        return packageService?.getPackageUidInternal(pkg ?: return uid)?.takeIf { it > 0 } ?: uid
+        val name = pkg ?: return uid
+        return android.os.Binder.withCleanCallingIdentity<Int?> {
+            packageService?.getPackageUid(name, 0L, UserHandle.getUserId(uid))
+        }?.takeIf { it > 0 } ?: uid
     }
 
     private fun targetSdkOf(pkg: String?): Int =
-        packageService?.getApplicationInfo(pkg, 0L, UserHandle.USER_SYSTEM)?.targetSdkVersion
+        android.os.Binder.withCleanCallingIdentity<android.content.pm.ApplicationInfo?> {
+            packageService?.getApplicationInfo(pkg, 0L, UserHandle.USER_SYSTEM)
+        }?.targetSdkVersion
             ?: android.os.Build.VERSION.SDK_INT
 
     // ------------------------------------------------------------ posting

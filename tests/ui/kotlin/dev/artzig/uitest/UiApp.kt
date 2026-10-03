@@ -61,8 +61,8 @@ object UiApp {
     }
 
     /** A log record of any session process with this tag containing `fragment`. */
-    fun assertLog(tag: String, fragment: String) {
-        val deadline = android.os.SystemClock.uptimeMillis() + TIMEOUT
+    fun assertLog(tag: String, fragment: String, timeoutMillis: Long = TIMEOUT) {
+        val deadline = android.os.SystemClock.uptimeMillis() + timeoutMillis
         while (true) {
             val journal = UiTest.diagnostics.read(logCursor, Long.MAX_VALUE)
             logCursor = journal.logCursor

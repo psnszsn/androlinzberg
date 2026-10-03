@@ -7,10 +7,13 @@ import android.content.res.Configuration;
  * process announces the package it hosts before attachApplication because no
  * zygote spawned it for that package (bindProcessPackage). */
 interface IHostedInstaller {
-    /** nativeLibraryDir: where the installing process extracted the APK's
-     * lib/x86_64 (NativeLibraryHelper role; the launcher picks the directory
-     * bionic sees), or null for a resources-only package. */
+    /** `pm install` of a host APK through a stock PackageInstaller session, for
+     * the system, shell and host session clients (not installed apps).
+     * nativeLibraryDir is no longer consulted: the session extracts libraries. */
     String installPackage(String apkPath, @nullable String nativeLibraryDir);
+    /** `am start` of a package's launcher activity in a new task, for the same
+     * callers: the system server starts it, as the session owner does. */
+    void launchPackage(String packageName);
     /** Initial resource configuration of this process's hosted desktop window.
      * It is a process override, never a mutation of the device configuration. */
     void bindProcessPackage(String packageName, String processName,

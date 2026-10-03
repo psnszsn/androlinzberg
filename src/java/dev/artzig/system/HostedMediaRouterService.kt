@@ -15,7 +15,7 @@ import java.util.Objects
  * remote-provider discovery and a system output-picker UI are absent on this host. */
 internal class HostedMediaRouterService(
     private val context: Context,
-    private val packages: HostedPackageManagerService,
+    private val packages: android.content.pm.IPackageManager,
 ) : IMediaRouterService.Stub() {
     private val lock = Any()
     private val handler = Handler.createAsync(Looper.getMainLooper())
@@ -192,7 +192,7 @@ internal class HostedMediaRouterService(
         val target = nonEmpty(targetPackageName)
         privileged(caller)
         val user = checkUser(targetUser!!)
-        require(packages.getPackageUid(target, 0, user) >= 0) { "targetPackageName does not exist: $target" }
+        require(android.os.Binder.withCleanCallingIdentity<Int> { packages.getPackageUid(target, 0L, user) } >= 0) { "targetPackageName does not exist: $target" }
         registerManager(manager!!, caller, target, user)
     }
     private fun registerManager(callback: IMediaRouter2Manager, pkg: String, target: String?, user: Int) {

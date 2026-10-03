@@ -51,13 +51,10 @@ internal class StockWindowServices private constructor() {
 
     fun attachContext(value: Context) { context.bind(value) }
 
-    fun startTasks(manager: SystemServiceManager) {
+    /** ActivityManagerService constructor: start and initialize ATMS (RecentTasks,
+     * intent firewall, pending intents) before the package manager serves queries. */
+    fun startTasks(manager: SystemServiceManager, activities: HostedActivityManagerService) {
         tasks = manager.startService(ActivityTaskManagerService.Lifecycle::class.java).service
-    }
-
-    fun setUsageStats(usage: android.app.usage.UsageStatsManagerInternal) { tasks.setUsageStatsManager(usage) }
-
-    fun startWindows(manager: SystemServiceManager, activities: HostedActivityManagerService) {
         val firewall = IntentFirewall(object : IntentFirewall.AMSInterface {
             override fun getAMSLock(): Any = activities.windowServiceLock()
             override fun checkComponentPermission(permission: String?, pid: Int, uid: Int,
@@ -70,6 +67,11 @@ internal class StockWindowServices private constructor() {
         pending.onActivityManagerInternalAdded()
         tasks.onActivityManagerInternalAdded()
         tasks.onInitPowerManagement()
+    }
+
+    fun setUsageStats(usage: android.app.usage.UsageStatsManagerInternal) { tasks.setUsageStatsManager(usage) }
+
+    fun startWindows(manager: SystemServiceManager, activities: HostedActivityManagerService) {
         activities.attachSystemWindowProcess(tasks)
         manager.startService(com.android.server.devicestate.DeviceStateManagerService::class.java)
         input = HostInputManagerBridge(context, BootstrapSeat())

@@ -106,8 +106,8 @@ internal object StockDownloadManagerSmoke {
             val providerApp = context.packageManager.getApplicationInfo(info.packageName, 0)
             check(providerApp.dataDir == info.applicationInfo.dataDir)
             val providerData = File(providerApp.dataDir).canonicalFile
-            check(providerData.path.endsWith("/service-app-data/user/0/${info.packageName}"))
-            check(providerData != android.os.Environment.getDataUserCePackageDirectory(null, 0, info.packageName).canonicalFile)
+            // PackageManagerService gives the system provider its CE data directory.
+            check(providerData == android.os.Environment.getDataUserCePackageDirectory(null, 0, info.packageName).canonicalFile)
             check(runCatching { DownloadManager.Request(Uri.parse("file:///invalid")) }.exceptionOrNull() is IllegalArgumentException)
             check(runCatching { resolver.query(Downloads.Impl.ALL_DOWNLOADS_CONTENT_URI, null, null, null, null)?.close() }
                 .exceptionOrNull() is SecurityException)

@@ -2678,6 +2678,52 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/content/pm/IPackageLoadingProgressCallback.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/content/pm/InstallationFileLocation.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/permission/IPermissionController.aidl" },
+    // Stock package stack: ART Service/artd, idmap2, keystore2 maintenance,
+    // update_engine, crash recovery, speech and dependency-installer interfaces.
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/ArtConstants.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/ArtdDexoptResult.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/ArtifactsLocation.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/ArtifactsPath.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/CopyAndRewriteProfileResult.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/DexMetadataPath.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/DexoptOptions.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/DexoptTrigger.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/FileVisibility.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/FsPermission.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/GetDexoptNeededResult.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/GetDexoptStatusResult.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/IArtd.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/IArtdCancellationSignal.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/IArtdNotification.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/MergeProfileOptions.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/OutputArtifacts.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/OutputProfile.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/OutputSecureDexMetadataCompanion.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/PriorityClass.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/ProfilePath.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/RuntimeArtifactsPath.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/SecureDexMetadataWithCompanionPaths.aidl" },
+    .{ .source = .aosp, .path = "art/artd/binder/com/android/server/art/VdexPath.aidl" },
+    .{ .source = .aosp, .path = "art/dexopt_chroot_setup/binder/com/android/server/art/IDexoptChrootSetup.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/cmds/idmap2/idmap2d/aidl/core/android/os/OverlayConstraint.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/cmds/idmap2/idmap2d/aidl/services/android/os/IIdmap2.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/cmds/idmap2/idmap2d/aidl/services/android/os/OverlayablePolicy.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/content/pm/dependencyinstaller/IDependencyInstallerCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/content/pm/dependencyinstaller/IDependencyInstallerService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/speech/IModelDownloadListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/speech/IRecognitionListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/speech/IRecognitionService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/speech/IRecognitionServiceManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/speech/IRecognitionServiceManagerCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/speech/IRecognitionSupportCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/native/libs/binder/aidl/android/content/pm/ApexStagedEvent.aidl" },
+    .{ .source = .aosp, .path = "frameworks/native/libs/binder/aidl/android/content/pm/IPackageManagerNative.aidl" },
+    .{ .source = .aosp, .path = "frameworks/native/libs/binder/aidl/android/content/pm/IStagedApexObserver.aidl" },
+    .{ .source = .aosp, .path = "frameworks/native/libs/binder/aidl/android/content/pm/StagedApexInfo.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/CrashRecovery/framework/java/android/service/watchdog/IExplicitHealthCheckService.aidl" },
+    .{ .source = .aosp, .path = "system/security/keystore2/aidl/android/security/maintenance/IKeystoreMaintenance.aidl" },
+    .{ .source = .aosp, .path = "system/update_engine/binder_bindings/android/os/IUpdateEngine.aidl" },
+    .{ .source = .aosp, .path = "system/update_engine/binder_bindings/android/os/IUpdateEngineCallback.aidl" },
 };
 
 pub const logtags = [_]Logtags{
@@ -2836,6 +2882,8 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.location.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/location/java/android/location/flags/location.aconfig"} },
     .{ .package = "android.speech.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/speech/flags/speech_flags.aconfig"} },
     .{ .package = "com.android.internal.widget.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/com/android/internal/widget/flags.aconfig"} },
+    .{ .package = "com.android.aconfig_new_storage", .container = "system", .source = .aosp, .declarations = &.{"system/server_configurable_flags/aconfigd/new_aconfig_storage.aconfig"} },
+    .{ .package = "com.android.providers.settings", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/packages/SettingsProvider/src/com/android/providers/settings/device_config_service.aconfig"} },
 };
 
 pub const sysprop = [_]Sysprop{
@@ -2856,6 +2904,8 @@ pub const sysprop = [_]Sysprop{
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/DeviceProperties.sysprop" } },
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/SocProperties.sysprop" } },
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/TelephonyProperties.sysprop" } },
+    // Pinned PackageWatchdog/RescueParty boot-loop counters.
+    .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/CrashRecoveryProperties.sysprop" } },
 };
 
 // Soong devicepolicyprotosnano's Android jarjar rule. Keep the original runtime
@@ -2900,6 +2950,13 @@ pub const nano = [_]Nano{
 pub const proto_relocations = .{
     .{ .output = "android/aconfigd/Aconfigd.java", .from = "android.aconfigd", .to = "android.internal.configinfra.aconfigd.x" },
 };
+/// Relocated outputs whose original package is also compiled. Pinned
+/// services.core links aconfigd_java_proto_lib unrelocated (SettingsToPropertiesMapper),
+/// while framework-configinfrastructure jarjars its own copy.
+pub const proto_unrelocated_copies = [_][]const u8{
+    "android/aconfigd/Aconfigd.java",
+};
+
 pub const cppstream = [_]struct { input: []const u8, output: []const u8 }{
     .{ .input = "frameworks/base/core/proto/android/service/sensor_service.proto", .output = "frameworks/base/core/proto/android/service/sensor_service.proto.h" },
 };
@@ -3008,6 +3065,53 @@ pub const proto_inputs = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/server/location/enums.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/os/powermanager.proto" },
     .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/telephony/enums.proto" },
+    // Pinned BroadcastHelper/PackageManagerService storage-volume constants.
+    .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/stats/storage/storage_enums.proto" },
+
+    // Pinned AppHibernationService state store (ART Service consults hibernation).
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/server/apphibernationservice.proto" },
+};
+
+/// Lite Java protos compiled with `--java_out=lite` (Soong `proto: { type: "lite" }`)
+/// from the AOSP root, so cross-file imports resolve as in Soong.
+pub const lite_java_protos = .{
+    // Pinned art/libartservice/service/Android.bp service-art-proto-java.
+    .inputs = &[_][]const u8{
+        "art/libartservice/service/proto/batch_dexopt_params.proto",
+        "art/libartservice/service/proto/common.proto",
+        "art/libartservice/service/proto/dex_metadata_config.proto",
+        "art/libartservice/service/proto/dex_use.proto",
+        "art/libartservice/service/proto/pre_reboot_stats.proto",
+    },
+    .outputs = &[_][]const u8{
+        "com/android/server/art/proto/BatchDexoptParams.java",
+        "com/android/server/art/proto/BatchDexoptParamsProto.java",
+        "com/android/server/art/proto/BatchDexoptParamsProtoOrBuilder.java",
+        "com/android/server/art/proto/Common.java",
+        "com/android/server/art/proto/DexMetadataConfig.java",
+        "com/android/server/art/proto/DexMetadataConfigOrBuilder.java",
+        "com/android/server/art/proto/DexMetadataConfigOuterClass.java",
+        "com/android/server/art/proto/DexoptParamsProto.java",
+        "com/android/server/art/proto/DexoptParamsProtoOrBuilder.java",
+        "com/android/server/art/proto/DexUse.java",
+        "com/android/server/art/proto/DexUseProto.java",
+        "com/android/server/art/proto/DexUseProtoOrBuilder.java",
+        "com/android/server/art/proto/Int32Value.java",
+        "com/android/server/art/proto/Int32ValueOrBuilder.java",
+        "com/android/server/art/proto/PackageDexUseProto.java",
+        "com/android/server/art/proto/PackageDexUseProtoOrBuilder.java",
+        "com/android/server/art/proto/PreRebootStats.java",
+        "com/android/server/art/proto/PreRebootStatsOrBuilder.java",
+        "com/android/server/art/proto/PreRebootStatsOuterClass.java",
+        "com/android/server/art/proto/PrimaryDexUseProto.java",
+        "com/android/server/art/proto/PrimaryDexUseProtoOrBuilder.java",
+        "com/android/server/art/proto/PrimaryDexUseRecordProto.java",
+        "com/android/server/art/proto/PrimaryDexUseRecordProtoOrBuilder.java",
+        "com/android/server/art/proto/SecondaryDexUseProto.java",
+        "com/android/server/art/proto/SecondaryDexUseProtoOrBuilder.java",
+        "com/android/server/art/proto/SecondaryDexUseRecordProto.java",
+        "com/android/server/art/proto/SecondaryDexUseRecordProtoOrBuilder.java",
+    },
 };
 
 pub const proto_outputs = [_][]const u8{
@@ -3266,6 +3370,12 @@ pub const proto_outputs = [_][]const u8{
     "android/os/PowerManagerProto.java",
     "android/os/OsProtoEnums.java",
     "android/telephony/TelephonyProtoEnums.java",
+    "android/stats/storage/StorageEnums.java",
+
+    "com/android/server/apphibernation/UserLevelHibernationStatesProto.java",
+    "com/android/server/apphibernation/UserLevelHibernationStateProto.java",
+    "com/android/server/apphibernation/GlobalLevelHibernationStatesProto.java",
+    "com/android/server/apphibernation/GlobalLevelHibernationStateProto.java",
 };
 
 // BEGIN GENERATED PERFETTO NATIVE DECLARATIONS
@@ -4695,6 +4805,12 @@ pub const stats_java = .{
     .{ .module = "telephony_common", .package = "com.android.internal.telephony", .class = "TelephonyCommonStatsLog" },
     .{ .module = "expresslog", .package = "com.android.modules.expresslog", .class = "StatsExpressLog" },
     .{ .module = "hwui", .package = "com.android.os.coregraphics", .class = "HwuiStatsLog" },
+    // Pinned services/core/Android.bp statslog-art-java-gen.
+    .{ .module = "art", .package = "com.android.internal.art", .class = "ArtStatsLog", .worksource = true },
+    // Pinned art/libartservice/service/Android.bp art-statslog-art-java-gen.
+    .{ .module = "art", .package = "com.android.server.art", .class = "ArtStatsLog" },
+    // Pinned packages/CrashRecovery/services/Android.bp statslog-crashrecovery-java-gen.
+    .{ .module = "crashrecovery", .package = "com.android.server.crashrecovery.proto", .class = "CrashRecoveryStatsLog", .worksource = true },
 };
 
 // libmediadrmmetrics: original schema, generated by the pinned protoc.

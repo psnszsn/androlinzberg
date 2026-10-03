@@ -63,6 +63,12 @@ The standalone supervisor owns the session's Android data root and exports it to
 process it starts: `ARTZIG_DATA_DIR` (default `$XDG_DATA_HOME/artzig`, else
 `~/.local/share/artzig`) is `Environment.getDataDirectory()`, with
 `DOWNLOAD_CACHE` and `EXTERNAL_STORAGE` (the one emulated volume) beneath it.
+Application data and the package database that owns it (`system`,
+`system_ce`, `system_de`) persist together, as on a device's data partition,
+and one session at a time owns a data root (`.session.lock`); another launcher
+joins that session. Application data written before a root's first package
+database exists moves to `legacy-app-data/` instead of being reconciled away.
+Android processes work from `/`, so paths handed to them are absolute.
 `ANDROID_DATA` remains ART's dalvik-cache root (an XDG cache directory) and is
 not the data directory; vendored patch 0019 gives `Environment` that
 precedence. `Build` values are session properties the broker seeds
@@ -200,13 +206,27 @@ availability does not imply that every device service or operation is supported.
 
 The hosted activity manager supplies process attachment, service binding,
 broadcasts and provider connections over original AIDL. Stock ATMS/WMS own
-activity and window lifecycle. The hosted package manager uses AOSP parsing,
-signature verification, component resolution and package-info construction.
-It publishes package identities and permissions shared by Java and native
-callers; property-cache invalidation propagates mutations across the session.
+activity and window lifecycle. Package management is the stock
+PackageManagerService with its own collaborators: PackageInstallerService and
+sessions, UserManagerService, AppsFilter package visibility, DomainVerification,
+the permission subsystem (AccessCheckingService), ART Service and
+AppHibernationService, started in `SystemServer` order by
+[`StockPackageServices.kt`](../src/java/dev/artzig/system/StockPackageServices.kt).
+The host implements only what Android runs outside `system_server`: installd
+(`HostedInstalld`), artd (`HostedArtd`), vold's user-storage preparation in the
+storage service, and the broker, which admits each package's processes with
+the application uid PackageManagerService assigned (`register_package_uid`).
 
-`framework-res.apk` is installed as package `android`. Its manifest supplies
-platform permissions, and signature grants use AOSP signing identities.
+`framework-res.apk` is installed as package `android`, and the system
+partition (`framework/`, `priv-app/`, `app/`, `etc/permissions/`) is projected
+into the runtime root, where PackageManagerService scans it. Stock system apps
+built from AOSP (PackageInstaller, ExtShared, Shell resources) sit beside small
+repo-owned stand-ins for modules not built here (PermissionController,
+ExtServices, SdkSandbox, Settings' "Install unknown apps" screen). Apps install
+through stock PackageInstaller sessions: an app without INSTALL_PACKAGES gets
+the stock installer's unknown-sources and confirmation UI.
+Its manifest supplies platform permissions, and signature grants use AOSP
+signing identities.
 The public [fixture signing keys](../tools/signing/README.md) also sign the
 test APKs used to exercise platform and untrusted-caller permission paths.
 

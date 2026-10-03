@@ -5,8 +5,12 @@
 const std = @import("std");
 
 pub const Library = struct { name: []const u8, path: []const u8 };
+/// A system-partition entry projected into ANDROID_ROOT, such as the
+/// framework, priv-app and app directories PackageManagerService scans or
+/// etc/permissions SystemConfig reads. `name` is relative to ANDROID_ROOT.
+pub const PartitionEntry = struct { name: []const u8, path: []const u8 };
 
-pub fn create(a: std.mem.Allocator, io: std.Io, runtime_root: []const u8, data_root: []const u8, libraries: []const Library) ![]const u8 {
+pub fn create(a: std.mem.Allocator, io: std.Io, runtime_root: []const u8, data_root: []const u8, libraries: []const Library, partition: []const PartitionEntry) ![]const u8 {
     try std.Io.Dir.cwd().createDirPath(io, data_root);
     var nonce: [16]u8 = undefined;
     io.random(&nonce);
@@ -28,6 +32,19 @@ pub fn create(a: std.mem.Allocator, io: std.Io, runtime_root: []const u8, data_r
             !std.mem.endsWith(u8, library.name, ".so")) return error.InvalidLibraryName;
         const target = try std.Io.Dir.cwd().realPathFileAlloc(io, library.path, a);
         try std.Io.Dir.cwd().symLink(io, target, try std.fs.path.join(a, &.{ lib64, library.name }), .{});
+    }
+    for (partition) |entry| {
+        if (entry.name.len == 0 or entry.name[0] == '/' or std.mem.indexOf(u8, entry.name, "..") != null)
+            return error.InvalidPartitionEntry;
+        const destination = try std.fs.path.join(a, &.{ path, entry.name });
+        if (std.fs.path.dirname(destination)) |parent| try std.Io.Dir.cwd().createDirPath(io, parent);
+        // A partition entry replaces the runtime root's entry of the same name.
+        std.Io.Dir.cwd().deleteFile(io, destination) catch |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        };
+        const target = try std.Io.Dir.cwd().realPathFileAlloc(io, entry.path, a);
+        try std.Io.Dir.cwd().symLink(io, target, destination, .{});
     }
     return path;
 }

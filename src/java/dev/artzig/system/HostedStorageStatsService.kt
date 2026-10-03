@@ -24,7 +24,7 @@ import java.io.File
 class HostedStorageStatsService : android.app.usage.IStorageStatsManager.Stub(), android.app.usage.IStorageStatsManager by unsupported<android.app.usage.IStorageStatsManager>() {
     override fun asBinder(): android.os.IBinder = this
 
-    @Volatile var packageService: HostedPackageManagerService? = null
+    @Volatile var packageService: android.content.pm.IPackageManager? = null
 
     private fun enforceCallerIsSystemOrSameApp(packageName: String?, callingPackage: String?) {
         val uid = Binder.getCallingUid()
@@ -45,7 +45,9 @@ class HostedStorageStatsService : android.app.usage.IStorageStatsManager.Stub(),
 
     @Suppress("UNCHECKED_CAST")
     private fun installedApplications(): List<android.content.pm.ApplicationInfo> =
-        (packageService?.getInstalledApplications(0L, UserHandle.USER_SYSTEM)?.list as? List<android.content.pm.ApplicationInfo>) ?: emptyList()
+        android.os.Binder.withCleanCallingIdentity<List<android.content.pm.ApplicationInfo>> {
+            (packageService?.getInstalledApplications(0L, UserHandle.USER_SYSTEM)?.list as? List<android.content.pm.ApplicationInfo>) ?: emptyList()
+        }
 
     override fun isQuotaSupported(volumeUuid: String?, callingPackage: String?): Boolean = false
     override fun isReservedSupported(volumeUuid: String?, callingPackage: String?): Boolean = false
@@ -59,7 +61,9 @@ class HostedStorageStatsService : android.app.usage.IStorageStatsManager.Stub(),
 
     override fun queryStatsForPackage(volumeUuid: String?, packageName: String?, userId: Int, callingPackage: String?): StorageStats? {
         enforceCallerIsSystemOrSameApp(packageName, callingPackage)
-        val info = packageService?.getApplicationInfo(packageName, 0L, UserHandle.USER_SYSTEM)
+        val info = android.os.Binder.withCleanCallingIdentity<android.content.pm.ApplicationInfo?> {
+            packageService?.getApplicationInfo(packageName, 0L, UserHandle.USER_SYSTEM)
+        }
             ?: throw android.os.ParcelableException(android.content.pm.PackageManager.NameNotFoundException(packageName))
         return statsOf(listOf(info))
     }
@@ -69,7 +73,9 @@ class HostedStorageStatsService : android.app.usage.IStorageStatsManager.Stub(),
     override fun queryStatsForUid(volumeUuid: String?, uid: Int, callingPackage: String?): StorageStats? {
         enforceCallerIsSystemOrSameApp(null, callingPackage)
         val packages = packageService?.getPackagesForUid(uid) ?: arrayOf()
-        return statsOf(packages.mapNotNull { packageService?.getApplicationInfo(it, 0L, UserHandle.USER_SYSTEM) })
+        return statsOf(android.os.Binder.withCleanCallingIdentity<List<android.content.pm.ApplicationInfo>> {
+            packages.mapNotNull { packageService?.getApplicationInfo(it, 0L, UserHandle.USER_SYSTEM) }
+        })
     }
 
     override fun queryStatsForUser(volumeUuid: String?, userId: Int, callingPackage: String?): StorageStats? {

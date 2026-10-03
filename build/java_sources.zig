@@ -56,6 +56,12 @@ pub const Set = struct {
     java_rsp: std.Build.LazyPath,
     kotlin_rsp: std.Build.LazyPath,
     annotations_rsp: std.Build.LazyPath,
+    /// frameworks/base/services/permission (AccessCheckingService, the
+    /// permission and app-op state PermissionManagerService and AppOpsService
+    /// use when PermissionManager.USE_ACCESS_CHECKING_SERVICE), compiled with
+    /// its Android.bp kotlincflags.
+    permission_kotlin: SourceFiles.Files,
+    permission_kotlin_rsp: std.Build.LazyPath,
 
     pub fn addKotlincInputs(s: Set, run: *std.Build.Step.Run) void {
         s.java.addInputs(run);
@@ -129,6 +135,9 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
     collectCronet(&cronet) catch |err| std.debug.panic("unable to collect Cronet sources: {t}", .{err});
     const java = framework.files.select(".java");
     const kotlin = framework.files.select(".kt");
+    var permission = SourceFiles.Collector.init(b);
+    permission.addTree(fb.child(b, "services/permission/java"), .{ .extensions = &.{".kt"} });
+    const permission_kotlin = permission.select(".kt");
     const annotation_files = annotations.select(".java");
     return .{
         .java = java,
@@ -139,10 +148,13 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
         .java_rsp = java.responseFile(b, "framework-static-java-sources.rsp"),
         .kotlin_rsp = kotlin.responseFile(b, "framework-static-kotlin-sources.rsp"),
         .annotations_rsp = annotation_files.responseFile(b, "framework-annotation-sources.rsp"),
+        .permission_kotlin = permission_kotlin,
+        .permission_kotlin_rsp = permission_kotlin.responseFile(b, "framework-permission-kotlin-sources.rsp"),
     };
 }
 
 fn collectStatic(c: *StaticCollector) !void {
+    try collectPackageManager(c);
     // Original HIDL transport and no-service behavior shared by legacy hardware clients.
     try c.file("$CJ/android/os/HidlSupport.java");
     try c.file("$CJ/android/os/HwBinder.java");
@@ -4550,6 +4562,312 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$A/packages/modules/Connectivity/staticlibs/device/com/android/net/module/util/Struct.java");
     try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/IpUtils.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/NetworkAgent.java");
+}
+
+fn collectPackageManager(c: *StaticCollector) !void {
+    // Stock package stack behind PackageManagerServiceInjector: PMS, the
+    // installer service and sessions, UserManagerService, AppsFilter, domain
+    // verification, PlatformCompat, legacy permissions, ART Service and the
+    // permission module's runtime-permission persistence. The closure was
+    // computed by tools/aosp-closure.py; host primitives (installd, artd,
+    // app-id admission, partitions) are supplied through the injector.
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/AidlUtils.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/ArtFileManager.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/ArtJni.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/ArtManagedInstallFileHelper.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/ArtManagerLocal.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/ArtModuleServiceInitializer.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/ArtShellCommand.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/ArtdRefCache.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/AsLog.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/BackgroundDexoptJob.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/BackgroundDexoptJobService.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/BackgroundDexoptJobStatsReporter.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/Constants.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/Debouncer.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/Dex2OatStatsReporter.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/DexMetadataHelper.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/DexUseManagerLocal.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/DexoptHelper.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/Dexopter.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/DumpHelper.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/GlobalInjector.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/IndentingPrintWriter.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/PreRebootDexoptJob.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/PrimaryDexUtils.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/PrimaryDexopter.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/ReasonMapping.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/SecondaryDexopter.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/Utils.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/model/ArtFlags.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/model/ArtManagedFileStats.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/model/ArtServiceJobInterface.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/model/BatchDexoptParams.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/model/Config.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/model/DeleteResult.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/model/DetailedDexInfo.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/model/DexContainerFileUseInfo.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/model/DexMetadata.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/model/DexoptParams.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/model/DexoptResult.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/model/DexoptStatus.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/model/OperationProgress.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/prereboot/PreRebootDriver.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/prereboot/PreRebootGlobalInjector.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/prereboot/PreRebootManager.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/prereboot/PreRebootManagerInterface.java");
+    try c.file("$A/art/libartservice/service/java/com/android/server/art/prereboot/PreRebootStatsReporter.java");
+    try c.file("$A/external/auto/value/src/main/java/com/google/auto/value/AutoValue.java");
+    try c.file("$A/packages/modules/CrashRecovery/framework/java/android/service/watchdog/ExplicitHealthCheckService.java");
+    try c.file("$A/packages/modules/Permission/framework-s/java/android/safetylabel/SafetyLabelConstants.java");
+    try c.file("$A/packages/modules/Permission/service/java/com/android/permission/persistence/IoUtils.java");
+    try c.file("$A/packages/modules/Permission/service/java/com/android/permission/persistence/RuntimePermissionsPersistence.java");
+    try c.file("$A/packages/modules/Permission/service/java/com/android/permission/persistence/RuntimePermissionsPersistenceImpl.java");
+    try c.file("$A/packages/modules/Permission/service/java/com/android/permission/persistence/RuntimePermissionsState.java");
+    try c.file("$CJ/android/app/ActivityManagerNative.java");
+    try c.file("$CJ/android/app/backup/BackupDataInputStream.java");
+    try c.file("$CJ/android/app/backup/BackupHelper.java");
+    try c.file("$CJ/android/app/backup/BackupHelperWithLogger.java");
+    try c.file("$CJ/android/app/backup/BlobBackupHelper.java");
+    try c.file("$CJ/android/content/pm/InstallationFile.java");
+    try c.file("$CJ/android/content/pm/PackageInfoLite.java");
+    try c.file("$CJ/android/content/pm/PackageParserCacheHelper.java");
+    try c.file("$CJ/android/content/pm/dependencyinstaller/DependencyInstallerCallback.java");
+    try c.file("$CJ/android/content/pm/verify/domain/DomainVerificationRequest.java");
+    try c.file("$CJ/android/os/ArtModuleServiceManager.java");
+    try c.file("$CJ/android/os/RevocableFileDescriptor.java");
+    try c.file("$CJ/android/os/UpdateEngine.java");
+    try c.file("$CJ/android/os/UpdateEngineCallback.java");
+    try c.file("$CJ/android/os/incremental/IncrementalFileStorages.java");
+    try c.file("$CJ/android/provider/AlarmClock.java");
+    try c.file("$CJ/android/service/dataloader/DataLoaderService.java");
+    try c.file("$CJ/android/speech/ModelDownloadListener.java");
+    try c.file("$CJ/android/speech/RecognitionListener.java");
+    try c.file("$CJ/android/speech/RecognitionService.java");
+    try c.file("$CJ/android/speech/RecognitionSupport.java");
+    try c.file("$CJ/android/speech/RecognitionSupportCallback.java");
+    try c.file("$CJ/android/speech/SpeechRecognizer.java");
+    try c.file("$CJ/android/speech/SpeechRecognizerImpl.java");
+    try c.file("$CJ/android/speech/SpeechRecognizerProxy.java");
+    try c.file("$CJ/android/util/PrintStreamPrinter.java");
+    try c.file("$CJ/com/android/internal/app/SetScreenLockDialogActivity.java");
+    try c.file("$CJ/com/android/internal/config/appcloning/AppCloningDeviceConfigHelper.java");
+    try c.file("$CJ/com/android/internal/content/F2fsUtils.java");
+    try c.file("$CJ/com/android/internal/util/JournaledFile.java");
+    try c.file("$CJ/com/android/server/backup/PreferredActivityBackupHelper.java");
+    try c.file("$FB/apex/jobscheduler/framework/java/com/android/server/DeviceIdleInternal.java");
+    try c.file("$FB/apex/jobscheduler/framework/java/com/android/server/deviceidle/IDeviceIdleConstraint.java");
+    try c.file("$FB/keystore/java/android/security/AndroidKeyStoreMaintenance.java");
+    try c.file("$FB/packages/CrashRecovery/adaptor/preModularization/java/com/android/server/crashrecovery/CrashRecoveryAdaptor.java");
+    try c.file("$FB/packages/CrashRecovery/services/platform/java/com/android/server/ExplicitHealthCheckController.java");
+    try c.file("$FB/packages/CrashRecovery/services/platform/java/com/android/server/PackageWatchdog.java");
+    try c.file("$FB/packages/CrashRecovery/services/platform/java/com/android/server/RescueParty.java");
+    try c.file("$FB/packages/CrashRecovery/services/platform/java/com/android/server/crashrecovery/CrashRecoveryModule.java");
+    try c.file("$FB/packages/CrashRecovery/services/platform/java/com/android/server/crashrecovery/CrashRecoveryUtils.java");
+    try c.file("$FB/packages/NeuralNetworks/service/module/java/com/android/server/ondeviceintelligence/OnDeviceIntelligenceManagerLocal.java");
+    try c.file("$FB/services/core/java/com/android/server/am/SettingsToPropertiesMapper.java");
+    try c.file("$FB/services/core/java/com/android/server/om/DumpState.java");
+    try c.file("$FB/services/core/java/com/android/server/om/IdmapDaemon.java");
+    try c.file("$FB/services/core/java/com/android/server/om/IdmapManager.java");
+    try c.file("$FB/services/core/java/com/android/server/om/OverlayActorEnforcer.java");
+    try c.file("$FB/services/core/java/com/android/server/om/OverlayManagerService.java");
+    try c.file("$FB/services/core/java/com/android/server/om/OverlayManagerServiceImpl.java");
+    try c.file("$FB/services/core/java/com/android/server/om/OverlayManagerSettings.java");
+    try c.file("$FB/services/core/java/com/android/server/om/OverlayManagerShellCommand.java");
+    try c.file("$FB/services/core/java/com/android/server/om/OverlayReferenceMapper.java");
+    try c.file("$FB/services/core/java/com/android/server/om/PackageManagerHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/ApkChecksums.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/AppDataHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/AppIdSettingMap.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/AppsFilterBase.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/AppsFilterImpl.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/AppsFilterLocked.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/AppsFilterSnapshot.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/AppsFilterSnapshotImpl.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/AppsFilterUtils.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/BackgroundUserSoundNotifier.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/BroadcastHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/ChangedPackagesTracker.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/CleanUpArgs.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/CompilerStats.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/Computer.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/ComputerEngine.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/ComputerLocked.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/CrossProfileDomainInfo.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/CrossProfileIntentFilter.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/CrossProfileIntentFilterHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/CrossProfileIntentResolver.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/CrossProfileIntentResolverEngine.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/CrossProfileResolver.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/DefaultCrossProfileIntentFilter.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/DefaultCrossProfileIntentFiltersUtils.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/DefaultCrossProfileResolver.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/DeletePackageAction.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/DeletePackageHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/DexOptHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/DistractingPackageHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/DomainVerificationConnection.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/DumpHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/FeatureConfig.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/FreeStorageHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/GentleUpdateHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/IPackageManagerBase.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/IncrementalProgressListener.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/InitAppsHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/InstallArgs.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/InstallDependencyHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/InstallPackageHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/InstallRequest.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/InstallingSession.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/InstantAppRegistry.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/InstructionSets.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/KeySetHandle.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/KeySetManagerService.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/KillAppBlocker.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/ModuleInfoProvider.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/MoveInfo.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/MovePackageHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/MultiPackageVerifyingSession.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/NoFilteringResolver.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/OriginInfo.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageAbiHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageAbiHelperImpl.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageDexOptimizer.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageFreezer.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageHandler.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageInstallerHistoricalSession.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageInstallerService.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageInstallerSession.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageManagerInternalBase.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageManagerNative.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageManagerService.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageManagerServiceCompilerMapping.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageManagerServiceInjector.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageManagerServiceTestParams.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageManagerServiceUtils.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageManagerShellCommand.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageManagerShellCommandDataLoader.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageMetrics.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageRemovedInfo.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageSender.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageSessionProvider.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageSessionVerifier.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageUsage.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageVerificationResponse.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageVerificationState.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/ParallelPackageParser.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PendingPackageBroadcasts.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PerPackageReadTimeouts.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PersistentPreferredActivity.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PersistentPreferredIntentResolver.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PreferredActivity.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PreferredActivityHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PreferredComponent.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PreferredIntentResolver.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PrepareFailure.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/ProcessLoggingHandler.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/QueryIntentActivitiesResult.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/ReconcileFailure.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/ReconcilePackageUtils.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/ReconciledPackage.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/RemovePackageHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/ResilientAtomicFile.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/ResolveIntentHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/ScanPackageUtils.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/ScanPartition.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/ScanRequest.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/ScanResult.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/Settings.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/SettingsXml.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/SharedLibrariesImpl.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/SharedLibrariesRead.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/SharedLibraryUtils.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/SharedUidMigration.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/SilentUpdatePolicy.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/SnapshotStatistics.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/StagingManager.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/StorageEventHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/SuspendPackageHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/SystemDeleteException.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/UpdateOwnershipHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/UserDataPreparer.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/UserJourneyLogger.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/UserManagerService.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/UserManagerServiceShellCommand.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/UserSystemPackageInstaller.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/UserTypeDetails.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/UserTypeFactory.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/UserVisibilityMediator.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/VerificationInfo.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/VerificationUtils.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/VerifyingSession.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/WatchedIntentFilter.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/WatchedIntentResolver.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/dex/ArtManagerService.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/dex/ArtStatsLogUtils.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/dex/DexManager.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/dex/DexoptOptions.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/dex/DexoptUtils.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/dex/PackageDexUsage.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/local/PackageManagerLocalImpl.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/parsing/PackageCacher.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/parsing/library/AndroidHidlUpdater.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/parsing/library/AndroidNetIpSecIkeUpdater.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/parsing/library/AndroidTestBaseUpdater.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/parsing/library/ApexSharedLibraryUpdater.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/parsing/library/ComGoogleAndroidMapsUpdater.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/parsing/library/OrgApacheHttpLegacyUpdater.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/parsing/library/PackageBackwardCompatibility.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/parsing/library/PackageSharedLibraryUpdater.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/parsing/library/SharedLibraryNames.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/parsing/library/WearSdkUpdater.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/permission/DefaultPermissionGrantPolicy.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/permission/LegacyPermissionManagerService.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/utils/RequestThrottle.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/DomainVerificationCollector.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/DomainVerificationDebug.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/DomainVerificationEnforcer.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/DomainVerificationLegacySettings.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/DomainVerificationManagerInternal.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/DomainVerificationManagerStub.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/DomainVerificationMessageCodes.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/DomainVerificationPersistence.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/DomainVerificationService.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/DomainVerificationSettings.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/DomainVerificationShell.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/DomainVerificationUtils.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/models/DomainVerificationInternalUserState.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/models/DomainVerificationPkgState.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/models/DomainVerificationStateMap.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/proxy/DomainVerificationProxy.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/proxy/DomainVerificationProxyCombined.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/proxy/DomainVerificationProxyUnavailable.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/proxy/DomainVerificationProxyV1.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/verify/domain/proxy/DomainVerificationProxyV2.java");
+    try c.file("$FB/services/core/java/com/android/server/rollback/ApexdRevertLogger.java");
+    try c.file("$FB/services/core/java/com/android/server/rollback/RollbackManagerInternal.java");
+    try c.file("$FB/services/core/java/com/android/server/security/FileIntegrity.java");
+    try c.file("$FB/services/core/java/com/android/server/storage/DeviceStorageMonitorInternal.java");
+    try c.file("$FB/services/core/java/com/android/server/utils/WatchedSparseBooleanMatrix.java");
+    try c.file("$FB/services/core/java/com/android/server/utils/WatchedSparseSetArray.java");
+    try c.file("$FB/services/net/java/android/net/ConnectivityModuleConnector.java");
+    try c.file("$MU/java/com/android/modules/utils/pm/PackageStateModulesUtils.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/permission/DevicePermissionState.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/permission/PermissionManagerServiceImpl.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/permission/PermissionRegistry.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/permission/UserPermissionState.java");
+    try c.file("$FB/services/core/java/com/android/server/policy/SoftRestrictedPermissionPolicy.java");
+    // AccessCheckingService (frameworks/base/services/permission) is its own
+    // Kotlin module with its own compiler flags: see Set.permission_kotlin.
+    try c.file("$FB/services/core/java/com/android/server/appop/AppOpMigrationHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/appop/AppOpMigrationHelperImpl.java");
+    try c.file("$FB/services/core/java/com/android/server/permission/PermissionManagerLocal.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/permission/PermissionMigrationHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/permission/PermissionMigrationHelperImpl.java");
+    // AppHibernationService (SystemServer.startOtherServices, before ART Service).
+    try c.add("$FB/services/core/java/com/android/server/apphibernation", .{});
+    // SystemConfigService (SystemServer.startBootstrapServices), read by PMS.systemReady.
+    try c.file("$FB/services/java/com/android/server/SystemConfigService.java");
 }
 
 fn collectProtobuf(c: *StaticCollector) !void {

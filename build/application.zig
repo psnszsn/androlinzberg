@@ -27,11 +27,11 @@ pub const Options = struct {
     framework_odex: LazyPath,
     framework_vdex: LazyPath,
     framework_resources: LazyPath,
-    download_provider: LazyPath,
     webview_provider: LazyPath,
-    desktop_transfer_provider: LazyPath,
-    /// Pinned frameworks/base/packages/Shell manifest: the permissions of uid 2000.
-    shell_manifest: LazyPath,
+    /// Pinned frameworks/base/data/etc permission and preinstall data.
+    aosp_platform_data: LazyPath,
+    /// System-partition APKs, laid out as Soong installs them.
+    system_apps: []const @import("system_apks.zig").SystemApp,
 };
 
 pub const NamedLibrary = struct {
@@ -45,7 +45,6 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     _ = tree.addCopyFile(options.launcher, "bin/androlinzberg");
     for (options.processes, [_][]const u8{ "azk-standalone", "azk-system-server", "azk-app-process", "azk-metadata", "azk-jvm-test", "azk-desktop-controller" }) |process, name|
         _ = tree.addCopyFile(process, b.pathJoin(&.{ "libexec", "androlinzberg", name }));
-    _ = tree.addCopyFile(options.shell_manifest, "etc/shell/AndroidManifest.xml");
     _ = tree.addCopyFile(options.broker, "bin/azk-binder-broker");
     _ = tree.addCopyFile(options.surfaceflinger, "bin/azk-surfaceflinger");
     _ = tree.addCopyFile(options.media_service, "bin/azk-media-service");
@@ -85,14 +84,23 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     _ = tree.addCopyFile(options.framework_odex, "framework/oat/x86_64/framework.odex");
     _ = tree.addCopyFile(options.framework_vdex, "framework/oat/x86_64/framework.vdex");
     _ = tree.addCopyFile(options.framework_resources, "res/framework-res.apk");
-    _ = tree.addCopyFile(options.download_provider, "apps/DownloadProvider.apk");
-    _ = tree.addCopyFile(options.webview_provider, "apps/WebView.apk");
+    // The system partition PackageManagerService scans (ANDROID_ROOT overlays
+    // this tree): framework-res as the platform package, then priv-app and app.
+    _ = tree.addCopyFile(options.framework_resources, "framework/framework-res.apk");
+    for (options.system_apps) |app| {
+        _ = tree.addCopyFile(app.apk, b.fmt("{s}/{s}/{s}.apk", .{ if (app.privileged) "priv-app" else "app", app.name, app.name }));
+    }
+    _ = tree.addCopyFile(options.webview_provider, "app/WebView/WebView.apk");
+    // SystemConfig reads ANDROID_ROOT/etc/permissions: AOSP platform data plus host features.
+    inline for (.{ "platform.xml", "privapp-permissions-platform.xml", "preinstalled-packages-platform.xml" }) |name| {
+        _ = tree.addCopyFile(options.aosp_platform_data.path(b, name), "etc/permissions/" ++ name);
+    }
+    _ = tree.addCopyDirectory(b.path("src/system-image/etc"), "etc", .{});
     // The bionic bridge needs a filesystem ELF instead of an apk!/lib path.
     const webview_library = b.addSystemCommand(&.{ "unzip", "-p" });
     webview_library.addFileArg(options.webview_provider);
     webview_library.addArg("lib/x86_64/libwebviewchromium.so");
     _ = tree.addCopyFile(webview_library.captureStdOut(.{}), "apps/lib/com.android.webview/libwebviewchromium.so");
-    _ = tree.addCopyFile(options.desktop_transfer_provider, "apps/DesktopTransferProvider.apk");
     _ = tree.addCopyFile(b.path("tools/dexopt-apk.sh"), "share/androlinzberg/dexopt-apk.sh");
     _ = tree.addCopyFile(b.path("src/bionic_translation.cfg"), "share/bionic_translation/cfg.d/bionic_translation.cfg");
     return tree.getDirectory();

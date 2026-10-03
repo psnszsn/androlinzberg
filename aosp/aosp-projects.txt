@@ -64,6 +64,8 @@ platform/external/junit
 platform/external/junit-params
 platform/external/kotlin.metadata
 platform/external/kotlinc
+platform/external/kotlinx.atomicfu
+platform/external/kotlinx.coroutines
 platform/external/kotlinx.metadata
 platform/external/ksp
 platform/external/libcxx
@@ -130,8 +132,10 @@ platform/packages/modules/AppSearch
 platform/packages/modules/Bluetooth
 platform/packages/modules/ConfigInfrastructure
 platform/packages/modules/Connectivity
+platform/packages/modules/CrashRecovery
 platform/packages/modules/DeviceLock
 platform/packages/modules/DnsResolver
+platform/packages/modules/ExtServices
 platform/packages/modules/Gki
 platform/packages/modules/HealthFitness
 platform/packages/modules/IPsec
@@ -200,6 +204,7 @@ platform/system/tools/hidl
 platform/system/tools/sysprop
 platform/system/tools/xsdc
 platform/system/unwinding
+platform/system/update_engine
 platform/system/vold
 platform/test/app_compat/csuite
 platform/tools/apksig

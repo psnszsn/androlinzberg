@@ -7,6 +7,7 @@ import android.os.storage.IObbActionListener
 import android.os.storage.OnObbStateChangeListener
 import com.android.internal.os.AppFuseMount
 import com.android.internal.os.BackgroundThread
+import com.android.server.LocalServices
 import android.os.Binder
 import android.os.Environment
 import android.os.ParcelableException
@@ -16,7 +17,9 @@ import android.os.UserHandle
 import android.os.storage.DiskInfo
 import android.os.storage.IStorageEventListener
 import android.os.storage.IStorageManager
+import android.os.storage.ICeStorageLockEventListener
 import android.os.storage.StorageManager
+import android.os.storage.StorageManagerInternal
 import android.os.storage.StorageVolume
 import android.os.storage.VolumeInfo
 import android.os.storage.VolumeRecord
@@ -37,7 +40,7 @@ import java.io.IOException
  * persistent application root. The service never exposes or creates paths outside that root.
  */
 class HostedStorageManagerService @JvmOverloads constructor(
-    private val packageService: HostedPackageManagerService,
+    private val packageService: android.content.pm.IPackageManager,
     private val dataRoot: File = System.getenv("ARTZIG_DATA_DIR")?.let(::File) ?: Environment.getDataDirectory(),
     private val externalRoot: File = configuredExternalRoot(dataRoot),
 ) : IStorageManager.Stub(), IStorageManager by unsupported<IStorageManager>() {
@@ -169,7 +172,7 @@ class HostedStorageManagerService @JvmOverloads constructor(
         flags: Int,
         callingPackage: String?,
     ): Long {
-        enforceCallingPackage(callingPackage)
+        adjustAllocateFlags(flags)
         requireInternalVolume(volumeUuid)
         return canonicalDataRoot.usableSpace
     }
@@ -180,7 +183,7 @@ class HostedStorageManagerService @JvmOverloads constructor(
         flags: Int,
         callingPackage: String?,
     ) {
-        enforceCallingPackage(callingPackage)
+        adjustAllocateFlags(flags)
         requireInternalVolume(volumeUuid)
         if (bytes < 0L) throw ParcelableException(IOException("negative allocation: $bytes"))
         if (bytes > canonicalDataRoot.usableSpace) {
@@ -216,8 +219,168 @@ class HostedStorageManagerService @JvmOverloads constructor(
         // Host processes share the session uid; no sdcardfs/FUSE ownership repair is needed.
     }
 
-    override fun getExternalStorageMountMode(uid: Int, packageName: String?): Int =
-        StorageManager.MOUNT_MODE_EXTERNAL_DEFAULT
+    override fun getExternalStorageMountMode(uid: Int, packageName: String?): Int {
+        android.app.ActivityManager.checkComponentPermission(android.Manifest.permission.WRITE_MEDIA_STORAGE,
+            Binder.getCallingUid(), -1, true).let {
+            if (it != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                throw SecurityException("getExternalStorageMountMode requires ${android.Manifest.permission.WRITE_MEDIA_STORAGE}")
+        }
+        return local.getExternalStorageMountMode(uid, packageName)
+    }
+
+    private val ceStoragePrepared = HashSet<Int>()
+    private val uidsWithLegacyExternalStorage = HashSet<Int>()
+    private val resetListeners = ArrayList<StorageManagerInternal.ResetListener>()
+    private val cloudProviderListeners = java.util.concurrent.CopyOnWriteArraySet<StorageManagerInternal.CloudProviderChangeListener>()
+    private val ceStorageLockListeners = java.util.concurrent.CopyOnWriteArrayList<ICeStorageLockEventListener>()
+    private val appOps by lazy {
+        com.android.internal.app.IAppOpsService.Stub.asInterface(android.os.ServiceManager.getService(android.content.Context.APP_OPS_SERVICE))
+    }
+
+    /** StorageManagerService.getProviderInfo, resolved per query: the authorities
+     * are fixed system providers, and the host has no servicesReady snapshot. */
+    private fun authorityAppId(authority: String): Int =
+        LocalServices.getService(android.content.pm.PackageManagerInternal::class.java)
+            ?.resolveContentProvider(authority, android.content.pm.PackageManager.MATCH_DIRECT_BOOT_AWARE.toLong() or
+                android.content.pm.PackageManager.MATCH_DIRECT_BOOT_UNAWARE.toLong(), UserHandle.USER_SYSTEM, Process.SYSTEM_UID)
+            ?.let { UserHandle.getAppId(it.applicationInfo.uid) } ?: -1
+
+    /** StorageManagerService.getMountModeInternal. */
+    private fun mountMode(uid: Int, requestedPackage: String?): Int {
+        if (Process.isIsolated(uid) || Process.isSdkSandboxUid(uid)) return StorageManager.MOUNT_MODE_EXTERNAL_NONE
+        val packages = packageService.getPackagesForUid(uid)
+        if (packages.isNullOrEmpty()) return StorageManager.MOUNT_MODE_EXTERNAL_NONE
+        val packageName = requestedPackage ?: packages[0]
+        val instant = Binder.withCleanCallingIdentity<Boolean> {
+            LocalServices.getService(android.content.pm.PackageManagerInternal::class.java)
+                .isInstantApp(packageName, UserHandle.getUserId(uid))
+        }
+        if (instant) return StorageManager.MOUNT_MODE_EXTERNAL_NONE
+        if (local.isExternalStorageService(uid)) return StorageManager.MOUNT_MODE_EXTERNAL_PASS_THROUGH
+        val appId = UserHandle.getAppId(uid)
+        if (authorityAppId(android.provider.Downloads.Impl.AUTHORITY) == appId ||
+            authorityAppId(android.provider.DocumentsContract.EXTERNAL_STORAGE_PROVIDER_AUTHORITY) == appId) {
+            return StorageManager.MOUNT_MODE_EXTERNAL_ANDROID_WRITABLE
+        }
+        val granted = android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (packageService.checkUidPermission(android.Manifest.permission.ACCESS_MTP, uid) == granted &&
+            packageService.getApplicationInfo(packageName, 0L, UserHandle.getUserId(uid))?.isSignedWithPlatformKey == true) {
+            return StorageManager.MOUNT_MODE_EXTERNAL_ANDROID_WRITABLE
+        }
+        val hasInstall = packageService.checkUidPermission(android.Manifest.permission.INSTALL_PACKAGES, uid) == granted
+        val hasInstallOp = packages.any {
+            appOps.checkOperation(android.app.AppOpsManager.OP_REQUEST_INSTALL_PACKAGES, uid, it) == android.app.AppOpsManager.MODE_ALLOWED
+        }
+        return if (hasInstall || hasInstallOp) StorageManager.MOUNT_MODE_EXTERNAL_INSTALLER else StorageManager.MOUNT_MODE_EXTERNAL_DEFAULT
+    }
+
+    /**
+     * StorageManagerService.StorageManagerInternalImpl over the hosted volume.
+     * No FUSE daemon mounts user storage and no vold exists to reset, fix up OBB
+     * directories, or prepare a move target, so those paths keep the stock
+     * not-mounted answers; fs-verity goes to installd as in the original.
+     */
+    val local: StorageManagerInternal = object : StorageManagerInternal() {
+        override fun isFuseMounted(userId: Int): Boolean = false
+
+        override fun prepareStorageDirs(userId: Int, packageList: MutableSet<String>?, processName: String?): Boolean {
+            android.util.Slog.w(TAG, "User $userId is not unlocked yet so skip mounting obb")
+            return false
+        }
+
+        override fun getExternalStorageMountMode(uid: Int, packageName: String?): Int = mountMode(uid, packageName)
+
+        override fun hasExternalStorageAccess(uid: Int, packageName: String?): Boolean {
+            val mode = appOps.checkOperation(android.app.AppOpsManager.OP_MANAGE_EXTERNAL_STORAGE, uid, packageName)
+            if (mode == android.app.AppOpsManager.MODE_DEFAULT) {
+                return packageService.checkUidPermission(android.Manifest.permission.MANAGE_EXTERNAL_STORAGE, uid) ==
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+            }
+            return mode == android.app.AppOpsManager.MODE_ALLOWED
+        }
+
+        override fun addResetListener(listener: StorageManagerInternal.ResetListener) {
+            synchronized(resetListeners) { resetListeners.add(listener) }
+        }
+
+        // H_RESET resets vold, which the host does not run; listeners are only
+        // invoked with a connected vold.
+        override fun resetUser(userId: Int) {}
+
+        override fun onAppOpsChanged(code: Int, uid: Int, packageName: String?, mode: Int, previousMode: Int) {
+            Binder.withCleanCallingIdentity {
+                when (code) {
+                    android.app.AppOpsManager.OP_REQUEST_INSTALL_PACKAGES ->
+                        if (previousMode == android.app.AppOpsManager.MODE_ALLOWED && mode != android.app.AppOpsManager.MODE_ALLOWED) killAppForOpChange(code, uid)
+                    android.app.AppOpsManager.OP_MANAGE_EXTERNAL_STORAGE ->
+                        if (mode != android.app.AppOpsManager.MODE_ALLOWED) killAppForOpChange(code, uid)
+                    android.app.AppOpsManager.OP_LEGACY_STORAGE -> synchronized(uidsWithLegacyExternalStorage) {
+                        if (mode == android.app.AppOpsManager.MODE_ALLOWED) uidsWithLegacyExternalStorage.add(uid)
+                        else uidsWithLegacyExternalStorage.remove(uid)
+                    }
+                }
+            }
+        }
+
+        override fun hasLegacyExternalStorage(uid: Int): Boolean =
+            synchronized(uidsWithLegacyExternalStorage) { uid in uidsWithLegacyExternalStorage }
+
+        // vold.fixupAppDir repairs OBB ownership; host processes share the
+        // session uid (see fixupAppDir).
+        override fun prepareAppDataAfterInstall(packageName: String, uid: Int) {}
+
+        override fun isExternalStorageService(uid: Int): Boolean =
+            authorityAppId(android.provider.MediaStore.AUTHORITY) == UserHandle.getAppId(uid)
+
+        // StorageSessionController.freeCache asks the bound ExternalStorageService;
+        // without FUSE none is bound and no cache is held on its behalf.
+        override fun freeCache(volumeUuid: String?, bytes: Long) {}
+
+        override fun getPrimaryVolumeIds(): List<String> = getVolumes(0).filter { it.isPrimary }.map { it.id }
+
+        override fun markCeStoragePrepared(userId: Int) {
+            synchronized(ceStoragePrepared) { ceStoragePrepared.add(userId) }
+        }
+
+        override fun isCeStoragePrepared(userId: Int): Boolean = synchronized(ceStoragePrepared) { userId in ceStoragePrepared }
+
+        override fun registerCloudProviderChangeListener(listener: StorageManagerInternal.CloudProviderChangeListener) {
+            cloudProviderListeners.add(listener)
+            BackgroundThread.getHandler().post {
+                cloudMediaProvider?.let { listener.onCloudProviderChanged(UserHandle.USER_SYSTEM, it) }
+            }
+        }
+
+        override fun prepareUserStorageForMove(fromVolumeUuid: String?, toVolumeUuid: String?, users: MutableList<android.content.pm.UserInfo>?) {
+            throw dev.artzig.ArtzigTestDiagnostics.unsupported("StorageManagerInternal", "prepareUserStorageForMove",
+                "Moving storage from $fromVolumeUuid to $toVolumeUuid needs vold; the host has one internal volume")
+        }
+
+        override fun createFsveritySetupAuthToken(authFd: ParcelFileDescriptor?, uid: Int): android.os.IInstalld.IFsveritySetupAuthToken =
+            try { installd().createFsveritySetupAuthToken(authFd, uid) } catch (e: Exception) { throw IOException(e) }
+
+        override fun enableFsverity(authToken: android.os.IInstalld.IFsveritySetupAuthToken?, filePath: String?, packageName: String?): Int =
+            try { installd().enableFsverity(authToken, filePath, packageName) } catch (e: Exception) { throw IOException(e) }
+
+        override fun registerStorageLockEventListener(listener: ICeStorageLockEventListener) {
+            if (!ceStorageLockListeners.add(listener)) android.util.Slog.w(TAG, "Failed to register listener: $listener")
+        }
+
+        override fun unregisterStorageLockEventListener(listener: ICeStorageLockEventListener) {
+            if (!ceStorageLockListeners.remove(listener)) android.util.Slog.w(TAG, "Unregistering $listener that was not registered")
+        }
+    }
+
+    private fun installd(): android.os.IInstalld =
+        android.os.IInstalld.Stub.asInterface(android.os.ServiceManager.getService("installd"))
+
+    private fun killAppForOpChange(code: Int, uid: Int) {
+        try {
+            android.app.ActivityManager.getService().killUid(UserHandle.getAppId(uid), UserHandle.USER_ALL,
+                "${android.app.AppOpsManager.opToName(code)} changed.")
+        } catch (_: RemoteException) {
+        }
+    }
 
     override fun isAppIoBlocked(
         volumeUuid: String?,
@@ -228,6 +391,10 @@ class HostedStorageManagerService @JvmOverloads constructor(
 
     override fun setCloudMediaProvider(authority: String?) {
         cloudMediaProvider = authority
+        // H_CLOUD_MEDIA_PROVIDER_CHANGED for the session's single user.
+        BackgroundThread.getHandler().post {
+            cloudProviderListeners.forEach { it.onCloudProviderChanged(UserHandle.USER_SYSTEM, authority) }
+        }
     }
 
     override fun getCloudMediaProvider(): String? = cloudMediaProvider
@@ -236,7 +403,90 @@ class HostedStorageManagerService @JvmOverloads constructor(
 
     override fun getInternalStorageRemainingLifetime(): Int = -1
 
+    /** vold fscrypt_prepare_user_storage followed by vold_prepare_subdirs
+     * "prepare", for the internal volume. File-based encryption policies,
+     * SELinux labels and per-uid ownership have no host counterpart: every
+     * hosted process shares the session uid. */
+    override fun prepareUserStorage(volumeUuid: String?, userId: Int, flags: Int) {
+        enforceStorageInternal("prepareUserStorage")
+        if (volumeUuid != null) throw RuntimeException(dev.artzig.ArtzigTestDiagnostics.unsupported(
+            "IStorageManager", "prepareUserStorage", "Adoptable storage volume $volumeUuid is not hosted"))
+        try {
+            for ((directory, mode) in userStorage(userId, flags)) prepareDirectory(directory, mode)
+        } catch (e: Exception) {
+            throw RuntimeException(e)
+        }
+    }
+
+    /** vold destroy_subdirs then fscrypt_destroy_user_storage; failures are
+     * logged, as StorageManagerService.destroyUserStorage does. */
+    override fun destroyUserStorage(volumeUuid: String?, userId: Int, flags: Int) {
+        enforceStorageInternal("destroyUserStorage")
+        if (volumeUuid != null) return
+        for ((directory, _) in userStorage(userId, flags).asReversed()) {
+            if (directory.exists() && !directory.deleteRecursively()) android.util.Slog.wtf(TAG, "Failed to destroy $directory")
+        }
+    }
+
+    private fun enforceStorageInternal(operation: String) {
+        if (android.app.ActivityManager.checkComponentPermission(android.Manifest.permission.STORAGE_INTERNAL,
+                Binder.getCallingUid(), -1, true) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            throw SecurityException("$operation requires ${android.Manifest.permission.STORAGE_INTERNAL}")
+        }
+    }
+
+    /** vold Utils BuildData*Path and prepare_subdirs, parents before children. */
+    private fun userStorage(userId: Int, flags: Int): List<Pair<File, Int>> {
+        val data = Environment.getDataDirectory()
+        fun dir(path: String) = File(data, path)
+        val result = ArrayList<Pair<File, Int>>()
+        if (flags and StorageManager.FLAG_STORAGE_DE != 0) {
+            val miscDe = dir("misc_de/$userId")
+            val vendorDe = dir("vendor_de/$userId")
+            result += listOf(dir("system/users/$userId") to "700".toInt(8), dir("misc/profiles/cur/$userId") to "771".toInt(8),
+                dir("system_de/$userId") to "770".toInt(8), vendorDe to "771".toInt(8), miscDe to "1771".toInt(8),
+                dir("user_de/$userId") to "771".toInt(8), File(miscDe, "sdksandbox") to "771".toInt(8))
+            result += listOf("vold", "storaged", "rollback", "apexrollback").map { File(miscDe, it) to "700".toInt(8) }
+            result += apexData(miscDe)
+            result += listOf(File(vendorDe, "fpdata") to "700".toInt(8), File(vendorDe, "facedata") to "700".toInt(8))
+        }
+        if (flags and StorageManager.FLAG_STORAGE_CE != 0) {
+            val systemCe = dir("system_ce/$userId")
+            val vendorCe = dir("vendor_ce/$userId")
+            val miscCe = dir("misc_ce/$userId")
+            result += listOf(systemCe to "770".toInt(8), vendorCe to "771".toInt(8), dir("media/$userId") to "2770".toInt(8),
+                miscCe to "1771".toInt(8), dir("user/$userId") to "771".toInt(8), File(miscCe, "sdksandbox") to "771".toInt(8))
+            result += listOf("vold", "storaged", "rollback", "apexrollback").map { File(miscCe, it) to "700".toInt(8) }
+            result += apexData(miscCe)
+            result += listOf(File(miscCe, "checkin") to "770".toInt(8), File(systemCe, "backup") to "700".toInt(8),
+                File(systemCe, "backup_stage") to "700".toInt(8), File(vendorCe, "facedata") to "700".toInt(8))
+        }
+        return result
+    }
+
+    /** prepare_apex_subdirs: one directory per APEX listed in /data/misc/apexdata. */
+    private fun apexData(parent: File): List<Pair<File, Int>> {
+        val apexData = File(parent, "apexdata")
+        val apexes = File(Environment.getDataDirectory(), "misc/apexdata").listFiles { file -> file.isDirectory && !file.name.startsWith(".") }
+        return listOf(apexData to "711".toInt(8)) + apexes.orEmpty().map { File(apexData, it.name) to "771".toInt(8) }
+    }
+
+    /** fs_prepare_dir: create a missing directory, then apply its mode. */
+    private fun prepareDirectory(directory: File, mode: Int) {
+        if (!directory.isDirectory && !directory.mkdirs() && !directory.isDirectory) throw IOException("Failed to prepare $directory")
+        android.system.Os.chmod(directory.path, mode)
+    }
+
     override fun supportsCheckpoint(): Boolean = false
+    // StorageManagerService.needsCheckpoint asks vold; a filesystem without
+    // checkpoint support never needs one (StagingManager restores staged sessions).
+    override fun needsCheckpoint(): Boolean {
+        if (android.app.ActivityManager.checkComponentPermission(android.Manifest.permission.MOUNT_FORMAT_FILESYSTEMS,
+                android.os.Binder.getCallingUid(), -1, true) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            throw SecurityException("needsCheckpoint requires ${android.Manifest.permission.MOUNT_FORMAT_FILESYSTEMS}")
+        }
+        return false
+    }
 
     private fun primaryVolume(userId: Int): StorageVolume =
         StorageVolume.Builder(
@@ -261,6 +511,18 @@ class HostedStorageManagerService @JvmOverloads constructor(
     private fun requireInternalVolume(volumeUuid: String?) {
         if (volumeUuid != StorageManager.UUID_PRIVATE_INTERNAL) {
             throw ParcelableException(IOException("unknown hosted volume UUID: $volumeUuid"))
+        }
+    }
+
+    /** StorageManagerService.adjustAllocateFlags: aggressive allocation needs
+     * ALLOCATE_AGGRESSIVE; callingPackage only selects camera-reserved space,
+     * which this host does not reserve. The package manager allocates for
+     * installs with the system context's package under the installer's uid. */
+    private fun adjustAllocateFlags(flags: Int) {
+        if (flags and StorageManager.FLAG_ALLOCATE_AGGRESSIVE != 0 &&
+            android.app.ActivityManager.checkComponentPermission(android.Manifest.permission.ALLOCATE_AGGRESSIVE,
+                Binder.getCallingUid(), -1, true) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            throw SecurityException("allocateBytes requires ${android.Manifest.permission.ALLOCATE_AGGRESSIVE}")
         }
     }
 
@@ -310,6 +572,7 @@ class HostedStorageManagerService @JvmOverloads constructor(
     }
 
     private companion object {
+        const val TAG = "HostedStorageManager"
         const val DEFAULT_CACHE_QUOTA_BYTES = 64L * 1024L * 1024L
 
         fun configuredExternalRoot(dataRoot: File): File {

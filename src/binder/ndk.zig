@@ -1697,7 +1697,7 @@ const Runtime = struct {
 
     fn serviceRequest(r: *Runtime, tag: Client.Message.Tag, body_extra: []const u8) *PendingCall {
         const call = r.preparePending(switch (tag) {
-            .reserve_package_uid, .process_uid => .package_uid,
+            .reserve_package_uid, .register_package_uid, .process_uid => .package_uid,
             .reserve_launch => .launch,
             else => .service,
         });
@@ -3505,6 +3505,39 @@ fn bsReservePackageUid(env: JNIEnvPtr, cls: jni.jclass, pkg: jni.jstring) callco
     return -1;
 }
 
+fn bsRegisterPackageUid(env: JNIEnvPtr, cls: jni.jclass, pkg: jni.jstring, uid: jni.jint) callconv(.c) void {
+    _ = cls;
+    if (pkg == null or uid < 0) {
+        throwException(env, "java/lang/IllegalArgumentException", "package name and uid are required");
+        return;
+    }
+    const chars = env.*.*.GetStringUTFChars.?(env, pkg, null) orelse return;
+    defer env.*.*.ReleaseStringUTFChars.?(env, pkg, chars);
+    const package = std.mem.span(chars);
+    if (package.len == 0 or package.len > Client.limits.max_name_len) {
+        throwException(env, "java/lang/IllegalArgumentException", "invalid package name length");
+        return;
+    }
+    var body: [@sizeOf(u32) + Client.limits.max_name_len]u8 = undefined;
+    std.mem.writeInt(u32, body[0..4], @intCast(uid), .little);
+    @memcpy(body[4..][0..package.len], package);
+    const r = Runtime.get();
+    const call = r.serviceRequest(.register_package_uid, body[0 .. 4 + package.len]);
+    defer r.destroyPending(call);
+    if (call.failed) {
+        throwRuntime(env, if (call.failure_status == STATUS_FAILED_TRANSACTION)
+            "too many outstanding Binder requests"
+        else
+            "broker disconnected while registering package uid");
+        return;
+    }
+    switch (call.package_uid.status) {
+        .ok => {},
+        .denied => throwException(env, "java/lang/SecurityException", "only the system process may register an application uid"),
+        else => throwRuntime(env, "invalid package uid response"),
+    }
+}
+
 // Authenticate the final package/role before ART or any identity cache exists.
 // CriticalNative libcore getters receive only the resulting immutable UID/GID.
 export fn azk_binder_bootstrap_identity(package_z: [*:0]const u8, system_value: c_int) callconv(.c) i32 {
@@ -3659,6 +3692,7 @@ pub fn registerBinderFrameworkNatives(env_opaque: ?*anyopaque) c_int {
         jm("setExitOnDisconnect", "()V", &bsSetExitOnDisconnect),
         jm("assignedUid", "()I", &bsAssignedUid),
         jm("reservePackageUid", "(Ljava/lang/String;)I", &bsReservePackageUid),
+        jm("registerPackageUid", "(Ljava/lang/String;I)V", &bsRegisterPackageUid),
         jm("reserveLaunch", "(Ljava/lang/String;Ljava/lang/String;ZJ)Ljava/lang/String;", &bsReserveLaunch),
         jm("reserveProcessLaunch", "(Ljava/lang/String;Ljava/lang/String;IJII)Ljava/lang/String;", &bsReserveProcessLaunch),
         jm("isSystemSocketPeer", "(Ljava/io/FileDescriptor;)Z", &bsIsSystemSocketPeer),

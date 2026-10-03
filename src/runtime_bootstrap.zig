@@ -120,6 +120,11 @@ pub fn bootHeadless(init: std.process.Init, role: runtime_identity.Role) !Headle
     // Stock runtime libart and default library search path: the overlay
     // libart in lib/art has no sibling JNI libraries (libicu_jni.so, ...), and
     // without the bionic loader there is no <root>/lib64 fallback.
+    // Android processes (init, zygote and its children) run with "/" as their
+    // working directory, and libcore fixes user.dir from it at VM creation;
+    // framework code such as InstallPackageHelper's makeDirRecursive resolves
+    // Path.subpath() results against it.
+    try std.process.setCurrentPath(init.io, "/");
     var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
         .classpath = &.{framework_jar},
         .process_identity = identity,
@@ -128,6 +133,7 @@ pub fn bootHeadless(init: std.process.Init, role: runtime_identity.Role) !Headle
         .data_dir = if (getenv("ARTZIG_RUNTIME_CACHE_DIR")) |cache| std.mem.span(cache) else null,
         .system_root_overlay = true,
         .system_libraries = try @import("platform/system_libraries.zig").resolve(arena, init.io, tree),
+        .system_partition = try systemPartition(arena, init.io, tree),
         .library_path = &.{ runtime_overlay_dir, "/system/lib64" },
         .root = try locateRuntimeRoot(init, tree),
         .use_bionic_loader = false,
@@ -177,6 +183,11 @@ pub fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8, role: runtim
 
     const identity = try runtime_identity.prepare(init, &lib, role, apk_abs);
     configureFonts(init);
+    // Android processes (init, zygote and its children) run with "/" as their
+    // working directory, and libcore fixes user.dir from it at VM creation;
+    // framework code such as InstallPackageHelper's makeDirRecursive resolves
+    // Path.subpath() results against it.
+    try std.process.setCurrentPath(init.io, "/");
     var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
         .classpath = &.{framework_jar},
         .process_identity = identity,
@@ -185,6 +196,7 @@ pub fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8, role: runtim
         .data_dir = if (getenv("ARTZIG_RUNTIME_CACHE_DIR")) |cache| std.mem.span(cache) else null,
         .system_root_overlay = true,
         .system_libraries = try @import("platform/system_libraries.zig").resolve(arena, init.io, tree),
+        .system_partition = try systemPartition(arena, init.io, tree),
         .library_path = &.{ runtime_overlay_dir, "/system/lib64" },
         .root = runtime_root,
         .libart_path = libart_overlay,
@@ -227,4 +239,20 @@ fn bindPlatformIo(lib: *std.DynLib, io: std.Io) !void {
     const bind = lib.lookup(BindPlatformIoFn, "azk_platform_bind_io") orelse
         return error.SymbolNotFound;
     bind(io.userdata, io.vtable);
+}
+
+/// The installed system image (build/application.zig) as PackageManagerService
+/// and SystemConfig see it under ANDROID_ROOT: framework-res and the
+/// priv-app/app partitions, plus etc/permissions. Absent entries are omitted.
+fn systemPartition(a: std.mem.Allocator, io: std.Io, tree: []const u8) ![]const art.SystemPartitionEntry {
+    var entries: std.ArrayList(art.SystemPartitionEntry) = .empty;
+    for ([_][]const u8{ "framework", "priv-app", "app", "etc/permissions" }) |name| {
+        const path = try std.fs.path.join(a, &.{ tree, name });
+        std.Io.Dir.cwd().access(io, path, .{}) catch |err| switch (err) {
+            error.FileNotFound => continue,
+            else => return err,
+        };
+        try entries.append(a, .{ .name = name, .path = path });
+    }
+    return entries.toOwnedSlice(a);
 }

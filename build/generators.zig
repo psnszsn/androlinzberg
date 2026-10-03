@@ -170,6 +170,12 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "frameworks/native/cmds/installd/binder/",
         "system/apex/apexd/aidl/",
         "frameworks/base/cmds/idmap2/idmap2d/aidl/core/",
+        "art/artd/binder/",
+        "art/dexopt_chroot_setup/binder/",
+        "frameworks/base/cmds/idmap2/idmap2d/aidl/services/",
+        "system/security/keystore2/aidl/",
+        "system/update_engine/binder_bindings/",
+        "packages/modules/CrashRecovery/framework/java/",
         "frameworks/base/location/java/",
         "frameworks/base/telephony/java/",
         "frameworks/base/telecomm/java/",
@@ -300,6 +306,12 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "frameworks/base/apex/jobscheduler/framework/java",
         "frameworks/base/native/android/aidl",
         "frameworks/base/cmds/idmap2/idmap2d/aidl/core",
+        "art/artd/binder",
+        "art/dexopt_chroot_setup/binder",
+        "frameworks/base/cmds/idmap2/idmap2d/aidl/services",
+        "system/security/keystore2/aidl",
+        "system/update_engine/binder_bindings",
+        "packages/modules/CrashRecovery/framework/java",
         "frameworks/base/location/java",
         "frameworks/base/telephony/java",
         "frameworks/base/telecomm/java",
@@ -755,6 +767,19 @@ fn frameworkProtoCpp(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Bu
     return output;
 }
 
+fn liteProtoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.Compile) []const LazyPath {
+    const declaration = declarations.lite_java_protos;
+    const run = b.addRunArtifact(protoc);
+    const output = run.addPrefixedOutputDirectoryArg("--java_out=lite:", "lite-proto-java");
+    run.addPrefixedDirectoryArg("-I", aosp.path(""));
+    run.addPrefixedDirectoryArg("-I", aosp.path("external/protobuf/src"));
+    for (declaration.inputs) |input| run.addFileArg(aosp.path(input));
+    run.setName("generate lite proto Java");
+    const files = b.allocator.alloc(LazyPath, declaration.outputs.len) catch @panic("OOM");
+    for (declaration.outputs, 0..) |path, index| files[index] = output.path(b, path);
+    return files;
+}
+
 fn frameworkProtoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.Compile, plugin: *std.Build.Step.Compile, package_rewriter: *std.Build.Step.Compile) []const LazyPath {
     const run = command.create(b);
     run.addFileArg(protoc.getEmittedBin());
@@ -782,7 +807,10 @@ fn frameworkProtoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.B
             }
         }
     }
-    return files;
+    var all: std.ArrayList(LazyPath) = .empty;
+    all.appendSlice(b.allocator, files) catch @panic("OOM");
+    for (declarations.proto_unrelocated_copies) |path| all.append(b.allocator, output.path(b, path)) catch @panic("OOM");
+    return all.toOwnedSlice(b.allocator) catch @panic("OOM");
 }
 
 fn perfettoProtoJava(
@@ -854,7 +882,8 @@ fn statsJava(
             "--javaClass",   spec.class,
         });
         if (@hasField(@TypeOf(spec), "min_api")) run.addArgs(&.{ "--minApiLevel", spec.min_api });
-        run.setName("generate " ++ spec.class ++ ".java");
+        if (@hasField(@TypeOf(spec), "worksource") and spec.worksource) run.addArg("--worksource");
+        run.setName("generate " ++ spec.package ++ "." ++ spec.class ++ ".java");
         result[index] = java;
     }
     _ = exposePaths(b, "gen-stats", "Generate stats-log Java sources", result);
@@ -1349,6 +1378,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     const cppstream_headers = frameworkProtoCpp(b, o.aosp, o.protoc, o.cppstream_tool);
     const proto_java = protoJava(b, o.aosp, o.protoc, o.javastream_tool, package_rewriter);
     const stats_java = statsJava(b, o.aosp, stats_tool);
+    const lite_proto_java = liteProtoJava(b, o.aosp, o.protoc);
     const express_metric_ids_java = expressMetricIdsJava(b, o.aosp);
     const system_features_java = systemFeaturesJava(b, o.aosp);
     const aconfig_device_paths_java = aconfigDevicePathsJava(b, o.aosp);
@@ -1358,7 +1388,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     const fixtures = fixtureApks(b, o.aosp, res.apk);
     const mime_resources = mimeResources(b, o.aosp);
     var java_files: std.ArrayList(LazyPath) = .empty;
-    inline for (.{ template_java, cronet_java, aidl_java, hidl_java, logtags_java, aconfig_java.java, sysprop_java, nano_java.java, proto_java, stats_java, xsd.java, res.java_sources }) |generated_set| {
+    inline for (.{ template_java, cronet_java, aidl_java, hidl_java, logtags_java, aconfig_java.java, sysprop_java, nano_java.java, proto_java, lite_proto_java, stats_java, xsd.java, res.java_sources }) |generated_set| {
         java_files.appendSlice(b.allocator, generated_set) catch @panic("OOM");
     }
     java_files.append(b.allocator, express_metric_ids_java) catch @panic("OOM");

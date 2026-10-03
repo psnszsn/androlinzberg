@@ -23,6 +23,15 @@ Run the framework and class-loading tests:
 zig build -j10 jvm-test
 ```
 
+Every test command gets its own `ARTZIG_DATA_DIR`; only `zig build run` uses
+the user's data root. A test process that runs as an app package is an
+instrumented package, as on a device: its session installs the package first
+(`AZK_SESSION_INSTALL`, a colon-separated list of absolute APK paths that the
+system server installs through stock PackageInstaller sessions before it
+reports ready), and the process then authenticates with the uid
+PackageManagerService assigned. Apps cannot install packages through the host
+launcher. Android processes work from `/`, so harnesses pass absolute paths.
+
 Run the multi-process hosted Binder tests. `native-test` already covers the
 broker with in-process Zig peers; this target starts the broker and three ART
 processes that talk through it:

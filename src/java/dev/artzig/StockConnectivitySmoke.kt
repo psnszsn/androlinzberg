@@ -23,7 +23,6 @@ import com.android.net.module.util.Struct
 import dev.artzig.system.HostedConnectivityService
 import dev.artzig.system.HostedNetworkSnapshot
 import dev.artzig.system.HostedNetworkSource
-import dev.artzig.system.HostedPackageManagerService
 
 /** Stock client callbacks over the generated proxy, with deterministic service observations. */
 internal object StockConnectivitySmoke {
@@ -39,11 +38,9 @@ internal object StockConnectivitySmoke {
 
     fun run(fixtureApk: String, pump: () -> Unit) {
         val base = HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 320, 240, 120, 0)
-        val packages = HostedPackageManagerService(
-            dev.artzig.system.HostedUserManagerInternal(dev.artzig.system.HostedUserLifecycle())).apply {
-            installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
-        }
-        val installed = packages.installPackage(fixtureApk)
+        // The session's PackageManagerService, with the fixture preinstalled.
+        val packages = android.app.ActivityThread.getPackageManager()
+        val installed = checkNotNull(base.packageManager.getPackageArchiveInfo(fixtureApk, 0)).packageName
         val caller = if (Binder.getCallingUid() == android.os.Process.SYSTEM_UID) "android" else installed
         check(packages.getPackagesForUid(Binder.getCallingUid())!!.contains(caller))
         val context = CallerContext(base, caller)

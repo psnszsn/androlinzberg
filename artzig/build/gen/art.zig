@@ -2482,6 +2482,36 @@ fn srcs_libart_disassembler(b: *std.Build, o: Options, I: Incs, m: *SourceGroups
 fn srcs_libart(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     _ = .{ b, o, I, m };
 }
+// art/libartservice/service/Android.bp libartservice: ART Service's JNI
+// library, with its libarttools and static libfstab (Soong art_defaults and
+// libbase-style fs_mgr flags). Built against libart's runtime headers.
+const inc_libfstab = [_]Inc{
+    .{ .root = .vendor, .rel = "system/core/fs_mgr/libfstab/include" },
+    .{ .root = .vendor, .rel = "system/gsid/include" },
+} ++ inc_1;
+const inc_libartservice = [_]Inc{
+    .{ .root = .vendor, .rel = "art/libartservice/service/native" },
+    .{ .root = .vendor, .rel = "art/libarttools/include" },
+    .{ .root = .vendor, .rel = "system/core/fs_mgr/libfstab/include" },
+    .{ .root = .vendor, .rel = "libnativehelper/include" },
+} ++ inc_21;
+fn srcs_libartservice(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
+    _ = I;
+    m.addCSourceFiles(.{
+        .root = o.vendor,
+        .files = &.{
+            "system/core/fs_mgr/libfstab/fstab.cpp", "system/core/fs_mgr/libfstab/boot_config.cpp", "system/core/fs_mgr/libfstab/slotselect.cpp",
+        },
+        .flags = flags(b, o, &cf_1, incSet(b, o, &inc_libfstab)),
+    });
+    m.addCSourceFiles(.{
+        .root = o.vendor,
+        .files = &.{
+            "art/libarttools/tools.cc", "art/libartservice/service/native/service.cc",
+        },
+        .flags = flags(b, o, &cf_0, incSet(b, o, &inc_libartservice)),
+    });
+}
 fn srcs_libziparchive(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
@@ -2766,6 +2796,7 @@ pub const Artifacts = struct {
     libprofile: *std.Build.Step.Compile,
     libart_disassembler: *std.Build.Step.Compile,
     libart: *std.Build.Step.Compile,
+    libartservice: *std.Build.Step.Compile,
     libziparchive: *std.Build.Step.Compile,
     libartpalette: *std.Build.Step.Compile,
     libbase: *std.Build.Step.Compile,
@@ -2906,6 +2937,8 @@ pub fn build(b: *std.Build, o: Options) Artifacts {
     applySourceGroups(b, o, I, libart_disassembler, srcs_libart_disassembler);
     const libart = newLib(b, o, "art", .dynamic);
     applySourceGroups(b, o, I, libart, srcs_libart);
+    const libartservice = newLib(b, o, "artservice", .dynamic);
+    applySourceGroups(b, o, I, libartservice, srcs_libartservice);
     const libziparchive = newLib(b, o, "ziparchive", .dynamic);
     applySourceGroups(b, o, I, libziparchive, srcs_libziparchive);
     const libartpalette = newLib(b, o, "artpalette", .dynamic);
@@ -2986,6 +3019,11 @@ pub fn build(b: *std.Build, o: Options) Artifacts {
     libart_disassembler.root_module.linkLibrary(libbase);
     applySourceGroups(b, o, I, libart, srcs_libart_compiler_static); // --whole-archive
     applySourceGroups(b, o, I, libart, srcs_libart_runtime_static); // --whole-archive
+    libartservice.root_module.linkLibrary(libart);
+    libartservice.root_module.linkLibrary(libartbase);
+    libartservice.root_module.linkLibrary(libbase);
+    libartservice.root_module.linkLibrary(liblog);
+    libartservice.root_module.linkLibrary(libnativehelper);
     libart.root_module.linkLibrary(libodrstatslog_static);
     libart.root_module.linkLibrary(libelffile_static);
     libart.root_module.linkLibrary(libartpalette);
@@ -3073,6 +3111,7 @@ pub fn build(b: *std.Build, o: Options) Artifacts {
         .libprofile = libprofile,
         .libart_disassembler = libart_disassembler,
         .libart = libart,
+        .libartservice = libartservice,
         .libziparchive = libziparchive,
         .libartpalette = libartpalette,
         .libbase = libbase,

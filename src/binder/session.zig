@@ -89,6 +89,8 @@ pub const Session = struct {
     cookie: []u8,
     system_cookie: []u8,
     inspector_cookie: ?[]u8 = null,
+    /// Exclusive ownership of the application data root's package database.
+    data_lock: ?Io.File = null,
 
     pub const Options = struct {
         broker_exe: []const u8,
@@ -109,7 +111,12 @@ pub const Session = struct {
         shutdown_timeout: Io.Duration = .{ .nanoseconds = 5 * std.time.ns_per_s },
         environ: std.process.Environ,
         storage: ?Storage = null,
-        first_app_uid: u32 = Client.default_app_uid,
+        /// `lockDataRoot` result for `storage`; the session owns it from start.
+        data_lock: ?Io.File = null,
+        /// PackageManagerService assigns installed packages' uids from the
+        /// bottom of the application range; peers of packages it never
+        /// installed take broker uids from the top, so the two never collide.
+        first_app_uid: u32 = 19000,
         declared_services: []const []const u8 = &.{},
         /// Admit host test tools as the broker's `inspector` role.
         inspection: bool = false,
@@ -118,7 +125,11 @@ pub const Session = struct {
     pub fn start(gpa: std.mem.Allocator, io: Io, options: Options) !Session {
         // startBroker transfers allocations and child ownership only on success.
         // Its errdefers have ended before stop takes over startup failure cleanup.
-        var session = try startBroker(gpa, io, options);
+        var session = startBroker(gpa, io, options) catch |err| {
+            if (options.data_lock) |file| file.close(io);
+            return err;
+        };
+        session.data_lock = options.data_lock;
         errdefer session.stop();
         try session.writeInfo(options.launcher_exe, options.storage);
         if (options.surfaceflinger_exe) |exe| try session.startSurfaceFlinger(options, exe);
@@ -362,8 +373,24 @@ pub const Session = struct {
         s.gpa.free(s.system_cookie);
         if (s.inspector_cookie) |value| s.gpa.free(value);
         s.gpa.destroy(s.drain);
+        if (s.data_lock) |file| file.close(io);
+        s.data_lock = null;
     }
 };
+
+/// Android runs one system server per data partition, and its persistent
+/// package database admits one owning session; other launchers join it.
+pub fn lockDataRoot(io: Io, root: []const u8) !Io.File {
+    var dir = try Io.Dir.cwd().openDir(io, root, .{});
+    defer dir.close(io);
+    const file = try dir.createFile(io, ".session.lock", .{ .truncate = false });
+    errdefer file.close(io);
+    if (!try file.tryLock(io, .exclusive)) {
+        std.log.err("data root {s} belongs to another running session; join it with --join", .{root});
+        return error.DataRootInUse;
+    }
+    return file;
+}
 
 // The pinned std.Io processSpawnPosix loses its pipe handles and child PID
 // when the child reports an exec error. Spawn the running executable first,

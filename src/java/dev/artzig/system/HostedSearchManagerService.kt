@@ -19,12 +19,14 @@ import android.util.Log
  * exactly as `Searchables.getSearchableInfo` does, the global search list is
  * empty, and `launchAssist` has no assistant to start.
  */
-class HostedSearchManagerService(private val context: Context, private val packages: HostedPackageManagerService) : android.app.ISearchManager.Stub(), android.app.ISearchManager by unsupported<android.app.ISearchManager>() {
+class HostedSearchManagerService(private val context: Context, private val packages: android.content.pm.IPackageManager) : android.app.ISearchManager.Stub(), android.app.ISearchManager by unsupported<android.app.ISearchManager>() {
     override fun asBinder(): android.os.IBinder = this
 
     override fun getSearchableInfo(launchActivity: ComponentName?): SearchableInfo? {
         val component = launchActivity ?: return null
-        val activityInfo = packages.getActivityInfo(component, PackageManager.GET_META_DATA.toLong(), UserHandle.USER_SYSTEM) ?: return null
+        val activityInfo = android.os.Binder.withCleanCallingIdentity<android.content.pm.ActivityInfo?> {
+            packages.getActivityInfo(component, PackageManager.GET_META_DATA.toLong(), UserHandle.USER_SYSTEM)
+        } ?: return null
         return try {
             SearchableInfo.getActivityMetaData(context, activityInfo, UserHandle.USER_SYSTEM)
         } catch (e: Exception) {

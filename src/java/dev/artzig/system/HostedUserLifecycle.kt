@@ -4,13 +4,21 @@ import android.os.UserHandle
 import com.android.server.am.UserState
 
 /**
- * UserController.finishUserBoot / finishUserUnlocking / finishUserUnlocked,
+ * UserController.startUserInternal / finishUserUnlocking / finishUserUnlocked,
  * for the host's single user and already-available data directory. The host has
  * no vold/FBE unlock operation. Stock UserState owns transitions and progress;
- * SystemServiceManager receives the normal starting/unlocking/unlocked order.
+ * UserManagerService prepares user and app data before start and unlock and
+ * mirrors each state, and SystemServiceManager receives the normal
+ * starting/unlocking/unlocked order.
  */
 internal class HostedUserLifecycle {
     interface Services {
+        /** UserManagerService.onBeforeStartUser. */
+        fun beforeStart(userId: Int)
+        /** UserManagerService.onBeforeUnlockUser: CE data and app-data reconcile. */
+        fun beforeUnlock(userId: Int)
+        /** UserManagerInternal.setUserState. */
+        fun stateChanged(userId: Int, state: Int)
         fun starting(userId: Int)
         fun unlocking(userId: Int)
         fun unlocked(userId: Int)
@@ -19,16 +27,6 @@ internal class HostedUserLifecycle {
     private val lock = Any()
     private val user = UserState(UserHandle.SYSTEM)
     private var started = false
-
-    /** The Binder and local user services share this session's user catalogue.
-     * Return a fresh stock value so a caller cannot mutate the authority. */
-    fun userInfo(userId: Int): android.content.pm.UserInfo? =
-        if (userId != UserHandle.USER_SYSTEM) null else android.content.pm.UserInfo(
-            UserHandle.USER_SYSTEM, "host", null,
-            android.content.pm.UserInfo.FLAG_PRIMARY or android.content.pm.UserInfo.FLAG_ADMIN or
-                android.content.pm.UserInfo.FLAG_FULL or android.content.pm.UserInfo.FLAG_SYSTEM or
-                android.content.pm.UserInfo.FLAG_MAIN,
-            android.os.UserManager.USER_TYPE_FULL_SYSTEM)
 
     fun isRunning(userId: Int): Boolean = synchronized(lock) {
         userId == UserHandle.USER_SYSTEM && user.state in
@@ -65,18 +63,25 @@ internal class HostedUserLifecycle {
             if (started) return false
             started = true
         }
+        val userId = UserHandle.USER_SYSTEM
         // Do not hold the state lock across service callbacks: they can query
         // the IUserManager Binder from a different thread.
-        services.starting(UserHandle.USER_SYSTEM)
+        services.stateChanged(userId, user.state)
+        services.beforeStart(userId)
+        services.starting(userId)
         transition(UserState.STATE_BOOTING, UserState.STATE_RUNNING_LOCKED)
+        services.stateChanged(userId, user.state)
         user.mUnlockProgress.start()
         user.mUnlockProgress.setProgress(5)
+        services.beforeUnlock(userId)
         transition(UserState.STATE_RUNNING_LOCKED, UserState.STATE_RUNNING_UNLOCKING)
+        services.stateChanged(userId, user.state)
         user.mUnlockProgress.setProgress(20)
-        services.unlocking(UserHandle.USER_SYSTEM)
+        services.unlocking(userId)
         transition(UserState.STATE_RUNNING_UNLOCKING, UserState.STATE_RUNNING_UNLOCKED)
+        services.stateChanged(userId, user.state)
         user.mUnlockProgress.finish()
-        services.unlocked(UserHandle.USER_SYSTEM)
+        services.unlocked(userId)
         return true
     }
 

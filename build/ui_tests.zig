@@ -7,6 +7,7 @@ const std = @import("std");
 const command = @import("command.zig");
 
 pub const sources = [_][]const u8{
+    "tests/ui/kotlin/dev/artzig/uitest/FDroidUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/HostInstrumentation.kt",
     "tests/ui/kotlin/dev/artzig/uitest/NewPipeUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/UiTestMain.kt",
@@ -56,6 +57,10 @@ pub const tests = [_][]const u8{
     "dev.artzig.uitest.NewPipeDesktopUiTest#fullscreenButtonExitsAndRestoresVideoDetails@1600x900@newpipe",
     "dev.artzig.uitest.NewPipeDesktopUiTest#videoButtonFillsItsWindowWithoutCompositorFullscreen@1600x900@newpipe",
     "dev.artzig.uitest.NewPipeDesktopUiTest#userFullscreenEndsWhenThePlayerLeavesFullscreen@1600x900@newpipe",
+    // F-Droid needs network access and the pinned APK (AZK_APK_FDROID_2_0_1).
+    "dev.artzig.uitest.FDroidUiTest#launchesDiscoverWithoutRuntimeIssues@412x915@fdroid",
+    "dev.artzig.uitest.FDroidUiTest#searchOpensAppDetails@412x915@fdroid",
+    "dev.artzig.uitest.FDroidUiTest#installsAnAppThroughThePackageInstaller@412x915@fdroid",
     // Host path: real Wayland input through the presenter and InputDispatcher.
     "dev.artzig.uitest.host.WaylandInputUiTest#tapReachesTheView",
     "dev.artzig.uitest.host.WaylandInputUiTest#overlappingChildrenInterceptionAndRemoval",
@@ -67,7 +72,10 @@ pub const tests = [_][]const u8{
 };
 
 /// tests/apks.json: `--pinned-apk` arguments of the orchestrator.
-pub const pinned_apks = [_][]const u8{ "--pinned-apk", "newpipe=AZK_APK_NEWPIPE_0_29_1=18447bfb1e06d113edc88df93f471827280de06f6f3d4dc42f56f28b9c1bab79" };
+pub const pinned_apks = [_][]const u8{
+    "--pinned-apk", "newpipe=AZK_APK_NEWPIPE_0_29_1=18447bfb1e06d113edc88df93f471827280de06f6f3d4dc42f56f28b9c1bab79",
+    "--pinned-apk", "fdroid=AZK_APK_FDROID_2_0_1=83d3fe522281c3cb89fce3bc05038f81b3c3b32c108536941f184c5f9bb53778",
+};
 
 const androidx = "prebuilts/sdk/current/androidx/m2repository/androidx/";
 

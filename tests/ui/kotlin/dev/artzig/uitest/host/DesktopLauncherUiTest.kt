@@ -82,6 +82,15 @@ class DesktopLauncherUiTest {
         awaitWindows(1)
         WaylandSeat.tapThenType(waitFor(By.desc("Fixture editor")).visibleCenter, "C")
         waitFor(By.desc("Fixture editor").text("abC"))
+
+        // A second launcher joins the session as a host client (not the app):
+        // it installs the package again, which, as `adb install -r` does, stops
+        // the running package, and the system starts it afresh.
+        val joined = HostSession.launchFromForeignShell()
+        assertTrue(joined, "Desktop launch accepted: dev.artzig.fixtures.windows" in joined)
+        awaitWindows(1)
+        waitFor(increment)
+        expectVisible("Counter: 0")
     }
 
     private fun label(text: String): BySelector = By.text(Pattern.compile(Pattern.quote(text), Pattern.CASE_INSENSITIVE))

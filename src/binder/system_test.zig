@@ -17,9 +17,14 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const gpa = init.gpa;
     const arena = init.arena.allocator();
-    const args = try init.minimal.args.toSlice(arena);
-    if (args.len >= 3 and std.mem.eql(u8, args[1], "--service-exec"))
-        return std.process.replace(io, .{ .argv = args[2..] });
+    const raw_args = try init.minimal.args.toSlice(arena);
+    if (raw_args.len >= 3 and std.mem.eql(u8, raw_args[1], "--service-exec"))
+        return std.process.replace(io, .{ .argv = raw_args[2..] });
+    // Session processes work from "/"; every executable and fixture they
+    // receive from this driver is absolute.
+    const args = try arena.alloc([]const u8, raw_args.len);
+    for (raw_args, args) |raw, *arg|
+        arg.* = if (std.mem.startsWith(u8, raw, "-")) raw else Io.Dir.cwd().realPathFileAlloc(io, raw, arena) catch raw;
     if ((args.len == 6 or args.len == 7) and std.mem.eql(u8, args[1], "--cold-window"))
         return coldWindow(init, args);
     if (args.len < 12) {
@@ -38,12 +43,28 @@ pub fn main(init: std.process.Init) !void {
 
     var env = try init.minimal.environ.createMap(gpa);
     defer env.deinit();
-    // The peers install their packages from build-time fixture APKs.
-    try env.put("AZK_FIXTURE_APK_A", fixture_a);
-    try env.put("AZK_FIXTURE_APK_B", fixture_b);
-    try env.put("AZK_FIXTURE_IDENTITY_A", identity_a);
-    try env.put("AZK_FIXTURE_IDENTITY_B", identity_b);
-    try env.put("AZK_FIXTURE_SERVICE_INSTANCES", service_fixture);
+    // `pm install` of the peers' packages before they run as those packages;
+    // the system process works from "/", so it receives absolute paths.
+    var installs: std.ArrayList(u8) = .empty;
+    defer installs.deinit(gpa);
+    for ([_][]const u8{ fixture_a, fixture_b, identity_a, identity_b }, 0..) |apk, index| {
+        if (index != 0) try installs.append(gpa, ':');
+        const absolute = try Io.Dir.cwd().realPathFileAlloc(io, apk, gpa);
+        defer gpa.free(absolute);
+        try installs.appendSlice(gpa, absolute);
+    }
+    try env.put("AZK_SESSION_INSTALL", installs.items);
+    for ([_][2][]const u8{
+        .{ "AZK_FIXTURE_APK_A", fixture_a },
+        .{ "AZK_FIXTURE_APK_B", fixture_b },
+        .{ "AZK_FIXTURE_IDENTITY_A", identity_a },
+        .{ "AZK_FIXTURE_IDENTITY_B", identity_b },
+        .{ "AZK_FIXTURE_SERVICE_INSTANCES", service_fixture },
+    }) |entry| {
+        const absolute = try Io.Dir.cwd().realPathFileAlloc(io, entry[1], gpa);
+        defer gpa.free(absolute);
+        try env.put(entry[0], absolute);
+    }
     // Hermetic: a nonexistent display keeps the hosted clipboard monitor off
     // the developer's real Wayland clipboard (an empty value would fall back
     // to wayland-0; parallel test sessions would cross-talk through it).
@@ -231,6 +252,9 @@ fn signalOutput(io: Io, env: *std.process.Environ.Map, launcher: []const u8) !vo
     try env.put("AZK_TEST_CLASS", "dev.artzig.systemtest.RuntimeSignalSystemSmoke");
     try env.put("AZK_BINDER_ROLE", "app");
     try env.put("AZK_BINDER_PACKAGE", "dev.artzig.test.a");
+    // The fake palette logs the dump at INFO; stderr shows warnings by default.
+    try env.put("AZK_LOG_LEVEL", "i");
+    defer _ = env.swapRemove("AZK_LOG_LEVEL");
     var child = try std.process.spawn(io, .{
         .argv = &.{ launcher, "--javatest" },
         .environ_map = env,

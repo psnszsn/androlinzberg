@@ -53,7 +53,7 @@ import java.util.concurrent.TimeUnit
 class HostedJobSchedulerService(private val context: Context) : android.app.job.IJobScheduler.Stub(), android.app.job.IJobScheduler by unsupported<android.app.job.IJobScheduler>() {
     override fun asBinder(): android.os.IBinder = this
 
-    @Volatile var packageService: HostedPackageManagerService? = null
+    @Volatile var packageService: android.content.pm.IPackageManager? = null
     @Volatile var notificationService: HostedNotificationManagerService? = null
 
     private data class JobKey(val uid: Int, val namespace: String?, val jobId: Int)
@@ -184,7 +184,7 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
     /** JobSchedulerService.enforceValidJobRequest. */
     private fun enforceValidJobRequest(uid: Int, job: JobInfo) {
         val service: ComponentName = job.service
-        val info = packageService?.getServiceInfo(service, (PackageManager.MATCH_DIRECT_BOOT_AWARE or PackageManager.MATCH_DIRECT_BOOT_UNAWARE).toLong(), 0)
+        val info = android.os.Binder.withCleanCallingIdentity<android.content.pm.ServiceInfo?> { packageService?.getServiceInfo(service, (PackageManager.MATCH_DIRECT_BOOT_AWARE or PackageManager.MATCH_DIRECT_BOOT_UNAWARE).toLong(), 0) }
             ?: throw IllegalArgumentException("Tried to schedule job for non-existent component: $service")
         if (info.applicationInfo.uid != uid) {
             throw IllegalArgumentException("uid $uid cannot schedule job in ${service.packageName}")
@@ -204,7 +204,7 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
     // This hosted scheduler applies that default SDK gate; it does not consume server-only
     // compat metadata from the uncompiled JobSchedulerService implementation.
     private fun canAccessJobNetwork(uid: Int, packageName: String): Boolean {
-        val app = packageService?.getApplicationInfo(packageName, 0, 0) ?: return false
+        val app = android.os.Binder.withCleanCallingIdentity<android.content.pm.ApplicationInfo?> { packageService?.getApplicationInfo(packageName, 0L, 0) } ?: return false
         return app.targetSdkVersion <= android.os.Build.VERSION_CODES.TIRAMISU ||
             packageService?.checkUidPermission(android.Manifest.permission.ACCESS_NETWORK_STATE, uid) == PackageManager.PERMISSION_GRANTED
     }
@@ -297,7 +297,7 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
         enforceValidJobRequest(uid, job)
         val owner = callingPackageFor(uid, job)
         val sourceUid = if (userId == android.os.UserHandle.USER_SYSTEM)
-            packageService?.getPackageUidInternal(packageName) ?: -1 else -1
+            android.os.Binder.withCleanCallingIdentity<Int?> { packageService?.getPackageUid(packageName, 0L, 0) } ?: -1 else -1
         return scheduleInternal(namespace, job, null, uid, owner,
             if (sourceUid >= 0) packageName else owner, if (sourceUid >= 0) sourceUid else uid)
     }
@@ -390,7 +390,8 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
     override fun canRunUserInitiatedJobs(packageName: String?): Boolean = true
 
     override fun hasRunUserInitiatedJobsPermission(packageName: String?, userId: Int): Boolean {
-        val uid = packageService?.getPackageUidInternal(packageName ?: return false) ?: return false
+        val name = packageName ?: return false
+        val uid = android.os.Binder.withCleanCallingIdentity<Int?> { packageService?.getPackageUid(name, 0L, 0) }?.takeIf { it >= 0 } ?: return false
         return packageService?.checkUidPermission(android.Manifest.permission.RUN_USER_INITIATED_JOBS, uid) == PackageManager.PERMISSION_GRANTED
     }
 

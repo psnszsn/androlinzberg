@@ -274,12 +274,11 @@ public final class FrameworkCompatSmoke {
         public fun main(args: Array<String>) {
             if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
             // A real application process is installed and attached before framework clients run.
-            // The direct --javatest entry has no launcher bindApplication handshake, so establish
-            // the broker/PackageManager identity explicitly before static clients such as
-            // Environment ask StorageManager for this UID's volumes.
-            val fixtureApk: String = requireNotNull(args.getOrNull(1)) { "fixture APK argument missing" }
-            val installer = requireNotNull(dev.artzig.HostedServiceClient.installerOrNull())
-            require(installer.installPackage(fixtureApk, null) == "org.example", "fixture install")
+            // The session preinstalls the fixture (AZK_SESSION_INSTALL), so this process runs
+            // with the uid PackageManagerService assigned it; the direct --javatest entry has no
+            // launcher bindApplication handshake, so it attaches explicitly below.
+            require(android.app.ActivityThread.getPackageManager().getPackageUid("org.example", 0L, 0) ==
+                android.os.Process.myUid(), "fixture installed for this process's uid")
             // Exercise LoadedApk construction before binding creates the Application.
             HostContexts.bootstrap(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
             testLoadedApk()

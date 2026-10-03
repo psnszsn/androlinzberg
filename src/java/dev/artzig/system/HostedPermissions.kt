@@ -9,7 +9,7 @@ import android.os.Process
  * install-time grants (no app ops). `Context.enforceCallingOrSelfPermission` for a
  * service that has no Context of the caller's process.
  */
-open class HostedPermissions(private val packages: HostedPackageManagerService) {
+open class HostedPermissions(private val packages: android.content.pm.IPackageManager) {
     fun has(permission: String, uid: Int = Binder.getCallingUid()): Boolean =
         uid == Process.SYSTEM_UID || uid == Process.ROOT_UID ||
             packages.checkUidPermission(permission, uid) == PackageManager.PERMISSION_GRANTED

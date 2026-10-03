@@ -25,11 +25,9 @@ internal object SystemTestHostB {
         // Own package identity (the clipboard's AppOps checkPackage verifies
         // the calling package against this process's uid).
         dev.artzig.HostContexts.prepareApplicationEnvironment(frameworkRes)
-        // Install this package's fixture APK: the session's package manager
-        // parses the real manifest (client A asserts the parsed values).
-        val fixture = checkNotNull(System.getenv("AZK_FIXTURE_APK_B")) { "AZK_FIXTURE_APK_B is not set" }
-        val installer = checkNotNull(dev.artzig.HostedServiceClient.installerOrNull())
-        check(installer.installPackage(fixture, null) == "dev.artzig.test.b")
+        // The session preinstalled this package's fixture APK: its package
+        // manager parsed the real manifest (client A asserts the parsed values).
+        check(android.app.ActivityThread.getPackageManager().getPackageUid("dev.artzig.test.b", 0L, 0) == android.os.Process.myUid())
         // The stock bindApplication message installs and publishes the parsed
         // providers before Application.onCreate.
         val context: android.content.Context =

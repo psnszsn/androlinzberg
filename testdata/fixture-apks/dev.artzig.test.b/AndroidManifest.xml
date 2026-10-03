@@ -18,6 +18,10 @@
             <process android:process="dev.artzig.test.b">
                 <deny-permission android:name="android.permission.INTERNET" />
             </process>
+            <!-- A declared <processes> list must name every component process. -->
+            <process android:process=":private_cold" />
+            <process android:process=":permission_cold" />
+            <process android:process=":secondary" />
         </processes>
         <activity android:name="dev.artzig.systemtest.BUriGrantActivity" android:exported="true" />
         <activity android:name="dev.artzig.systemtest.BMainActivity" android:exported="true">

@@ -375,8 +375,11 @@ internal object ServiceInstancesSystemSmoke {
     }
 
     fun run(context: Context) {
-        val path = java.io.File(checkNotNull(System.getenv("AZK_FIXTURE_SERVICE_INSTANCES"))).canonicalPath
-        val ownerUid = context.packageManager.getApplicationInfo(PACKAGE, 0).uid
+        // PackageManagerService copies the installed APK into its code path.
+        val installed = context.packageManager.getApplicationInfo(PACKAGE, 0)
+        val path = checkNotNull(installed.sourceDir)
+        check(java.io.File(path).canonicalPath.startsWith(android.os.Environment.getDataAppDirectory(null).canonicalPath + "/"))
+        val ownerUid = installed.uid
         check(context.packageManager.checkPermission(android.Manifest.permission.CAMERA, PACKAGE) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED)
         check(context.packageManager.checkSignatures(PACKAGE, context.packageName) ==

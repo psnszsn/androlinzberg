@@ -163,6 +163,10 @@ pub const Message = struct {
         /// Kernel PID; returns PackageUidResult for an authenticated live process.
         process_uid,
         system_process,
+        /// Body is a little-endian u32 uid followed by a package name. The
+        /// system process records the uid its package manager assigned;
+        /// answered with `package_uid_result`.
+        register_package_uid,
         _,
     };
 
@@ -458,6 +462,13 @@ pub fn serveProcessUid(c: *const Client, request_id: u64, pid: i32) Writer.Error
 pub fn serveSystemProcess(c: *const Client, request_id: u64, pid: i32) Writer.Error!void {
     try c.serveMessageHeader(.{ .tag = .system_process, .request_id = request_id, .bytes_len = @sizeOf(i32) });
     try c.out.writeInt(i32, pid, .little);
+    try c.out.flush();
+}
+
+pub fn serveRegisterPackageUid(c: *const Client, request_id: u64, package: []const u8, uid: u32) Writer.Error!void {
+    try c.serveMessageHeader(.{ .tag = .register_package_uid, .bytes_len = @intCast(@sizeOf(u32) + package.len), .request_id = request_id });
+    try c.out.writeInt(u32, uid, .little);
+    try c.out.writeAll(package);
     try c.out.flush();
 }
 

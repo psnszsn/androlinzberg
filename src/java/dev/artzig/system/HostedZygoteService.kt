@@ -25,7 +25,7 @@ import java.util.concurrent.Semaphore
  * ActivityThread entry and lifecycle transactions remain responsible for their
  * contracts. Prepared starts avoid re-entering AMS while it waits on its socket. */
 internal class HostedZygoteService(
-    private val packages: HostedPackageManagerService?,
+    private val packages: android.content.pm.IPackageManager?,
     private val dispatchExit: (() -> Unit) -> Unit,
     private val controller: HostedWebViewZygote? = null,
 ) : AutoCloseable {
@@ -91,8 +91,10 @@ internal class HostedZygoteService(
         val info = request.metadata ?: checkNotNull(packages).getApplicationInfo(request.key.packageName, 0, request.key.userId)
             ?: return@Launcher null
         val kind = if (request.key.isolated) BinderSession.LaunchKind.ISOLATED else BinderSession.LaunchKind.APP
+        // PackageManagerService owns the application uid; the broker admits it.
+        // An isolated process receives a broker-allocated isolated uid.
         val grant = Grant(BinderSession.reserveLaunchForUid(request.key.packageName, request.key.processName,
-            kind, request.sequence, request.key.userId, -1))
+            kind, request.sequence, request.key.userId, if (request.key.isolated) -1 else info.uid))
         val start = Prepared(request, ApplicationInfo(info), grant, onExit)
         check(prepared.putIfAbsent(request.sequence, start) == null)
         try {
@@ -201,7 +203,7 @@ internal class HostedZygoteService(
             val users = android.os.IUserManager.Stub.asInterface(android.os.ServiceManager.getService(android.content.Context.USER_SERVICE))
             require(users.getUserInfo(UserHandle.getUserId(uid)) != null) { "Requested Android user does not exist" }
         }
-        val info = pending?.info ?: packages.getApplicationInfo(packageName, 0, UserHandle.getUserId(uid))
+        val info = pending?.info ?: packages.getApplicationInfo(packageName, 0L, UserHandle.getUserId(uid))
             ?: throw IllegalArgumentException("Package is not installed for requested user")
         val kind = when {
             uid == AndroidProcess.SYSTEM_UID -> BinderSession.LaunchKind.SYSTEM

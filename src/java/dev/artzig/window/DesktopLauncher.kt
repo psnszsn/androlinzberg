@@ -15,6 +15,8 @@ import java.util.concurrent.atomic.AtomicReference
 /** Session controller: ATMS starts application processes and the system task
  * organizer owns their presentation. This process never attaches as an APK. */
 object DesktopLauncher {
+    /** Binder identity of a launcher joining an existing session. */
+    private const val JOINED_IDENTITY = "android:launcher"
     private var failure: String? = null
     @JvmStatic fun sessionFailed(): Boolean = failure != null
     private fun sessionLost(service: String) {
@@ -32,7 +34,10 @@ object DesktopLauncher {
             else -> error("Invalid desktop controller role")
         }
         Looper.prepareMainLooper()
-        if (owner) BinderSession.setIdentity("android", true) else ApkHost.prepareProcessIdentity()
+        // A joined launcher is a host session client (`adb install` + `am start`),
+        // never the package it launches: that package's processes are started
+        // by ATMS with the uid PackageManagerService assigned.
+        if (owner) BinderSession.setIdentity("android", true) else BinderSession.setIdentity(JOINED_IDENTITY, false)
         val context = HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")),
             640, 480, 120, 0)
         val presentation = android.os.ServiceManager.checkService("dev.artzig.window.presenter") ?: run {
@@ -40,6 +45,12 @@ object DesktopLauncher {
             return
         }
         val packageName = ApkHost.installForDesktop()
+        if (!owner) {
+            // A joined launch leaves lifetime with the existing session owner.
+            checkNotNull(dev.artzig.HostedServiceClient.installerOrNull()).launchPackage(packageName)
+            println("Desktop launch accepted: $packageName")
+            return
+        }
         val intent = checkNotNull(context.packageManager.getLaunchIntentForPackage(packageName)) {
             "No launcher activity in $packageName"
         }.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -72,12 +83,10 @@ object DesktopLauncher {
                 tasks.registerTaskStackListener(listener)
                 registered = true
             }
-            val result = tasks.startActivity(null, if (owner) "android" else packageName, null,
+            val result = tasks.startActivity(null, "android", null,
                 intent, null, null, null, -1, 0, null, null)
             check(ActivityManager.isStartResultSuccessful(result)) { "Activity launch rejected: $result ($intent)" }
             println("Desktop launch accepted: $packageName")
-            // A joined launch leaves lifetime with the existing session owner.
-            if (!owner) return
             var observedTask = false
             val deadline = SystemClock.uptimeMillis() + 15_000
             while (true) {

@@ -36,7 +36,7 @@ class HostedAlarmManagerService(private val context: Context) : android.app.IAla
     override fun asBinder(): android.os.IBinder = this
 
     /** The package manager binds calling packages to uids (AlarmManagerService checks the same). */
-    @Volatile var packageService: HostedPackageManagerService? = null
+    @Volatile var packageService: android.content.pm.IPackageManager? = null
 
     private class Alarm(
         val type: Int,

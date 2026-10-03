@@ -28,7 +28,12 @@ pub fn configureNativeLibraries(init: std.process.Init, tree: []const u8, runtim
     _ = setenv("ARTZIG_NATIVE_LIB_DIR", try a.dupeSentinel(u8, native_dir, 0), 1);
     _ = setenv("ARTZIG_IMAGE_NATIVE_LIB_DIR", try std.fs.path.joinZ(a, &.{ tree, "apps", "lib" }), 1);
     _ = runtime_root;
-    _ = setenv("BIONIC_LD_LIBRARY_PATH", try std.fmt.allocPrintSentinel(a, "{s}:{s}/apps/lib/*", .{ native_dir, tree }, 0), 1);
+    // <native>/apk/<archive>/<version> holds libraries materialized from APK
+    // entries ("base.apk!/lib/<abi>/...") that Android's linker would map in
+    // place; only an archive's current version remains. bionic_translation
+    // matches this pattern to admit an absolute path as a bionic library; its
+    // bare-name search does not expand it.
+    _ = setenv("BIONIC_LD_LIBRARY_PATH", try std.fmt.allocPrintSentinel(a, "{s}:{s}/apk/*/*:{s}/apps/lib/*", .{ native_dir, native_dir, tree }, 0), 1);
 
     // libdl_bio reads its soname override files from XDG_DATA_DIRS in its ELF
     // constructor, so prepend the mappings installed alongside the launcher.
@@ -49,12 +54,15 @@ pub fn configureNativeLibraries(init: std.process.Init, tree: []const u8, runtim
 pub fn configureDataRoot(init: std.process.Init) !void {
     const a = init.arena.allocator();
     const env = init.minimal.environ;
-    const root = if (env.getPosix("ARTZIG_DATA_DIR")) |configured| configured else blk: {
+    const configured_root = if (env.getPosix("ARTZIG_DATA_DIR")) |configured| configured else blk: {
         if (env.getPosix("XDG_DATA_HOME")) |xdg| break :blk try std.fs.path.join(a, &.{ xdg, "artzig" });
         const home = env.getPosix("HOME") orelse "/tmp";
         break :blk try std.fs.path.join(a, &.{ home, ".local", "share", "artzig" });
     };
-    try std.Io.Dir.cwd().createDirPath(init.io, root);
+    try std.Io.Dir.cwd().createDirPath(init.io, configured_root);
+    // Runtime processes work from "/" (see runtime_bootstrap), so every
+    // exported storage root is absolute.
+    const root = try std.Io.Dir.cwd().realPathFileAlloc(init.io, configured_root, a);
     _ = setenv("ARTZIG_DATA_DIR", try a.dupeSentinel(u8, root, 0), 1);
     if (env.getPosix("DOWNLOAD_CACHE") == null) {
         _ = setenv("DOWNLOAD_CACHE", try std.fs.path.joinZ(a, &.{ root, "cache" }), 1);

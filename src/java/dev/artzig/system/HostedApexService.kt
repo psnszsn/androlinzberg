@@ -45,4 +45,10 @@ class HostedApexService : IApexService.Stub(), IApexService by unsupported<IApex
         enforceCaller("getStagedSessionInfo")
         return ApexSessionInfo().apply { isUnknown = true }
     }
+
+    // apexservice.cpp ApexService::markBootCompleted -> OnBootCompleted finalizes
+    // sessions staged or activated for this boot; the host has none.
+    override fun markBootCompleted() {
+        enforceCaller("markBootCompleted")
+    }
 }

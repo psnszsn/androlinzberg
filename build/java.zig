@@ -17,7 +17,7 @@ pub const Options = struct {
 pub const Result = struct {
     classes_jar: LazyPath,
     /// Exact static compiler inputs for the independent AOSP source comparison.
-    static_sources: [3]LazyPath,
+    static_sources: [4]LazyPath,
     compile_boot_jar: LazyPath,
     /// Classpath jar containing classes.dex and any secondary dex files.
     classpath_jar: LazyPath,
@@ -31,8 +31,8 @@ pub const Result = struct {
     resources: @import("generators.zig").FrameworkResources,
     fixtures: @import("generators.zig").FixtureApks,
     java_step: *std.Build.Step,
-    download_provider: LazyPath,
-    desktop_transfer_provider: LazyPath,
+    /// System-partition APKs that PackageManagerService scans at boot.
+    system_apps: []const @import("system_apks.zig").SystemApp,
 };
 
 fn extractJarPackage(
@@ -277,9 +277,6 @@ pub fn build(b: *std.Build, o: Options) Result {
     package_manager_internal_processor.addArg("-d");
     const package_manager_internal_processor_jar =
         package_manager_internal_processor.addOutputFileArg("package-manager-internal-processor.jar");
-    package_manager_internal_processor.addFileArg(
-        b.path("src/java/dev/artzig/tools/PackageManagerInternalProcessor.kt"),
-    );
     package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/LocalServiceAdapterProcessor.kt"));
     package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/ActivityManagerInternalProcessor.kt"));
     package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/WindowManagerInternalProcessor.kt"));
@@ -289,6 +286,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/BatteryManagerInternalProcessor.kt"));
     package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/UsageStatsInternalProcessor.kt"));
     package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/DesktopWindowPolicyProcessor.kt"));
+    package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/PackageManagerInternalTestDoubleProcessor.kt"));
     package_manager_internal_processor.run.setName("compile local-service adapter processors");
 
     var safeparcel_sources = SourceFiles.Collector.init(b);
@@ -333,13 +331,55 @@ pub fn build(b: *std.Build, o: Options) Result {
     safeparcel_jar_cmd.addDirectoryArg(jsilver_root.path);
     safeparcel_jar_cmd.addArg(".");
     safeparcel_jar_cmd.setName("package AppSearch SafeParcel processor");
+
+    // Pinned external/auto/value auto_value_plugin (libauto_value_plugin), the
+    // processor ART Service's AutoValue classes are generated with. Its static
+    // libraries are compiled from their pinned sources; asm-9.6's API is the
+    // org.objectweb.asm core of the pinned external/ow2-asm tree.
+    var auto_value_sources = SourceFiles.Collector.init(b);
+    const auto_root = SourceFiles.Root.dependency(b, aosp, "external/auto");
+    auto_value_sources.addTree(auto_root.child(b, "value/src/main/java/com/google/auto/value"), .{});
+    auto_value_sources.addTree(auto_root.child(b, "common/src/main/java"), .{});
+    auto_value_sources.addTree(auto_root.child(b, "service/annotations/src/main/java"), .{});
+    auto_value_sources.addTree(auto_root.child(b, "android-annotation-stubs/src"), .{});
+    auto_value_sources.addTree(SourceFiles.Root.dependency(b, aosp, "external/escapevelocity/src/main/java"), .{});
+    auto_value_sources.addTree(SourceFiles.Root.dependency(b, aosp, "external/ow2-asm/asm/src/main/java"), .{});
+    auto_value_sources.addTree(javapoet_root, .{});
+    const auto_value_java = auto_value_sources.select(".java");
+    const kotlinx_metadata_jar = aosp.path("external/kotlinx.metadata/kotlinx-metadata-jvm-0.6.0.jar");
+    const auto_value_javac = command.create(b);
+    auto_value_javac.addArgs(&.{ "javac", "-source", "21", "-target", "21", "-encoding", "UTF-8", "-nowarn", "-proc:none", "-classpath" });
+    auto_value_javac.addJoinedPathInputs(":", &.{
+        .{ .file = guava_host_jar },
+        .{ .file = kotlin_stdlib },
+        .{ .file = kotlinx_metadata_jar },
+        .{ .file = aosp.path("external/error_prone/error_prone/error_prone_annotations-2.36.0.jar") },
+    });
+    auto_value_javac.addArg("-d");
+    const auto_value_classes = auto_value_javac.addOutputDirectoryArg("auto-value-processor-classes");
+    auto_value_javac.addPrefixedFileArg("@", auto_value_java.responseFile(b, "auto-value-processor-sources.rsp"));
+    inline for (.{
+        "Note: Some input files use or override a deprecated API.",
+        "Note: Recompile with -Xlint:deprecation for details.",
+        "Note: Some input files use or override a deprecated API that is marked for removal.",
+        "Note: Recompile with -Xlint:removal for details.",
+        "uses unchecked or unsafe operations.",
+        "Note: Recompile with -Xlint:unchecked for details.",
+    }) |pattern| auto_value_javac.filterStderr(pattern);
+    auto_value_java.addInputs(auto_value_javac.run);
+    auto_value_javac.run.setName("compile AutoValue processor");
+    // auto_value_plugin_resources: the processor's Velocity templates.
+    const auto_value_templates = b.addWriteFiles();
+    inline for (.{ "autoannotation", "autobuilderannotation", "autobuilder", "autooneof", "autovalue", "builder", "equalshashcode", "gwtserializer" }) |name| {
+        _ = auto_value_templates.addCopyFile(
+            aosp.path("external/auto/value/src/main/java/com/google/auto/value/processor/" ++ name ++ ".vm"),
+            "com/google/auto/value/processor/" ++ name ++ ".vm",
+        );
+    }
     b.step("safeparcel-processor", "Build the AppSearch SafeParcel annotation processor")
         .dependOn(&safeparcel_jar_cmd.step);
 
-    const kotlinc = command.create(b);
-    kotlinc.addFileArg(aosp.path("external/kotlinc/bin/kotlinc"));
-    inline for (.{ "-no-jdk", "-no-stdlib", "-no-reflect", "-nowarn", "-language-version", "2.0", "-api-version", "2.0", "-jvm-target", "21", "-java-parameters", "-Xsam-conversions=class", "-Xstring-concat=inline", "-classpath" }) |arg| kotlinc.addArg(arg);
-    kotlinc.addJoinedPathInputs(":", &.{
+    const kotlin_classpath = [_]command.Command.PathInput{
         .{ .file = core_plus },
         .{ .file = kotlin_stdlib },
         .{ .directory = androidx_annotation_classes },
@@ -347,26 +387,56 @@ pub fn build(b: *std.Build, o: Options) Result {
         .{ .directory = error_prone_annotation_classes },
         .{ .directory = r8_keepanno_classes },
         .{ .directory = protobuf_classes },
-    });
-    kotlinc.addArg("-d");
-    const kotlin_classes = kotlinc.addOutputDirectoryArg("kotlin-classes");
-    kotlinc.addPrefixedFileArg("@", sources.java_rsp);
-    kotlinc.addPrefixedFileArg("@", sources.kotlin_rsp);
-    for (o.generated.jvm.sources) |file| kotlinc.addFileArg(file);
-    kotlinc.addFileArg(cronet.preload_source);
-    // K2 also needs package roots to resolve fully qualified Java annotation constants
-    // inherited from Activity. These roots contain only the declared aconfig outputs.
-    for (o.generated.jvm.aconfig_source_roots) |root| {
-        kotlinc.addPrefixedDirectoryArg("-Xjava-source-roots=", root);
-    }
-    // Relocated nano runtime and messages also need a package root for K2.
-    kotlinc.addPrefixedDirectoryArg("-Xjava-source-roots=", o.generated.jvm.nano_source_root);
-    sources.addKotlincInputs(kotlinc.run);
-    kotlinc_inputs.addInputs(kotlinc.run);
-    kotlinc.run.step.dependOn(o.source_audit);
-    // C1-only code fills the code cache faster; size it for the whole tree.
-    kotlinc.run.setEnvironmentVariable("JAVA_OPTS", "-Xmx2048M -Xms256M -XX:TieredStopAtLevel=1 -XX:ReservedCodeCacheSize=512m");
-    kotlinc.run.setName("compile framework Kotlin");
+    };
+    const KotlinModule = struct {
+        /// One kotlinc run over a Kotlin module, with the framework's Java
+        /// sources and generated Java visible as sources.
+        fn compile(builder: *std.Build, aosp_dep: *std.Build.Dependency, opts: Options, set: java_sources.Set,
+            inputs: SourceFiles.Files, preload: LazyPath, classpath: []const command.Command.PathInput,
+            flags: []const []const u8, kotlin_rsp: LazyPath, output: []const u8) struct { run: command.Command, classes: LazyPath } {
+            const run = command.create(builder);
+            run.addFileArg(aosp_dep.path("external/kotlinc/bin/kotlinc"));
+            inline for (.{ "-no-jdk", "-no-stdlib", "-no-reflect", "-nowarn", "-language-version", "2.0", "-api-version", "2.0", "-jvm-target", "21", "-java-parameters", "-Xsam-conversions=class", "-Xstring-concat=inline" }) |arg| run.addArg(arg);
+            run.addArgs(flags);
+            run.addArg("-classpath");
+            run.addJoinedPathInputs(":", classpath);
+            run.addArg("-d");
+            const classes = run.addOutputDirectoryArg(output);
+            run.addPrefixedFileArg("@", set.java_rsp);
+            run.addPrefixedFileArg("@", kotlin_rsp);
+            for (opts.generated.jvm.sources) |file| run.addFileArg(file);
+            run.addFileArg(preload);
+            // K2 also needs package roots to resolve fully qualified Java annotation constants
+            // inherited from Activity. These roots contain only the declared aconfig outputs.
+            for (opts.generated.jvm.aconfig_source_roots) |root| {
+                run.addPrefixedDirectoryArg("-Xjava-source-roots=", root);
+            }
+            // Relocated nano runtime and messages also need a package root for K2.
+            run.addPrefixedDirectoryArg("-Xjava-source-roots=", opts.generated.jvm.nano_source_root);
+            set.addJavacInputs(run.run);
+            inputs.addInputs(run.run);
+            run.run.step.dependOn(opts.source_audit);
+            // C1-only code fills the code cache faster; size it for the whole tree.
+            run.run.setEnvironmentVariable("JAVA_OPTS", "-Xmx2048M -Xms256M -XX:TieredStopAtLevel=1 -XX:ReservedCodeCacheSize=512m");
+            return .{ .run = run, .classes = classes };
+        }
+    };
+    // Pinned frameworks/base/services/permission/Android.bp kotlincflags: its
+    // stock Java callers pass null for platform types (such as the internal
+    // volume UUID), so this module alone omits Kotlin's null assertions.
+    const permission_kotlin = KotlinModule.compile(b, aosp, o, sources, sources.permission_kotlin, cronet.preload_source,
+        &kotlin_classpath, &.{ "-module-name", "services.permission", "-Xjvm-default=all", "-Xno-call-assertions", "-Xno-param-assertions", "-Xno-receiver-assertions" },
+        sources.permission_kotlin_rsp, "permission-kotlin-classes");
+    kotlinc_inputs.addInputs(permission_kotlin.run.run);
+    permission_kotlin.run.run.setName("compile framework permission Kotlin");
+    const permission_classes = permission_kotlin.classes;
+
+    const framework_kotlin = KotlinModule.compile(b, aosp, o, sources, sources.kotlin, cronet.preload_source,
+        &(kotlin_classpath ++ [_]command.Command.PathInput{.{ .directory = permission_classes }}),
+        &.{}, sources.kotlin_rsp, "kotlin-classes");
+    kotlinc_inputs.addInputs(framework_kotlin.run.run);
+    framework_kotlin.run.run.setName("compile framework Kotlin");
+    const kotlin_classes = framework_kotlin.classes;
 
     const javac = command.create(b);
     javac.addArg("javac");
@@ -375,6 +445,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     inline for (.{ "-source", "21", "-target", "21", "-encoding", "UTF-8", "-g", "-parameters", "-XDstringConcat=inline", "-Xmaxerrs", "2000", "-nowarn", "-Xlint:none", "-classpath" }) |arg| javac.addArg(arg);
     javac.addJoinedPathInputs(":", &.{
         .{ .directory = kotlin_classes },
+        .{ .directory = permission_classes },
         .{ .directory = annotation_classes },
         .{ .directory = androidx_annotation_classes },
         .{ .directory = cronet.experimental_annotations },
@@ -389,6 +460,9 @@ pub fn build(b: *std.Build, o: Options) Result {
         .{ .file = safeparcel_jar },
         .{ .file = property_cache_jar },
         .{ .file = package_manager_internal_processor_jar },
+        .{ .directory = auto_value_classes },
+        .{ .directory = auto_value_templates.getDirectory() },
+        .{ .file = kotlinx_metadata_jar },
         .{ .file = o.generated.jvm.system_features_processor },
         .{ .directory = o.generated.jvm.system_features_processor_dependencies },
         .{ .file = kotlin_stdlib },
@@ -397,7 +471,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     });
     javac.addArgs(&.{
         "-processor",
-        "android.app.appsearch.safeparcel.SafeParcelProcessor,android.processor.property_cache.CachedPropertyProcessor,dev.artzig.tools.PackageManagerInternalProcessor,dev.artzig.tools.ActivityManagerInternalProcessor,dev.artzig.tools.WindowManagerInternalProcessor,dev.artzig.tools.DisplayManagerInternalProcessor,dev.artzig.tools.PowerManagerInternalProcessor,dev.artzig.tools.InputManagerInternalProcessor,dev.artzig.tools.BatteryManagerInternalProcessor,dev.artzig.tools.UsageStatsInternalProcessor,dev.artzig.tools.DesktopWindowPolicyProcessor," ++ @import("generator_sources.zig").system_features.processor_class ++ "," ++ compat_declaration.processor_class,
+        "com.google.auto.value.processor.AutoValueProcessor,android.app.appsearch.safeparcel.SafeParcelProcessor,android.processor.property_cache.CachedPropertyProcessor,dev.artzig.tools.ActivityManagerInternalProcessor,dev.artzig.tools.WindowManagerInternalProcessor,dev.artzig.tools.DisplayManagerInternalProcessor,dev.artzig.tools.PowerManagerInternalProcessor,dev.artzig.tools.InputManagerInternalProcessor,dev.artzig.tools.BatteryManagerInternalProcessor,dev.artzig.tools.UsageStatsInternalProcessor,dev.artzig.tools.DesktopWindowPolicyProcessor,dev.artzig.tools.PackageManagerInternalTestDoubleProcessor," ++ @import("generator_sources.zig").system_features.processor_class ++ "," ++ compat_declaration.processor_class,
     });
     javac.addArg("-d");
     const java_classes = javac.addOutputDirectoryArg("java-classes");
@@ -424,6 +498,9 @@ pub fn build(b: *std.Build, o: Options) Result {
     const classes_jar = jar.addOutputFileArg("framework-classes.jar");
     jar.addArg("-C");
     jar.addDirectoryArg(kotlin_classes);
+    jar.addArg(".");
+    jar.addArg("-C");
+    jar.addDirectoryArg(permission_classes);
     jar.addArg(".");
     jar.addArg("-C");
     jar.addDirectoryArg(annotation_classes);
@@ -599,7 +676,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     }
     return .{
         .classes_jar = classes_jar,
-        .static_sources = .{ sources.java_rsp, sources.kotlin_rsp, sources.annotations_rsp },
+        .static_sources = .{ sources.java_rsp, sources.kotlin_rsp, sources.annotations_rsp, sources.permission_kotlin_rsp },
         .compile_boot_jar = core_plus,
         .classpath_jar = classpath_jar,
         .compat_config = compat_config,
@@ -611,7 +688,127 @@ pub fn build(b: *std.Build, o: Options) Result {
         .resources = o.generated.resources,
         .fixtures = o.generated.fixtures,
         .java_step = java_step,
-        .download_provider = download_provider,
-        .desktop_transfer_provider = @import("desktop_transfer_provider.zig").build(b, aosp, classes_jar, core_plus, res_apk),
+        .system_apps = systemApps(b, aosp, .{ .classes = classes_jar, .core = core_plus, .system_modules = sysmod_dir, .resources = res_apk },
+            download_provider, @import("desktop_transfer_provider.zig").build(b, aosp, classes_jar, core_plus, res_apk)),
     };
+}
+
+/// The system image PackageManagerService requires (pinned getRequired*LPr
+/// lookups and config_servicesExtensionPackage) plus the host's own system apps.
+/// frameworks/base/packages/PackageInstaller (android_app PackageInstaller):
+/// the stock installer and uninstaller UI over its androidx static_libs.
+fn packageInstaller(b: *std.Build, aosp: *std.Build.Dependency, framework: @import("system_apks.zig").Framework) LazyPath {
+    const libraries = @import("android_libraries.zig").build(b, aosp, framework.core, framework.classes);
+    var sources = SourceFiles.Collector.init(b);
+    sources.addTree(SourceFiles.Root.dependency(b, aosp, "frameworks/base/packages/PackageInstaller/src"), .{});
+    const androidx = "prebuilts/sdk/current/androidx/m2repository/androidx/";
+    const stdlib_dir = "external/kotlinc/lib/";
+    var jars: std.ArrayList(LazyPath) = .empty;
+    jars.appendSlice(b.allocator, libraries.jars) catch @panic("OOM");
+    jars.append(b.allocator, aosp.path(stdlib_dir ++ "parcelize-runtime.jar")) catch @panic("OOM");
+    return @import("system_apks.zig").build(b, aosp, framework, .{
+        .name = "PackageInstaller",
+        .manifest = aosp.path("frameworks/base/packages/PackageInstaller/AndroidManifest.xml"),
+        .res = aosp.path("frameworks/base/packages/PackageInstaller/res"),
+        .java = paths(b, sources.select(".java")),
+        .kotlin = paths(b, sources.select(".kt")),
+        .kotlin_plugins = &.{aosp.path(stdlib_dir ++ "parcelize-compiler.jar")},
+        .jars = jars.items,
+        .java_resources = libraries.resources,
+        // Pinned prebuilts/sdk Android.bp static_libs closure, dependencies first.
+        .libraries = &.{
+            androidx ++ "annotation/annotation-jvm/1.9.0-rc01/annotation-jvm-1.9.0-rc01.jar",
+            androidx ++ "annotation/annotation-experimental/1.5.0-alpha01/annotation-experimental-1.5.0-alpha01.aar",
+            androidx ++ "collection/collection-jvm/1.5.0-beta03/collection-jvm-1.5.0-beta03.jar",
+            androidx ++ "concurrent/concurrent-futures/1.3.0-alpha01/concurrent-futures-1.3.0-alpha01.jar",
+            androidx ++ "core/core-viewtree/1.1.0-alpha01/core-viewtree-1.1.0-alpha01.aar",
+            androidx ++ "interpolator/interpolator/1.1.0-alpha01/interpolator-1.1.0-alpha01.aar",
+            androidx ++ "arch/core/core-common/2.3.0-alpha01/core-common-2.3.0-alpha01.jar",
+            androidx ++ "arch/core/core-runtime/2.3.0-alpha01/core-runtime-2.3.0-alpha01.aar",
+            androidx ++ "lifecycle/lifecycle-common-jvm/2.9.0-alpha12/lifecycle-common-jvm-2.9.0-alpha12.jar",
+            androidx ++ "tracing/tracing-android/1.3.0-beta01/tracing-android-1.3.0-beta01.aar",
+            androidx ++ "startup/startup-runtime/1.2.0-alpha02/startup-runtime-1.2.0-alpha02.aar",
+            androidx ++ "profileinstaller/profileinstaller/1.5.0-alpha01/profileinstaller-1.5.0-alpha01.aar",
+            androidx ++ "lifecycle/lifecycle-runtime-android/2.9.0-alpha12/lifecycle-runtime-android-2.9.0-alpha12.aar",
+            androidx ++ "versionedparcelable/versionedparcelable/1.2.0-rc01/versionedparcelable-1.2.0-rc01.aar",
+            androidx ++ "core/core/1.16.0-beta01/core-1.16.0-beta01.aar",
+            androidx ++ "core/core-ktx/1.16.0-beta01/core-ktx-1.16.0-beta01.aar",
+            androidx ++ "lifecycle/lifecycle-viewmodel-android/2.9.0-alpha12/lifecycle-viewmodel-android-2.9.0-alpha12.aar",
+            androidx ++ "lifecycle/lifecycle-livedata-core/2.9.0-alpha12/lifecycle-livedata-core-2.9.0-alpha12.aar",
+            androidx ++ "savedstate/savedstate-android/1.3.0-alpha11/savedstate-android-1.3.0-alpha11.aar",
+            androidx ++ "lifecycle/lifecycle-viewmodel-savedstate-android/2.9.0-alpha12/lifecycle-viewmodel-savedstate-android-2.9.0-alpha12.aar",
+            androidx ++ "activity/activity/1.11.0-alpha01/activity-1.11.0-alpha01.aar",
+            androidx ++ "loader/loader/1.2.0-alpha01/loader-1.2.0-alpha01.aar",
+            androidx ++ "customview/customview/1.2.0-alpha03/customview-1.2.0-alpha03.aar",
+            androidx ++ "viewpager/viewpager/1.1.0-alpha02/viewpager-1.1.0-alpha02.aar",
+            androidx ++ "fragment/fragment/1.9.0-alpha01/fragment-1.9.0-alpha01.aar",
+            androidx ++ "vectordrawable/vectordrawable/1.2.0/vectordrawable-1.2.0.aar",
+            androidx ++ "vectordrawable/vectordrawable-animated/1.2.0/vectordrawable-animated-1.2.0.aar",
+            androidx ++ "cursoradapter/cursoradapter/1.1.0-alpha01/cursoradapter-1.1.0-alpha01.aar",
+            androidx ++ "drawerlayout/drawerlayout/1.3.0-alpha01/drawerlayout-1.3.0-alpha01.aar",
+            androidx ++ "lifecycle/lifecycle-process/2.9.0-alpha12/lifecycle-process-2.9.0-alpha12.aar",
+            androidx ++ "emoji2/emoji2/1.5.0-rc01/emoji2-1.5.0-rc01.aar",
+            androidx ++ "emoji2/emoji2-views-helper/1.5.0-rc01/emoji2-views-helper-1.5.0-rc01.aar",
+            androidx ++ "resourceinspection/resourceinspection-annotation/1.1.0-alpha01/resourceinspection-annotation-1.1.0-alpha01.jar",
+            androidx ++ "appcompat/appcompat/1.8.0-alpha01/appcompat-1.8.0-alpha01.aar",
+            androidx ++ "customview/customview-poolingcontainer/1.1.0-alpha01/customview-poolingcontainer-1.1.0-alpha01.aar",
+            androidx ++ "recyclerview/recyclerview/1.5.0-alpha01/recyclerview-1.5.0-alpha01.aar",
+            androidx ++ "leanback/leanback-grid/1.0.0-beta01/leanback-grid-1.0.0-beta01.aar",
+            androidx ++ "media/media/1.7.0-alpha02/media-1.7.0-alpha02.aar",
+            androidx ++ "leanback/leanback/1.2.0-beta01/leanback-1.2.0-beta01.aar",
+            androidx ++ "lifecycle/lifecycle-livedata-core-ktx/2.9.0-alpha12/lifecycle-livedata-core-ktx-2.9.0-alpha12.aar",
+            androidx ++ "lifecycle/lifecycle-livedata/2.9.0-alpha12/lifecycle-livedata-2.9.0-alpha12.aar",
+            androidx ++ "lifecycle/lifecycle-service/2.9.0-alpha12/lifecycle-service-2.9.0-alpha12.aar",
+            "prebuilts/sdk/current/androidx-legacy/m2repository/androidx/lifecycle/lifecycle-extensions/2.3.0-alpha01/lifecycle-extensions-2.3.0-alpha01.aar",
+        },
+    });
+}
+
+fn paths(b: *std.Build, files: SourceFiles.Files) []const LazyPath {
+    const result = b.allocator.alloc(LazyPath, files.items.len) catch @panic("OOM");
+    for (files.items, result) |file, *path| path.* = file.path;
+    return result;
+}
+
+fn systemApps(b: *std.Build, aosp: *std.Build.Dependency, framework: @import("system_apks.zig").Framework,
+    download_provider: LazyPath, desktop_transfer_provider: LazyPath) []const @import("system_apks.zig").SystemApp {
+    const apps = @import("system_apks.zig");
+    const list = [_]apps.SystemApp{
+        .{ .name = "ExtShared", .privileged = false, .apk = apps.build(b, aosp, framework, .{
+            .name = "ExtShared",
+            .manifest = aosp.path("frameworks/base/packages/ExtShared/AndroidManifest.xml"),
+            .res = aosp.path("frameworks/base/packages/ExtShared/res"),
+            .java = &.{aosp.path("frameworks/base/packages/ExtShared/src/android/ext/shared/Version.java")},
+            .shared_lib = true,
+        }) },
+        .{ .name = "ExtServices", .privileged = true, .apk = apps.build(b, aosp, framework, .{
+            .name = "ExtServices",
+            .manifest = b.path("testdata/ext-services/AndroidManifest.xml"),
+        }) },
+        .{ .name = "PermissionController", .privileged = true, .apk = apps.build(b, aosp, framework, .{
+            .name = "PermissionController",
+            .manifest = b.path("testdata/permission-controller/AndroidManifest.xml"),
+            .kotlin = &.{b.path("src/java/dev/artzig/permissioncontroller/PermissionControllerActivities.kt")},
+        }) },
+        .{ .name = "Shell", .privileged = true, .apk = apps.build(b, aosp, framework, .{
+            .name = "Shell",
+            .manifest = aosp.path("frameworks/base/packages/Shell/AndroidManifest.xml"),
+            .res = aosp.path("frameworks/base/packages/Shell/res"),
+            // Shell flags_packages values matching the framework's generated aconfig flags.
+            .feature_flags = "android.permission.flags.replace_body_sensor_permission_enabled:ro=false,android.security.protect_device_config_flags:ro=false",
+        }) },
+        .{ .name = "PackageInstaller", .privileged = true, .apk = packageInstaller(b, aosp, framework) },
+        .{ .name = "Settings", .privileged = false, .apk = apps.build(b, aosp, framework, .{
+            .name = "Settings",
+            .manifest = b.path("testdata/settings-standin/AndroidManifest.xml"),
+            .kotlin = &.{b.path("src/java/dev/artzig/settings/ManageUnknownAppSourcesActivity.kt")},
+        }) },
+        .{ .name = "SdkSandbox", .privileged = false, .apk = apps.build(b, aosp, framework, .{
+            .name = "SdkSandbox",
+            .manifest = b.path("testdata/sdk-sandbox-standin/AndroidManifest.xml"),
+        }) },
+        .{ .name = "DownloadProvider", .privileged = true, .apk = download_provider },
+        .{ .name = "DesktopTransferProvider", .privileged = false, .apk = desktop_transfer_provider },
+    };
+    return b.allocator.dupe(apps.SystemApp, &list) catch @panic("OOM");
 }

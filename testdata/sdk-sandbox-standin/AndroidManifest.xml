@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TEMPORARY bring-up stand-in for packages/modules/AdServices/sdksandbox/SdkSandbox.
+     Pinned PackageManagerService.getRequiredSdkSandboxPackageName requires exactly
+     one system service for com.android.sdksandbox.SdkSandboxService. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.android.sdksandbox"
+    android:versionCode="1"
+    android:versionName="hosted">
+    <application android:label="SDK sandbox" android:hasCode="false" android:allowBackup="false">
+        <service android:name=".SdkSandboxService" android:exported="true"
+            android:permission="android.permission.BIND_SDK_SANDBOX_SERVICE">
+            <intent-filter>
+                <action android:name="com.android.sdksandbox.SdkSandboxService" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

@@ -35,49 +35,26 @@ internal object SystemServices {
         val manager = SystemServiceManager(context)
         LocalServices.addService(SystemServiceManager::class.java, manager)
         val userLifecycle = HostedUserLifecycle()
-        val userManager = HostedUserManagerInternal(userLifecycle)
-        LocalServices.addService(UserManagerInternal::class.java, userManager)
         // Seams the reused AOSP services consult (clipboard first): window focus,
         // URI grants, and the IUserManager binder.
         LocalServices.addService(
             VirtualDeviceManagerInternal::class.java,
             HostedVirtualDeviceManagerInternal(),
         )
-        // Identity/policy services on the real AIDL surfaces, session-global
-        // (any process may ask about users or app-ops).
-        android.os.ServiceManager.addService(Context.USER_SERVICE, HostedUserManagerService(userLifecycle))
         android.os.ServiceManager.addService(Context.NSD_SERVICE, HostedNsdService(context))
 
         val trace = TimingsTraceAndSlog()
-        // Bootstrap services (source note: SystemServer.startBootstrapServices
-        // starts the package manager before the activity manager). The
-        // platform package "android" is framework-res.apk parsed by the real
-        // AOSP parser — its manifest is the session's permission source.
-        val packageManager = HostedPackageManagerService(userManager, desktopWindows = true,
-            reservePackageUid = dev.artzig.BinderSession::reservePackageUid)
-        android.os.ServiceManager.addService("package", packageManager)
-        val permissionPolicy = HostedWindowPermissionPolicy(context, packageManager)
-        LocalServices.addService(com.android.server.policy.PermissionPolicyInternal::class.java, permissionPolicy)
-        LocalServices.addService(
-            com.android.server.pm.permission.LegacyPermissionManagerInternal::class.java,
-            HostedLegacyPermissionManagerInternal(packageManager),
-        )
-        val packageManagerInternal = Class.forName(
-            "android.content.pm.HostedPackageManagerInternal",
-        ).getConstructor(HostedPackageManagerService::class.java)
-            .newInstance(packageManager) as PackageManagerInternal
-        LocalServices.addService(PackageManagerInternal::class.java, packageManagerInternal)
+        // Source note: SystemServer.startBootstrapServices starts the activity
+        // manager (and its AppOpsService) and PlatformCompat before the package
+        // manager; PackageManagerService.main then creates the user, permission
+        // and app-filter services and scans the system image.
         android.os.ServiceManager.addService("apexservice", HostedApexService())
-        com.android.server.pm.HostedApexPackages.initialize()
         val platformCompat = com.android.server.compat.PlatformCompat(context)
         android.os.ServiceManager.addService(Context.PLATFORM_COMPAT_SERVICE, platformCompat)
         android.os.ServiceManager.addService(Context.PLATFORM_COMPAT_NATIVE_SERVICE,
             com.android.server.compat.PlatformCompatNative(platformCompat))
         val activityManager = HostedActivityManagerService(context)
         activityManager.platformCompat = platformCompat
-        val processLauncher = HostedZygoteService(packageManager, activityManager::dispatchProcessExit)
-        activityManager.processLauncher = processLauncher.serviceLauncher()
-        activityManager.packageService = packageManager
         android.os.ServiceManager.addService(Context.ACTIVITY_SERVICE, activityManager, true,
             android.os.IServiceManager.DUMP_FLAG_PRIORITY_CRITICAL or android.os.IServiceManager.DUMP_FLAG_PRIORITY_NORMAL or
                 android.os.IServiceManager.DUMP_FLAG_PROTO)
@@ -85,42 +62,50 @@ internal object SystemServices {
         // C++ PermissionCache uses android.os.IPermissionController over these same authorities.
         android.os.ServiceManager.addService("permission",
             HostedNativePermissionController(context, activityManager))
-        android.os.ServiceManager.addService(Context.WIFI_SERVICE,
-            HostedWifiService(HostedPermissions(packageManager)))
-        android.os.ServiceManager.addService(Context.COMPANION_DEVICE_SERVICE, HostedCompanionDeviceService(context))
-        android.os.ServiceManager.addService(Context.VIRTUAL_DEVICE_SERVICE, HostedVirtualDeviceService(context))
-        val activityManagerAccess = HostActivityManagerInternalAccess(activityManager, packageManager, userLifecycle)
+        // ActivityManagerService.start publishes ActivityManagerInternal before
+        // the package manager caches it (BroadcastHelper, AppsFilter).
+        val activityManagerAccess = HostActivityManagerInternalAccess(activityManager,
+            { checkNotNull(activityManager.packageService) { "package manager is not started" } }, userLifecycle)
         val activityManagerInternal = Class.forName("android.app.HostedActivityManagerInternal")
             .getConstructor(HostActivityManagerInternalAccess::class.java)
             .newInstance(activityManagerAccess) as android.app.ActivityManagerInternal
         LocalServices.addService(android.app.ActivityManagerInternal::class.java, activityManagerInternal)
-        com.android.server.LocalManagerRegistry.addManager(
-            com.android.server.pm.PackageManagerLocal::class.java,
-            HostedPackageManagerLocal(packageManager))
-        android.os.ServiceManager.addService(Context.SENSOR_PRIVACY_SERVICE,
-            HostedSensorPrivacyService(context))
+        StockPackageServices.startAccessChecking(manager)
         val appOps = com.android.server.appop.HostedAppOpsBootstrap.create(context)
         activityManager.appOps = appOps
+        // SystemServer.startBootstrapServices starts PowerManagerService before
+        // the package manager (PackageDexOptimizer holds a wake lock).
+        val power = HostedPowerManagerService()
+        android.os.ServiceManager.addService(Context.POWER_SERVICE, power)
+        LocalServices.addService(android.os.PowerManagerInternal::class.java,
+            Class.forName("android.os.HostedPowerManagerInternal")
+                .getConstructor(HostedPowerManagerService::class.java)
+                .newInstance(power) as android.os.PowerManagerInternal)
+        android.os.ServiceManager.addService(Context.THERMAL_SERVICE, HostedThermalService())
+        val packages = StockPackageServices.startBootstrap(context, manager, platformCompat)
+        val packageManager = packages.packages
+        // SystemServer.startOtherServices: user-aware services follow the
+        // package manager, which creates UserManagerService.
+        android.os.ServiceManager.addService(Context.COMPANION_DEVICE_SERVICE, HostedCompanionDeviceService(context))
+        android.os.ServiceManager.addService(Context.VIRTUAL_DEVICE_SERVICE, HostedVirtualDeviceService(context))
+        android.os.ServiceManager.addService(Context.SENSOR_PRIVACY_SERVICE,
+            HostedSensorPrivacyService(context))
+        val permissionPolicy = HostedWindowPermissionPolicy(context, packageManager)
+        LocalServices.addService(com.android.server.policy.PermissionPolicyInternal::class.java, permissionPolicy)
+        val processLauncher = HostedZygoteService(packageManager, activityManager::dispatchProcessExit)
+        activityManager.processLauncher = processLauncher.serviceLauncher()
+        activityManager.packageService = packageManager
+        android.os.ServiceManager.addService(Context.WIFI_SERVICE,
+            HostedWifiService(HostedPermissions(packageManager)))
         // Publish before services construct SystemSensorManager and wait for its native Binder.
         android.os.ServiceManager.addService("sensorservice", nativeCreateSensorService())
-        LocalServices.addService(com.android.server.pm.permission.PermissionManagerServiceInterface::class.java,
-            HostedPermissionPolicy(packageManager))
-        com.android.server.pm.permission.PermissionManagerService.create(context, android.util.ArrayMap())
         android.os.ServiceManager.addService(Context.FINGERPRINT_SERVICE,
             HostedFingerprintService(HostedPermissions(packageManager), appOps))
-        // PMS creates permission services before scanning its packages.
-        // PackageParser2 asks PermissionManager for split permissions even for
-        // framework-res and system-image APKs; publishing later loses that input.
-        packageManager.installPlatform(
-            checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")) { "ARTZIG_FRAMEWORK_RES is not set" },
-        )
-        // Pinned PMS scans system-image APKs before publishing packages. The host
-        // application bundle places them next to res/, with ordinary package UIDs.
-        val imageApps = java.io.File(java.io.File(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES"))).parentFile.parentFile, "apps")
-        imageApps.listFiles()?.filter { it.isFile && it.extension == "apk" }
-            ?.sortedBy { it.name }?.forEach { packageManager.installSystemPackage(it.canonicalPath) }
-        stockWindows.startTasks(manager)
-        android.os.ServiceManager.addService("hosted_installer", HostedInstallerService(packageManager, activityManager))
+        // SystemServer.startBootstrapServices: UriGrantsManagerService before
+        // ActivityTaskManagerService, which caches its local service.
+        manager.startService(com.android.server.uri.UriGrantsManagerService.Lifecycle::class.java)
+        stockWindows.startTasks(manager, activityManager)
+        android.os.ServiceManager.addService("hosted_installer", HostedInstallerService(context, activityManager))
         if (dev.artzig.testing.ProcessInspection.enabled) {
             val inspection = HostedInspectionRegistry(activityManager)
             android.os.ServiceManager.addService(dev.artzig.testing.ProcessInspection.SERVICE, inspection)
@@ -131,7 +116,6 @@ internal object SystemServices {
         android.os.ServiceManager.addService("content", HostedContentService())
         // Stock stats-manager caches pull callbacks while the native statsd daemon is absent.
         android.os.ServiceManager.addService("statsmanager", com.android.server.stats.StatsManagerService(context))
-        manager.startService(com.android.server.uri.UriGrantsManagerService.Lifecycle::class.java)
         val settingsInfo = android.content.pm.ProviderInfo()
         settingsInfo.packageName = "android"
         settingsInfo.name = SettingsProvider::class.java.name
@@ -170,14 +154,7 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.JOB_SCHEDULER_SERVICE, jobs)
         // Managers over hosted services, phase 2: power (+ thermal), vibrator, battery
         // (properties, sticky broadcast, battery stats), usage and storage stats, device idle.
-        val power = HostedPowerManagerService()
-        android.os.ServiceManager.addService(Context.POWER_SERVICE, power)
-        LocalServices.addService(android.os.PowerManagerInternal::class.java,
-            Class.forName("android.os.HostedPowerManagerInternal")
-                .getConstructor(HostedPowerManagerService::class.java)
-                .newInstance(power) as android.os.PowerManagerInternal)
         manager.startService(com.android.server.power.hint.HintManagerService::class.java)
-        android.os.ServiceManager.addService(Context.THERMAL_SERVICE, HostedThermalService())
         android.os.ServiceManager.addService(Context.VIBRATOR_MANAGER_SERVICE, HostedVibratorManagerService())
         val battery = HostedBatteryService(activityManager)
         activityManager.batteryService = battery
@@ -204,7 +181,12 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.STORAGE_STATS_SERVICE, storageStats)
         // AOSP StorageManager uses the historical ServiceManager name "mount";
         // Context.STORAGE_SERVICE is the Context wrapper name, not the transport.
-        android.os.ServiceManager.addService("mount", HostedStorageManagerService(packageManager))
+        val storage = HostedStorageManagerService(packageManager)
+        LocalServices.addService(android.os.storage.StorageManagerInternal::class.java, storage.local)
+        android.os.ServiceManager.addService("mount", storage)
+        // SystemServer.startOtherServices: AppHibernationService and ART Service
+        // after the core services (usage stats, job scheduler, storage).
+        StockPackageServices.startOther(context, packages)
         android.os.ServiceManager.addService(
             Context.DEVICE_POLICY_SERVICE,
             HostedDevicePolicyManagerService(),
@@ -227,7 +209,6 @@ internal object SystemServices {
         // Phase 4: location (no providers), lights (none), color display (no transforms).
         // Original native sensor clients now use the system sensor service.
         val location = HostedLocationManagerService()
-        location.packageService = packageManager
         android.os.ServiceManager.addService(Context.LOCATION_SERVICE, location)
         android.os.ServiceManager.addService(Context.LIGHTS_SERVICE, HostedLightsService())
         // ActivityRecord attaches its per-app color transform to this stock
@@ -257,7 +238,6 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.SEARCH_SERVICE, HostedSearchManagerService(context, packageManager))
         android.os.ServiceManager.addService(Context.DROPBOX_SERVICE, HostedDropBoxManagerService(context, hostedPermissions))
         android.os.ServiceManager.addService(Context.OVERLAY_SERVICE, HostedOverlayManagerService(hostedPermissions))
-        android.os.ServiceManager.addService(Context.DOMAIN_VERIFICATION_SERVICE, HostedDomainVerificationService(packageManager, hostedPermissions))
         android.os.ServiceManager.addService(Context.WALLPAPER_SERVICE, HostedWallpaperManagerService(hostedPermissions))
         android.os.ServiceManager.addService(Context.CREDENTIAL_SERVICE, HostedCredentialManagerService(hostedPermissions))
         android.os.ServiceManager.addService(Context.SHORTCUT_SERVICE, HostedShortcutService(context, hostedPermissions))
@@ -288,11 +268,18 @@ internal object SystemServices {
         // Pinned AMS.systemReady marks its state before the phase callback.
         activityManagerAccess.setSystemReady()
         stockWindows.systemReady()
+        // SystemServer: PackageManagerService.systemReady follows WindowManagerService.systemReady.
+        StockPackageServices.systemReady(packages)
         manager.startBootPhase(trace, SystemService.PHASE_ACTIVITY_MANAGER_READY)
         com.android.server.webkit.HostedWebViewUpdateService(context, hostedPermissions,
             processLauncher::selectWebViewProvider).start()
         manager.startBootPhase(trace, SystemService.PHASE_THIRD_PARTY_APPS_CAN_START)
+        val userManager = com.android.server.pm.UserManagerService.getInstance()
+        val userManagerInternal = LocalServices.getService(com.android.server.pm.UserManagerInternal::class.java)
         userLifecycle.start(object : HostedUserLifecycle.Services {
+            override fun beforeStart(userId: Int) = userManager.onBeforeStartUser(userId)
+            override fun beforeUnlock(userId: Int) = userManager.onBeforeUnlockUser(userId)
+            override fun stateChanged(userId: Int, state: Int) = userManagerInternal.setUserState(userId, state)
             override fun starting(userId: Int) {
                 manager.onUserStarting(trace, userId)
                 permissionPolicy.startUser(userId)
@@ -315,7 +302,19 @@ internal object SystemServices {
                 stockWindows.verifyStartup()
                 android.os.SystemProperties.set("sys.azk.boot_completed", "1")
                 Log.i(TAG, "system services started for " + context.packageName)
-                onBootComplete()
+                // The session's preinstalled packages (`pm install` before an
+                // instrumentation run) are present when the session reports ready.
+                val preinstalled = System.getenv("AZK_SESSION_INSTALL")?.split(':')?.filter { it.isNotEmpty() }.orEmpty()
+                if (preinstalled.isEmpty()) onBootComplete() else kotlin.concurrent.thread(name = "session-install") {
+                    val failure = runCatching {
+                        for (apk in preinstalled) Log.i(TAG, "preinstalled " + StockPackageServices.installApk(context, java.io.File(apk)))
+                    }.exceptionOrNull()
+                    // A failed preinstall is a failed boot: rethrow on the main
+                    // thread, so the system process dies with the install error
+                    // and the session reports it instead of waiting for ready.
+                    if (failure == null) onBootComplete()
+                    else check(completionHandler.post { throw IllegalStateException("Session preinstall failed", failure) })
+                }
             })
         }
         stockWindows.bootCompleted()

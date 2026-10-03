@@ -75,8 +75,7 @@ object HostedProcessObserversSmoke {
             val denied = HostedActivityManagerService()
             check(runCatching { denied.registerProcessObserver(Observer()) }
                 .exceptionOrNull() is SecurityException)
-            val access = HostActivityManagerInternalAccess(denied, HostedPackageManagerService(
-            dev.artzig.system.HostedUserManagerInternal(dev.artzig.system.HostedUserLifecycle())),
+            val access = HostActivityManagerInternalAccess(denied, android.content.pm.IPackageManager.Default(),
                 HostedUserLifecycle())
             val local = Class.forName("android.app.HostedActivityManagerInternal")
                 .getConstructor(HostActivityManagerInternalAccess::class.java)

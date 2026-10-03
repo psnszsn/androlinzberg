@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Host stand-in for the ExtServices module APK
+     (packages/modules/ExtServices). Pinned
+     PackageManagerService.getRequiredServicesExtensionPackageLPr requires the
+     system package named by config_servicesExtensionPackage. The module's
+     notification assistant, text classifier and storage services, which need
+     its native libraries and models, are not built here. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="android.ext.services"
+    android:versionCode="1"
+    android:versionName="hosted"
+    coreApp="true">
+    <application android:label="Android services" android:hasCode="false" android:allowBackup="false" />
+</manifest>

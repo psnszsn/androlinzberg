@@ -16,9 +16,13 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class HostActivityManagerInternalAccess internal constructor(
     private val activities: HostedActivityManagerService,
-    private val packages: HostedPackageManagerService,
+    // AMS reaches the package manager lazily (AppGlobals): ActivityManagerInternal
+    // is published before PackageManagerService starts.
+    private val packageService: () -> android.content.pm.IPackageManager,
     private val users: HostedUserLifecycle,
 ) {
+    internal constructor(activities: HostedActivityManagerService, packages: android.content.pm.IPackageManager, users: HostedUserLifecycle) :
+        this(activities, { packages }, users)
     private val ready = AtomicBoolean(false)
 
     fun registerProcessObserver(observer: android.app.IProcessObserver) =
@@ -44,6 +48,10 @@ class HostActivityManagerInternalAccess internal constructor(
     fun isActivityStartsLoggingEnabled(): Boolean = android.provider.Settings.Global.getInt(
         (android.app.ActivityThread.currentActivityThread().systemContext as android.content.Context).contentResolver,
         android.provider.Settings.Global.ACTIVITY_STARTS_LOGGING_ENABLED, 1) == 1
+    /** ActivityManagerConstants.updateBootTimeTempAllowListDuration: the window
+     * PackageManagerService grants package-replaced and boot-time broadcasts. */
+    fun getBootTimeTempAllowListDuration(): Long = android.provider.DeviceConfig.getLong(
+        android.provider.DeviceConfig.NAMESPACE_ACTIVITY_MANAGER, "boot_time_temp_allowlist_duration", 20_000L)
     fun isBackgroundActivityStartsEnabled(): Boolean = android.provider.DeviceConfig.getBoolean(
         android.provider.DeviceConfig.NAMESPACE_ACTIVITY_MANAGER,
         "default_background_activity_starts_enabled", false)
@@ -67,6 +75,15 @@ class HostActivityManagerInternalAccess internal constructor(
     fun isCurrentProfile(userId: Int): Boolean = userId == UserHandle.USER_SYSTEM
     fun hasStartedUserState(userId: Int): Boolean = userId == UserHandle.USER_SYSTEM
     fun isUserRunning(userId: Int, flags: Int): Boolean = users.isRunning(userId, flags)
+    fun broadcastIntent(intent: Intent, resultTo: android.content.IIntentReceiver?, requiredPermissions: Array<String>?,
+        serialized: Boolean, userId: Int, appIdAllowList: IntArray?,
+        filterExtrasForReceiver: java.util.function.BiFunction<Int, android.os.Bundle, android.os.Bundle>?, bOptions: android.os.Bundle?): Int =
+        activities.broadcastIntentFromSystem(intent, resultTo, requiredPermissions, serialized, userId, appIdAllowList,
+            filterExtrasForReceiver, bOptions)
+    fun broadcastIntentWithCallback(intent: Intent, resultTo: android.content.IIntentReceiver?, requiredPermissions: Array<String>?,
+        userId: Int, appIdAllowList: IntArray?,
+        filterExtrasForReceiver: java.util.function.BiFunction<Int, android.os.Bundle, android.os.Bundle>?, bOptions: android.os.Bundle?): Int =
+        broadcastIntent(intent, resultTo, requiredPermissions, false, userId, appIdAllowList, filterExtrasForReceiver, bOptions)
     // UserController.shouldConfirmCredentials returns false for absent user state
     // or a user without credentials shared with a parent. The host has only its
     // full system user, and no credential-sharing profiles.
@@ -74,7 +91,7 @@ class HostActivityManagerInternalAccess internal constructor(
     fun addCreatorToken(intent: Intent?, creatorPackage: String?) =
         activities.addCreatorToken(intent, creatorPackage)
     fun enforceCallingPermission(permission: String, operation: String) =
-        HostedPermissions(packages).enforce(permission, operation)
+        HostedPermissions(packageService()).enforce(permission, operation)
     fun checkContentProviderUriPermission(uri: Uri, userId: Int, callingUid: Int, modeFlags: Int): Int =
         activities.checkProviderUriPermissionFromHost(uri, userId, callingUid, modeFlags)
 

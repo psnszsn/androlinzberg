@@ -14,8 +14,8 @@ internal object CallerIdentitySystemSmoke {
         val pkg = checkNotNull(System.getenv("AZK_BINDER_PACKAGE"))
         val client = pkg == "dev.artzig.identity.a"
         HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 320, 240, 120, 0)
-        val fixture = checkNotNull(System.getenv(if (client) "AZK_FIXTURE_IDENTITY_A" else "AZK_FIXTURE_IDENTITY_B"))
-        check(checkNotNull(HostedServiceClient.installerOrNull()).installPackage(fixture, null) == pkg)
+        // Preinstalled by the session; this process runs with its package's uid.
+        check(android.app.ActivityThread.getPackageManager().getPackageUid(pkg, 0L, 0) == android.os.Process.myUid())
         val context = HostedServiceClient.attachApplication(pkg)
         check(!context.applicationInfo.isSignedWithPlatformKey)
         check(context.packageManager.checkSignatures(pkg, "android") == PackageManager.SIGNATURE_NO_MATCH)

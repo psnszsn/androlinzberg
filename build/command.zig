@@ -124,6 +124,17 @@ pub const Command = struct {
         command.run.addDirectoryArg(value);
     }
 
+    /// A build-root-relative path, passed absolute: Android processes run from "/".
+    pub fn setHostPathEnvironment(command: Command, name: []const u8, relative: []const u8) void {
+        command.run.addArgs(&.{ "--env-path", name, relative });
+    }
+
+    /// Prepends an absolute file path to a colon-separated list variable.
+    pub fn prependFileEnvironment(command: Command, name: []const u8, value: LazyPath) void {
+        command.run.addArgs(&.{ "--env-path-prepend", name });
+        command.run.addFileArg(value);
+    }
+
     pub fn setChildPathEnvironment(command: Command, name: []const u8, child: []const u8, parent: LazyPath) void {
         command.run.addArgs(&.{ "--env-child", name, child });
         command.run.addDirectoryArg(parent);

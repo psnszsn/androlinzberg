@@ -32,8 +32,6 @@ import android.util.Log
 class HostedLocationManagerService : android.location.ILocationManager.Stub(), android.location.ILocationManager by unsupported<android.location.ILocationManager>() {
     override fun asBinder(): android.os.IBinder = this
 
-    @Volatile var packageService: HostedPackageManagerService? = null
-
     private val lock = Any()
     private val listeners = LinkedHashMap<IBinder, Pair<String, String?>>()
     private val pendingIntents = LinkedHashMap<PendingIntent, String>()

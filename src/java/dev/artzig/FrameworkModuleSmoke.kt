@@ -130,7 +130,6 @@ import android.window.IWindowContainerToken
 import android.window.TaskSnapshot
 import android.window.WindowContainerToken
 import dev.artzig.system.HostedActivityManagerService
-import dev.artzig.system.HostedPackageManagerService
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebViewClient
@@ -916,13 +915,31 @@ internal object FrameworkModuleSmoke {
             override fun checkCallingOrSelfPermission(permission: String) = PackageManager.PERMISSION_GRANTED
             override fun enforceCallingOrSelfPermission(permission: String, message: String?) {}
         }
+        // NetworkScoreService registers its open-Wi-Fi app with the system
+        // server's LegacyPermissionManagerService; record it in-process.
         val legacyClass = com.android.server.pm.permission.LegacyPermissionManagerInternal::class.java
+        var openWifiProvider: com.android.server.pm.permission.LegacyPermissionManagerInternal.PackagesProvider? = null
+        val legacy = object : com.android.server.pm.permission.LegacyPermissionManagerInternal {
+            override fun resetRuntimePermissions() = error("unexpected")
+            override fun setDialerAppPackagesProvider(provider: com.android.server.pm.permission.LegacyPermissionManagerInternal.PackagesProvider?) = error("unexpected")
+            override fun setLocationExtraPackagesProvider(provider: com.android.server.pm.permission.LegacyPermissionManagerInternal.PackagesProvider?) = error("unexpected")
+            override fun setLocationPackagesProvider(provider: com.android.server.pm.permission.LegacyPermissionManagerInternal.PackagesProvider?) = error("unexpected")
+            override fun setSimCallManagerPackagesProvider(provider: com.android.server.pm.permission.LegacyPermissionManagerInternal.PackagesProvider?) = error("unexpected")
+            override fun setSmsAppPackagesProvider(provider: com.android.server.pm.permission.LegacyPermissionManagerInternal.PackagesProvider?) = error("unexpected")
+            override fun setSyncAdapterPackagesProvider(provider: com.android.server.pm.permission.LegacyPermissionManagerInternal.SyncAdapterPackagesProvider?) = error("unexpected")
+            override fun setUseOpenWifiAppPackagesProvider(provider: com.android.server.pm.permission.LegacyPermissionManagerInternal.PackagesProvider?) { openWifiProvider = provider }
+            override fun setVoiceInteractionPackagesProvider(provider: com.android.server.pm.permission.LegacyPermissionManagerInternal.PackagesProvider?) = error("unexpected")
+            override fun grantDefaultPermissionsToDefaultSimCallManager(packageName: String, userId: Int) = error("unexpected")
+            override fun grantDefaultPermissionsToDefaultUseOpenWifiApp(packageName: String, userId: Int) = error("unexpected")
+            override fun grantDefaultPermissions(userId: Int) = error("unexpected")
+            override fun scheduleReadDefaultPermissionExceptions() = error("unexpected")
+            override fun checkSoundTriggerRecordAudioPermissionForDataDelivery(uid: Int, packageName: String, attributionTag: String?, reason: String): Int = error("unexpected")
+        }
         val ownsLegacy = com.android.server.LocalServices.getService(legacyClass) == null
-        if (ownsLegacy) com.android.server.LocalServices.addService(legacyClass,
-            dev.artzig.system.HostedLegacyPermissionManagerInternal(HostedPackageManagerService(
-            dev.artzig.system.HostedUserManagerInternal(dev.artzig.system.HostedUserLifecycle()))))
+        if (ownsLegacy) com.android.server.LocalServices.addService(legacyClass, legacy)
         try {
             val service = com.android.server.NetworkScoreService(context)
+            if (ownsLegacy) check(openWifiProvider!!.getPackages(0) == null)
             var invalidations = 0
             val cache = object : android.net.INetworkScoreCache.Stub() {
                 override fun updateScores(scores: MutableList<android.net.ScoredNetwork>?) {
@@ -954,8 +971,7 @@ internal object FrameworkModuleSmoke {
         check(!android.app.ActivityManager.isUserAMonkey())
         // LocalServices belongs to system_server; exercise the generated stock adapter
         // with a separate in-memory service so these contracts do not depend on IPC identity.
-        val packages = HostedPackageManagerService(
-            dev.artzig.system.HostedUserManagerInternal(dev.artzig.system.HostedUserLifecycle()))
+        val packages = android.content.pm.IPackageManager.Default()
         val local = dev.artzig.system.HostActivityManagerInternalAccess(
             HostedActivityManagerService(), packages, dev.artzig.system.HostedUserLifecycle(),
         )
@@ -2372,11 +2388,9 @@ internal object FrameworkModuleSmoke {
     private fun testHostedPermissionGrants() {
         val frameworkResources =
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk"
-        // Server-side install of the fixture APK: WAKE_LOCK (normal) is
-        // granted at install, CAMERA (dangerous) is not.
-        val fixture = checkNotNull(permissionsFixtureApk) { "permission fixture APK argument missing" }
-        val installer = checkNotNull(dev.artzig.HostedServiceClient.installerOrNull())
-        check(installer.installPackage(fixture, null) == "org.example.permissions")
+        // The session preinstalled the fixture APK (stock PackageInstaller
+        // session): WAKE_LOCK (normal) is granted at install, CAMERA (dangerous) is not.
+        check(ActivityThread.getPackageManager().getPackageUid("org.example.permissions", 0L, 0) == android.os.Process.myUid())
 
         val wakeLock = "android.permission.WAKE_LOCK"
         val camera = "android.permission.CAMERA"
@@ -2431,7 +2445,7 @@ internal object FrameworkModuleSmoke {
         check(permissions.checkPermission("org.example.missing", wakeLock, defaultDevice, 0) == PackageManager.PERMISSION_DENIED)
         // WAKE_LOCK is not device-aware; AOSP reads its default-device grant.
         check(permissions.checkUidPermission(uid, wakeLock, 777) == PackageManager.PERMISSION_GRANTED)
-        StockPermissionClientsSmoke.run(base, fixture)
+        StockPermissionClientsSmoke.run(base, checkNotNull(permissionsFixtureApk))
         val permissionState = android.permission.PermissionManager.PermissionState(true, 0x1234)
         val stateParcel = Parcel.obtain()
         try {
@@ -2700,9 +2714,7 @@ internal object FrameworkModuleSmoke {
         check(runCatching { activityTaskService.getTaskBounds(Int.MAX_VALUE) }
             .exceptionOrNull() is SecurityException)
         // Stock ATMS validates the package/UID before resolving an activity.
-        val fixture = checkNotNull(permissionsFixtureApk) { "permission fixture APK argument missing" }
-        val fixtureInstaller = checkNotNull(dev.artzig.HostedServiceClient.installerOrNull())
-        check(fixtureInstaller.installPackage(fixture, null) == "org.example.permissions")
+        check(ActivityThread.getPackageManager().getPackageUid("org.example.permissions", 0L, 0) == android.os.Process.myUid())
         check(activityTaskService.startActivity(
             null,
             "org.example.permissions",
@@ -2948,14 +2960,12 @@ internal object FrameworkModuleSmoke {
             0,
         )
         android.app.PropertyInvalidatedCache.disableForTestMode()
-        StockPackageSnapshotsSmoke.run(checkNotNull(permissionsFixtureApk))
         StockPackageDiagnosticsSmoke.run()
-        val packages = HostedPackageManagerService(
-            dev.artzig.system.HostedUserManagerInternal(dev.artzig.system.HostedUserLifecycle())).apply {
-            installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
-        }
+        // The in-process activity manager hosts this process as its own
+        // (preinstalled) package, resolved by the session's package manager.
+        val packages = ActivityThread.getPackageManager()
         val callerPackage = "org.example.permissions"
-        check(packages.installPackage(checkNotNull(permissionsFixtureApk)) == callerPackage)
+        check(packages.getPackageUid(callerPackage, 0L, 0) == Binder.getCallingUid())
         testTaskRemovalServices(context, packages, callerPackage)
     }
 
@@ -3562,11 +3572,11 @@ internal object FrameworkModuleSmoke {
         check(!thread.isHandleSplashScreenExit(token))
 
         android.app.PropertyInvalidatedCache.disableForTestMode()
-        val packages = HostedPackageManagerService(
-            dev.artzig.system.HostedUserManagerInternal(dev.artzig.system.HostedUserLifecycle())).apply {
-            installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
-        }
-        val packageName = checkNotNull(packages.installPackage(checkNotNull(permissionsFixtureApk)))
+        // The session's PackageManagerService splash-theme state of this
+        // process's own (preinstalled) package.
+        val packages = ActivityThread.getPackageManager()
+        val packageName = "org.example.permissions"
+        check(packages.getPackageUid(packageName, 0L, 0) == android.os.Process.myUid())
         check(packages.getSplashScreenTheme(packageName, 0) == null)
         packages.setSplashScreenTheme(packageName, "android:style/Theme.Material", 0)
         check(packages.getSplashScreenTheme(packageName, 0) == "android:style/Theme.Material")
@@ -3748,7 +3758,7 @@ internal object FrameworkModuleSmoke {
         check(HostedWindowPresentation.requestsFullscreen(0, 0, modernImmersive, false))
     }
 
-    private fun testTaskRemovalServices(context: Context, packages: HostedPackageManagerService, pkg: String) {
+    private fun testTaskRemovalServices(context: Context, packages: android.content.pm.IPackageManager, pkg: String) {
         val reports = HostedActivityManagerService()
         for (system in listOf(false, true)) {
             val completed = java.util.concurrent.CountDownLatch(1)
@@ -3773,7 +3783,6 @@ internal object FrameworkModuleSmoke {
         val am = HostedActivityManagerService(context).apply { packageService = packages }
         val thread = CapturingApplicationThread()
         val uid = Binder.getCallingUid()
-        packages.bindPackageUid(pkg, uid)
         am.noteProcessPackage(uid, pkg, pkg)
         // This in-process AMS fixture bypasses SystemServer's shared-memory setup.
         val previousMemory = com.android.internal.os.ApplicationSharedMemory.sInstance

@@ -11,7 +11,6 @@ import android.os.HandlerThread
 import android.os.Looper
 import com.android.server.LocalServices
 import com.android.server.firewall.IntentFirewall
-import dev.artzig.system.HostedPackageManagerService
 import java.io.File
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -26,17 +25,25 @@ object IntentFirewallSmoke {
 
     @JvmStatic fun main(args: Array<String>) {
         Looper.prepareMainLooper()
-        // AOSP's server-fixture mode avoids publishing system cache nonces
-        // from this unprivileged, process-local package catalog.
-        android.app.PropertyInvalidatedCache.disableForTestMode()
         HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 640, 480, 120, 0)
-        val packages = HostedPackageManagerService(
-            dev.artzig.system.HostedUserManagerInternal(dev.artzig.system.HostedUserLifecycle()))
-        packages.installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
-        val internal = Class.forName("android.content.pm.HostedPackageManagerInternal")
-            .getConstructor(HostedPackageManagerService::class.java).newInstance(packages)
-            as PackageManagerInternal
-        LocalServices.addService(PackageManagerInternal::class.java, internal)
+        // Sender filters consult the system server's PackageManagerInternal; this
+        // local double gives each application id one signing certificate.
+        val snapshot = java.lang.reflect.Proxy.newProxyInstance(com.android.server.pm.Computer::class.java.classLoader,
+            arrayOf(com.android.server.pm.Computer::class.java)) { _, method, _ ->
+            throw ArtzigTestDiagnostics.unsupported("Computer", method.name, "not provided by this test double")
+        }
+        val packages = java.util.function.BiFunction<String, Array<Any?>, Any?> { method, arguments ->
+            when (method) {
+                // FirewallIntentResolver matches rules, not packages, against it.
+                "snapshot" -> snapshot
+                "checkUidSignaturesForAllUsers" ->
+                    if (android.os.UserHandle.getAppId(arguments[0] as Int) == android.os.UserHandle.getAppId(arguments[1] as Int))
+                        PackageManager.SIGNATURE_MATCH else PackageManager.SIGNATURE_NO_MATCH
+                else -> throw ArtzigTestDiagnostics.unsupported("PackageManagerInternal", method, "not provided by this test double")
+            }
+        }
+        LocalServices.addService(PackageManagerInternal::class.java, Class.forName("dev.artzig.testing.PackageManagerInternalDouble")
+            .getConstructor(java.util.function.BiFunction::class.java).newInstance(packages) as PackageManagerInternal)
 
         // This target has its own ARTZIG_DATA_DIR; never edit session policy.
         val rules = IntentFirewall.getRulesDir()

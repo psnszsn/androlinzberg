@@ -16,6 +16,7 @@ pub const jmethodID = jni.jmethodID;
 pub const jint = jni.jint;
 pub const DataPartition = @import("data_partition.zig");
 pub const SystemLibrary = @import("system_root.zig").Library;
+pub const SystemPartitionEntry = @import("system_root.zig").PartitionEntry;
 
 pub const Error = error{
     RuntimeTreeNotFound,
@@ -117,11 +118,82 @@ pub const HostLoader = struct {
     };
 };
 
+/// Copies the stored (uncompressed) entry `<archive>!/<entry>` to
+/// `<ARTZIG_NATIVE_LIB_DIR>/apk/<archive path hash>/<archive version hash>/<entry basename>`
+/// unless an identical copy exists, and returns that path in `buf`. A new
+/// version of an archive (size or mtime changed) retires the copies of its
+/// previous versions, so an updated package never resolves a stale library.
+fn materializeZipEntry(requested: []const u8, buf: *[4096]u8) ![:0]const u8 {
+    const io = BionicLoader.loader_io orelse return error.NoLoaderIo;
+    const separator = std.mem.indexOf(u8, requested, "!/").?;
+    const archive_path = requested[0..separator];
+    const entry_name = requested[separator + 2 ..];
+    const root = std.mem.span(BionicLoader.guest_dir orelse return error.NoGuestLibraryDirectory);
+    var archive = try std.Io.Dir.cwd().openFile(io, archive_path, .{});
+    defer archive.close(io);
+    const stat = try archive.stat(io);
+    const archive_key = std.hash.Wyhash.hash(0, archive_path);
+    var version: std.hash.Wyhash = .init(0);
+    version.update(std.mem.asBytes(&stat.size));
+    version.update(std.mem.asBytes(&stat.mtime));
+    const version_key = version.final();
+    const written = try std.fmt.bufPrint(buf[0 .. buf.len - 1], "{s}/apk/{x:0>16}/{x:0>16}/{s}", .{ root, archive_key, version_key, std.fs.path.basename(entry_name) });
+    buf[written.len] = 0;
+    const destination: [:0]const u8 = buf[0..written.len :0];
+    if (std.Io.Dir.cwd().statFile(io, destination, .{})) |_| return destination else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    }
+    var read_buffer: [8192]u8 = undefined;
+    var reader = archive.reader(io, &read_buffer);
+    var entries = try std.zip.Iterator.init(&reader);
+    var name_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const entry = while (try entries.next()) |candidate| {
+        const name = candidate.getFilename(&reader, &name_buffer, .{}) catch continue;
+        if (std.mem.eql(u8, name, entry_name)) break candidate;
+    } else return error.ZipEntryNotFound;
+    // Android loads only stored entries in place; keep that contract.
+    if (entry.compression_method != .store) return error.CompressedNativeLibrary;
+    try std.Io.Dir.cwd().createDirPath(io, std.fs.path.dirname(destination).?);
+    var temporary_buf: [4096]u8 = undefined;
+    var nonce: [8]u8 = undefined;
+    io.random(&nonce);
+    const temporary = try std.fmt.bufPrint(&temporary_buf, "{s}.{x}.tmp", .{ destination, nonce });
+    {
+        var file = try std.Io.Dir.cwd().createFile(io, temporary, .{});
+        defer file.close(io);
+        var write_buffer: [8192]u8 = undefined;
+        var writer = file.writer(io, &write_buffer);
+        try entry.extractTo(&reader, &writer.interface);
+        try writer.interface.flush();
+    }
+    try std.Io.Dir.cwd().rename(temporary, std.Io.Dir.cwd(), destination, io);
+    retireArchiveVersions(io, root, archive_key, version_key);
+    return destination;
+}
+
+/// Removes materialized copies of an archive's other versions. Processes that
+/// already mapped an old copy keep their mapping.
+fn retireArchiveVersions(io: std.Io, root: []const u8, archive_key: u64, keep: u64) void {
+    var path_buf: [4096]u8 = undefined;
+    const archive_dir = std.fmt.bufPrint(&path_buf, "{s}/apk/{x:0>16}", .{ root, archive_key }) catch return;
+    var dir = std.Io.Dir.cwd().openDir(io, archive_dir, .{ .iterate = true }) catch return;
+    defer dir.close(io);
+    var keep_buf: [16]u8 = undefined;
+    const keep_name = std.fmt.bufPrint(&keep_buf, "{x:0>16}", .{keep}) catch return;
+    var entries = dir.iterate();
+    while (entries.next(io) catch return) |entry| {
+        if (entry.kind != .directory or std.mem.eql(u8, entry.name, keep_name)) continue;
+        dir.deleteTree(io, entry.name) catch |err| std.log.warn("cannot retire {s}/{s}: {t}", .{ archive_dir, entry.name, err });
+    }
+}
+
 /// NativeLoader backed by bionic_translation's shim linker (libdl_bio.so from the
 /// runtime tree): System.loadLibrary() can then load Android (bionic-linked)
 /// native libraries, falling back to the host libc for host libraries.
 pub const BionicLoader = struct {
     var lib: ?std.DynLib = null;
+    var loader_io: ?std.Io = null;
     var guest_dir: ?[*:0]const u8 = null;
     var image_guest_dir: ?[*:0]const u8 = null;
     var host_lib_dir: ?[:0]const u8 = null;
@@ -135,7 +207,8 @@ pub const BionicLoader = struct {
 
     /// Load libdl_bio.so from `<root>/lib64` and return the loader to put in
     /// `Options.native_loader`.
-    pub fn init(a: std.mem.Allocator, root: []const u8, overlay_dir: ?[]const u8) Error!*const NativeLoader {
+    pub fn init(a: std.mem.Allocator, io: std.Io, root: []const u8, overlay_dir: ?[]const u8) Error!*const NativeLoader {
+        loader_io = io;
         if (lib == null) {
             var lib_dir_buf: [4096]u8 = undefined;
             const lib_dir = overlay_dir orelse std.fmt.bufPrint(&lib_dir_buf, "{s}/lib64", .{root}) catch return Error.OutOfMemory;
@@ -174,7 +247,20 @@ pub const BionicLoader = struct {
         return &loader;
     }
 
-    fn dlopen(path: ?[*:0]const u8, flags: c_int, library_path: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+    fn dlopen(requested: ?[*:0]const u8, flags: c_int, library_path: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+        // Android's linker maps an uncompressed library stored in an APK in
+        // place ("base.apk!/lib/<abi>/libx.so", as PackageManagerService leaves
+        // apps with extractNativeLibs="false"). bionic_translation opens files,
+        // so materialize that entry once below the guest directory.
+        var materialized_buf: [4096]u8 = undefined;
+        const path: ?[*:0]const u8 = if (requested) |p| zip: {
+            const name = std.mem.span(p);
+            if (std.mem.indexOf(u8, name, "!/") == null) break :zip p;
+            break :zip (materializeZipEntry(name, &materialized_buf) catch |err| {
+                std.log.err("cannot load {s} from its archive: {t}", .{ name, err });
+                return null;
+            }).ptr;
+        } else null;
         // ART itself loads host/glibc JNI libraries (libicu_jni, libjavacore,
         // etc.). Only APK libraries extracted into guest_dir are bionic ELF.
         var is_guest = false;
@@ -261,6 +347,8 @@ pub const Options = struct {
     /// Real implementations exposed under /system/lib64 by the native file and
     /// library loaders. Empty for standalone ART; no synthetic File.exists.
     system_libraries: []const SystemLibrary = &.{},
+    /// System-partition entries projected into the ANDROID_ROOT overlay.
+    system_partition: []const SystemPartitionEntry = &.{},
     /// Optional libart.so overlay. Other runtime libraries and data continue
     /// to resolve from `root`.
     libart_path: ?[]const u8 = null,
@@ -324,7 +412,7 @@ pub const Runtime = struct {
         errdefer if (data_partition) |partition| partition.release(io);
 
         const system_root_overlay = if (opts.system_root_overlay)
-            @import("system_root.zig").create(a, io, root, data_dir, opts.system_libraries) catch return Error.SystemRootCreationFailed
+            @import("system_root.zig").create(a, io, root, data_dir, opts.system_libraries, opts.system_partition) catch return Error.SystemRootCreationFailed
         else
             null;
         errdefer if (system_root_overlay) |path| std.Io.Dir.cwd().deleteTree(io, path) catch {};
@@ -408,7 +496,7 @@ pub const Runtime = struct {
         const create_vm = lib.lookup(CreateFn, "JNI_CreateJavaVM") orelse return Error.SymbolNotFound;
         var native_loader = opts.native_loader;
         if (opts.use_bionic_loader) {
-            native_loader = try BionicLoader.init(gpa, root, opts.bionic_lib_dir);
+            native_loader = try BionicLoader.init(gpa, io, root, opts.bionic_lib_dir);
         } else if (native_loader == null) {
             native_loader = try HostLoader.init(root);
         }

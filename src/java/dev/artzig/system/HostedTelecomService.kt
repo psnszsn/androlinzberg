@@ -34,7 +34,7 @@ import android.util.Log
 class HostedTelecomService(
     private val context: Context,
     private val permissions: HostedTelephonyPermissions,
-    private val packages: HostedPackageManagerService,
+    private val packages: android.content.pm.IPackageManager,
 ) : com.android.internal.telecom.ITelecomService.Stub(), com.android.internal.telecom.ITelecomService by unsupported<com.android.internal.telecom.ITelecomService>() {
     override fun asBinder(): android.os.IBinder = this
 
@@ -54,7 +54,10 @@ class HostedTelecomService(
 
     /** PhoneAccountRegistrar.phoneAccountRequiresBindPermission. */
     private fun connectionServiceRequiresBindPermission(component: ComponentName?): Boolean {
-        val info = packages.getServiceInfo(component ?: return false, 0L, UserHandle.USER_SYSTEM) ?: return false
+        val target = component ?: return false
+        val info = android.os.Binder.withCleanCallingIdentity<android.content.pm.ServiceInfo?> {
+            packages.getServiceInfo(target, 0L, UserHandle.USER_SYSTEM)
+        } ?: return false
         return info.permission == Manifest.permission.BIND_TELECOM_CONNECTION_SERVICE
     }
 

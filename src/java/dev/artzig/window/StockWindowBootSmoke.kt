@@ -39,9 +39,14 @@ object StockWindowBootSmoke {
         android.os.Looper.prepareMainLooper()
         dev.artzig.HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")),
             320, 240, 120, 0)
-        val installer = checkNotNull(dev.artzig.HostedServiceClient.installerOrNull())
-        val packageName = installer.installPackage(args.single(), null)
+        // The session preinstalled the fixture (AZK_SESSION_INSTALL); this
+        // process runs with the uid PackageManagerService assigned it.
+        val packageName = checkNotNull(System.getenv("AZK_BINDER_PACKAGE"))
         check(packages.getApplicationInfo(packageName, 0L, 0)!!.uid == android.os.Process.myUid())
+        val installer = checkNotNull(dev.artzig.HostedServiceClient.installerOrNull())
+        check(runCatching { installer.installPackage(args.single(), null) }.exceptionOrNull() is SecurityException) {
+            "an installed app may not install packages through the host launcher"
+        }
         check(runCatching { dev.artzig.BinderSession.reservePackageUid(packageName) }
             .exceptionOrNull() is SecurityException)
         dev.artzig.BinderSession.setIdentity(packageName, false) // Same connected identity is safe.

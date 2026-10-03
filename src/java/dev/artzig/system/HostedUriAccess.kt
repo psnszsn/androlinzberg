@@ -18,7 +18,7 @@ import com.android.server.uri.UriGrantsManagerInternal
  * process attachment instead of AMS's ProcessRecord/zygote process machinery.
  */
 internal class HostedUriAccess(
-    private val packages: HostedPackageManagerService,
+    private val packages: android.content.pm.IPackageManager,
     private val callerUid: (IApplicationThread?) -> Int,
 ) {
     private val grants: UriGrantsManagerInternal

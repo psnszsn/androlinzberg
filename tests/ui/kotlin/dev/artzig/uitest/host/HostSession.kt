@@ -37,6 +37,21 @@ object HostSession {
         })
     }
 
+    /**
+     * `androlinzberg --join <session> <apk>` from a foreign shell: a second
+     * launcher joining the running session installs the session's APK again
+     * and starts it (the host's `adb install` + `am start`). Returns its output.
+     */
+    fun launchFromForeignShell(): String {
+        val directory = checkNotNull(System.getenv("AZK_TEST_SESSION_DIR")) { "AZK_TEST_SESSION_DIR is not set" }
+        val apk = checkNotNull(System.getenv("AZK_TEST_SESSION_APK")) { "AZK_TEST_SESSION_APK is not set" }
+        val owned = setOf("ANDROID_DATA", "ARTZIG_DATA_DIR", "ARTZIG_RUNTIME_CACHE_DIR", "EXTERNAL_STORAGE", "DOWNLOAD_CACHE", "AZK_PROP_AREA")
+        return String(run(checkNotNull(System.getenv("AZK_TEST_LAUNCHER")), "--join", directory, apk,
+            timeoutMillis = 60_000, mergeError = true) { variables ->
+            variables.keys.removeAll { it.startsWith("AZK_BINDER_") || it.startsWith("AZK_TEST_") || it in owned }
+        })
+    }
+
     /** Where this test's artifacts are retained. */
     val artifacts: File get() = log.absoluteFile.parentFile
 
@@ -88,6 +103,8 @@ object HostSession {
     ): ByteArray {
         val nowhere = File("/dev/null")
         val builder = ProcessBuilder(*argv).redirectInput(ProcessBuilder.Redirect.from(nowhere))
+        // Host tools start in the invoking host directory, not the VM's "/".
+        System.getenv("AZK_HOST_CWD")?.let { builder.directory(File(it)) }
         environment(builder.environment())
         if (capture) {
             if (mergeError) builder.redirectErrorStream(true) else builder.redirectError(ProcessBuilder.Redirect.INHERIT)
@@ -99,7 +116,10 @@ object HostSession {
         try {
             val output = if (capture) process.inputStream.readBytes() else ByteArray(0)
             check(process.waitFor(timeoutMillis, TimeUnit.MILLISECONDS)) { "${argv.first()} timed out" }
-            check(process.exitValue() == 0) { "${argv.joinToString(" ")} exited ${process.exitValue()}" }
+            check(process.exitValue() == 0) {
+                "${argv.joinToString(" ")} exited ${process.exitValue()}" +
+                    if (output.isEmpty()) "" else ":\n" + String(output).takeLast(4000)
+            }
             return output
         } finally {
             if (process.isAlive) process.destroyForcibly()

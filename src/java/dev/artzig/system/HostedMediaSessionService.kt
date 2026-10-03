@@ -44,7 +44,7 @@ import android.view.KeyEvent
 class HostedMediaSessionService : android.media.session.ISessionManager.Stub(), android.media.session.ISessionManager by unsupported<android.media.session.ISessionManager>() {
     override fun asBinder(): android.os.IBinder = this
 
-    @Volatile var packageService: HostedPackageManagerService? = null
+    @Volatile var packageService: android.content.pm.IPackageManager? = null
 
     private val lock = Any()
     /** MediaSessionStack: every live session, most recently created first. */

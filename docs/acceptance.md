@@ -9,7 +9,7 @@ and performs build and source audits. The target list is maintained in
 ## Run the complete suite
 
 Prepare the three local archives as described in [AOSP packaging](../aosp/README.md).
-Provide the pinned NewPipe APK from `tests/apks.json`, a clean reference checkout
+Provide the pinned NewPipe and F-Droid APKs from `build/ui_tests.zig`, a clean reference checkout
 at the pinned Android 16 r1 revision, and the host graphics-driver environment.
 On hosts that need explicit Mesa paths, supply `__EGL_VENDOR_LIBRARY_FILENAMES`,
 `GBM_BACKENDS_PATH`, `LIBVA_DRIVERS_PATH` and `VK_DRIVER_FILES` as appropriate.
@@ -17,6 +17,7 @@ On hosts that need explicit Mesa paths, supply `__EGL_VENDOR_LIBRARY_FILENAMES`,
 ```sh
 nix develop ./artzig -c env -u AZK_WINDOW_BACKEND -u AZK_TASK_WINDOWS \
   AZK_APK_NEWPIPE_0_29_1=/absolute/path/to/NewPipe_v0.29.1.apk \
+  AZK_APK_FDROID_2_0_1=/absolute/path/to/org.fdroid.fdroid_2000051.apk \
   AZK_TEST_REQUIRE_EGL=1 \
   zig build -j10 acceptance-test -Daosp-reference=/absolute/path/to/clean/aosp
 ```

@@ -6,7 +6,7 @@
     .dependencies = .{
         .aosp = .{
             .url = "file:aosp/androlinzberg-aosp-android-16.0.0_r1.tar.gz",
-            .hash = "N-V-__8AAKdhA0K4YrsZ3cie_MYBbsheJyk9SLp7nnYIOn2S",
+            .hash = "N-V-__8AAABDXENCJ0_ZoHjUKGaLBqaBCEitcsWgdvKUd5gM",
         },
         .webview = .{
             .url = "file:aosp/androlinzberg-webview-140.0.7339.15.tar.gz",

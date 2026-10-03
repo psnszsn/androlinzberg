@@ -60,6 +60,7 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
         var resultCode: Int,
         var resultData: String?,
         var resultExtras: Bundle?,
+        val filterExtras: java.util.function.BiFunction<Int, Bundle, Bundle>?,
     ) {
         var index = -1
         var timeout: ScheduledFuture<*>? = null
@@ -145,11 +146,20 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
         if (advance) finishCurrent(binder, null, null, null, false)
     }
 
+    /**
+     * [requiredPermissions]: a receiver must hold every one. [userId]: the
+     * session's receivers all belong to the system user, so a broadcast to
+     * another user reaches none. [appIdAllowList] and [filterExtras] follow
+     * BroadcastController.broadcastIntentLocked and
+     * BroadcastRecord.getReceiverIntent: application receivers outside the
+     * allow list are dropped, and a receiver whose filtered extras are null is
+     * skipped.
+     */
     fun broadcastIntent(
         intent: Intent,
         resultTo: IIntentReceiver?,
         resultCode: Int,
-        requiredPermission: String?,
+        requiredPermissions: List<String>,
         isOrdered: Boolean,
         sticky: Boolean,
         callingPackage: String?,
@@ -158,21 +168,29 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
         shareIdentity: Boolean = false,
         resultData: String? = null,
         resultExtras: Bundle? = null,
+        userId: Int = android.os.UserHandle.USER_ALL,
+        appIdAllowList: IntArray? = null,
+        filterExtras: java.util.function.BiFunction<Int, Bundle, Bundle>? = null,
     ): Int {
         val action = intent.action ?: return -1
         val exposedUid = if (shareIdentity) senderUid else android.os.Process.INVALID_UID
         val exposedPackage = if (shareIdentity) callingPackage else null
+        val allowList = if (userId == android.os.UserHandle.USER_ALL && appIdAllowList != null) IntArray(0) else appIdAllowList
         val targets: List<Registration>
         synchronized(lock) {
             if (sticky) stickies[action] = Intent(intent)
             targets = registrations.values.mapNotNull { registration ->
+                if (userId != android.os.UserHandle.USER_ALL &&
+                    android.os.UserHandle.getUserId(registration.uid) != userId) return@mapNotNull null
                 val priority = matchPriorityLocked(registration, intent) ?: return@mapNotNull null
-                // Receiver-side restriction: only receivers holding requiredPermission.
-                if (requiredPermission != null &&
-                    ams.checkUidPermission(requiredPermission, registration.uid) != PackageManager.PERMISSION_GRANTED
-                ) {
+                // Receiver-side restriction: only receivers holding every required permission.
+                if (requiredPermissions.any {
+                        ams.checkUidPermission(it, registration.uid) != PackageManager.PERMISSION_GRANTED }) {
                     return@mapNotNull null
                 }
+                val appId = android.os.UserHandle.getAppId(registration.uid)
+                if (allowList != null && appId >= android.os.Process.FIRST_APPLICATION_UID &&
+                    java.util.Arrays.binarySearch(allowList, appId) < 0) return@mapNotNull null
                 // Sender-side restrictions the receiver declared at registration.
                 if (!senderMayReach(registration, senderUid)) return@mapNotNull null
                 registration to priority
@@ -180,9 +198,10 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
         }
         if (!isOrdered) {
             for (registration in targets) {
+                val receiverIntent = receiverIntent(intent, registration.uid, filterExtras) ?: continue
                 try {
                     deliver(registration.receiver, registration.callerBinder, registration.uid,
-                        intent, resultCode, resultData, resultExtras, false, false,
+                        receiverIntent, resultCode, resultData, resultExtras, false, false,
                         exposedUid, exposedPackage)
                 } catch (e: RemoteException) {
                 }
@@ -193,7 +212,7 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
         }
         synchronized(lock) {
             ordered.addLast(BroadcastRecord(intent, targets, resultTo, caller, senderUid,
-                exposedUid, exposedPackage, resultCode, resultData, resultExtras))
+                exposedUid, exposedPackage, resultCode, resultData, resultExtras, filterExtras))
             if (current == null) scheduleNextLocked()
         }
         return 0
@@ -256,9 +275,10 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
             }
             val target = record.receivers[record.index]
             if (registrations[target.binder] == null) continue // unregistered meanwhile
+            val receiverIntent = receiverIntent(record.intent, target.uid, record.filterExtras) ?: continue
             val delivered = try {
                 deliver(target.receiver, target.callerBinder, target.uid,
-                    record.intent, record.resultCode, record.resultData, record.resultExtras,
+                    receiverIntent, record.resultCode, record.resultData, record.resultExtras,
                     true, false, record.senderUid, record.senderPackage)
                 true
             } catch (e: RemoteException) {
@@ -313,6 +333,14 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
                 false, false, senderUid, senderPackage)
         } catch (e: RemoteException) {
         }
+    }
+
+    /** BroadcastRecord.getReceiverIntent: null when the extras filter removes the receiver. */
+    private fun receiverIntent(intent: Intent, receiverUid: Int, filterExtras: java.util.function.BiFunction<Int, Bundle, Bundle>?): Intent? {
+        filterExtras ?: return intent
+        val extras = intent.extras ?: return intent
+        val filtered = filterExtras.apply(receiverUid, extras) ?: return null
+        return Intent(intent).replaceExtras(filtered)
     }
 
     /** Highest priority among the registration's matching filters, or null when none match. */

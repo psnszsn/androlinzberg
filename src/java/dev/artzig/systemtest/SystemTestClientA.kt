@@ -51,9 +51,9 @@ internal object SystemTestClientA {
         // package's Application). The fixture requests WRITE_SECURE_SETTINGS;
         // the signature match with framework-res.apk (both signed by the
         // azk-platform test key) grants it at install.
-        val fixture = checkNotNull(System.getenv("AZK_FIXTURE_APK_A")) { "AZK_FIXTURE_APK_A is not set" }
-        val installer = checkNotNull(dev.artzig.HostedServiceClient.installerOrNull())
-        check(installer.installPackage(fixture, null) == "dev.artzig.test.a")
+        // The session preinstalled this package (AZK_SESSION_INSTALL); this
+        // process runs with the uid PackageManagerService assigned it.
+        check(android.app.ActivityThread.getPackageManager().getPackageUid("dev.artzig.test.a", 0L, 0) == android.os.Process.myUid())
         val context: android.content.Context =
             dev.artzig.HostedServiceClient.attachApplication("dev.artzig.test.a")
         check(ApplicationBindingEvents.events == listOf("application:attach",
@@ -355,10 +355,28 @@ internal object SystemTestClientA {
         val ipm = android.content.pm.IPackageManager.Stub.asInterface(
             ServiceManager.getService("package"),
         )
-        val allPackages = ipm.allPackages
         check(
-            allPackages.containsAll(listOf("android", "dev.artzig.test.a", "dev.artzig.test.b")),
-            "getAllPackages lists the platform and both fixtures",
+            runCatching { ipm.allPackages }.exceptionOrNull() is SecurityException,
+            "getAllPackages is limited to system, root and shell callers",
+        )
+        // installd and artd serve only the system server (ENFORCE_UID(AID_SYSTEM)).
+        val installd = android.os.IInstalld.Stub.asInterface(ServiceManager.getService("installd"))
+        check(
+            runCatching { installd.destroyAppData(null, "dev.artzig.test.b", 0, 3, 0L) }.exceptionOrNull() is SecurityException,
+            "installd rejects an application caller",
+        )
+        check(ipm.getPackageUid("dev.artzig.test.b", 0L, 0) > 0, "peer B survives the rejected installd call")
+        val artd = com.android.server.art.IArtd.Stub.asInterface(ServiceManager.getService("artd"))
+        check(runCatching { artd.isAlive }.exceptionOrNull() is SecurityException, "artd rejects an application caller")
+        check(
+            runCatching { checkNotNull(dev.artzig.HostedServiceClient.installerOrNull()).launchPackage("dev.artzig.test.b") }
+                .exceptionOrNull() is SecurityException,
+            "an installed app may not start packages through the host launcher",
+        )
+        val visible = context.packageManager.getInstalledPackages(0).map { it.packageName }
+        check(
+            visible.containsAll(listOf("android", "dev.artzig.test.a", "dev.artzig.test.b")),
+            "installed packages visible to A include the platform, itself and its queried peer",
         )
         check(
             ipm.checkSignatures("dev.artzig.test.a", "dev.artzig.test.b", 0) ==
@@ -1224,7 +1242,9 @@ internal object SystemTestClientA {
         // user, keyguard, search, shortcuts/launcher apps, dropbox, overlays, domain
         // verification, wallpaper, credentials, UI mode and app widgets.
         val hostedUsers = checkNotNull(context.getSystemService(android.os.UserManager::class.java))
-        check(hostedUsers.getUserHandles(true) == listOf(android.os.UserHandle.SYSTEM), "the single hosted user")
+        check(hostedUsers.userProfiles == listOf(android.os.UserHandle.SYSTEM), "the single hosted user")
+        check(runCatching { hostedUsers.getUserHandles(true) }.exceptionOrNull() is SecurityException,
+            "listing every user requires MANAGE_USERS or CREATE_USERS")
         val keyguard = checkNotNull(context.getSystemService(android.app.KeyguardManager::class.java))
         check(!keyguard.isKeyguardLocked && !keyguard.isKeyguardSecure && !keyguard.isDeviceLocked && !keyguard.isDeviceSecure, "no keyguard, no lock")
         val searchManager = checkNotNull(context.getSystemService(android.app.SearchManager::class.java))
@@ -1292,7 +1312,9 @@ internal object SystemTestClientA {
             Settings.Global.putString(context.contentResolver, Settings.Global.WTF_IS_FATAL, oldFatal)
         }
         val domainVerification = checkNotNull(context.getSystemService(DomainVerificationManager::class.java))
-        check(domainVerification.getDomainVerificationUserState(context.packageName) == null, "no verified domains")
+        val domainState = checkNotNull(domainVerification.getDomainVerificationUserState(context.packageName))
+        check(domainState.packageName == context.packageName && domainState.hostToStateMap.isEmpty() &&
+            domainState.isLinkHandlingAllowed, "no verified domains")
         check(
             runCatching { domainVerification.getDomainVerificationUserState("dev.artzig.no.such.package") }.exceptionOrNull() is android.content.pm.PackageManager.NameNotFoundException,
             "domain verification of an unknown package",
@@ -1629,15 +1651,18 @@ internal object SystemTestClientA {
             ServiceManager.getService(Context.USER_SERVICE),
         )
         check(userManager != null, "user manager published session-wide")
-        check(userManager.getUsers(false, false, false)?.size == 1, "single hosted user")
+        // Stock UserManagerService answers an unprivileged app about its own
+        // profile group and requires a users permission for anything wider.
+        fun requiresUsersPermission(call: () -> Any?) = runCatching { call() }.exceptionOrNull() is SecurityException
+        check(requiresUsersPermission { userManager.getUsers(false, false, false) }, "listing users requires a users permission")
         check(userManager.isUserRunning(0) && userManager.isUserUnlocked(0), "system user running and unlocked")
-        check(userManager.getUserInfo(0)?.id == 0, "user info for user 0")
-        check(userManager.getProfileType(0) == "" && userManager.getProfileType(99) == null,
-            "full user and absent user have distinct profile types")
-        check(userManager.getProfileIds(0, true).contentEquals(intArrayOf(0)) &&
-            userManager.getProfileIds(99, false).isEmpty() &&
-            userManager.getProfileIdsExcludingHidden(99, true).isEmpty() &&
-            userManager.getProfiles(99, false).isEmpty(), "unknown user has no profile group")
+        check(requiresUsersPermission { userManager.getUserInfo(0) }, "user info requires a users permission")
+        check(userManager.getProfileType(0) == "", "the full system user has no profile type")
+        check(userManager.getProfileIds(0, true).contentEquals(intArrayOf(0)), "the caller's profile group")
+        check(requiresUsersPermission { userManager.getProfileType(99) } &&
+            requiresUsersPermission { userManager.getProfileIds(99, false) } &&
+            requiresUsersPermission { userManager.getProfileIdsExcludingHidden(99, true) } &&
+            requiresUsersPermission { userManager.getProfiles(99, false) }, "other profile groups require a users permission")
         val appOps = com.android.internal.app.IAppOpsService.Stub.asInterface(
             ServiceManager.getService("appops"),
         )

@@ -20,6 +20,9 @@ object BinderSession {
     /** System-only install boundary: allocate the identity before starting an app.
      * The broker returns the same uid when that package connects later. */
     @JvmStatic external fun reservePackageUid(packageName: String): Int
+    /** System-only: the application uid the package manager assigned [packageName].
+     * The package's later Binder peers authenticate with it. */
+    @JvmStatic external fun registerPackageUid(packageName: String, uid: Int)
     /** Supervisor-only one-use exec credential. Contains a secret; never log it. */
     @JvmStatic external fun reserveLaunch(packageName: String, processName: String,
         isolated: Boolean, sequence: Long): String

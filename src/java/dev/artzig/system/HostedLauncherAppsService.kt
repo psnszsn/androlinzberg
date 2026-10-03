@@ -45,7 +45,7 @@ import android.window.IDumpCallback
  */
 class HostedLauncherAppsService(
     private val context: Context,
-    private val packages: HostedPackageManagerService,
+    private val packages: android.content.pm.IPackageManager,
     private val permissions: HostedPermissions,
 ) : android.content.pm.ILauncherApps.Stub(), android.content.pm.ILauncherApps by unsupported<android.content.pm.ILauncherApps>() {
     override fun asBinder(): android.os.IBinder = this

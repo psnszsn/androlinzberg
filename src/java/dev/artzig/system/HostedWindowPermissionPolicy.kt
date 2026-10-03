@@ -10,13 +10,13 @@ import com.android.server.policy.PermissionPolicyInternal
 /**
  * PermissionPolicyService.Internal's launch policy. The Android service also
  * owns PermissionController upgrades and permission/AppOps reconciliation;
- * this host installs its grants through HostedPackageManagerService instead.
+ * this host keeps the stock PackageManagerService grants instead.
  * Keep removed actions, intent mutation, task eligibility and initialization
  * ordering here, without making framework callers aware of the host.
  */
 internal class HostedWindowPermissionPolicy(
     private val context: Context,
-    private val packages: HostedPackageManagerService,
+    private val packages: android.content.pm.IPackageManager,
 ) : PermissionPolicyInternal() {
     private val lock = Any()
     private var initialized = false
@@ -71,12 +71,15 @@ internal class HostedWindowPermissionPolicy(
     }
 
     override fun showNotificationPromptIfNeeded(packageName: String, userId: Int, taskId: Int) {
-        val pkg = packages.getPackage(packageName) ?: return
+        val pkg = android.os.Binder.withCleanCallingIdentity<android.content.pm.PackageInfo?> {
+            packages.getPackageInfo(packageName, PackageManager.GET_PERMISSIONS.toLong(), userId)
+        } ?: return
+        val targetSdk = pkg.applicationInfo?.targetSdkVersion ?: return
         if (taskId == android.app.ActivityTaskManager.INVALID_TASK_ID ||
             packageName == packages.permissionControllerPackageName ||
-            pkg.targetSdkVersion < android.os.Build.VERSION_CODES.M ||
+            targetSdk < android.os.Build.VERSION_CODES.M ||
             android.os.SystemProperties.get("sys.azk.boot_completed") != "1" ||
-            android.Manifest.permission.POST_NOTIFICATIONS !in pkg.requestedPermissions ||
+            android.Manifest.permission.POST_NOTIFICATIONS !in pkg.requestedPermissions.orEmpty() ||
             android.app.compat.CompatChanges.isChangeEnabled(194833441L, packageName, UserHandle.of(userId)) ||
             context.getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked) return
         val notifications = android.app.INotificationManager.Stub.asInterface(

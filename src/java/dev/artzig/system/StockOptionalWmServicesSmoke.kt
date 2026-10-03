@@ -6,8 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.os.Binder
 import android.os.Bundle
-import com.android.server.pm.PackageArchiver
-import com.android.server.pm.pkg.ArchiveState
 import dev.artzig.ArtzigTestDiagnostics
 import org.json.JSONObject
 
@@ -59,21 +57,10 @@ object StockOptionalWmServicesSmoke {
             HostedAssistSessions(Binder()).showFromActivity(arguments, null, token)
         }
 
-        // As in the other in-process package fixtures, this anonymous test peer
-        // does not own the system_server cache-property namespace.
-        android.app.PropertyInvalidatedCache.disableForTestMode()
-        val packageBroadcasts = java.util.Collections.synchronizedList(ArrayList<Intent>())
-        val packages = HostedPackageManagerService(
-            dev.artzig.system.HostedUserManagerInternal(dev.artzig.system.HostedUserLifecycle()), packageBroadcast = { intent, user ->
-            check(user == 0)
-            packageBroadcasts.add(Intent(intent))
-        }).apply {
-            installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
-        }
-        val packageName = verifyPackageObservers(packages, apk)
+        // The session's PackageManagerService, with the fixture APK preinstalled.
+        val packages = android.app.ActivityThread.getPackageManager()
+        val packageName = checkNotNull(context.packageManager.getPackageArchiveInfo(apk, 0)).packageName
         check(packages.getApplicationInfo("android", 0L, 0)!!.uid == android.os.Process.SYSTEM_UID)
-        check(packages.getActivityInfo(HostedPermissionController.component, 0L, 0)!!.applicationInfo.uid ==
-            packages.getPackageUid("android", 0L, 0))
         val permissionPolicy = HostedWindowPermissionPolicy(context, packages)
         check(!permissionPolicy.isInitialized(0))
         var initialized = 0
@@ -120,64 +107,16 @@ object StockOptionalWmServicesSmoke {
         val uid = packages.getPackageUid(packageName, 0L, 0)
         check(uid >= android.os.Process.FIRST_APPLICATION_UID)
         verifyProviderReferenceRelease(packages, uid)
-        val state = packages.getPackageStateInternal(packageName) as HostedPackageState
-        packages.setPackageStoppedState(packageName, true, 0)
-        state.userState.setNotLaunched(true)
-        check(packages.getApplicationInfo(packageName, 0L, 0)!!.flags and
-            android.content.pm.ApplicationInfo.FLAG_STOPPED != 0)
-        packages.notifyComponentUsed(packageName, 0, "fixture.caller", "resume")
-        check(!state.userState.isStopped && !state.userState.isNotLaunched)
-        packages.notifyComponentUsed(packageName, 0, "fixture.caller", "repeat")
-        packages.notifyComponentUsed("fixture.absent", 0, null, "absent")
-        check(runCatching { packages.setPackageStoppedState("android", true, 0) }.exceptionOrNull() is SecurityException)
-        packages.setPackageStoppedState(packageName, true, 10)
-        check(!state.userState.isStopped)
-        val broadcastsDone = java.util.concurrent.CountDownLatch(1)
-        com.android.internal.os.BackgroundThread.getHandler().post { broadcastsDone.countDown() }
-        check(broadcastsDone.await(2, java.util.concurrent.TimeUnit.SECONDS))
-        check(packageBroadcasts.size == if (android.content.pm.Flags.stayStopped()) 1 else 0)
-        packageBroadcasts.firstOrNull()?.let {
-            check(it.action == Intent.ACTION_PACKAGE_UNSTOPPED)
-            check(it.data?.schemeSpecificPart == packageName)
-            check(it.getIntExtra(Intent.EXTRA_UID, -1) == uid)
-            check(it.getIntExtra(Intent.EXTRA_USER_HANDLE, -1) == 0)
-            check(it.flags and Intent.FLAG_RECEIVER_REGISTERED_ONLY != 0)
-        }
+        // Stock PackageManagerService property queries over the parsed manifest.
         val applicationProperty = checkNotNull(packages.getPropertyAsUser("dev.artzig.fixture.property", packageName, null, 0))
         check(applicationProperty.isBoolean && applicationProperty.boolean)
         val serviceProperty = checkNotNull(packages.getPropertyAsUser("dev.artzig.fixture.property", packageName,
             "android.inputmethodservice.InputMethodService", 0))
         check(serviceProperty.isBoolean && !serviceProperty.boolean)
         check(packages.getPropertyAsUser("dev.artzig.fixture.integer", packageName, null, 0)!!.integer == 42)
-        check(packages.getPropertyAsUser("dev.artzig.fixture.resource", packageName,
-            "android.inputmethodservice.InputMethodService", 0)!!.resourceId != 0)
         check(packages.getPropertyAsUser("fixture.absent", packageName, null, 0) == null)
-        check(packages.getPropertyAsUser("dev.artzig.fixture.integer", packageName,
-            "android.inputmethodservice.InputMethodService", 0) == null)
-        check(packages.queryProperty("dev.artzig.fixture.property", android.content.pm.PackageManager.TYPE_APPLICATION).list.single().boolean)
-        check(!packages.queryProperty("dev.artzig.fixture.property", android.content.pm.PackageManager.TYPE_SERVICE).list.single().boolean)
-        check(packages.queryProperty("dev.artzig.fixture.property", -1).list.isEmpty())
-        check(runCatching { packages.getPropertyAsUser(null, packageName, null, 0) }.exceptionOrNull() is NullPointerException)
-        check(runCatching { packages.getPropertyAsUser("fixture", packageName, null, 10) }.exceptionOrNull() is SecurityException)
-        state.userState.setInstalled(false)
-        check(packages.getPropertyAsUser("dev.artzig.fixture.property", packageName, null, 0) == null)
-        check(packages.queryProperty("dev.artzig.fixture.property", android.content.pm.PackageManager.TYPE_APPLICATION).list.isEmpty())
-        state.userState.setInstalled(true)
-        check(packages.getUserMinAspectRatio(packageName, 0) == android.content.pm.PackageManager.USER_MIN_ASPECT_RATIO_UNSET)
-        check(packages.getUserMinAspectRatio("fixture.absent", 0) == android.content.pm.PackageManager.USER_MIN_ASPECT_RATIO_UNSET)
-        check(packages.getUserMinAspectRatio(packageName, 10) == android.content.pm.PackageManager.USER_MIN_ASPECT_RATIO_UNSET)
-        check(runCatching { packages.setUserMinAspectRatio(packageName, 0, android.content.pm.PackageManager.USER_MIN_ASPECT_RATIO_16_9) }
-            .exceptionOrNull() is SecurityException)
-        // In-memory package authority supplies a caller granted INSTALL_PACKAGES,
-        // exercising the setter through its Android permission/ownership contract.
-        check(state.grantedPermissions.add(android.Manifest.permission.INSTALL_PACKAGES))
-        try {
-            packages.setUserMinAspectRatio(packageName, 0, android.content.pm.PackageManager.USER_MIN_ASPECT_RATIO_16_9)
-            check(packages.getUserMinAspectRatio(packageName, 0) == android.content.pm.PackageManager.USER_MIN_ASPECT_RATIO_16_9)
-            packages.setUserMinAspectRatio(packageName, 0, android.content.pm.PackageManager.USER_MIN_ASPECT_RATIO_UNSET)
-            check(runCatching { packages.setUserMinAspectRatio("android", 0, 0) }.exceptionOrNull() is SecurityException)
-            check(runCatching { packages.setUserMinAspectRatio(packageName, 10, 0) }.exceptionOrNull() is SecurityException)
-        } finally { state.grantedPermissions.remove(android.Manifest.permission.INSTALL_PACKAGES) }
+        check(packages.queryProperty("dev.artzig.fixture.property", android.content.pm.PackageManager.TYPE_APPLICATION)
+            .list.map { it as android.content.pm.PackageManager.Property }.any { it.packageName == packageName && it.boolean })
         val grammar = HostedGrammaticalInflectionService(HostedActivityManagerService(context),
             HostedPermissions(packages)).localService
         check(grammar.getSystemGrammaticalGender(0) == android.content.res.Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED)
@@ -191,59 +130,6 @@ object StockOptionalWmServicesSmoke {
         unsupported("GrammaticalInflectionManagerInternal", "stageAndApplyRestoredPayload") {
             grammar.stageAndApplyRestoredPayload(byteArrayOf(), 0)
         }
-        val component = ComponentName(packageName, "$packageName.ArchivedActivity")
-        val intent = Intent(Intent.ACTION_MAIN).setComponent(component)
-        val archiver = packages.getPackageArchiver()
-        check(archiver === packages.getPackageArchiver())
-        check(packages.getPackageStateInternal("android")!!.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM != 0)
-        check(!archiver.isAppArchivable("android", android.os.UserHandle.SYSTEM))
-        fun archived(value: Intent = intent, userId: Int = 0) =
-            archiver.isIntentResolvedToArchivedApp(value, userId)
-        check(!PackageArchiver.isArchived(state.userState))
-        check(!archived())
-        state.userState.setInstalled(false)
-        check(!PackageArchiver.isArchived(state.userState))
-        state.userState.setArchiveState(ArchiveState(
-            listOf(ArchiveState.ArchiveActivityInfo("Fixture", component, null, null)), "Fixture installer", 1L))
-        check(PackageArchiver.isArchived(state.userState))
-        check(archived())
-        check(!archived(Intent(Intent.ACTION_MAIN)))
-        check(!archived(Intent(intent).setClassName(packageName, "$packageName.OtherActivity")))
-        check(!archived(Intent(intent).setPackage("missing.fixture")))
-        check(!archived(userId = 10))
-        check(archiver.requestUnarchiveOnActivityStart(intent, null, 0, uid) == ActivityManager.START_CLASS_NOT_FOUND)
-        check(archiver.requestUnarchiveOnActivityStart(intent, "missing.fixture", 0, uid) == ActivityManager.START_PERMISSION_DENIED)
-        unsupported("PackageArchiver", "requestUnarchive") { HostedPackageArchiving.requireBackend("requestUnarchive") }
-        val iconFile = java.io.File.createTempFile("archive-icon-", ".png",
-            java.io.File(checkNotNull(System.getenv("AZK_BINDER_SESSION_DIR"))))
-        val icon = android.graphics.Bitmap.createBitmap(32, 32, android.graphics.Bitmap.Config.ARGB_8888)
-        try {
-            icon.eraseColor(android.graphics.Color.GREEN)
-            iconFile.outputStream().use { check(icon.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) }
-            state.userState.setArchiveState(ArchiveState(listOf(ArchiveState.ArchiveActivityInfo(
-                "Fixture", component, iconFile.toPath(), null)), "Fixture installer", 1L))
-            val decoded = checkNotNull(archiver.getArchivedAppIcon(packageName, android.os.UserHandle.SYSTEM, packageName))
-            check(decoded.width > 0 && decoded.height > 0)
-            check(decoded.getPixel(decoded.width / 2, decoded.height / 2) ushr 24 != 0)
-            decoded.recycle()
-        } finally {
-            icon.recycle()
-            check(iconFile.delete())
-        }
-        val capturedArchive = packages.snapshotPackages()
-        val archiveState = checkNotNull(state.userState.archiveState)
-        check(runCatching { packages.storePackageArchiveState(packageName, archiveState, 0) }
-            .exceptionOrNull() is android.content.pm.PackageManager.NameNotFoundException)
-        state.userState.setInstalled(true)
-        packages.storePackageArchiveState(packageName, archiveState, 0)
-        check(runCatching { packages.storePackageArchiveState(packageName, archiveState, 10) }
-            .exceptionOrNull() is android.content.pm.PackageManager.NameNotFoundException)
-        check(!PackageArchiver.isArchived(state.userState))
-        check(!archived())
-        check(packages.clearPackageArchiveState(packageName, 0))
-        check(!packages.clearPackageArchiveState(packageName, 0))
-        check(PackageArchiver.isArchived(capturedArchive.getPackageStateInternal(packageName)!!.getUserStateOrDefault(0)))
-
         val launcher = HostedLauncherAppsService(context, packages, HostedPermissions(packages))
         fun shortcut(callerUid: Int, callerPackage: String) = launcher.startShortcut(
             callerUid, android.os.Process.myPid(), callerPackage, packageName, null,
@@ -296,7 +182,7 @@ object StockOptionalWmServicesSmoke {
         check(first.foregroundMs == 150L) // Returned snapshots are independent.
     }
 
-    private fun verifyProviderReferenceRelease(packages: HostedPackageManagerService, uid: Int) {
+    private fun verifyProviderReferenceRelease(packages: android.content.pm.IPackageManager, uid: Int) {
         val access = HostedUriAccess(packages) { error("No application caller in local lookup") }
         val uri = android.net.Uri.parse("content://fixture/permission")
         var fail = false
@@ -329,80 +215,6 @@ object StockOptionalWmServicesSmoke {
         check(access.checkProvider(uri, 0, uid, Intent.FLAG_GRANT_READ_URI_PERMISSION,
             release = { error("Missing provider has no reference") }) { _, _ -> null } ==
             android.content.pm.PackageManager.PERMISSION_DENIED)
-    }
-
-    private fun verifyPackageObservers(packages: HostedPackageManagerService, apk: String): String {
-        val serviceClass = android.content.pm.PackageManagerInternal::class.java
-        val previous = com.android.server.LocalServices.getService(serviceClass)
-        val internal = Class.forName("android.content.pm.HostedPackageManagerInternal")
-            .getConstructor(HostedPackageManagerService::class.java).newInstance(packages)
-            as android.content.pm.PackageManagerInternal
-        com.android.server.LocalServices.removeServiceForTest(serviceClass)
-        com.android.server.LocalServices.addService(serviceClass, internal)
-        val events = ArrayList<String>()
-        val snapshot = internal.getPackageList(object : android.content.pm.PackageManagerInternal.PackageListObserver {
-            override fun onPackageAdded(name: String, uid: Int) {
-                check(packages.getPackageUid(name, 0L, 0) == uid)
-                events.add("added:$name")
-            }
-            override fun onPackageChanged(name: String, uid: Int) { events.add("changed:$name") }
-            override fun onPackageRemoved(name: String, uid: Int) { error("Unexpected removal") }
-        })
-        try {
-            check(snapshot.packageNames == listOf("android"))
-            val name = packages.installPackage(apk)
-            check(!internal.isInstantApp(name, 0))
-            check(!internal.isInstantAppInstallerComponent(HostedPermissionController.component))
-            check(!internal.isPermissionsReviewRequired(name, 0))
-            check(internal.getDefaultHomeActivity(0) == null)
-            check(internal.getDefaultHomeActivity(10) == null)
-            val state = checkNotNull(packages.getPackageStateInternal(name))
-            check(!internal.isPackageSuspended(name, 0))
-            check(!internal.isPackageSuspended("fixture.absent", 0))
-            val userState = (state as HostedPackageState).userState
-            val suspender = android.content.pm.UserPackage.of(0, "android")
-            userState.putSuspendParams(suspender, null)
-            check(internal.isPackageSuspended(name, 0))
-            check(!internal.isPackageSuspended(name, 10))
-            userState.removeSuspension(suspender)
-            check(!internal.isPackageSuspended(name, 0))
-            check(state.lastPackageUsageTime.all { it == 0L })
-            val beforeUse = System.currentTimeMillis()
-            internal.notifyPackageUse(name, android.content.pm.PackageManager.NOTIFY_PACKAGE_USE_ACTIVITY)
-            check(state.lastPackageUsageTime[android.content.pm.PackageManager.NOTIFY_PACKAGE_USE_ACTIVITY] >= beforeUse)
-            val used = state.lastPackageUsageTime.clone()
-            internal.notifyPackageUse(name, -1)
-            internal.notifyPackageUse(name, android.content.pm.PackageManager.NOTIFY_PACKAGE_USE_REASONS_COUNT)
-            internal.notifyPackageUse("fixture.missing", 0)
-            check(state.lastPackageUsageTime.contentEquals(used))
-            val explicit = Intent().setComponent(HostedPermissionController.component)
-            check(internal.resolveIntent(explicit, null, 0L, 0L, 0, true,
-                android.os.Binder.getCallingUid(), android.os.Process.myPid())?.activityInfo?.name ==
-                HostedPermissionController.component.className)
-            check(internal.resolveIntent(Intent("fixture.absent.action"), null, 0L, 0L, 0, true,
-                android.os.Process.SYSTEM_UID, android.os.Process.myPid()) == null)
-            check(internal.resolveIntent(explicit, null, 0L, 0L, 10, true,
-                android.os.Process.SYSTEM_UID, android.os.Process.myPid()) == null)
-            check(events == listOf("added:$name"))
-            check(snapshot.packageNames == listOf("android"))
-            internal.getPackageList(null).use { check(it.packageNames.toSet() == setOf("android", name)) }
-            check(packages.installPackage(apk) == name)
-            check(packages.installPackage(java.io.File(apk).canonicalPath) == name)
-            check(events.size == 1)
-            packages.setApplicationEnabledSetting(name, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                android.content.pm.PackageManager.DONT_KILL_APP, 0, name)
-            check(events == listOf("added:$name", "changed:$name"))
-            snapshot.close()
-            snapshot.close()
-            packages.setApplicationEnabledSetting(name, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT,
-                android.content.pm.PackageManager.DONT_KILL_APP, 0, name)
-            check(events.size == 2)
-            return name
-        } finally {
-            snapshot.close()
-            com.android.server.LocalServices.removeServiceForTest(serviceClass)
-            if (previous != null) com.android.server.LocalServices.addService(serviceClass, previous)
-        }
     }
 
     private fun verifyConfigurationBroadcasts() {

@@ -115,44 +115,6 @@ launcher shortcut calls use the same hosted launcher authority as Binder clients
          } finally {
              Binder.restoreCallingIdentity(ident);
          }
---- a/services/core/java/com/android/server/wm/ActivityStarter.java
-+++ b/services/core/java/com/android/server/wm/ActivityStarter.java
-@@ -66,7 +66,6 @@
- import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_TASKS;
- import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_WINDOW_TRANSITIONS;
- import static com.android.internal.util.FrameworkStatsLog.INTENT_REDIRECT_BLOCKED;
--import static com.android.server.pm.PackageArchiver.isArchivingEnabled;
- import static com.android.server.wm.ActivityRecord.State.RESUMED;
- import static com.android.server.wm.ActivityTaskManagerDebugConfig.DEBUG_PERMISSIONS_REVIEW;
- import static com.android.server.wm.ActivityTaskManagerDebugConfig.DEBUG_RESULTS;
-@@ -146,7 +145,7 @@
- import dev.artzig.system.HostedIntentCreators.Token;
- import com.android.server.am.PendingIntentRecord;
- import com.android.server.pm.InstantAppResolver;
--import com.android.server.pm.PackageArchiver;
-+import dev.artzig.system.HostedPackageArchiving;
- import com.android.server.power.ShutdownCheckPoints;
- import com.android.server.statusbar.StatusBarManagerInternal;
- import com.android.server.uri.NeededUriGrants;
-@@ -1163,16 +1162,8 @@
-             // We couldn't find the specific class specified in the Intent.
-             err = ActivityManager.START_CLASS_NOT_FOUND;
- 
--            if (isArchivingEnabled()) {
--                PackageArchiver packageArchiver = mService
--                        .getPackageManagerInternalLocked()
--                        .getPackageArchiver();
--                if (packageArchiver.isIntentResolvedToArchivedApp(intent, mRequest.userId)) {
--                    err = packageArchiver
--                            .requestUnarchiveOnActivityStart(
--                                    intent, callingPackage, mRequest.userId, realCallingUid);
--                }
--            }
-+            err = HostedPackageArchiving.resolveMissingActivity(
-+                    mService.getPackageManagerInternalLocked(), intent, mRequest.userId);
-         }
- 
-         if (err == ActivityManager.START_SUCCESS && sourceRecord != null
 --- a/services/core/java/com/android/server/wm/WindowOrganizerController.java
 +++ b/services/core/java/com/android/server/wm/WindowOrganizerController.java
 @@ -146,7 +146,7 @@

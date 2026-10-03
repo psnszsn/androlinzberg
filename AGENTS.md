@@ -119,12 +119,15 @@ instrumentation does on a device: stock `UiAutomation`, the session's real
 `AccessibilityManagerService`, and `IInputManager` injection. There is no
 private test-control protocol; do not add one.
 
-NewPipe is pinned by SHA-256 in `build/ui_tests.zig`; provide it by absolute
-path. From outside the development shell, run the complete suite with:
+NewPipe and F-Droid are pinned by SHA-256 in `build/ui_tests.zig`; provide
+them by absolute path (F-Droid 2.0.1 is
+`https://f-droid.org/repo/org.fdroid.fdroid_2000051.apk`). From outside the
+development shell, run the complete suite with:
 
 ```sh
 nix develop ./artzig -c env \
   AZK_APK_NEWPIPE_0_29_1=/absolute/path/to/NewPipe_v0.29.1.apk \
+  AZK_APK_FDROID_2_0_1=/absolute/path/to/org.fdroid.fdroid_2000051.apk \
   zig build -j10 ui-test
 ```
 

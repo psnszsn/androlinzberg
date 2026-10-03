@@ -31,7 +31,7 @@ import com.android.internal.os.BackgroundThread
  */
 internal class HostedConnectivityService(
     private val context: Context,
-    private val packages: HostedPackageManagerService,
+    private val packages: android.content.pm.IPackageManager,
     private val source: HostedNetworkSource = ValidatedNetworkSource(LinuxNetworkSource(), HttpNetworkProbe.forContext(context)),
     private val handler: Handler = BackgroundThread.getHandler(),
 ) : IConnectivityManager.Stub(), IConnectivityManager by unsupported<IConnectivityManager>() {

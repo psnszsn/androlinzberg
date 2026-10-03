@@ -352,6 +352,23 @@ fn seedProperties(props: *prop_area.Area) prop_area.Error!void {
         .{ "ro.debuggable", "0" },
         .{ "ro.hw_timeout_multiplier", "1" },
         .{ "debug.force_rtl", "0" },
+        // Pinned build/make/target/product/runtime_libart.mk compiler filters,
+        // validated by PackageManagerServiceCompilerMapping.checkProperties.
+        .{ "pm.dexopt.post-boot", "verify" },
+        .{ "pm.dexopt.first-boot", "verify" },
+        .{ "pm.dexopt.boot-after-ota", "verify" },
+        .{ "pm.dexopt.boot-after-mainline-update", "verify" },
+        .{ "pm.dexopt.install", "speed-profile" },
+        .{ "pm.dexopt.install-fast", "skip" },
+        .{ "pm.dexopt.install-bulk", "speed-profile" },
+        .{ "pm.dexopt.install-bulk-secondary", "verify" },
+        .{ "pm.dexopt.install-bulk-downgraded", "verify" },
+        .{ "pm.dexopt.install-bulk-secondary-downgraded", "verify" },
+        .{ "pm.dexopt.bg-dexopt", "speed-profile" },
+        .{ "pm.dexopt.ab-ota", "speed-profile" },
+        .{ "pm.dexopt.inactive", "verify" },
+        .{ "pm.dexopt.cmdline", "verify" },
+        .{ "pm.dexopt.shared", "speed" },
     };
     for (seeds) |seed| try props.set(seed[0], seed[1]);
 }
@@ -680,6 +697,7 @@ fn serveLoop(peer: *Peer) ServeError!void {
             .list_services => try handleList(peer, header),
             .set_property => try handleSetProperty(peer, header, body),
             .reserve_package_uid => try handleReservePackageUid(peer, header, body),
+            .register_package_uid => try handleRegisterPackageUid(peer, header, body),
             .process_uid => try handleProcessUid(peer, header, body),
             .system_process => try handleSystemProcess(peer, header, body),
             .reserve_launch => try handleReserveLaunch(peer, header, body),
@@ -773,6 +791,18 @@ fn assignPackageUidLocked(b: *Broker, package: []const u8) error{OutOfMemory}!?u
     return uid;
 }
 
+/// Records the system authority's application id for [package]. An existing
+/// identity is kept; reserveForUid then denies a mismatching request.
+fn adoptPackageUidLocked(b: *Broker, package: []const u8, app_id: u32) error{OutOfMemory}!?u32 {
+    if (b.packages.get(package)) |uid| return uid;
+    if (app_id < 10000 or app_id > 19999) return null;
+    const owned = try b.gpa.dupe(u8, package);
+    errdefer b.gpa.free(owned);
+    try b.packages.put(b.gpa, owned, app_id);
+    b.next_app_uid = @max(b.next_app_uid, app_id + 1);
+    return app_id;
+}
+
 fn handleProcessUid(peer: *Peer, header: Client.Message.Header, body: []const u8) ServeError!void {
     if (body.len != @sizeOf(i32)) return protocolError(peer, "malformed process_uid");
     const pid = std.mem.readInt(i32, body[0..4], .little);
@@ -815,6 +845,34 @@ fn handleReservePackageUid(peer: *Peer, header: Client.Message.Header, package: 
         .{ .status = .ok, .uid = uid }
     else
         .{ .status = .exhausted };
+    peer.enqueue(try b.encode(Server.servePackageUidResult, .{ header.request_id, result }));
+}
+
+/// PackageManagerService owns application ids (Settings.registerAppIdLPw);
+/// the system process records each installed package's uid here, so the
+/// package's processes authenticate with that identity. A later registration
+/// replaces the mapping for future peers; connected peers keep their uid.
+fn handleRegisterPackageUid(peer: *Peer, header: Client.Message.Header, body: []const u8) ServeError!void {
+    if (body.len <= @sizeOf(u32)) return protocolError(peer, "malformed register_package_uid");
+    const uid = std.mem.readInt(u32, body[0..4], .little);
+    const package = body[4..];
+    if (package.len > limits.max_name_len or std.mem.indexOfScalar(u8, package, 0) != null)
+        return protocolError(peer, "malformed register_package_uid");
+    const b = peer.broker;
+    b.mutex.lockUncancelable(b.io);
+    defer b.mutex.unlock(b.io);
+    const result: Server.Message.PackageUidResult = if (peer.role != .system or uid % 100000 < 10000 or uid % 100000 > 19999 or uid >= 100000)
+        .{ .status = .denied }
+    else result: {
+        if (b.packages.getPtr(package)) |existing| {
+            existing.* = uid;
+        } else {
+            const owned = try b.gpa.dupe(u8, package);
+            errdefer b.gpa.free(owned);
+            try b.packages.put(b.gpa, owned, uid);
+        }
+        break :result .{ .status = .ok, .uid = uid };
+    };
     peer.enqueue(try b.encode(Server.servePackageUidResult, .{ header.request_id, result }));
 }
 
@@ -868,7 +926,15 @@ fn handleReserveLaunch(peer: *Peer, header: Client.Message.Header, body: []const
     const kind: LaunchGrants.Kind = @fromBackingInt(@intCast(req.kind));
     const requested: ?u32 = if (req.requested_uid == std.math.maxInt(u32)) null else req.requested_uid;
     if (peer.role == .system or b.launches.mayDelegate(peer.id, kind, requested)) {
-        const app_id = if (kind == .system) @as(?u32, Client.system_uid) else if (peer.role == .system) try assignPackageUidLocked(b, package) else b.packages.get(package); // Delegation cannot create package identities.
+        // The system server's PackageManagerService assigns application ids
+        // (Settings.registerAppIdLPw); its Process.start uid becomes the
+        // package's identity. Delegation cannot create package identities.
+        const app_id = if (kind == .system)
+            @as(?u32, Client.system_uid)
+        else if (peer.role == .system)
+            (if (kind == .app and requested != null) try adoptPackageUidLocked(b, package, requested.? % 100000) else try assignPackageUidLocked(b, package))
+        else
+            b.packages.get(package);
         if (app_id) |id| {
             if (req.user_id > @as(u32, std.math.maxInt(i32)) / 100000 or
                 (kind == .system and req.user_id != 0))

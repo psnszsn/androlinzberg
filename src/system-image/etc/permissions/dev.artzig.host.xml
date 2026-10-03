@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Device features of a hosted desktop session, read by SystemConfig like a
+     device's /system/etc/permissions feature files (for example
+     frameworks/native/data/etc/pc_core_hardware.xml). Hardware the host does
+     not expose to Android (radios, cameras, sensors) is not declared. -->
+<permissions>
+    <feature name="android.hardware.type.pc" />
+    <feature name="android.software.freeform_window_management" />
+    <feature name="android.software.app_widgets" />
+    <feature name="android.software.companion_device_setup" />
+    <feature name="android.software.webview" />
+</permissions>

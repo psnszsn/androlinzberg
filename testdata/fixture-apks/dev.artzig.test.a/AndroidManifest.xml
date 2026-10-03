@@ -31,6 +31,12 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Package visibility (AppsFilter): peer A interacts with peer B and
+         the service-instances fixture. -->
+    <queries>
+        <package android:name="dev.artzig.test.b" />
+        <package android:name="dev.artzig.fixtures.services" />
+    </queries>
     <application android:name="dev.artzig.systemtest.BindingApplication" android:hasCode="false" android:label="azk test a">
         <provider android:name="dev.artzig.systemtest.SecretProvider"
             android:authorities="dev.artzig.test.a.secret" android:exported="false"

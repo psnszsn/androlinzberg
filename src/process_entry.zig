@@ -72,7 +72,7 @@ fn runRole(comptime role: Role, init: std.process.Init) !void {
     var i: usize = 1;
     while (i < args.len and std.mem.eql(u8, args[i], "--join")) {
         if (i + 1 >= args.len) return error.MissingSessionDirectory;
-        join_dir = args[i + 1];
+        join_dir = try hostPath(init, args[i + 1]);
         i += 2;
     }
     var binder: ?binder_session.Session = null;
@@ -91,9 +91,10 @@ fn runRole(comptime role: Role, init: std.process.Init) !void {
         .metadata => {
             if (i < args.len and std.mem.eql(u8, args[i], "--inspect-apk-package")) i += 1;
             if (i + 1 != args.len) return error.InvalidApkPackageInspectionArguments;
+            const apk = try hostPath(init, args[i]);
             var headless = try bootHeadless(init, .metadata);
             defer headless.rt.releaseProcessState();
-            try runtime_identity.printPackage(&headless.rt, init.io, args[i]);
+            try runtime_identity.printPackage(&headless.rt, init.io, apk);
         },
         .app => {
             if (i + 2 != args.len) return error.InvalidAppProcessArguments;
@@ -152,13 +153,22 @@ fn runRole(comptime role: Role, init: std.process.Init) !void {
                 if (!std.fs.path.isAbsolute(fixture_apk)) return error.TestApkPathMustBeAbsolute;
                 _ = setenv("ARTZIG_APK", try init.arena.allocator().dupeSentinel(u8, fixture_apk, 0), 1);
             }
+            // The VM works from "/" (runtime_bootstrap); test arguments and the
+            // test dex name host paths relative to the invoking directory, where
+            // host tools a test runs beside the session also start.
+            _ = setenv("AZK_HOST_CWD", try init.arena.allocator().dupeSentinel(u8, try hostPath(init, "."), 0), 1);
+            if (init.minimal.environ.getPosix("AZK_TEST_DEX")) |dex|
+                _ = setenv("AZK_TEST_DEX", try init.arena.allocator().dupeSentinel(u8, try hostPath(init, dex), 0), 1);
+            const test_args = try hostArguments(init, args[i..]);
+            // An instrumented process authenticates as its installed package:
+            // the session's preinstalls (AZK_SESSION_INSTALL) complete before ready.
+            if (binder) |*session| try session.awaitSystemReady();
             const process_role = try runtime_identity.testRole(init.minimal.environ);
             var headless = if (test_apk) |fixture_apk| try bootHeadlessApk(init, fixture_apk, process_role) else try bootHeadless(init, process_role);
             defer headless.rt.releaseProcessState();
-            if (binder) |*session| try session.awaitSystemReady();
             const rt = &headless.rt;
             const cls_name = init.minimal.environ.getPosix("AZK_TEST_CLASS") orelse "dev.artzig.TestMain";
-            try runFrameworkMain(rt, cls_name, args[i..]);
+            try runFrameworkMain(rt, cls_name, test_args);
             const e2 = art.Env{ .env = rt.env };
             const cls2 = try e2.findClass("dev/artzig/GraphicsSmoke");
             const draw2 = try e2.getStaticMethodID(cls2, "draw", "(II)Landroid/graphics/Bitmap;");
@@ -172,6 +182,27 @@ fn runRole(comptime role: Role, init: std.process.Init) !void {
     }
 }
 
+/// Absolute form of a path named relative to the invoking directory.
+fn hostPath(init: std.process.Init, path: []const u8) ![]const u8 {
+    if (std.fs.path.isAbsolute(path)) return path;
+    return std.Io.Dir.cwd().realPathFileAlloc(init.io, path, init.arena.allocator());
+}
+
+/// Test-class arguments with each relative host path made absolute. Only a
+/// path-shaped argument (one containing a separator, as `./x` or `dir/x`) that
+/// names an existing entry is rewritten; plain tokens pass through unchanged.
+fn hostArguments(init: std.process.Init, args: []const [:0]const u8) ![]const [:0]const u8 {
+    const a = init.arena.allocator();
+    const resolved = try a.alloc([:0]const u8, args.len);
+    for (args, resolved) |arg, *out| {
+        out.* = arg;
+        if (std.fs.path.isAbsolute(arg) or std.mem.indexOfScalar(u8, arg, '/') == null) continue;
+        const absolute = std.Io.Dir.cwd().realPathFileAlloc(init.io, arg, a) catch continue;
+        out.* = try a.dupeSentinel(u8, absolute, 0);
+    }
+    return resolved;
+}
+
 fn runStandalone(init: std.process.Init, args: []const [:0]const u8, binder: *?binder_session.Session, joined: ?[]const u8, start: usize) !void {
     var join_dir = joined;
     var apk: ?[]const u8 = null;
@@ -180,7 +211,7 @@ fn runStandalone(init: std.process.Init, args: []const [:0]const u8, binder: *?b
         if (std.mem.eql(u8, args[i], "--join")) {
             if (i + 1 >= args.len) return error.MissingSessionDirectory;
             i += 1;
-            join_dir = args[i];
+            join_dir = try hostPath(init, args[i]);
         } else if (std.mem.eql(u8, args[i], "--java") or std.mem.eql(u8, args[i], "--standalone")) {
             continue;
         } else if (std.mem.eql(u8, args[i], "--fullscreen") or std.mem.eql(u8, args[i], "--frames")) {
@@ -239,6 +270,10 @@ fn runDesktop(init: std.process.Init, args: []const [:0]const u8) !void {
     const path = args[1];
     if (!std.fs.path.isAbsolute(path)) return error.DesktopApkPathMustBeAbsolute;
     _ = setenv("ARTZIG_APK", path, 1);
+    // A joined launcher is a host session client, never the package it
+    // launches (DesktopLauncher.JOINED_IDENTITY): ATMS starts that package's
+    // processes with the uid PackageManagerService assigned.
+    if (!owner) _ = setenv("AZK_BINDER_PACKAGE", "android:launcher", 1);
     var headless = try bootHeadlessApk(init, path, if (owner) .system else .app);
     defer headless.rt.releaseProcessState();
     try runFrameworkMain(&headless.rt, "dev.artzig.window.DesktopLauncher", &.{args[0]});

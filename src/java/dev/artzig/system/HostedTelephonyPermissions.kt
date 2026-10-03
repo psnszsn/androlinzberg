@@ -14,7 +14,7 @@ import android.os.Binder
  * permission: a SecurityException where AOSP enforces, a false where AOSP asks
  * the no-throw variant.
  */
-class HostedTelephonyPermissions(packages: HostedPackageManagerService) : HostedPermissions(packages) {
+class HostedTelephonyPermissions(packages: android.content.pm.IPackageManager) : HostedPermissions(packages) {
     /** TelephonyPermissions.checkCallingOrSelfReadPhoneStateNoThrow. */
     fun canReadPhoneState(): Boolean = has(Manifest.permission.READ_PRIVILEGED_PHONE_STATE) || has(Manifest.permission.READ_PHONE_STATE)
 

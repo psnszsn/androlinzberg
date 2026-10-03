@@ -120,17 +120,6 @@ class ApkHost private constructor() {
             return result.result.packageName
         }
 
-        /** Installs this process's APK through the activity manager (parsing
-         * happens only in the system process). */
-        @JvmStatic
-        private fun installOwnPackage(apkPath: String, pkg: String, nativeLibraryDir: String) {
-            val installer = checkNotNull(dev.artzig.HostedServiceClient.installerOrNull()) {
-                "no hosted installer in this session"
-            }
-            val installed = installer.installPackage(apkPath, nativeLibraryDir)
-            check(installed == pkg) { "installed as " + installed + ", expected " + pkg }
-        }
-
         /** Install an APK for ATMS to launch in its own process. The desktop
          * controller has already selected its Binder identity before this call. */
         @JvmStatic fun installForDesktop(): String {
@@ -149,14 +138,11 @@ class ApkHost private constructor() {
             // exit if the broker connection is lost (parent death, teardown).
             dev.artzig.BinderSession.setExitOnDisconnect()
             val frameworkRes: String = System.getenv("ARTZIG_FRAMEWORK_RES")
-            val apkPath: String = System.getenv("ARTZIG_APK")
             val pkg = prepareProcessIdentity()
             val processName = System.getenv("AZK_APP_PROCESS_NAME") ?: pkg
             android.os.Process.setArgV0(processName)
-            // Supervised children use the package state prepared by their parent.
-            // Isolated UIDs must never acquire the installer capability.
-            if (System.getenv("AZK_LAUNCH_CREDENTIAL") == null)
-                installOwnPackage(apkPath, pkg, extractNativeLibraries(apkPath))
+            // The package is installed before its process starts (by a launcher
+            // or the session's preinstalls); this process runs with its uid.
             HostContexts.prepareApplicationEnvironment(frameworkRes)
             if (java.security.Security.getProvider("AndroidKeyStore") == null) {
                 java.security.Security.insertProviderAt(ArtzigKeyStoreProvider(), 1)

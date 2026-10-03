@@ -66,7 +66,18 @@ class HostedWebViewUpdateService(
     }
     override fun waitForAndGetProvider(): WebViewProviderResponse {
         check(Binder.getCallingPid() != Process.myPid()) { "Cannot create a WebView from the SystemServer" }
-        return impl.waitForAndGetProvider()
+        val callingUid = Binder.getCallingUid()
+        val response = impl.waitForAndGetProvider()
+        response.packageInfo?.let { grantVisibilityToCaller(it.packageName, callingUid) }
+        return response
+    }
+
+    /** WebViewUpdateService.grantVisibilityToCaller: an app that loads WebView
+     * sees its provider package (implicit, direct package visibility). */
+    private fun grantVisibilityToCaller(webViewPackageName: String, callingUid: Int) {
+        val packages = com.android.server.LocalServices.getService(android.content.pm.PackageManagerInternal::class.java)
+        val webviewUid = packages.getPackageUid(webViewPackageName, 0L, UserHandle.getUserId(callingUid))
+        packages.grantImplicitAccess(UserHandle.getUserId(callingUid), null, UserHandle.getAppId(callingUid), webviewUid, true)
     }
     override fun changeProviderAndSetting(newProvider: String?): String {
         permissions.enforce(android.Manifest.permission.WRITE_SECURE_SETTINGS, "changeProviderAndSetting")

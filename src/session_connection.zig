@@ -69,6 +69,7 @@ pub fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, j
             null,
         .environ = init.minimal.environ,
         .storage = storage,
+        .data_lock = try binder_session.lockDataRoot(init.io, storage.application_data),
         .inspection = std.mem.eql(u8, init.minimal.environ.getPosix("AZK_TEST_INSPECTION") orelse "", "1"),
     });
     _ = setenv(binder_session.socket_env, try arena.dupeSentinel(u8, binder.*.?.socket_path, 0), 1);

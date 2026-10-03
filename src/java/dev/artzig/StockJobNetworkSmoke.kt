@@ -25,7 +25,6 @@ import dev.artzig.system.HostedConnectivityService
 import dev.artzig.system.HostedJobSchedulerService
 import dev.artzig.system.HostedNetworkSnapshot
 import dev.artzig.system.HostedNetworkSource
-import dev.artzig.system.HostedPackageManagerService
 import java.util.concurrent.LinkedBlockingQueue
 
 /** Stock network and JobService Binder protocols with deterministic network observations. */
@@ -83,11 +82,13 @@ internal object StockJobNetworkSmoke {
 
     fun run(fixtureApk: String, pump: () -> Unit) {
         val resources = checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES"))
-        val packages = HostedPackageManagerService(
-            dev.artzig.system.HostedUserManagerInternal(dev.artzig.system.HostedUserLifecycle())).apply { installPlatform(resources) }
-        val owner = packages.installPackage(fixtureApk)
+        val base = HostContexts.systemContext(resources, 200, 200, 120, 0)
+        // The session's PackageManagerService, with the fixture preinstalled.
+        val packages = android.app.ActivityThread.getPackageManager()
+        val owner = checkNotNull(base.packageManager.getPackageArchiveInfo(fixtureApk, 0)).packageName
+        check(packages.getPackageUid(owner, 0L, 0) >= 0) { "$owner is not installed in the session" }
         val handler = Handler(Looper.getMainLooper())
-        val context = JobContext(HostContexts.systemContext(resources, 200, 200, 120, 0), owner, handler)
+        val context = JobContext(base, owner, handler)
         var observed: HostedNetworkSnapshot? = snapshot(100, false)
         val networkService = HostedConnectivityService(context, packages, HostedNetworkSource { observed }, handler)
         val remote = object : Binder() {

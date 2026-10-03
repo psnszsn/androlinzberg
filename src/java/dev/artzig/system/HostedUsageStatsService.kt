@@ -39,6 +39,13 @@ class HostedUsageStatsService(private val stockActivities: Boolean = false) : an
             return
         }
         activityUsage.report(component, userId, type, instanceId, taskRoot)
+        notifyListeners(userId, UsageEvents.Event(type, System.currentTimeMillis()).apply {
+            mPackage = component.packageName
+            mClass = component.className
+            mInstanceId = instanceId
+            mTaskRootPackage = taskRoot?.packageName
+            mTaskRootClass = taskRoot?.className
+        })
     }
 
     fun reportEvent(packageName: String?, userId: Int, type: Int) {
@@ -47,6 +54,30 @@ class HostedUsageStatsService(private val stockActivities: Boolean = false) : an
             return
         }
         activityUsage.report(packageName, userId, type)
+        notifyListeners(userId, UsageEvents.Event(type, System.currentTimeMillis()).apply { mPackage = packageName })
+    }
+
+    // UsageStatsService.LocalService.registerListener/unregisterListener: every
+    // reported event reaches the registered listeners (AppHibernationService, ...).
+    private val listeners = java.util.concurrent.CopyOnWriteArraySet<android.app.usage.UsageStatsManagerInternal.UsageEventListener>()
+
+    fun registerListener(listener: android.app.usage.UsageStatsManagerInternal.UsageEventListener) {
+        listeners.add(listener)
+    }
+
+    fun unregisterListener(listener: android.app.usage.UsageStatsManagerInternal.UsageEventListener) {
+        listeners.remove(listener)
+    }
+
+    /** UsageStatsService handles a reported event on its own handler
+     * (MSG_REPORT_EVENT, BackgroundThread's looper), never on the reporter's
+     * thread: ATMS reports while holding its lock. Listeners see events in
+     * report order. */
+    private fun notifyListeners(userId: Int, event: UsageEvents.Event) {
+        if (listeners.isEmpty()) return
+        com.android.internal.os.BackgroundThread.getHandler().post {
+            for (listener in listeners) listener.onUsageEvent(userId, event)
+        }
     }
 
     private val configurationUsage = com.android.server.usage.HostedConfigurationUsage()
@@ -59,7 +90,7 @@ class HostedUsageStatsService(private val stockActivities: Boolean = false) : an
         configurationUsage.report(config, userId)
     }
 
-    @Volatile var packageService: HostedPackageManagerService? = null
+    @Volatile var packageService: android.content.pm.IPackageManager? = null
 
     private class Event(val packageName: String, val type: Int, val timeStamp: Long)
 

@@ -7,7 +7,15 @@
 const std = @import("std");
 const Scanner = @import("wayland").Scanner;
 
+/// A test command: the installed image plus its own persistent data root.
+/// Tests never use the user's default data root, whose application storage
+/// belongs to the package database of the user's own sessions.
 fn setApplicationEnvironment(command: @import("build/command.zig").Command, tree: std.Build.LazyPath) void {
+    setInstalledImageEnvironment(command, tree);
+    _ = command.setOutputDirectoryEnvironment("ARTZIG_DATA_DIR", "artzig-data");
+}
+
+fn setInstalledImageEnvironment(command: @import("build/command.zig").Command, tree: std.Build.LazyPath) void {
     command.setPathEnvironment("ARTZIG_INSTALL_ROOT", tree);
     command.setPathEnvironment("ARTZIG_ROOT", tree.path(command.b, "bin/art"));
     // glibc reads LD_LIBRARY_PATH at process startup. ART later dlopens its
@@ -154,7 +162,7 @@ pub fn build(b: *std.Build) void {
     b.step("system-certificates-test", "Verify stock standalone ART trust and native certificate installation").dependOn(&certificate_tests.step);
     const partition_tests = b.addSystemCommand(&.{"env"});
     partition_tests.addFileArg(artzig_dep.namedLazyPath("data-partition-test-bin"));
-    b.step("data-partition-test", "Verify persistent app storage, session policy and shared ART cache").dependOn(&partition_tests.step);
+    b.step("data-partition-test", "Verify persistent app storage, package database and shared ART cache").dependOn(&partition_tests.step);
     const bionic_loader_tests = b.addSystemCommand(&.{"env"});
     bionic_loader_tests.addFileArg(artzig_dep.namedLazyPath("bionic-loader-test-bin"));
     b.step("bionic-loader-test", "Verify native process handles, global exports and explicit DSO scope").dependOn(&bionic_loader_tests.step);
@@ -1141,7 +1149,6 @@ pub fn build(b: *std.Build) void {
     egl_support.root_module.addObjectFile(island.file);
     egl_support.root_module.addRPathSpecial("$ORIGIN/..");
     const application_tree = @import("build/application.zig").build(b, .{
-        .shell_manifest = aosp.path(b, "frameworks/base/packages/Shell/AndroidManifest.xml"),
         .pdfclient = island.pdfclient,
         .launcher = exe.getEmittedBin(),
         .processes = process_bins,
@@ -1171,9 +1178,9 @@ pub fn build(b: *std.Build) void {
         .framework_odex = java.framework_odex,
         .framework_vdex = java.framework_vdex,
         .framework_resources = java.resources.apk,
-        .download_provider = java.download_provider,
         .webview_provider = webview_dep.path("webview.apk"),
-        .desktop_transfer_provider = java.desktop_transfer_provider,
+        .aosp_platform_data = aosp.path(b, "frameworks/base/data/etc"),
+        .system_apps = java.system_apps,
     });
     b.getInstallStep().dependOn(&b.addInstallDirectory(.{
         .source_dir = application_tree,
@@ -1366,7 +1373,6 @@ pub fn build(b: *std.Build) void {
     intent_policy.addArg("--javatest");
     intent_policy.setEnvironment("AZK_TEST_CLASS", "dev.artzig.IntentFirewallSmoke");
     intent_policy.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
-    _ = intent_policy.setOutputDirectoryEnvironment("ARTZIG_DATA_DIR", "intent-policy-data");
     intent_policy.run.setName("verify pinned intent policy and Linux file observation");
     intent_policy.run.has_side_effects = true;
     b.step("intent-policy-test", "Verify stock intent matching and live policy reload").dependOn(&intent_policy.run.step);
@@ -1465,6 +1471,7 @@ pub fn build(b: *std.Build) void {
     stock_window_boot.addFileArg(application_tree.path(b, "bin/androlinzberg"));
     stock_window_boot.addArg("--javatest");
     stock_window_boot.addFileArg(window_fixture.apk);
+    stock_window_boot.prependFileEnvironment("AZK_SESSION_INSTALL", window_fixture.apk);
     stock_window_boot.setEnvironment("AZK_TEST_CLASS", "dev.artzig.window.StockWindowBootSmoke");
     stock_window_boot.setEnvironment("AZK_BINDER_PACKAGE", "dev.artzig.fixtures.windows");
     stock_window_boot.setEnvironment("AZK_WINDOW_BACKEND", "stock");
@@ -1576,12 +1583,15 @@ pub fn build(b: *std.Build) void {
     );
     for ([_][]const u8{ "thumbnail.mp4", "thumbnail.webm", "tone.flac", "tone.ogg", "tone.opus", "tone.ts", "tone.mpg", "silence.amr" }) |fixture|
         framework_module_smoke.run.addFileInput(b.path(b.fmt("testdata/media/{s}", .{fixture})));
-    framework_module_smoke.setEnvironment("AZK_TEST_THUMBNAIL", b.pathResolve(&.{"testdata/media/thumbnail.mp4"}));
+    framework_module_smoke.setFileEnvironment("AZK_TEST_THUMBNAIL", b.path("testdata/media/thumbnail.mp4"));
     framework_module_smoke.setEnvironment("AZK_BINDER_PACKAGE", "org.example.permissions");
     framework_module_smoke.setEnvironment("AZK_WINDOW_BACKEND", "stock");
     // Fixture APKs (installed server-side by the permission-grant test).
     framework_module_smoke.addFileArg(java.fixtures.permissions);
     framework_module_smoke.addFileArg(java.fixtures.example);
+    // `pm install` before the instrumented process runs as org.example.permissions.
+    framework_module_smoke.prependFileEnvironment("AZK_SESSION_INSTALL", java.fixtures.permissions);
+    framework_module_smoke.prependFileEnvironment("AZK_SESSION_INSTALL", java.fixtures.example);
     // Hermetic: a nonexistent WAYLAND_DISPLAY keeps the session's clipboard
     // monitor off the developer's real desktop clipboard (empty falls back
     // to wayland-0).
@@ -1631,6 +1641,7 @@ pub fn build(b: *std.Build) void {
         aosp.path(b, "frameworks/base/libs/androidfw/tests/data/app/app.apk"),
     );
     framework_compat_smoke.addFileArg(java.fixtures.example);
+    framework_compat_smoke.prependFileEnvironment("AZK_SESSION_INSTALL", java.fixtures.example);
     // Hermetic: a nonexistent WAYLAND_DISPLAY keeps the session's clipboard
     // monitor off the developer's real desktop clipboard (empty falls back
     // to wayland-0).
@@ -1794,7 +1805,7 @@ pub fn build(b: *std.Build) void {
         const trace = b.fmt("zig-out/test-results/{s}/rendering-trace.json", .{fixture.directory});
         if (fixture.overlay) {
             ui.setEnvironment("AZK_WEBVIEW_VIDEO_SOURCE", "avc");
-            ui.setEnvironment("AZK_WEBVIEW_TRACE_OUT", b.pathResolve(&.{trace}));
+            ui.setHostPathEnvironment("AZK_WEBVIEW_TRACE_OUT", trace);
             ui.setEnvironment("AZK_WEBVIEW_CONFIGURE_OVERLAYS", "1");
         }
         ui.addArg("bash");
@@ -1825,7 +1836,7 @@ pub fn build(b: *std.Build) void {
     }
 
     const run = @import("build/command.zig").create(b);
-    setApplicationEnvironment(run, application_tree);
+    setInstalledImageEnvironment(run, application_tree);
     run.addFileArg(application_tree.path(b, "bin/androlinzberg"));
     run.addPassthruArgs();
     run.run.setName("run androlinzberg");
