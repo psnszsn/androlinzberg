@@ -154,6 +154,7 @@ fn resourceJar(b: *std.Build, name: []const u8, directory: LazyPath, exclude: []
         \\shift 2
         \\staging=$(mktemp -d)
         \\cp -R "$directory"/. "$staging"
+        \\chmod -R u+w "$staging"
         \\for excluded in "$@"; do rm -f "$staging/$excluded"; done
         \\jar --create --file "$out" -C "$staging" .
         \\rm -rf "$staging"

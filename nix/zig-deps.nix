@@ -27,7 +27,7 @@ in
 linkFarm "androlinzberg-zig-packages" [
   # build.zig.zon: .aosp
   {
-    name = "N-V-__8AAKdhA0K4YrsZ3cie_MYBbsheJyk9SLp7nnYIOn2S";
+    name = "N-V-__8AAABDXENCJ0_ZoHjUKGaLBqaBCEitcsWgdvKUd5gM";
     path = unpackWithKotlinc "androlinzberg-aosp" aospArchives.androlinzberg;
   }
   # build.zig.zon: .webview
@@ -45,7 +45,7 @@ linkFarm "androlinzberg-zig-packages" [
   }
   # artzig/build.zig.zon: .aosp
   {
-    name = "N-V-__8AAFy_Sw3fTP2p_29yYUTLwLIfAFVUAabWYBO97HQb";
+    name = "N-V-__8AAK0OTQ2sZhxuVUU7_TVV1M-Xs_Ts9CxOXSf3sB3j";
     path = unpack "artzig-aosp" aospArchives.artzig;
   }
   # artzig/build.zig.zon: .bionic_translation
