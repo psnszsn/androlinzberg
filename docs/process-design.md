@@ -10,8 +10,14 @@ standalone supervisor outside ART, and an ART desktop controller. The public
 command dispatches without ART; existing internal flags remain compatible.
 Image, storage and bootstrap code now have explicit modules, and session startup
 passes system/app executable paths. `--system` rejects unsupported deployment
-rather than silently using standalone state. The two-user feasibility gate
-remains outstanding; executable separation does not establish multi-user safety.
+rather than silently using standalone state. Executable separation does not
+establish multi-user safety.
+
+A prototype answered the single-account half of the two-user feasibility gate;
+see [Two-user prototype findings](#two-user-prototype-findings). It was built on
+the hosted services and is not on `main`. The AOSP code policy in `AGENTS.md`
+requires stock services instead, so the implementation sequence now replaces
+the hosted services the multi-user path depends on before repeating the gate.
 
 ## Target
 
@@ -32,7 +38,8 @@ machine. Standalone mode is a supported deployment, not an emulation or a
 temporary compatibility path.
 
 The process design leaves room for privileged process setup and hardware
-services. Detailed per-app namespace, mount and UID sandbox policy is deferred.
+services. The per-app sandbox direction is decided in
+[App sandbox](#app-sandbox); its implementation follows the launch-contract phase.
 System mode nevertheless must keep app code out of service accounts and must
 enforce boundaries between Linux users before it is enabled for general use.
 
@@ -51,8 +58,8 @@ concurrent desktop use in an early prototype before expanding the migration.
 | `src/binder/Broker.zig` | Admission rejects Linux peers whose UID differs from the broker's UID; service identity also depends on a shared system cookie |
 | `src/binder/LaunchGrants.zig` | Existing one-use grants and process binding already carry Android UID/user information; retain this foundation |
 | `src/binder/ProcessNamespace.zig` | Each app's namespace currently maps its Android UID to the launching host UID; this is not a full app sandbox |
-| `HostedUserLifecycle.kt`, `HostedUserManagerService.kt` | User catalogue and lifecycle assume Android user 0 |
-| `HostedPackageManagerService.kt`, `HostedPackageState.kt` | Several queries conflate app ID with full UID and select one user state |
+| `HostedUserLifecycle.kt` | Stock `UserManagerService` owns the user catalogue; this stand-in for `UserController` starts only Android user 0 |
+| `HostedActivityManagerService.kt` | Process, provider, service and broadcast paths resolve packages for user 0; stock PackageManagerService registers only user 0's UIDs with the broker |
 | `HostedZygoteService.kt` | App children inherit the system process's host credentials and re-execute the launcher |
 | `SessionTaskShell.kt` | One global presenter is required during bootstrap; presenter death exits the system process |
 | `HostedSessionDisplayService.kt` | Several display paths assume the default display and system user |
@@ -287,7 +294,8 @@ not service access to arbitrary home directories. The package manager decides
 the transaction; the host storage adapter applies its filesystem operations.
 Initial app data belongs to its host account, not the system-server account;
 service-private metadata stays inaccessible to apps. Per-app isolation within
-one account remains deferred and must not be advertised as solved.
+one account follows [App sandbox](#app-sandbox) and must not be advertised as
+solved before that work lands.
 
 Trace start, unlock, stop and removal using pinned `UserController` and
 `SystemServiceManager` callbacks. Login attachment, visibility, screen locking
@@ -296,6 +304,103 @@ Android FBE/vold; do not describe a desktop screen lock as cryptographic key
 eviction. On desktop logout, detach presentation and stop that user's Android
 work by default after its last attachment; keep machine services running.
 Background execution after logout can be an explicit administrator policy.
+
+## App sandbox
+
+Decided direction; not implemented. It applies to both deployment modes and
+sits in the pre-ART setup of `azk-app-process`, behind the same launch boundary.
+
+Keep the single-UID mapping of `src/binder/ProcessNamespace.zig`: each app has
+its own user namespace mapping its Android UID to the owning account's host
+UID. Do not allocate subordinate UID ranges (`newuidmap`, `/etc/subuid`) to give
+apps distinct kernel UIDs: a 65536-ID range cannot hold Android's UID space
+(100000 IDs per Android user, isolated processes from 90000). Kernel ownership
+checks therefore do not separate one account's apps; the mechanisms below do.
+
+| Exposure with one host UID | Mechanism |
+| --- | --- |
+| Tracing or reading another process's memory | Already refused: the per-app user namespace lacks `CAP_SYS_PTRACE` over its siblings and parent |
+| Signalling the broker, system server, other apps or desktop processes | PID namespace per app |
+| Seeing other processes in `/proc` | PID namespace per app, with a fresh `/proc` |
+| Reading other apps' data or the account's home | Mount namespace per app: read-only image plus that app's own storage |
+| Direct access to desktop sockets | Not mounted into the app's view; only typed descriptor slots are inherited |
+| Undoing the sandbox from inside | `no_new_privs`, dropped capabilities and a seccomp filter before ART |
+
+The PID and mount namespaces land together, because a private `/proc` needs
+both. The first process of a PID namespace is its init: it must reap and it
+ignores signals without a handler. Decide between a minimal init stub ahead of
+ART and ART as PID 1 when implementing; either way the app's own PID differs
+from the PID the host observes. Landlock is an optional second layer where the
+kernel provides it, and cgroup limits apply only under a delegated cgroup.
+Mount, seccomp and Landlock policy details are still to be specified and need
+their own review; app rendering needs the render device and driver libraries
+inside each app's view.
+
+## Two-user prototype findings
+
+A prototype ran two Android users on two desktops under one Linux account. It
+is kept at the local git reference `refs/prototypes/phase2-hosted-two-users`
+(not a branch; `git show refs/prototypes/phase2-hosted-two-users`). It extended
+the hosted services, which the AOSP code policy does not allow, so it is
+evidence and a source of tests, not code to merge. In that state the system
+tests, JVM tests, all 40 UI tests and the five desktop scenarios passed.
+
+What it established about the pinned Android version on this host:
+
+- Stock `UserManagerService` creates further full users once `fw.max_users`
+  and `fw.visible_bg_users` are set. Creation needs `DeviceStorageMonitorInternal`
+  (stock `DeviceStorageMonitorService` compiles with no blockers and runs),
+  `IStorageManager.createUserStorageKeys` and `LockSettingsInternal.createNewUser`.
+- Stock `UserVisibilityMediator`, WindowManager and ActivityTaskManager support
+  one visible full user per display here. The window manager refused a window
+  of a user that was not visible on the task's display, as it does on a device.
+- Launching on another display needs the system feature
+  `android.software.activities_on_secondary_displays`; without it the task is
+  placed on the default display.
+- Stock PackageManagerService installs an existing package for a second user
+  and gives it a distinct UID and data directory; the broker's launch grants
+  already carry the user, so the second user's process was admitted unchanged.
+- SurfaceFlinger makes windows touchable only on a layer stack that has a
+  composed display, and reports a window's display as its layer stack. An
+  additional Android display therefore needs a real SurfaceFlinger display whose
+  layer stack equals the display ID, and that ID must not collide with the
+  private per-task output stacks.
+- The input dispatcher's hosted keyboard-task patch is global; two seats need
+  it per display. A patch doing that applied on top of the existing series.
+- A second task presenter can serve one display's tasks: the single task
+  organizer routes by display, the presenter attaches itself instead of
+  registering the fixed service name, and it must not make that call on its
+  Wayland thread because the system calls back during attachment. Its loss was
+  contained to its display.
+- Two real Wayland seats delivered pointer input independently to each user's
+  instance of the same app.
+- The podman test container runs two Linux accounts, each with a GPU headless
+  compositor and a private standalone session. It needs the host's Mesa paths,
+  a CA bundle and no process-count limit; systemd user managers do not start
+  in the Debian image used.
+
+What it did not cover: two Linux accounts on one Android system, keyboard
+typing, clipboard, input method, drag and drop and audio on the second desktop,
+user stop and the per-user lifecycle broadcasts, and providers, services and
+broadcasts of a second user. The UI runner's UiAutomation belongs to the system
+user and did not see another user's windows.
+
+Closures of the stock services that would replace the hosted ones, measured
+with `tools/aosp-closure.py closure` against the live framework JAR:
+
+| Stock service | Replaces | Sources | Blockers |
+| --- | --- | --- | --- |
+| `PermissionPolicyService` | `HostedWindowPermissionPolicy` | 1 | 0 |
+| `DeviceStorageMonitorService` | nothing; absent today | 1 | 0 |
+| `StorageManagerService` | `HostedStorageManagerService` | 13 | 5 |
+| `InputManagerService` | `HostInputManagerBridge`, `HostedInputDevices` | 40 | 5 |
+| `LockSettingsService` | `HostedLockSettingsService` | 77 | 19 |
+| `DisplayManagerService` | `HostedSessionDisplayService`, `HostedLogicalDisplay` | 289 | 71 |
+| `ActivityManagerService` with `UserController` | `HostedActivityManagerService`, `HostedUserLifecycle` | 510 | 75 |
+
+The blocker counts are what the tool reports before any work; most are sources
+not yet in the package manifest, and the remainder are JNI natives, AIDL files
+outside the include roots, absent HIDL classes and unwired generators.
 
 ## Desktop, display and audio boundaries
 
@@ -379,6 +484,13 @@ ownership mechanisms, including forced-supervisor-loss cleanup, without relying
 on systemd. Kernel/process cleanup and Android callbacks are separate outcomes
 and both need verification.
 
+Do not assume that the process running ART is the manager's direct child or
+that its own PID is the host-visible PID. The [app sandbox](#app-sandbox) later
+places each app in a PID namespace, possibly behind an init stub. Handles,
+grant binding, exit results and reaping refer to the manager's direct child and
+its stable process handle; anything an app reports about its own PID is not an
+identity.
+
 Order broker and host setup before dependent services; system-server boot must
 no longer wait for a user presenter. Media resource services still wait for the
 system services they consume. Separate process existence, Binder registration,
@@ -454,7 +566,26 @@ executor now.
    `build/application.zig`, packaging and existing runner callers together.
    Exit: APK launch, join, service startup/failure and headless tests still work
    under one user from an installed read-only tree and unrelated working directory.
-2. **Prove two-user operation with a bounded end-to-end prototype.** In a
+2. **Replace the hosted services that multi-user operation depends on.**
+   The AOSP code policy requires stock Android Java, and stock `UserController`
+   lives inside `ActivityManagerService`, so this precedes the two-user gate.
+   Work in order of closure size, each as its own verified change that deletes
+   the hosted class it replaces: `PermissionPolicyService` and
+   `DeviceStorageMonitorService`; `StorageManagerService` over a stand-in for
+   vold's stock `IVold` interface; `InputManagerService` over the host's native
+   input manager; `LockSettingsService`; `DisplayManagerService`, with additional
+   desktops supplied from below Java as SurfaceFlinger displays; and
+   `ActivityManagerService` with `UserController`. The measured closures are in
+   [Two-user prototype findings](#two-user-prototype-findings). Where a closure
+   reaches something the host lacks, implement it at the daemon, HAL or JNI
+   boundary. Still to decide before the last two: how a desktop's presenter and
+   seat attach without a repository-owned Java service, and whether the task
+   shell in `dev.artzig.window` is replaced or stays as recorded debt.
+   Exit: every existing test passes after each replacement; a private
+   single-user instance behaves as before; no hosted service was extended.
+3. **Prove two-user operation with a bounded end-to-end prototype.** Repeat the
+   single-account prototype on the stock services, reusing its tests, native
+   input-dispatcher patch and presenter attach mode, then extend it: in a
    disposable installation, use two real Linux accounts, two Android users, two
    Wayland desktops and independent PipeWire endpoints. Reuse the existing test
    runner/harness. Implement only the minimum real admission, grant-bound launch,
@@ -471,7 +602,7 @@ executor now.
    and remaining blockers. Investigate compositor buffer/device compatibility
    and state supported GPU/seat limits. This is a feasibility gate: if it fails,
    revise the architecture before undertaking the broad migration below.
-3. **Harden admission, launch and storage contracts.** Complete role-scoped
+4. **Harden admission, launch and storage contracts.** Complete role-scoped
    admission, the operation table above, administrator-authorized enrollment,
    storage-root registration and host-manager/standalone/in-memory adapters.
    Introduce minimal system units here to verify the actual cross-account and
@@ -480,20 +611,22 @@ executor now.
    stale children; app code never inherits service credentials; forged/replayed
    grants, descriptor substitution, path races and unauthorized registrations
    fail. Missing/locked homes do not produce replacement data. No orphaned app
-   descendants survive manager failure. System mode remains experimental.
-4. **Implement durable Android users and per-user state.** Persist account
+   descendants survive manager failure. Handles and reaping hold when the ART
+   process is a descendant with a namespace-local PID rather than the direct
+   child. System mode remains experimental.
+5. **Implement durable Android users and per-user state.** Persist account
    mappings and app IDs, generalize user lifecycle and package/user state, and
    audit services for user-0/global-state assumptions. Cover settings, providers,
    broadcasts, permissions/AppOps/URI grants, services, jobs, alarms, storage and
    notifications. Exit: two real host accounts use the same package with distinct
    UIDs/data/grants, survive reboot and cannot access each other's state; account
    deprovisioning and UID reuse are tested. Shared package updates obey policy.
-5. **Complete desktop attachment and routing.** Extend the proven prototype to
+6. **Complete desktop attachment and routing.** Extend the proven prototype to
    the full task lifecycle, multi-display routing and per-user PipeWire adapters.
    Exit: two desktops operate concurrently; input, screenshots,
    clipboard, IME, drag, audio and notifications reach only their owner; disconnect/
    reconnect of one desktop leaves the other usable. Headless boot works.
-6. **Ship deployment, upgrades and migration.** Finalize separate units/accounts,
+7. **Ship deployment, upgrades and migration.** Finalize separate units/accounts,
    storage ownership, resource limits, activation authorization, NixOS packaging
    and generation-wide stop/restart. Document mode selection, supported devices,
    shared package-update policy and optional stopped-instance data import.
@@ -501,17 +634,20 @@ executor now.
    each service, timeouts, log backpressure, logout, restart and upgrades leaves
    no orphaned apps or mixed image generations. Validate on a real system manager
    with at least two Linux accounts. Do not enable shared mode by default before
-   phases 2–5 pass. Remove legacy internal CLI flags only after all callers
+   phases 3–6 pass. Remove legacy internal CLI flags only after all callers
    migrate. Both modes must have published installation/run instructions.
+
+The [app sandbox](#app-sandbox) is implemented after phase 4, once the launch
+contract is stable, as one more pre-ART setup step in both modes.
 
 Every phase has a standalone regression gate: APK launch, explicit join, headless
 execution, clean shutdown and retained data must work without systemd or privilege
 helpers. Add system-mode tests as its interfaces become available, then require
 both modes on each subsequent change. Test concurrent system/standalone instances
-with separate data and endpoints from phase 3 onward. A phase is not complete if
+with separate data and endpoints from phase 4 onward. A phase is not complete if
 it requires a later compatibility repair to restore standalone behavior.
 
-Before any framework changes, including the phase 2 prototype, trace the pinned AOSP methods and
+Before any framework changes, including the phase 3 prototype, trace the pinned AOSP methods and
 their collaborators, determine actual source inclusion in `build/java_sources.zig`,
 and prefer direct reuse. Run `tools/aosp-closure.py closure` against a live
 framework JAR before replacing a hosted service, and update generator inputs as
@@ -551,8 +687,8 @@ standalone behavior without systemd or privilege helpers. Match app behavior and
 Android-visible results, not private shim state. UI success requires the expected
 state/capture and `issues=0`; inspect retained `app.log` and `test.log` on failure.
 
-The immediate implementation milestone is phase 1. It reduces the main
-executable's responsibilities and gives both deployments reusable entry points
-without prematurely changing the user model or system installation behavior.
-The next milestone is the two-user feasibility gate, before a broad persistence
-or production deployment migration.
+Phase 1 is complete: it reduced the main executable's responsibilities and gave
+both deployments reusable entry points without changing the user model or
+system installation behavior. The next milestone is phase 2, the stock-service
+replacements, followed by the two-user feasibility gate, before a broad
+persistence or production deployment migration.
