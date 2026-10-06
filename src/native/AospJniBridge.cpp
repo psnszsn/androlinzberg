@@ -511,11 +511,14 @@ static thread_local bool javaLogWrite;
 static jclass diagnosticLogClass;
 static jmethodID diagnosticRecordLog;
 // stderr shows the log the way logcat does: AZK_LOG_LEVEL (v, d, i, w, e, f
-// or s; warnings when unset) selects the entries, and each entry is cut at
-// logd's payload limit, so a Throwable's stack trace does not turn one warning
-// into a screenful. The Java diagnostics journal still sees every message in
-// full. This is deliberately not ANDROID_LOG_TAGS: the pinned runtime reads
-// that one too and lowers the framework's own loggable threshold with it.
+// or s; warnings when unset) selects the entries. A Java entry is cut at logd's
+// payload limit, as liblog's logd writer cuts it, so a Throwable's stack trace
+// does not turn one warning into a screenful. A native entry beyond the limit
+// is emitted whole in newline-bounded chunks, following libbase's
+// SplitByLogdChunks: SignalCatcher's thread dump is one such LOG(INFO). The
+// Java diagnostics journal still sees every message in full. This is
+// deliberately not ANDROID_LOG_TAGS: the pinned runtime reads that one too and
+// lowers the framework's own loggable threshold with it.
 static int stderrMinimumPriority = ANDROID_LOG_WARN;
 static constexpr size_t kLogEntryMaxPayload = 4068;  // liblog's LOGGER_ENTRY_MAX_PAYLOAD
 static int parseStderrMinimumPriority() {
@@ -539,11 +542,25 @@ static void diagnosticLogger(const __android_log_message* message) {
             __android_log_stderr_logger(message);
         } else {
             static thread_local char payload[kLogEntryMaxPayload];
-            memcpy(payload, message->message, kLogEntryMaxPayload - 1);
-            payload[kLogEntryMaxPayload - 1] = 0;
             __android_log_message cut = *message;
             cut.message = payload;
-            __android_log_stderr_logger(&cut);
+            const char* rest = message->message;
+            size_t remaining = length;
+            do {
+                size_t chunk = remaining < kLogEntryMaxPayload ? remaining : kLogEntryMaxPayload - 1;
+                size_t skip = 0;
+                if (chunk < remaining) {
+                    // End the chunk at its last newline; a single longer line is cut hard.
+                    for (size_t i = chunk; i > 0; --i) {
+                        if (rest[i - 1] == '\n') { chunk = i - 1; skip = 1; break; }
+                    }
+                }
+                memcpy(payload, rest, chunk);
+                payload[chunk] = 0;
+                __android_log_stderr_logger(&cut);
+                rest += chunk + skip;
+                remaining -= chunk + skip;
+            } while (!javaLogWrite && remaining > 0);
         }
     }
     static thread_local bool recording = false;

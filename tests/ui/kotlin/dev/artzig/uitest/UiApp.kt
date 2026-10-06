@@ -18,7 +18,8 @@ object UiApp {
     private const val TIMEOUT = 30_000L
     private val device get() = UiTest.device
     private var logCursor = 0L
-    private val logs = ArrayList<String>()
+    // Every record read so far, so assertions on different tags can interleave.
+    private val logs = ArrayList<Pair<String, String>>()
 
     fun text(value: String): BySelector = By.text(value)
     fun description(value: String): BySelector = By.desc(value)
@@ -66,8 +67,8 @@ object UiApp {
         while (true) {
             val journal = UiTest.diagnostics.read(logCursor, Long.MAX_VALUE)
             logCursor = journal.logCursor
-            for (record in journal.logs) if (record.tag == tag) logs += record.message
-            if (logs.any { fragment in it }) return
+            for (record in journal.logs) logs += record.tag to record.message
+            if (logs.any { it.first == tag && fragment in it.second }) return
             assertTrue("no $tag log contains: $fragment", android.os.SystemClock.uptimeMillis() < deadline)
             Thread.sleep(100)
         }

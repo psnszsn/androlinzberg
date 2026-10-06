@@ -989,26 +989,29 @@ internal object FrameworkModuleSmoke {
         check(!internal.isPendingTopUid(12345))
         check(internal.getUidProcessState(12345) == ActivityManager.PROCESS_STATE_NONEXISTENT)
         check(internal.getActivityInfoForUser(null, 0) == null)
+        // An application UID that no installed package holds. PackageManagerService hands out
+        // the low app IDs in scan order, so a fixed low ID can belong to a privileged system app.
+        val unprivilegedUid = 14321
         val original = android.content.pm.ActivityInfo().apply {
             name = "FixtureActivity"
             applicationInfo = android.content.pm.ApplicationInfo().apply {
                 packageName = "org.example.permissions"
-                uid = 10001
+                uid = unprivilegedUid
                 initForUser(0)
             }
         }
         check(internal.getActivityInfoForUser(original, 0) === original)
         val remapped = internal.getActivityInfoForUser(original, 2)
         check(remapped !== original && remapped.applicationInfo !== original.applicationInfo)
-        check(remapped.name == original.name && remapped.applicationInfo.uid == UserHandle.getUid(2, 10001))
-        check(original.applicationInfo.uid == 10001 && remapped.applicationInfo.dataDir != original.applicationInfo.dataDir)
-        check(internal.handleIncomingUser(1, 10001, 0, false, 2, "test", null) == 0)
+        check(remapped.name == original.name && remapped.applicationInfo.uid == UserHandle.getUid(2, unprivilegedUid))
+        check(original.applicationInfo.uid == unprivilegedUid && remapped.applicationInfo.dataDir != original.applicationInfo.dataDir)
+        check(internal.handleIncomingUser(1, unprivilegedUid, 0, false, 2, "test", null) == 0)
         check(internal.handleIncomingUser(1, 0, UserHandle.USER_ALL, true, 2, "test", null) == UserHandle.USER_ALL)
         check(runCatching { internal.handleIncomingUser(1, 0, UserHandle.USER_ALL, false, 2, "test", null) }
             .exceptionOrNull() is IllegalArgumentException)
-        check(runCatching { internal.handleIncomingUser(1, 10001, 1, false, 2, "test", null) }
+        check(runCatching { internal.handleIncomingUser(1, unprivilegedUid, 1, false, 2, "test", null) }
             .exceptionOrNull() is SecurityException)
-        check(internal.handleIncomingUser(1, UserHandle.getUid(1, 10001),
+        check(internal.handleIncomingUser(1, UserHandle.getUid(1, unprivilegedUid),
             UserHandle.USER_CURRENT_OR_SELF, false, 2, "test", null) == 1)
 
         val memory = android.app.ActivityManager.MemoryInfo()

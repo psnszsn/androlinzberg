@@ -16,11 +16,21 @@ class WaylandInputUiTest {
     private fun await(selector: BySelector) =
         checkNotNull(device.wait(Until.findObject(selector), TIMEOUT)) { "missing $selector" }
 
-    private fun tap(selector: BySelector) = WaylandSeat.tap(await(selector).visibleCenter)
+    /** The fixture rebuilds its routing views after a button press; a node found
+     * just before that is stale by the time its geometry is read. Look it up again. */
+    private fun <T> geometry(selector: BySelector, read: (androidx.test.uiautomator.UiObject2) -> T): T {
+        repeat(20) {
+            try { return read(await(selector)) }
+            catch (_: androidx.test.uiautomator.StaleObjectException) { Thread.sleep(50) }
+        }
+        return read(await(selector))
+    }
+
+    private fun tap(selector: BySelector) = WaylandSeat.tap(geometry(selector) { it.visibleCenter })
 
     /** A drag across `selector` at mid-height, between two horizontal fractions. */
     private fun drag(selector: BySelector, from: Double, to: Double) {
-        val bounds = await(selector).visibleBounds
+        val bounds = geometry(selector) { it.visibleBounds }
         fun at(fraction: Double) = Point(bounds.left + (bounds.width() * fraction).toInt(), bounds.centerY())
         WaylandSeat.drag(at(from), at(to))
     }
