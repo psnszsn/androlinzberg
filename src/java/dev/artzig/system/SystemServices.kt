@@ -90,8 +90,6 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.VIRTUAL_DEVICE_SERVICE, HostedVirtualDeviceService(context))
         android.os.ServiceManager.addService(Context.SENSOR_PRIVACY_SERVICE,
             HostedSensorPrivacyService(context))
-        val permissionPolicy = HostedWindowPermissionPolicy(context, packageManager)
-        LocalServices.addService(com.android.server.policy.PermissionPolicyInternal::class.java, permissionPolicy)
         val processLauncher = HostedZygoteService(packageManager, activityManager::dispatchProcessExit)
         activityManager.processLauncher = processLauncher.serviceLauncher()
         activityManager.packageService = packageManager
@@ -256,12 +254,19 @@ internal object SystemServices {
         HostedClipboardMonitor.enable()
         manager.startService(com.android.server.clipboard.ClipboardService::class.java)
         manager.startService(com.android.server.NetworkScoreService.Lifecycle::class.java)
+        // SystemServer "StartDeviceMonitor": UserManagerService.createUser refuses
+        // a new user while DeviceStorageMonitorInternal reports low storage.
+        manager.startService(com.android.server.storage.DeviceStorageMonitorService::class.java)
         manager.startService(com.android.server.texttospeech.TextToSpeechManagerService::class.java)
         // SystemServer registers compatibility observers after the activity and
         // content services can receive package broadcasts and settings changes.
         platformCompat.registerPackageReceiver(context)
         platformCompat.registerContentObserver()
         manager.preSystemReady()
+        // SystemServer "StartPermissionPolicyService": the launch policy and the
+        // per-user permission/app-op synchronization. The PermissionController
+        // stand-in answers its default-grant request at once.
+        manager.startService(com.android.server.policy.PermissionPolicyService::class.java)
         appOps.systemReady()
         manager.startBootPhase(trace, SystemService.PHASE_SYSTEM_SERVICES_READY)
         LocalServices.getService(com.android.server.uri.UriGrantsManagerInternal::class.java).onSystemReady()
@@ -282,7 +287,6 @@ internal object SystemServices {
             override fun stateChanged(userId: Int, state: Int) = userManagerInternal.setUserState(userId, state)
             override fun starting(userId: Int) {
                 manager.onUserStarting(trace, userId)
-                permissionPolicy.startUser(userId)
             }
             override fun unlocking(userId: Int) { manager.onUserUnlocking(userId) }
             override fun unlocked(userId: Int) { manager.onUserUnlocked(userId) }

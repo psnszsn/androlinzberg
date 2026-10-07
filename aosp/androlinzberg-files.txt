@@ -6223,6 +6223,7 @@ F aosp frameworks/base/services/core/java/com/android/server/pm/InstantAppResolv
 F aosp frameworks/base/services/core/java/com/android/server/pm/InstantAppResolverConnection.java
 F aosp frameworks/base/services/core/java/com/android/server/pm/SaferIntentUtils.java
 F aosp frameworks/base/services/core/java/com/android/server/policy/PermissionPolicyInternal.java
+F aosp frameworks/base/services/core/java/com/android/server/policy/PermissionPolicyService.java
 F aosp frameworks/base/services/core/java/com/android/server/policy/WindowManagerPolicy.java
 F aosp frameworks/base/services/core/java/com/android/server/power/ShutdownCheckPoints.java
 F aosp frameworks/base/services/core/java/com/android/server/statusbar/StatusBarManagerInternal.java
@@ -11021,6 +11022,7 @@ F aosp frameworks/base/services/core/java/com/android/server/rollback/ApexdRever
 F aosp frameworks/base/services/core/java/com/android/server/rollback/RollbackManagerInternal.java
 F aosp frameworks/base/services/core/java/com/android/server/security/FileIntegrity.java
 F aosp frameworks/base/services/core/java/com/android/server/storage/DeviceStorageMonitorInternal.java
+F aosp frameworks/base/services/core/java/com/android/server/storage/DeviceStorageMonitorService.java
 F aosp frameworks/base/services/core/java/com/android/server/utils/WatchedSparseBooleanMatrix.java
 F aosp frameworks/base/services/core/java/com/android/server/utils/WatchedSparseSetArray.java
 F aosp frameworks/base/services/net/java/android/net/ConnectivityModuleConnector.java

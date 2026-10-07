@@ -263,7 +263,6 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/system/HostedDeviceIdleController.kt",
     "src/java/dev/artzig/system/HostedDevicePolicyManagerService.kt",
     "src/java/dev/artzig/system/HostedMediaRoutes.kt",
-    "src/java/dev/artzig/system/HostedWindowPermissionPolicy.kt",
     "src/java/dev/artzig/system/HostedFingerprintService.kt",
     "src/java/dev/artzig/system/HostedCompanionDeviceService.kt",
     "src/java/dev/artzig/system/HostedDropBoxManagerService.kt",

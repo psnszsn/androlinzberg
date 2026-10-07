@@ -80,4 +80,23 @@ class HostedPermissionControllerService : android.permission.PermissionControlle
 
     override fun onSetRuntimePermissionGrantStateByDeviceAdmin(callerPackageName: String, packageName: String,
         permission: String, grantState: Int, callback: java.util.function.Consumer<Boolean>) = callback.accept(false)
+
+    // Stock PermissionPolicyService asks for these on every user start and app
+    // install; the host has no user-sensitive flags, one-time sessions or
+    // hibernation to maintain.
+    override fun onUpdateUserSensitivePermissionFlags(uid: Int, executor: java.util.concurrent.Executor, callback: Runnable) =
+        executor.execute(callback)
+
+    override fun onOneTimePermissionSessionTimeout(packageName: String) { }
+
+    override fun onGetPlatformPermissionsForGroup(permissionGroupName: String,
+        callback: java.util.function.Consumer<List<String>>) = callback.accept(emptyList())
+
+    override fun onGetGroupOfPlatformPermission(permissionName: String,
+        callback: java.util.function.Consumer<String?>) = callback.accept(null)
+
+    override fun onGetUnusedAppCount(callback: java.util.function.IntConsumer) = callback.accept(0)
+
+    override fun onGetHibernationEligibility(packageName: String, callback: java.util.function.IntConsumer) =
+        callback.accept(android.permission.PermissionControllerManager.HIBERNATION_ELIGIBILITY_UNKNOWN)
 }

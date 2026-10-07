@@ -13,6 +13,11 @@ passes system/app executable paths. `--system` rejects unsupported deployment
 rather than silently using standalone state. Executable separation does not
 establish multi-user safety.
 
+Phase 2 has started: stock `PermissionPolicyService` replaced
+`HostedWindowPermissionPolicy`, and stock `DeviceStorageMonitorService` runs;
+the PermissionController stand-in answers the callbacks the stock policy
+service issues on user start.
+
 A prototype answered the single-account half of the two-user feasibility gate;
 see [Two-user prototype findings](#two-user-prototype-findings). It was built on
 the hosted services and is not on `main`. The AOSP code policy in `AGENTS.md`
@@ -390,8 +395,8 @@ with `tools/aosp-closure.py closure` against the live framework JAR:
 
 | Stock service | Replaces | Sources | Blockers |
 | --- | --- | --- | --- |
-| `PermissionPolicyService` | `HostedWindowPermissionPolicy` | 1 | 0 |
-| `DeviceStorageMonitorService` | nothing; absent today | 1 | 0 |
+| `PermissionPolicyService` (done) | `HostedWindowPermissionPolicy` | 1 | 0 |
+| `DeviceStorageMonitorService` (done) | nothing; absent before | 1 | 0 |
 | `StorageManagerService` | `HostedStorageManagerService` | 13 | 5 |
 | `InputManagerService` | `HostInputManagerBridge`, `HostedInputDevices` | 40 | 5 |
 | `LockSettingsService` | `HostedLockSettingsService` | 77 | 19 |

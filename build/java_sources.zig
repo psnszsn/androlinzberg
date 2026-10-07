@@ -1628,6 +1628,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/com/android/internal/os/ProcfsMemoryUtil.java");
     try c.file("$CJ/com/android/internal/os/logging/MetricsLoggerWrapper.java");
     try c.file("$FB/services/core/java/com/android/server/policy/PermissionPolicyInternal.java");
+    try c.file("$FB/services/core/java/com/android/server/policy/PermissionPolicyService.java");
     try c.file("$CJ/android/hardware/camera2/MultiResolutionImageReader.java");
     try c.file("$CJ/android/hardware/camera2/params/MultiResolutionStreamInfo.java");
     try c.file("$CJ/android/media/Image.java");
@@ -4846,6 +4847,7 @@ fn collectPackageManager(c: *StaticCollector) !void {
     try c.file("$FB/services/core/java/com/android/server/rollback/RollbackManagerInternal.java");
     try c.file("$FB/services/core/java/com/android/server/security/FileIntegrity.java");
     try c.file("$FB/services/core/java/com/android/server/storage/DeviceStorageMonitorInternal.java");
+    try c.file("$FB/services/core/java/com/android/server/storage/DeviceStorageMonitorService.java");
     try c.file("$FB/services/core/java/com/android/server/utils/WatchedSparseBooleanMatrix.java");
     try c.file("$FB/services/core/java/com/android/server/utils/WatchedSparseSetArray.java");
     try c.file("$FB/services/net/java/android/net/ConnectivityModuleConnector.java");

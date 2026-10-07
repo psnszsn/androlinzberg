@@ -61,46 +61,6 @@ object StockOptionalWmServicesSmoke {
         val packages = android.app.ActivityThread.getPackageManager()
         val packageName = checkNotNull(context.packageManager.getPackageArchiveInfo(apk, 0)).packageName
         check(packages.getApplicationInfo("android", 0L, 0)!!.uid == android.os.Process.SYSTEM_UID)
-        val permissionPolicy = HostedWindowPermissionPolicy(context, packages)
-        check(!permissionPolicy.isInitialized(0))
-        var initialized = 0
-        permissionPolicy.setOnInitializedCallback { user ->
-            check(user == 0 && permissionPolicy.isInitialized(user))
-            initialized++
-        }
-        permissionPolicy.startUser(0)
-        permissionPolicy.startUser(0)
-        check(initialized == 1 && !permissionPolicy.isInitialized(10))
-        permissionPolicy.setOnInitializedCallback { error("Initialization is not replayed") }
-        check(permissionPolicy.checkStartActivity(Intent(Intent.ACTION_MAIN), 10001, packageName))
-        val removed = Intent(android.telecom.TelecomManager.ACTION_CHANGE_DEFAULT_DIALER)
-        check(!permissionPolicy.checkStartActivity(removed, 10001, packageName))
-        check(!removed.hasExtra(Intent.EXTRA_CALLING_PACKAGE))
-        val unknown = Intent(android.provider.Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT)
-        check(permissionPolicy.checkStartActivity(unknown, 10001, "fixture.absent"))
-        check(unknown.getStringExtra(Intent.EXTRA_CALLING_PACKAGE) == "fixture.absent")
-        val other = Intent(android.content.pm.PackageManager.ACTION_REQUEST_PERMISSIONS_FOR_OTHER)
-        check(!permissionPolicy.checkStartActivity(other, 10001, packageName))
-        check(!permissionPolicy.checkStartActivity(other, android.os.Process.SYSTEM_UID, packageName))
-        check(permissionPolicy.checkStartActivity(other, android.os.Process.SYSTEM_UID, "android"))
-        check(!permissionPolicy.isIntentToPermissionDialog(other))
-        check(permissionPolicy.isIntentToPermissionDialog(other.setPackage(packages.permissionControllerPackageName)))
-        permissionPolicy.showNotificationPromptIfNeeded(packageName, 0, -1)
-        val launch = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val taskInfo = android.app.ActivityManager.RunningTaskInfo().apply {
-            isFocused = true; isVisible = true; isRunning = true
-            baseIntent = launch
-            baseActivity = ComponentName(packageName, "FixtureActivity")
-            topActivityInfo = android.content.pm.ActivityInfo().apply { name = "FixtureActivity" }
-            numActivities = 1
-        }
-        check(permissionPolicy.shouldShowNotificationDialogForTask(taskInfo, packageName, packageName, launch, "FixtureActivity"))
-        taskInfo.isVisible = false
-        check(!permissionPolicy.shouldShowNotificationDialogForTask(taskInfo, packageName, packageName, launch, "FixtureActivity"))
-        taskInfo.isVisible = true
-        taskInfo.baseIntent = Intent("fixture.trampoline")
-        check(permissionPolicy.shouldShowNotificationDialogForTask(taskInfo, packageName, packageName, taskInfo.baseIntent, "FixtureActivity"))
-        check(!permissionPolicy.shouldShowNotificationDialogForTask(taskInfo, packageName, "other", taskInfo.baseIntent, "FixtureActivity"))
         val deniedCleanup = HostedActivityManagerService(context).apply { packageService = packages }
         check(runCatching { deniedCleanup.killAllBackgroundProcessesExcept(-1, -1) }.exceptionOrNull()
             is SecurityException)
