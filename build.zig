@@ -15,6 +15,8 @@ fn setApplicationEnvironment(command: @import("build/command.zig").Command, tree
     _ = command.setOutputDirectoryEnvironment("ARTZIG_DATA_DIR", "artzig-data");
 }
 
+const pinnedLoader = @import("build/application.zig").pinnedLoader;
+
 fn setInstalledImageEnvironment(command: @import("build/command.zig").Command, tree: std.Build.LazyPath) void {
     command.setPathEnvironment("ARTZIG_INSTALL_ROOT", tree);
     command.setPathEnvironment("ARTZIG_ROOT", tree.path(command.b, "bin/art"));
@@ -36,6 +38,8 @@ pub fn build(b: *std.Build) void {
     const host_toolchain = @import("build/host_toolchain.zig").discover(b);
     const host_libc = b.option([]const u8, "host-libc", "Pinned glibc runtime providing ART's private stack query") orelse
         b.graph.environ_map.get("AZK_HOST_LIBC");
+    const host_loader = b.option([]const u8, "host-loader", "The pinned glibc runtime's dynamic loader, written into pinned executables") orelse
+        b.graph.environ_map.get("AZK_HOST_LOADER");
 
     const build_tools_test = b.step("build-tools-test", "Run build graph support unit tests");
     @import("build/command.zig").addTests(b, build_tools_test);
@@ -842,7 +846,7 @@ pub fn build(b: *std.Build) void {
     });
     ndk_test.root_module.linkLibrary(binder_ndk);
     const ndk_test_run = b.addRunArtifact(ndk_test);
-    ndk_test_run.addFileArg(binder_broker.getEmittedBin());
+    ndk_test_run.addFileArg(pinnedLoader(b, host_loader, binder_broker.getEmittedBin(), "azk-binder-broker"));
     b.step("ndk-test", "Run the native binder ABI self-test").dependOn(&ndk_test_run.step);
 
     // Zig AIDL backend self-test: tests/aidl-zig compiled by `aidl --lang=zig`
@@ -888,7 +892,7 @@ pub fn build(b: *std.Build) void {
     aidl_zig_test.root_module.addCSourceFile(.{ .file = b.path("tests/aidl-zig/ProbeNdk.cpp"), .flags = &probe_ndk_flags });
     aidl_zig_test.root_module.linkLibrary(binder_ndk);
     const aidl_zig_test_run = b.addRunArtifact(aidl_zig_test);
-    aidl_zig_test_run.addFileArg(binder_broker.getEmittedBin());
+    aidl_zig_test_run.addFileArg(pinnedLoader(b, host_loader, binder_broker.getEmittedBin(), "azk-binder-broker"));
     b.step("aidl-zig-test", "Round-trip the Zig AIDL backend against itself and the NDK backend").dependOn(&aidl_zig_test_run.step);
 
     // Cross-language system-test client: links the ABI and, connecting to the
@@ -931,6 +935,7 @@ pub fn build(b: *std.Build) void {
     process_entry_mod.addCSourceFile(.{ .file = b.path("src/native/LauncherSignals.c"), .flags = &.{ "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror" } });
     process_entry_mod.addCSourceFile(.{ .file = b.path("src/native/ProcessAppData.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     if (host_libc) |root| exe.root_module.addRPath(b.graph.cwdRelativePath(b.fmt("{s}/lib", .{root})));
+    const launcher_bin = pinnedLoader(b, host_loader, exe.getEmittedBin(), "androlinzberg");
     process_entry_mod.linkSystemLibrary("fontconfig", .{ .needed = true }); // platform/fonts.zig
 
     // --- azk_codec: MediaCodec backend over system FFmpeg. The system build
@@ -1018,13 +1023,13 @@ pub fn build(b: *std.Build) void {
         });
         if (host_libc) |root| process.root_module.addRPath(b.graph.cwdRelativePath(b.fmt("{s}/lib", .{root})));
         process.rdynamic = true;
-        bin.* = process.getEmittedBin();
+        bin.* = pinnedLoader(b, host_loader, process.getEmittedBin(), name);
         process_build.dependOn(&process.step);
     }
 
     const process_entry_test = b.addSystemCommand(&.{"python3"});
     process_entry_test.addFileArg(b.path("tools/test_process_entry.py"));
-    process_entry_test.addFileArg(exe.getEmittedBin());
+    process_entry_test.addFileArg(launcher_bin);
     b.step("process-entry-test", "Verify installed CLI dispatch and explicit image selection").dependOn(&process_entry_test.step);
 
     const wayland_tests = b.addTest(.{
@@ -1142,12 +1147,12 @@ pub fn build(b: *std.Build) void {
     egl_support.root_module.addRPathSpecial("$ORIGIN/..");
     const application_tree = @import("build/application.zig").build(b, .{
         .pdfclient = island.pdfclient,
-        .launcher = exe.getEmittedBin(),
+        .launcher = launcher_bin,
         .processes = process_bins,
-        .broker = binder_broker.getEmittedBin(),
-        .surfaceflinger = sf_service.getEmittedBin(),
-        .media_service = media_service.getEmittedBin(),
-        .task_presenter = task_presenter.getEmittedBin(),
+        .broker = pinnedLoader(b, host_loader, binder_broker.getEmittedBin(), "azk-binder-broker"),
+        .surfaceflinger = pinnedLoader(b, host_loader, sf_service.getEmittedBin(), "azk-surfaceflinger"),
+        .media_service = pinnedLoader(b, host_loader, media_service.getEmittedBin(), "azk-media-service"),
+        .task_presenter = pinnedLoader(b, host_loader, task_presenter.getEmittedBin(), "azk-task-presenter"),
         .island = island.file,
         .idmap2 = idmap2.file,
         .stats_jni = stats_jni.getEmittedBin(),
@@ -1271,7 +1276,8 @@ pub fn build(b: *std.Build) void {
     });
     host_stack_test.root_module.addCSourceFile(.{ .file = b.path("tests/native/HostStackTest.c"), .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" } });
     if (host_libc) |root| host_stack_test.root_module.addRPath(b.graph.cwdRelativePath(b.fmt("{s}/lib", .{root})));
-    const host_stack_run = b.addRunArtifact(host_stack_test);
+    const host_stack_run = std.Build.Step.Run.create(b, "run host-stack-test");
+    host_stack_run.addFileArg(pinnedLoader(b, host_loader, host_stack_test.getEmittedBin(), "host-stack-test"));
     host_stack_step.dependOn(&host_stack_run.step);
     if (host_libc != null) native_test_step.dependOn(host_stack_step);
 
@@ -1385,9 +1391,9 @@ pub fn build(b: *std.Build) void {
     task_output.addArg("python3");
     task_output.addFileArg(b.path("tools/binder-facade-test.py"));
     task_output.addArgs(&.{ "--retire-broker", "--system-client", "--server" });
-    task_output.addFileArg(sf_service.getEmittedBin());
+    task_output.addFileArg(pinnedLoader(b, host_loader, sf_service.getEmittedBin(), "azk-surfaceflinger"));
     task_output.addArg("--broker");
-    task_output.addFileArg(binder_broker.getEmittedBin());
+    task_output.addFileArg(pinnedLoader(b, host_loader, binder_broker.getEmittedBin(), "azk-binder-broker"));
     // Java registration and C++ DT_NEEDED must load the same installed runtime.
     task_output.addArg("--library");
     task_output.addFileArg(application_tree.path(b, "lib/art/libbinder.so"));

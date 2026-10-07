@@ -24,6 +24,14 @@ Run `zig build -j10 host-stack-test` to verify stack and guard bounds under
 affinity denial. The glibc patch is in `artzig/patches/glibc/`, and its isolated
 Nix derivation is `artzig/host-libc.nix`.
 
+Executables linked against that runtime also boot through its dynamic loader.
+Zig embeds the host system's loader, and glibc aborts at startup ("stack
+smashing detected") when the system's glibc version differs from the pinned
+one, as it does after a host upgrade. The shell exposes the pinned loader under
+a short store path as `AZK_HOST_LOADER` (`-Dhost-loader=` overrides it), and
+`tools/set-interpreter.py` writes it into each emitted executable in place;
+`patchelf` cannot relocate the interpreter in Zig-linked executables.
+
 The build consumes pinned AOSP source tarballs through the Zig package manager.
 Follow [the AOSP package instructions](../aosp/README.md) to initialize the
 selective Repo checkout and regenerate those archives.

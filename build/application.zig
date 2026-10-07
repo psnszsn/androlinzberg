@@ -39,6 +39,23 @@ pub const NamedLibrary = struct {
     name: []const u8,
 };
 
+/// An executable linked against the pinned glibc runtime (`host-libc`) must
+/// also boot through that runtime's dynamic loader: Zig embeds the host
+/// system's loader, and glibc aborts at startup ("stack smashing detected")
+/// when the two versions differ, as they do after a host upgrade. Zig cannot
+/// take another loader without giving up native system-library discovery, and
+/// patchelf cannot relocate .interp in its output, so the path is rewritten in
+/// place; the runtime exposes its loader under a store path short enough to fit.
+pub fn pinnedLoader(b: *std.Build, loader: ?[]const u8, bin: LazyPath, name: []const u8) LazyPath {
+    const path = loader orelse return bin;
+    const rewrite = b.addSystemCommand(&.{ "python3", "-B" });
+    rewrite.addFileArg(b.path("tools/set-interpreter.py"));
+    rewrite.addArgs(&.{ path, "--output" });
+    const pinned = rewrite.addOutputFileArg(name);
+    rewrite.addFileArg(bin);
+    return pinned;
+}
+
 pub fn build(b: *std.Build, options: Options) LazyPath {
     const tree = b.addWriteFiles();
     _ = tree.addCopyDirectory(b.path("src/native/codec2/config"), "", .{});
