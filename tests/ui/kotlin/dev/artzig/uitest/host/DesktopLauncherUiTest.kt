@@ -35,8 +35,9 @@ class DesktopLauncherUiTest {
         click(label("show attached dialog"))
         expectVisible("Fixture dialog")
         // A modal window's touchable region covers its task, so the stock
-        // accessibility window list reports it in place of the activity.
-        assertEquals(listOf(task to "Fixture dialog"), windows().map { it.taskId to it.title?.toString() })
+        // accessibility window list reports it in place of the activity. The
+        // list updates after the dialog's text is already visible.
+        assertEquals(listOf(task to "Fixture dialog"), awaitWindowTitles(listOf(task to "Fixture dialog")))
         // The button's centre lies inside the dialog's outer frame (including
         // its shadow): that click neither activates the covered activity nor
         // counts as an outside dismissal.
@@ -96,6 +97,15 @@ class DesktopLauncherUiTest {
     private fun label(text: String): BySelector = By.text(Pattern.compile(Pattern.quote(text), Pattern.CASE_INSENSITIVE))
 
     private fun windows() = UiTest.instrumentation.uiAutomation.windows.filter { it.taskId > 0 }
+
+    private fun awaitWindowTitles(expected: List<Pair<Int, String>>): List<Pair<Int, String?>> {
+        val deadline = SystemClock.uptimeMillis() + 30_000
+        while (true) {
+            val titles = windows().map { it.taskId to it.title?.toString() }
+            if (titles == expected || SystemClock.uptimeMillis() >= deadline) return titles
+            SystemClock.sleep(50)
+        }
+    }
 
     private fun awaitWindows(count: Int): List<android.view.accessibility.AccessibilityWindowInfo> {
         val deadline = SystemClock.uptimeMillis() + 30_000
