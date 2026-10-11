@@ -202,8 +202,26 @@ class HostedDesktopWindowPolicy(private val toggleFullscreen: ((android.os.IBind
         screenTurnedOn(Display.DEFAULT_DISPLAY)
     }
     fun enableScreenAfterBoot() {
-        displayPolicy.setLidState(WindowManagerPolicy.WindowManagerFuncs.LID_ABSENT)
+        // PhoneWindowManager.readLidState: the reader's SW_LID, absent here.
+        displayPolicy.setLidState(funcs.lidState)
         funcs.updateRotation(true, false)
+    }
+    /** PhoneWindowManager.notifyLidSwitchChanged with the default
+     * LID_BEHAVIOR_NONE: no lock or sleep, and its userActivity reaches the
+     * hosted power manager's no-op. */
+    fun notifyLidSwitchChanged(whenNanos: Long, lidOpen: Boolean) {
+        val state = if (lidOpen) WindowManagerPolicy.WindowManagerFuncs.LID_OPEN
+            else WindowManagerPolicy.WindowManagerFuncs.LID_CLOSED
+        if (state == displayPolicy.lidState) return
+        displayPolicy.setLidState(state)
+        funcs.updateRotation(true, false)
+    }
+    /** PhoneWindowManager.notifyCameraLensCoverSwitchChanged: acting on the
+     * cover requires config_launchCameraOnCameraLensCoverToggle, off here. */
+    fun notifyCameraLensCoverSwitchChanged(whenNanos: Long, lensCovered: Boolean) {
+        if (context.resources.getBoolean(com.android.internal.R.bool.config_launchCameraOnCameraLensCoverToggle))
+            throw dev.artzig.ArtzigTestDiagnostics.unsupported("WindowManagerPolicy",
+                "notifyCameraLensCoverSwitchChanged", "camera launch on lens cover is not hosted")
     }
     fun isScreenOn(): Boolean = displayPolicy.isScreenOnEarly
     fun okToAnimate(ignoreScreenOn: Boolean): Boolean = (ignoreScreenOn || isScreenOn()) && !goingToSleep

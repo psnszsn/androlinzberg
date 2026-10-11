@@ -2,17 +2,34 @@
 // live in host_composer.zig. GraphicBuffer/Fence strong references stay here.
 // The logical display has no physical scanout; task outputs use SF's GPU
 // virtual displays and the Wayland BufferQueue consumer.
+//
+// The one device-composited layer is the cursor: stock PointerController's
+// sprite is a cursor-flagged layer, which a device composer scans out on its
+// cursor plane. Here the plane is the Wayland seat's cursor surface
+// (cursor_plane.zig). As for ARC++, SpriteController publishes the icon's
+// hotspot as CursorInfo layer metadata, which this composer advertises.
 #define LOG_TAG "HostComposer"
 #include <azk/host_composer.h>
 #include "DisplayHardware/ComposerHal.h"
 #include "DisplayHardware/HWC2.h"
+#include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
+#include <cstring>
+#include <map>
 #include <mutex>
+#include <optional>
+#include <vector>
 #include <fcntl.h>
 #include <log/log.h>
 
+extern "C" void azk_host_composer_cursor(int32_t hotspotX, int32_t hotspotY, int32_t width,
+                                         int32_t height, const int32_t *pixels, size_t count);
+
 namespace android::Hwc2 {
+// SurfaceFlinger::getGenericLayerMetadataKeyMap's name for METADATA_MOUSE_CURSOR.
+static constexpr char kCursorInfo[] = "org.chromium.arc.V1_0.CursorInfo";
 static_assert(int(V3_0::Composition::CLIENT) == 1);
 static_assert(int(V3_0::Composition::CURSOR) == 4);
 static_assert(int(V3_0::Composition::SIDEBAND) == 5);
@@ -69,7 +86,12 @@ public:
   Error destroyLayer(Display display, Layer layer) override {
     if (display != 1)
       return Error::BAD_DISPLAY;
-    return error(azk_host_composer_layer_destroy(state_, layer));
+    auto result = error(azk_host_composer_layer_destroy(state_, layer));
+    if (result == Error::NONE) {
+      std::lock_guard lock(layerMutex_);
+      layers_.erase(layer);
+    }
+    return result;
   }
   Error getActiveConfig(Display display, Config *outConfig) override {
     if (display != 1)
@@ -222,6 +244,7 @@ public:
     // No physical scanout occurs here. This is only the GPU completion fence;
     // PRESENT_FENCE_IS_NOT_RELIABLE keeps it out of presentation accounting.
     *outPresentFence = fence;
+    presentCursor();
     return Error::NONE;
   }
   Error setActiveConfig(Display display, Config config) override {
@@ -318,28 +341,63 @@ public:
     return validateDisplay(display, expectedPresentTime, frameIntervalNs,
                            outNumTypes, outNumRequests);
   }
+  // The Wayland compositor places its cursor surface at its own pointer, so
+  // the plane's position carries nothing the presenter uses.
   Error setCursorPosition(Display display, Layer layer, int32_t x,
                           int32_t y) override {
-    if (display != 1)
-      return Error::BAD_DISPLAY;
-    return Error::UNSUPPORTED;
+    return layerStatus(display, layer, false);
   }
   Error setLayerBuffer(Display display, Layer layer, uint32_t slot,
                        const sp<GraphicBuffer> &buffer,
                        int acquireFence) override {
-    if (acquireFence >= 0)
-      sp<Fence>::make(acquireFence).clear();  // owned, like every HAL fence
-    return layerStatus(display, layer, false);
+    // Owned, like every HAL fence.
+    sp<Fence> fence =
+        acquireFence >= 0 ? sp<Fence>::make(acquireFence) : Fence::NO_FENCE;
+    auto result = layerStatus(display, layer, false);
+    if (result != Error::NONE)
+      return result;
+    std::lock_guard lock(layerMutex_);
+    auto &state = layers_[layer];
+    // A null buffer selects the composer's cached buffer in that slot.
+    if (buffer)
+      state.slots[slot] = buffer;
+    auto cached = state.slots.find(slot);
+    sp<GraphicBuffer> current =
+        cached == state.slots.end() ? nullptr : cached->second;
+    if (current != state.buffer)
+      state.dirty = true;
+    state.buffer = current;
+    state.fence = fence;
+    return Error::NONE;
   }
   Error setLayerBufferSlotsToClear(Display display, Layer layer,
                                    const std::vector<uint32_t> &slotsToClear,
                                    uint32_t activeBufferSlot) override {
-    return layerStatus(display, layer, false);
+    auto result = layerStatus(display, layer, false);
+    if (result != Error::NONE)
+      return result;
+    std::lock_guard lock(layerMutex_);
+    auto &state = layers_[layer];
+    for (uint32_t slot : slotsToClear)
+      if (slot != activeBufferSlot)
+        state.slots.erase(slot);
+    return Error::NONE;
   }
   Error setLayerSurfaceDamage(
       Display display, Layer layer,
       const std::vector<IComposerClient::Rect> &damage) override {
-    return layerStatus(display, layer, false);
+    auto result = layerStatus(display, layer, false);
+    if (result != Error::NONE)
+      return result;
+    // HWC2: one empty rectangle means unchanged contents; none means unknown.
+    const bool unchanged = damage.size() == 1 && damage[0].left == 0 &&
+                           damage[0].top == 0 && damage[0].right == 0 &&
+                           damage[0].bottom == 0;
+    if (!unchanged) {
+      std::lock_guard lock(layerMutex_);
+      layers_[layer].dirty = true;
+    }
+    return Error::NONE;
   }
   Error setLayerBlendMode(Display display, Layer layer,
                           IComposerClient::BlendMode mode) override {
@@ -355,8 +413,13 @@ public:
       aidl::android::hardware::graphics::composer3::Composition type) override {
     if (display != 1)
       return Error::BAD_DISPLAY;
-    return error(azk_host_composer_layer_composition(
+    auto result = error(azk_host_composer_layer_composition(
         state_, layer, static_cast<int32_t>(type)));
+    if (result == Error::NONE) {
+      std::lock_guard lock(layerMutex_);
+      layers_[layer].cursor = type == V3_0::Composition::CURSOR;
+    }
+    return result;
   }
   Error setLayerDataspace(Display display, Layer layer,
                           Dataspace dataspace) override {
@@ -522,11 +585,26 @@ public:
                           const std::vector<uint8_t> &value) override {
     if (display != 1)
       return V2_4::Error::BAD_DISPLAY;
-    return V2_4::Error::UNSUPPORTED;
+    if (key != kCursorInfo)
+      return V2_4::Error::UNSUPPORTED;
+    if (azk_host_composer_layer_check(state_, layer, false) != 0)
+      return V2_4::Error::BAD_LAYER;
+    // SpriteController's parcel: int32 style, float hotspot x, float hotspot
+    // y, bool drop shadow. The drop shadow is already in the sprite's pixels.
+    if (value.size() < 12)
+      return V2_4::Error::BAD_PARAMETER;
+    float hotspot[2];
+    std::memcpy(hotspot, value.data() + 4, sizeof(hotspot));
+    if (!std::isfinite(hotspot[0]) || !std::isfinite(hotspot[1]))
+      return V2_4::Error::BAD_PARAMETER;
+    std::lock_guard lock(layerMutex_);
+    layers_[layer].hotspot = {static_cast<int32_t>(std::lround(hotspot[0])),
+                              static_cast<int32_t>(std::lround(hotspot[1]))};
+    return V2_4::Error::NONE;
   }
   V2_4::Error getLayerGenericMetadataKeys(
       std::vector<IComposerClient::LayerGenericMetadataKey> *outKeys) override {
-    outKeys->clear();
+    *outKeys = {{kCursorInfo, false}};
     return V2_4::Error::NONE;
   }
   Error getClientTargetProperty(Display display,
@@ -681,6 +759,78 @@ private:
     if (auto *callback = self.callback_.load())
       callback->onComposerHalVsync(1, timestamp, self.period_);
   }
+  struct LayerState {
+    bool cursor = false;
+    bool dirty = true;
+    std::map<uint32_t, sp<GraphicBuffer>> slots;
+    sp<GraphicBuffer> buffer;
+    sp<Fence> fence = Fence::NO_FENCE;
+    std::optional<std::array<int32_t, 2>> hotspot;
+  };
+  struct SentCursor {
+    Layer layer;
+    std::array<int32_t, 2> hotspot;
+  };
+
+  /** The cursor plane after a present: the sprite's pixels when its layer,
+   * contents or hotspot changed, or an empty plane once it is gone. */
+  void presentCursor() {
+    std::lock_guard lock(layerMutex_);
+    auto plane = std::find_if(layers_.begin(), layers_.end(), [](const auto &entry) {
+      return entry.second.cursor && entry.second.buffer && entry.second.hotspot;
+    });
+    if (plane == layers_.end()) {
+      if (sent_ && sent_->layer != 0) {
+        azk_host_composer_cursor(0, 0, 0, 0, nullptr, 0);
+        sent_ = SentCursor{0, {0, 0}};
+      }
+      return;
+    }
+    auto &[layer, state] = *plane;
+    if (sent_ && sent_->layer == layer && sent_->hotspot == *state.hotspot &&
+        !state.dirty)
+      return;
+    std::vector<int32_t> pixels;
+    if (!readCursor(state, &pixels))
+      return;
+    state.dirty = false;
+    azk_host_composer_cursor((*state.hotspot)[0], (*state.hotspot)[1],
+                             int32_t(state.buffer->getWidth()),
+                             int32_t(state.buffer->getHeight()), pixels.data(),
+                             pixels.size());
+    sent_ = SentCursor{layer, *state.hotspot};
+  }
+  /** Premultiplied ARGB words of the sprite's RGBA_8888 buffer. */
+  static bool readCursor(const LayerState &state, std::vector<int32_t> *out) {
+    const auto &buffer = state.buffer;
+    if (buffer->getPixelFormat() != PIXEL_FORMAT_RGBA_8888 ||
+        buffer->getWidth() == 0 || buffer->getWidth() > 256 ||
+        buffer->getHeight() == 0 || buffer->getHeight() > 256) {
+      ALOGW("Cursor plane cannot show a %ux%u buffer of format %d",
+            buffer->getWidth(), buffer->getHeight(), buffer->getPixelFormat());
+      return false;
+    }
+    if (state.fence->wait(Fence::TIMEOUT_NEVER) != OK)
+      return false;
+    void *data = nullptr;
+    if (buffer->lock(GraphicBuffer::USAGE_SW_READ_OFTEN, &data) != OK)
+      return false;
+    const uint32_t width = buffer->getWidth(), height = buffer->getHeight();
+    out->resize(size_t(width) * height);
+    for (uint32_t y = 0; y < height; y++) {
+      const auto *row = static_cast<const uint8_t *>(data) +
+                        size_t(y) * buffer->getStride() * 4;
+      for (uint32_t x = 0; x < width; x++) {
+        const uint8_t *p = row + x * 4;
+        (*out)[size_t(y) * width + x] =
+            int32_t(uint32_t(p[3]) << 24 | uint32_t(p[0]) << 16 |
+                    uint32_t(p[1]) << 8 | p[2]);
+      }
+    }
+    buffer->unlock();
+    return true;
+  }
+
   AzkHostComposer *state_ = nullptr;
   int32_t width_, height_, period_;
   std::atomic<HWC2::ComposerCallback *> callback_{nullptr};
@@ -688,6 +838,10 @@ private:
   std::array<sp<GraphicBuffer>, 64> targets_;
   sp<GraphicBuffer> currentTarget_;
   sp<Fence> currentFence_ = Fence::NO_FENCE;
+  std::mutex layerMutex_;
+  std::map<Layer, LayerState> layers_;
+  // Layer 0 (never a composer layer) records an empty plane.
+  std::optional<SentCursor> sent_;
 };
 
 // Pinned ComposerHal.cpp owns this destructor and selects the AIDL/HIDL HAL.

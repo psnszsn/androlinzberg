@@ -649,13 +649,17 @@ branches. Layoutlib's zero CPU usage is inappropriate for this backend.
 ImageReader and ImageWriter retain stock `media_jni` library initialization. Image queue transfer and transition border luminance pass through the
 shared mapper, including IMapper's all-zero full-buffer rectangle contract.
 
-The WM-facing `HostInputManagerBridge` owns pinned filter installation,
-uninstallation and fallback-key policy. Its desktop transport calls
-`HostInputDispatcher.notifyInputEvent`, which translates Java event values
-(including motion history and transforms) to stock NotifyArgs. Injected events
-intentionally bypass filtering; only filter reinjection uses that path. Native
-InputDispatcher owns key repeat, so the Wayland seat must not also synthesize
-repeat events when using this boundary.
+Stock `InputManagerService` owns inputflinger's `InputManager` through its
+original JNI. Below it, the host event hub (`src/native/input/HostEventHub.cpp`)
+is the reader's device source: the Wayland seat's keyboard, mouse, touchscreen
+and tablet tools arrive as evdev packets from `WaylandTaskInput`, so stock
+mappers, PointerChoreographer, the interaction blockers, InputFilter and
+InputDispatcher produce and route every event. The host reader and dispatcher
+factories construct the stock classes; the dispatcher factory subscribes the
+dispatcher to SurfaceFlinger's window infos, and `HostInputDispatcher.cpp`
+supplies only the task of each input window and native drag targeting.
+PointerController's sprite reaches the Wayland cursor through the host
+composer's cursor plane (`src/platform/cursor_plane.zig`).
 
 Original PDF rendering uses the separately loaded `libpdfclient.so`, with
 PDFium globals localized by its pinned export script. Original PdfEditor

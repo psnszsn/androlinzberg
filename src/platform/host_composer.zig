@@ -1,10 +1,16 @@
 //! State and software display clock for SurfaceFlinger's GPU-only host composer.
 //! This clock requests Android work; it never reports Wayland presentation.
+//! Every layer is client-composited except the CURSOR layer, which the
+//! composer hands to the cursor plane (cursor_plane.zig).
 const std = @import("std");
+comptime {
+    _ = @import("cursor_plane.zig");
+}
 const Io = std.Io;
 const alloc = std.heap.c_allocator;
 const max_layers = 1024;
 const client = 1; // pinned composer3.Composition.CLIENT
+const cursor = 4; // pinned composer3.Composition.CURSOR
 const Layer = struct { id: u64 = 0, composition: i32 = client };
 const Callback = *const fn (?*anyopaque, i64) callconv(.c) void;
 const Context = struct {
@@ -65,6 +71,11 @@ const Context = struct {
         }
     }
 };
+
+/// Layers this composer turns into client composition at validation.
+fn changes(entry: Layer) bool {
+    return entry.id != 0 and entry.composition != client and entry.composition != cursor;
+}
 
 pub export fn azk_host_composer_create(period: i64, callback: Callback, cookie: ?*anyopaque) callconv(.c) ?*Context {
     if (period < std.time.ns_per_ms or period > std.time.ns_per_s) return null;
@@ -142,7 +153,7 @@ pub export fn azk_host_composer_validate(ctx: *Context, count: *u32) callconv(.c
     ctx.lock();
     defer ctx.unlock();
     count.* = 0;
-    for (ctx.layers) |entry| if (entry.id != 0 and entry.composition != client) {
+    for (ctx.layers) |entry| if (changes(entry)) {
         count.* += 1;
     };
     ctx.validated = true;
@@ -154,13 +165,13 @@ pub export fn azk_host_composer_changes(ctx: *Context, ids: [*]u64, capacity: u3
     defer ctx.unlock();
     if (!ctx.validated) return 7;
     var needed: u32 = 0;
-    for (ctx.layers) |entry| if (entry.id != 0 and entry.composition != client) {
+    for (ctx.layers) |entry| if (changes(entry)) {
         needed += 1;
     };
     count.* = needed;
     if (capacity < needed) return 6;
     var index: usize = 0;
-    for (ctx.layers) |entry| if (entry.id != 0 and entry.composition != client) {
+    for (ctx.layers) |entry| if (changes(entry)) {
         ids[index] = entry.id;
         index += 1;
     };
@@ -170,7 +181,9 @@ pub export fn azk_host_composer_accept(ctx: *Context) callconv(.c) i32 {
     ctx.lock();
     defer ctx.unlock();
     if (!ctx.validated) return 7;
-    for (&ctx.layers) |*entry| entry.composition = client;
+    for (&ctx.layers) |*entry| if (changes(entry.*)) {
+        entry.composition = client;
+    };
     ctx.accepted = true;
     return 0;
 }
@@ -181,7 +194,7 @@ pub export fn azk_host_composer_present(ctx: *Context, has_target: bool) callcon
     // HWC permits an empty validated display without a client target. A target
     // is required when our GPU-only composer has actual client layers.
     if (!has_target) for (ctx.layers) |entry| {
-        if (entry.id != 0) return 4;
+        if (entry.id != 0 and entry.composition != cursor) return 4;
     };
     ctx.invalidate();
     return 0;

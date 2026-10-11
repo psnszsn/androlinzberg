@@ -155,24 +155,10 @@ with (out / 'app.log').open('wb') as log:
                             raise RuntimeError(f'{name} pixel {actual}, expected {color}')
                         time.sleep(.02)
                     subprocess.run(['grim', str(out / f'{name}.png')], check=True, timeout=3)
-                    # The source fixture accepts the tablet tool's set_cursor,
-                    # and moves the compositor cursor to the surface-local point.
-                    cursor_color = (0, 255, 0) if name == 'tablet-pen' else (0, 0, 255)
-                    while True:
-                        ppm = subprocess.check_output(['grim', '-c', '-t', 'ppm', '-'], timeout=3)
-                        _, dimensions, _, data = ppm.split(b'\n', 3)
-                        width, height = map(int, dimensions.split())
-                        def pixel(px, py):
-                            return tuple(data[(py * width + px) * 3:(py * width + px) * 3 + 3])
-                        # (2,3) hotspot gives this exact 16x16 immutable bitmap.
-                        correct = all(pixel(px, py) == cursor_color for px, py in
-                            [(x - 2, y - 3), (x + 13, y - 3), (x - 2, y + 12), (x + 13, y + 12)])
-                        if correct: break
-                        if time.monotonic() >= deadline:
-                            raise RuntimeError(f'{name} tablet cursor/hotspot not rendered')
-                        time.sleep(.02)
-                    subprocess.run(['grim', '-c', str(out / f'{name}-cursor.png')], check=True, timeout=3)
-                    result[name] = dict(point=[x, y], color=actual, cursor=cursor_color, hotspot=[2, 3])
+                    # Stock InputManagerService shows stylus pointer icons only with
+                    # config_enableStylusPointerIcon, off in the pinned configuration,
+                    # so the compositor keeps its own tablet tool cursor.
+                    result[name] = dict(point=[x, y], color=actual)
                     process.stdin.write(b'continue\n')
                     process.stdin.flush()
 

@@ -148,6 +148,12 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
         "src/native/graphics/HostTrace.cpp",
         "src/native/graphics/SurfaceFlingerHost.cpp",
         "src/native/graphics/SurfaceQueue.cpp",
+        // Stock InputReader's device source and factory, and the IMS JNI's
+        // user-activity entry point while PowerManagerService is hosted.
+        "src/native/input/HostEventHub.cpp",
+        "src/native/input/HostInputDispatcherFactory.cpp",
+        "src/native/input/HostInputReaderFactory.cpp",
+        "src/native/input/HostUserActivity.cpp",
         "src/native/network/NetworkBackend.cpp",
     };
     if (files.len != expected.len) return error.AuditFailed;

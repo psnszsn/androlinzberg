@@ -42,8 +42,8 @@ real `IActivityManager`/`IApplicationThread` AIDL. Activity, ActivityThread,
 Instrumentation and the client-transaction lifecycle
 use the pinned AOSP implementation. Stock ActivityTaskManagerService and
 WindowManagerService own task/window state, lifecycle scheduling and resource
-configuration; host adapters supply process startup, package lookup, display,
-input and desktop policy collaborators.
+configuration; host adapters supply process startup, package lookup, display
+and desktop policy collaborators.
 
 A process is bound to its package the way `handleBindApplication` does it:
 the package's `LoadedApk` builds the class loader (`ApplicationLoaders` →
@@ -105,10 +105,14 @@ Wayland transfer streams have separate limits.
 
 ### Input
 
-Wayland pointer, keyboard, touch, tablet and scroll events enter the stock native
-InputDispatcher and InputChannel path. The task shell translates synthetic
-coordinates and owns focus/capture generations; WMS supplies Android input-window
-metadata. App input reaches stock ViewRootImpl input stages. IME, clipboard,
+Stock InputManagerService runs inputflinger's InputReader over a host event
+hub: Wayland pointer, keyboard, touch, tablet and scroll events become evdev
+devices and packets there, and stock mappers, PointerChoreographer and
+InputDispatcher produce and route the Android events through InputChannels. The
+task shell projects surface coordinates onto the synthetic display and owns
+focus/capture generations; WMS supplies Android input-window metadata. The
+pointer sprite reaches the Wayland cursor through the host composer's cursor
+plane. App input reaches stock ViewRootImpl input stages. IME, clipboard,
 drag-and-drop and accessibility cross host adapters with task/window identity.
 
 ### Media

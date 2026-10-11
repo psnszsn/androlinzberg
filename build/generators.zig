@@ -69,6 +69,7 @@ pub const GeneratedNative = struct {
     surfaceflinger: @import("surfaceflinger.zig").Generated,
     input: @import("input.zig").Generated,
     input_dispatcher: @import("input_dispatcher.zig").Generated,
+    inputflinger: @import("inputflinger.zig").Generated,
 };
 
 pub const FrameworkResources = struct {
@@ -1363,6 +1364,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     const aidl_cpp = aidlCpp(b, o.aosp, aidl_tool);
     const input = @import("input.zig").generate(b, o.aosp.path(""), runner, aidl_tool, gui, aidl_cpp.headers);
     const input_dispatcher = @import("input_dispatcher.zig").generate(b, o.aosp.path(""), runner, aidl_tool, o.protoc, stats_tool);
+    const inputflinger = @import("inputflinger.zig").generate(b, o.aosp.path(""), runner, aidl_tool, o.sysprop_cpp_tool, stats_tool, input);
     const graphics = b.addRunArtifact(aidl_tool);
     graphics.addArgs(&.{ "--lang=cpp", "-I" });
     graphics.addDirectoryArg(o.aosp.path("frameworks/native/libs/gui/aidl"));
@@ -1456,6 +1458,7 @@ pub fn build(b: *std.Build, o: Options) Result {
             .perfetto = perfetto,
             .input = input,
             .input_dispatcher = input_dispatcher,
+            .inputflinger = inputflinger,
         },
         .resources = res,
         .fixtures = fixtures,

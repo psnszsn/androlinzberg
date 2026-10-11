@@ -61,3 +61,18 @@ internal class WaylandPointerCapture(private val host: Host) {
         host.acknowledge(null, request.sequence)
     }
 }
+
+/** Android's side of the handshake: the capture request stock InputReader
+ * applies. When the compositor refuses or revokes the lock for that request,
+ * capture is released as the window would release it; replies to earlier or
+ * already released requests change nothing. */
+internal class AndroidPointerCapture(private val release: (IBinder) -> Unit) {
+    private var held: Pair<IBinder, Int>? = null
+    fun requested(token: IBinder?, sequence: Int) { held = token?.let { it to sequence } }
+    fun acknowledged(token: IBinder?, sequence: Int) {
+        val current = held ?: return
+        if (token != null || current.second != sequence) return
+        held = null
+        release(current.first)
+    }
+}

@@ -25,13 +25,11 @@ extern "C" int azk_media_service_start() {
         if (!service) return -1;
         AIBinder_decStrong(service);
     }
-    // Match the hosted allocator and the declared AIDL HAL transport. All clients
-    // read the same session property area before creating their first codec;
-    // the session seeds ro.vendor.api_level (2024Q2) before any process starts.
-    if (property_set("media.c2.hal.selection", "aidl") != 0 ||
-        // Use the existing compositor's real frame times through CCodec's
-        // standard configuration, rather than its requested-time fallback.
-        property_set("persist.device_config.media_native.render_metrics_enabled", "true") != 0) return -1;
+    // Match the hosted allocator. The session seeds ro.vendor.api_level (2024Q2)
+    // and the AIDL HAL transport (media.c2.hal.selection) before any process
+    // starts. Use the existing compositor's real frame times through CCodec's
+    // standard configuration, rather than its requested-time fallback.
+    if (property_set("persist.device_config.media_native.render_metrics_enabled", "true") != 0) return -1;
     const auto mask = std::to_string((1u << android::C2PlatformAllocatorStore::BLOB) |
                                     (1u << android::C2PlatformAllocatorStore::BUFFERQUEUE));
     if (property_set("debug.stagefright.c2-poolmask", mask.c_str()) != 0) return -1;

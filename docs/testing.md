@@ -106,8 +106,8 @@ zig build -j10 ui-test -- --class WindowInputUiTest --method clickingButtonUpdat
 Ordinary tests inject input through `UiAutomation`. The host seam has its own
 coverage in the same suite: `dev.artzig.uitest.host` tests ask the task
 presenter's inspection methods (`WaylandSeat`) for real Wayland pointer and key
-events, so input crosses the compositor, the presenter's seat translation and
-the stock InputDispatcher, and they assert the app's reaction through the
+events, so input crosses the compositor, the seat's evdev devices, stock
+InputReader and InputDispatcher, and they assert the app's reaction through the
 Android APIs; `probe#<check>` tests run `tests/ui/probe`, a native inspector on
 the Zig generated from the presenter's AIDL, for what needs no app state
 (presented frames advancing with Wayland frame callbacks, resource accounting).

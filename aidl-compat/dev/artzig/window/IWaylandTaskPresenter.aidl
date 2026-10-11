@@ -22,11 +22,11 @@ interface IWaylandTaskPresenter {
      * requested/active configuration generations, active/presented output generations, pixel size. */
     long[] testWindow(int taskId);
     /** Positive ordered input sequence; zero is rejection, negative is unknown completion.
-     * Kinds: 0 tap, 1 drag, 2 text, 3 key, 4 tap+text, 5 tap+key. A combined
+     * Kinds: 0 tap, 1 drag, 2 text, 3 key, 4 tap+text, 5 tap+key, 6 wheel
+     * scroll of points[2] detents (positive scrolls down) at points[0..1]. A combined
      * action validates once before its own tap changes focus/selection. */
     long injectTestInput(int taskId, long generation, long configurationGeneration, in int[] geometry,
         int kind, in int[] points, String text);
-    boolean setPointerIcon(int taskId, long generation, int type);
     /** Establish the session-wide seat owner and return a versioned initial snapshot. */
     int[] connectSeat(IWaylandTaskEvents events);
     /** One pending producer per task, installed in the synchronized SF transaction. */
@@ -38,13 +38,10 @@ interface IWaylandTaskPresenter {
     boolean testHoldOutput(int taskId, long generation, boolean hold);
     /** Inspection-only accounting: tasks, queues, Wayland imports, graphics buffers, descriptors. */
     long[] testResources();
-    /** Immutable premultiplied ARGB cursor frames; caller and pointer-window ownership are checked. */
-    boolean setCursorImage(int taskId, long generation, int width, int height,
-        int hotspotX, int hotspotY, int frameMillis, in int[] pixels);
-    /** Tablet cursors use that tool's current proximity serial and source generation. */
-    boolean setTabletPointerIcon(int taskId, long generation, int deviceId, int deviceGeneration, int type);
-    boolean setTabletCursorImage(int taskId, long generation, int deviceId, int deviceGeneration,
-        int width, int height, int hotspotX, int hotspotY, int frameMillis, in int[] pixels);
+    /** SurfaceFlinger's cursor plane: the host composer's CURSOR layer, which is
+     * stock PointerController's sprite, as premultiplied ARGB with the hotspot
+     * of its CursorInfo layer metadata. Width 0: Android shows no pointer. */
+    oneway void setDisplayCursor(int hotspotX, int hotspotY, int width, int height, in int[] pixels);
     /** Production task policy: exit=0, enter=1, toggle current compositor state=2.
      * A request is not an acknowledgement; xdg configure remains authoritative. */
     boolean requestFullscreen(int taskId, long generation, int mode);

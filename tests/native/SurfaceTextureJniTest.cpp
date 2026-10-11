@@ -184,19 +184,6 @@ extern "C" JNIEXPORT jobject JNICALL Java_dev_artzig_SurfaceBufferSmoke_ndkCopy(
   return result;
 }
 
-// Only the WMS lifetime endpoint is a fixture. Inputflinger and its policy
-// bridge are the production HostInputDispatcher; this does not prove WMS boot.
-#include <binder/IServiceManager.h>
-#include <gui/SurfaceComposerClient.h>
-extern "C" JNIEXPORT void JNICALL
-Java_dev_artzig_HostInputDispatcherSmoke_startInputPublication(JNIEnv *,
-                                                               jclass) {
-  using namespace android;
-  assert(defaultServiceManager()->addService(String16("window"),
-                                             sp<BBinder>::make()) == OK);
-  assert(SurfaceComposerClient::bootFinished() == OK);
-}
-
 extern "C" JNIEXPORT jint JNICALL Java_dev_artzig_SurfaceBufferSmoke_pixelAt(
         JNIEnv*, jclass, jlong ptr, jfloat x, jfloat y) {
     return reinterpret_cast<TextureReader*>(ptr)->pixel(x, y);

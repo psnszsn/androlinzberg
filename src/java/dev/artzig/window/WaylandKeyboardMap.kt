@@ -5,8 +5,9 @@ import android.view.KeyCharacterMap
 import android.view.KeyEvent
 
 /** Converts the seat's XKB character matrix to the pinned KeyCharacterMap parser
- * format. EventHub normally selects a device KCM; that hardware owner is absent
- * here. Stock KeyCharacterMap retains Unicode/dead-key lookup and parceling.
+ * format: the device KCM stock EventHub would load for the keyboard, here the
+ * host event hub's keyboard map. Stock KeyCharacterMap retains Unicode/dead-key
+ * lookup and parceling.
  * Rows are evdev scan codes; columns are Shift, Caps, Level3, Num, Ctrl, Alt bits.
  */
 internal object WaylandKeyboardMap {
@@ -52,8 +53,14 @@ internal object WaylandKeyboardMap {
         else -> if (scan == 86) KeyEvent.KEYCODE_RO else HostedInputDevices.androidKeyCodeForScanCode(scan)
     }
 
+    /** The layout as a parsed stock KeyCharacterMap (for checks of the text). */
     fun compile(characters: IntArray, symbols: IntArray = IntArray(SCAN_COUNT),
-        deviceId: Int = KeyCharacterMap.VIRTUAL_KEYBOARD): KeyCharacterMap {
+        deviceId: Int = KeyCharacterMap.VIRTUAL_KEYBOARD): KeyCharacterMap =
+        HostedInputDevices.createHostKeyCharacterMap(deviceId, compileText(characters, symbols))
+
+    /** The layout as stock KCM text, the seat keyboard's device map in the
+     * session's host event hub. */
+    fun compileText(characters: IntArray, symbols: IntArray = IntArray(SCAN_COUNT)): String {
         require(symbols.size == SCAN_COUNT && symbols.all { it >= 0 }) { "Invalid XKB symbol matrix" }
         require(characters.size == SCAN_COUNT * STATE_COUNT) { "Invalid XKB character matrix" }
         require(characters.all { it == 0 || it in 1..0xffff && it !in 0xd800..0xdfff }) {
@@ -109,7 +116,7 @@ internal object WaylandKeyboardMap {
                 append("}\n")
             }
         }
-        return HostedInputDevices.createHostKeyCharacterMap(deviceId, contents)
+        return contents
     }
 
     /** Only positions present in the XKB layout are advertised. Modifier and

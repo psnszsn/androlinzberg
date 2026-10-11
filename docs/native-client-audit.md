@@ -417,12 +417,11 @@ commands and generated reports.
 
 **Already outside app presentation:** Wayland windows and desktop input live in
 [`task_presenter.zig`](../src/platform/task_presenter.zig); SurfaceFlinger and
-its host composer run in the supervised SF process. WMS/ATMS and hosted input
-policy run in the system process. InputDispatcher has host policy/crypto/drag
-patches. App MessageQueue, InputChannel and InputEventReceiver/Sender JNI reuse
-stock code; the Looper poll accessor is an additional host/test seam.
-[`pointer_icon_jni.zig`](../src/binder/pointer_icon_jni.zig) registers methods on
-`dev.artzig.window.WaylandCursor`, not replacement PointerIcon natives.
+its host composer run in the supervised SF process. WMS/ATMS and stock
+InputManagerService run in the system process; its reader reads the host event
+hub. InputDispatcher has host crypto/task/drag patches. App MessageQueue,
+InputChannel and InputEventReceiver/Sender JNI reuse stock code; the Looper
+poll accessor is an additional host/test seam.
 
 Remaining graphics adaptations are concentrated in EGL, allocator, libgui,
 loader and compositor interfaces. The original HWUI clients render in the app

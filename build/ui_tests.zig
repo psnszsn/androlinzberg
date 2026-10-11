@@ -63,6 +63,7 @@ pub const tests = [_][]const u8{
     "dev.artzig.uitest.FDroidUiTest#installsAnAppThroughThePackageInstaller@412x915@fdroid",
     // Host path: real Wayland input through the presenter and InputDispatcher.
     "dev.artzig.uitest.host.WaylandInputUiTest#tapReachesTheView",
+    "dev.artzig.uitest.host.WaylandInputUiTest#wheelScrollsTheView@412x400",
     "dev.artzig.uitest.host.WaylandInputUiTest#overlappingChildrenInterceptionAndRemoval",
     "dev.artzig.uitest.host.WaylandInputUiTest#seekBarDragPreservesTrackingCallbacks",
     "dev.artzig.uitest.host.WaylandInputUiTest#hostF11EntersAndExitsCompositorFullscreen",

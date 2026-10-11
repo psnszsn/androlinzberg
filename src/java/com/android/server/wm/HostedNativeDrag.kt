@@ -10,7 +10,6 @@ import android.view.DragEvent
 import android.view.IWindow
 import android.view.View
 import com.android.server.LocalServices
-import dev.artzig.window.HostInputManagerBridge
 
 /** Native-compositor entry to pinned DragDropController/DragState. A native
  * source has no Android window or DOWN event to transfer. WMS retains its real
@@ -20,8 +19,7 @@ import dev.artzig.window.HostInputManagerBridge
  * separate input FD. ViewRootImpl.WindowInputEventReceiver.onDragEvent defines
  * the location payload; its dispatchDragEvent is also the IWindow destination.
  * No Wayland presenter IPC or provider work occurs while holding the WM lock. */
-class HostedNativeDrag(private val windows: WindowManagerService, private val handler: Handler,
-    private val input: HostInputManagerBridge) {
+class HostedNativeDrag(private val windows: WindowManagerService, private val handler: Handler) {
     val context: android.content.Context get() = windows.mContext
 
     interface Native {
@@ -111,7 +109,7 @@ class HostedNativeDrag(private val windows: WindowManagerService, private val ha
         if (outgoing !== source || !valid(source)) return false
         // Lock order: the dispatcher may query WMS; never hold its global lock
         // while resetting input ownership. The shell serializes queued CANCEL.
-        if (!input.handoffNativeDrag(source.inputToken)) return false
+        if (!dev.artzig.window.HostInputDispatcher.handoffNativeDrag(source.inputToken)) return false
         synchronized(windows.mGlobalLock) {
             if (!valid(source)) return false
             val state = source.identity as DragState
@@ -207,7 +205,7 @@ class HostedNativeDrag(private val windows: WindowManagerService, private val ha
         // SF's input transforms, regions, visibility, z-order and task Binder
         // identity determine the recipient. Synthetic Android coordinates are
         // never passed to the native compositor as desktop positions.
-        val target = input.hostedDragTarget(task, Display.DEFAULT_DISPLAY, x, y)
+        val target = dev.artzig.window.HostInputDispatcher.hostedDragTarget(task, Display.DEFAULT_DISPLAY, x, y)
         synchronized(windows.mGlobalLock) {
             if (windows.mDragDropController.hostedDragStateLocked() !== drag.state) return
             val old = drag.target?.let { windows.mInputToWindowMap[it] }
@@ -245,7 +243,7 @@ class HostedNativeDrag(private val windows: WindowManagerService, private val ha
         onThread()
         val drag = active?.takeIf { it.token == token && !it.dropped } ?: return false
         val task = HostedTaskInputTargets.taskToken(windows, taskId) ?: run { cancel(token); return false }
-        val target = input.hostedDragTarget(task, Display.DEFAULT_DISPLAY, x, y)
+        val target = dev.artzig.window.HostInputDispatcher.hostedDragTarget(task, Display.DEFAULT_DISPLAY, x, y)
         synchronized(windows.mGlobalLock) {
             if (windows.mDragDropController.hostedDragStateLocked() !== drag.state) return false
             drag.dropped = true

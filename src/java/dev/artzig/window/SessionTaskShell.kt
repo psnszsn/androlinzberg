@@ -1,57 +1,50 @@
 package dev.artzig.window
 
+import android.content.Context
 import android.os.Handler
 import android.os.ServiceManager
 
 /** The system process owns one organizer independently of APK launchers. */
 internal object SessionTaskShell {
-    class Controller(private val presenter: RemoteTaskPresenter, private val input: WaylandTaskInput, private val cleanup: () -> Unit) : AutoCloseable {
+    class Controller(private val presenter: RemoteTaskPresenter, private val cleanup: () -> Unit) : AutoCloseable {
         fun toggleFullscreen(token: android.os.IBinder) = presenter.toggleFullscreen(token)
         fun pointerCapture(token: android.os.IBinder?, sequence: Int) = presenter.pointerCapture(token, sequence)
-        fun pointerIcon(token: android.os.IBinder, type: Int, deviceId: Int): Boolean = presenter.pointerIcon(token, type, deviceId)
-        fun cursorImage(token: android.os.IBinder, image: WaylandCursor.Image, deviceId: Int): Boolean = presenter.cursorImage(token, image, deviceId)
-        fun keyCodeState(deviceId: Int, sourceMask: Int, code: Int) = input.keyCodeState(deviceId, sourceMask, code)
-        fun scanCodeState(deviceId: Int, sourceMask: Int, scan: Int) = input.scanCodeState(deviceId, sourceMask, scan)
         override fun close() = cleanup()
     }
-    fun start(handler: Handler, dispatcher: HostInputManagerBridge,
-        publishKeyboard: (android.view.KeyCharacterMap, IntArray, android.view.KeyCharacterMap) -> Unit,
-        publishCapabilities: (Int, Int) -> Unit,
-        publishTablet: (WaylandTabletInput.Device, Boolean) -> Unit,
-        resolveTask: (Int) -> android.os.IBinder?,
+    fun start(handler: Handler, context: Context,
         taskForToken: (android.os.IBinder) -> Int?,
         taskForEditor: (android.os.IBinder, Int, Int) -> Int?): Controller {
         val binder = checkNotNull(ServiceManager.checkService("dev.artzig.window.presenter")) {
             "Session presenter did not register before system startup"
         }
         val remote = IWaylandTaskPresenter.Stub.asInterface(binder)
-        var keyboardTask: TaskGeometry.Task? = null
-        var keyboardToken: android.os.IBinder? = null
         val input = WaylandTaskInput(object : WaylandTaskInput.Android {
-            override fun keyboardFocus(task: TaskGeometry.Task?) {
-                keyboardToken = task?.let { resolveTask(it.id) }
-                keyboardTask = task.takeIf { keyboardToken != null }
-                dispatcher.setHostedKeyboardFocus(keyboardToken)
-            }
+            // Stock InputDispatcher delivers keys to WM's focused window; the
+            // compositor's keyboard focus selects that window's task.
+            override fun keyboardFocus(task: TaskGeometry.Task?) {}
             override fun focusTask(taskId: Int) = android.app.ActivityTaskManager.getService().setFocusedTask(taskId)
-            override fun keyboardLayout(map: android.view.KeyCharacterMap, supportedKeyCodes: IntArray, keyboard: android.view.KeyCharacterMap) = publishKeyboard(map, supportedKeyCodes, keyboard)
-            override fun dispatch(event: android.view.InputEvent, repeatable: Boolean, owner: TaskGeometry.Task?, layoutFlags: Int) {
-                if (event is android.view.KeyEvent) {
-                    // A late old-window cancellation must not acquire the new
-                    // task's authority. Native code retains the focus epoch
-                    // across policy delays, queued delivery and key repeats.
-                    if (owner == null || owner != keyboardTask || keyboardToken == null) return
-                    dispatcher.dispatchDesktopEvent(event, repeatable, keyboardToken, layoutFlags)
-                } else dispatcher.dispatchDesktopEvent(event, repeatable)
+            /** The desktop's repeat policy, as the stock settings InputSettingsObserver applies. */
+            override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) {
+                val resolver = context.contentResolver
+                val user = android.os.UserHandle.USER_SYSTEM
+                android.provider.Settings.Secure.putIntForUser(resolver,
+                    android.provider.Settings.Secure.KEY_REPEAT_ENABLED, if (enabled) 1 else 0, user)
+                if (enabled) {
+                    android.provider.Settings.Secure.putIntForUser(resolver,
+                        android.provider.Settings.Secure.KEY_REPEAT_TIMEOUT_MS, timeoutMillis, user)
+                    android.provider.Settings.Secure.putIntForUser(resolver,
+                        android.provider.Settings.Secure.KEY_REPEAT_DELAY_MS, delayMillis, user)
+                }
             }
-            override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) =
-                dispatcher.setKeyRepeatConfiguration(timeoutMillis, delayMillis, enabled)
+            override fun endHover() = android.hardware.input.IInputManager.Stub.asInterface(
+                ServiceManager.getService(Context.INPUT_SERVICE)).cancelCurrentTouch()
+            override fun displaySize(): Pair<Int, Int> {
+                val info = checkNotNull(android.hardware.display.DisplayManagerGlobal.getInstance()
+                    .getDisplayInfo(android.view.Display.DEFAULT_DISPLAY)) { "Default display is absent" }
+                return info.logicalWidth to info.logicalHeight
+            }
         })
-        // Wait for Wayland's repeat policy before allowing stock dispatcher to
-        // synthesize repeats. The presenter sends physical key edges only.
-        dispatcher.setKeyRepeatConfiguration(500, 50, false)
-        dispatcher.setHostedKeyboardFocus(null)
-        val presenter = RemoteTaskPresenter(remote, handler, input, taskForToken, taskForEditor, publishCapabilities, publishTablet, dispatcher::notifyPointerCaptureChanged)
+        val presenter = RemoteTaskPresenter(remote, handler, input, taskForToken, taskForEditor)
         presenter.connect()
         com.android.server.LocalServices.addService(WaylandInputMethod::class.java, presenter.textInput)
         val shell = WaylandTaskShell(StockTaskOrganizer(handler), presenter)
@@ -66,7 +59,7 @@ internal object SessionTaskShell {
         binder.linkToDeath(death, 0)
         try { shell.start() }
         catch (failure: Throwable) { binder.unlinkToDeath(death, 0); throw failure }
-        return Controller(presenter, input) {
+        return Controller(presenter) {
             binder.unlinkToDeath(death, 0)
             shell.close()
         }

@@ -346,6 +346,11 @@ fn seedProperties(props: *prop_area.Area) prop_area.Error!void {
         // every reader (TelephonyManager feature gating, the codec HAL selection)
         // must see one value for the whole session. 2024Q2.
         .{ "ro.vendor.api_level", "202404" },
+        // The vendor's codec HAL transport, set by its init script before any
+        // codec client (StorageManagerService queries MediaCodecList at boot,
+        // also in sessions without the media service). No declared AIDL store
+        // then means no codecs rather than the absent HIDL service manager.
+        .{ "media.c2.hal.selection", "aidl" },
         .{ "ro.product.cpu.abi", "x86_64" },
         .{ "ro.product.cpu.abilist", "x86_64,arm64-v8a" },
         .{ "ro.product.cpu.abilist64", "x86_64,arm64-v8a" },

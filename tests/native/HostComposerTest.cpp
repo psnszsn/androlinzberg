@@ -6,6 +6,7 @@
 #include "DisplayHardware/HWC2.h"
 #include "GpuBufferRenderer.h"
 #include <cassert>
+#include <cstring>
 #include <condition_variable>
 #include <cerrno>
 #include <fcntl.h>
@@ -181,6 +182,33 @@ int main() {
            layers.empty() && fences.empty());
     assert(composer->destroyLayer(1, layer) == Error::NONE);
     assert(composer->destroyLayer(1, layer) == Error::BAD_LAYER);
+    // The cursor layer stays device-composited (the cursor plane), and the
+    // CursorInfo metadata SurfaceFlinger forwards for it is advertised.
+    std::vector<IComposerClient::LayerGenericMetadataKey> keys;
+    assert(composer->getLayerGenericMetadataKeys(&keys) == V2_4::Error::NONE &&
+           keys.size() == 1 &&
+           keys[0].name == "org.chromium.arc.V1_0.CursorInfo" &&
+           !keys[0].mandatory);
+    Layer cursor;
+    assert(composer->createLayer(1, &cursor) == Error::NONE);
+    assert(composer->setLayerCompositionType(
+               1, cursor, V3_0::Composition::CURSOR) == Error::NONE);
+    std::vector<uint8_t> info(16, 0);
+    const float hotspot[2] = {2.f, 3.f};
+    std::memcpy(info.data() + 4, hotspot, sizeof(hotspot));
+    assert(composer->setLayerGenericMetadata(
+               1, cursor, "org.chromium.arc.V1_0.CursorInfo", false, info) ==
+           V2_4::Error::NONE);
+    assert(composer->setLayerGenericMetadata(
+               1, cursor, "org.chromium.arc.V1_0.CursorInfo", false, {1, 2}) ==
+           V2_4::Error::BAD_PARAMETER);
+    assert(composer->setLayerGenericMetadata(1, cursor, "org.example.Other",
+                                             false, info) ==
+           V2_4::Error::UNSUPPORTED);
+    assert(composer->validateDisplay(1, 0, 5'000'000, &count, &requests) ==
+               Error::NONE &&
+           count == 0);
+    assert(composer->destroyLayer(1, cursor) == Error::NONE);
     assert(composer->getChangedCompositionTypes(1, &layers, &types) ==
            Error::NOT_VALIDATED);
     for (unsigned i = 0; i < 1024; ++i) {

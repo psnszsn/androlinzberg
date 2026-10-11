@@ -2493,7 +2493,14 @@ export fn AIBinder_associateClass(raw_binder: ?*AIBinder, raw_class: ?*const AIB
         binder.class = @constCast(clazz);
         return true;
     }
-    return binder.class == clazz or std.mem.eql(u8, binder.class.?.descriptor, clazz.descriptor);
+    if (binder.class == clazz) return true;
+    // Pinned AIBinder::associateClass: a local binder's class is its
+    // implementation, so another class object for the same descriptor (another
+    // library's or language's definition) fails, and generated fromBinder
+    // reaches it through a proxy over AIBinder_transact instead of reading its
+    // user data as its own interface.
+    if (binder.kind == .local) return false;
+    return std.mem.eql(u8, binder.class.?.descriptor, clazz.descriptor);
 }
 export fn AIBinder_getUserData(raw_binder: ?*AIBinder) callconv(.c) ?*anyopaque {
     const binder = raw_binder orelse return null;
@@ -3108,6 +3115,38 @@ export fn ABinderProcess_setupPolling(fd: *i32) callconv(.c) i32 {
 }
 export fn ABinderProcess_handlePolledCommands() callconv(.c) i32 {
     return STATUS_INVALID_OPERATION;
+}
+
+// ----- RPC binder accessors (binder_rpc.h)
+// The session's binder has no RPC transport, so no AIBinder here implements
+// IAccessor and no ABinderRpc_Accessor or provider can exist in this process
+// (ABinderRpc_Accessor_new and ABinderRpc_registerAccessorProvider are not
+// provided). The stock Rust binder crate links these for its system-only
+// accessor wrapper; each answers with binder_rpc.h's documented failure.
+
+const RpcAccessor = opaque {};
+const RpcAccessorProvider = opaque {};
+
+export fn ABinderRpc_Accessor_fromBinder(instance: ?[*:0]const u8, binder: ?*AIBinder) callconv(.c) ?*RpcAccessor {
+    _ = instance;
+    _ = binder;
+    return null;
+}
+export fn ABinderRpc_Accessor_asBinder(accessor: ?*RpcAccessor) callconv(.c) ?*AIBinder {
+    if (accessor != null) @panic("ABinderRpc_Accessor_asBinder: no accessor exists in this process");
+    return null;
+}
+export fn ABinderRpc_Accessor_delete(accessor: ?*RpcAccessor) callconv(.c) void {
+    if (accessor != null) @panic("ABinderRpc_Accessor_delete: no accessor exists in this process");
+}
+export fn ABinderRpc_Accessor_delegateAccessor(instance: ?[*:0]const u8, binder: ?*AIBinder, out_delegator: ?*?*AIBinder) callconv(.c) i32 {
+    if (instance == null or binder == null or out_delegator == null) return STATUS_UNEXPECTED_NULL;
+    return STATUS_BAD_TYPE;
+}
+export fn ABinderRpc_unregisterAccessorProvider(provider: ?*RpcAccessorProvider) callconv(.c) void {
+    _ = provider;
+    // binder_rpc.h: aborts when the provider was never registered.
+    @panic("ABinderRpc_unregisterAccessorProvider: no provider was registered");
 }
 
 // ----- Java/NDK bridge and native worker attachment

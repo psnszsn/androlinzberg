@@ -9,10 +9,7 @@ import android.view.Surface
 internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
     private val handler: Handler, private val input: WaylandTaskInput,
     private val taskForToken: (android.os.IBinder) -> Int?,
-    private val taskForEditor: (android.os.IBinder, Int, Int) -> Int?,
-    private val publishCapabilities: (Int, Int) -> Unit,
-    private val publishTablet: (WaylandTabletInput.Device, Boolean) -> Unit,
-    acknowledgeCapture: (android.os.IBinder?, Int) -> Unit) : WaylandTaskShell.Presenter {
+    private val taskForEditor: (android.os.IBinder, Int, Int) -> Int?) : WaylandTaskShell.Presenter {
     private val windows = mutableMapOf<Int, Window>()
     private val outgoingDrag by lazy {
         WaylandOutgoingDrag(handler, checkNotNull(com.android.server.LocalServices.getService(
@@ -22,9 +19,11 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
                 val bounds = window.bounds ?: return null
                 val kind: Int
                 val id: Int
-                if (source.deviceId == 0 && source.inputSource and android.view.InputDevice.SOURCE_MOUSE == android.view.InputDevice.SOURCE_MOUSE) {
+                // Stock InputReader assigns device IDs; the seat's mouse and
+                // touchscreen are the only devices with these sources.
+                if (source.inputSource and android.view.InputDevice.SOURCE_MOUSE == android.view.InputDevice.SOURCE_MOUSE) {
                     kind = 0; id = 0
-                } else if (source.deviceId == 2 && source.inputSource and android.view.InputDevice.SOURCE_TOUCHSCREEN == android.view.InputDevice.SOURCE_TOUCHSCREEN) {
+                } else if (source.inputSource and android.view.InputDevice.SOURCE_TOUCHSCREEN == android.view.InputDevice.SOURCE_TOUCHSCREEN) {
                     kind = 1; id = window.seat.nativeTouchId(source.pointerId) ?: return null
                 } else return null
                 val claim = remote.claimNativeDrag(window.task.id, window.task.generation, window.size.configurationGeneration, kind, id)
@@ -90,7 +89,7 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
             state.copyOfRange(8 + characterCount, state.size))
         input.repeatConfiguration(state[4], state[5])
         input.modifiers(state[6], state[7])
-        publishCapabilities(state[1], state[2])
+        input.seatCapabilities(state[2])
         textInput.availability(remote.textInputAvailable())
         dev.artzig.system.HostedClipboardMonitor.current()?.connect(
             object : dev.artzig.system.HostedClipboardMonitor.Publisher {
@@ -106,33 +105,27 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
         override fun mode(task: TaskGeometry.Task, enabled: Boolean) {
             windows[task.id]?.takeIf { it.task == task }?.seat?.captureChanged(enabled)
         }
-        override fun acknowledge(token: android.os.IBinder?, sequence: Int) = acknowledgeCapture(token, sequence)
+        // Stock InputReader applies Android's capture request itself; the
+        // compositor's lock only decides whether relative motion arrives. When
+        // the compositor refuses or revokes the lock for the request Android
+        // holds, release capture through the stock dispatcher, as the window
+        // would (InputManagerService.requestPointerCapture).
+        override fun acknowledge(token: android.os.IBinder?, sequence: Int) =
+            androidCapture.acknowledged(token, sequence)
         override fun unsupported(task: TaskGeometry.Task) {
             android.util.Log.w("WaylandSeat", "Pointer capture unavailable for task ${task.id}",
                 dev.artzig.ArtzigTestDiagnostics.unsupported("WaylandSeat", "setPointerCapture",
                     "Compositor pointer constraints or relative pointer capability unavailable"))
         }
     })
-    fun pointerIcon(token: android.os.IBinder, type: Int, deviceId: Int): Boolean {
-        check(Looper.myLooper() === handler.looper)
-        val window = taskForToken(token)?.let(windows::get) ?: return false
-        return if (deviceId == 0) remote.setPointerIcon(window.task.id, window.task.generation, type)
-        else input.tabletDeviceGeneration(deviceId)?.let {
-            remote.setTabletPointerIcon(window.task.id, window.task.generation, deviceId, it, type)
-        } ?: false
-    }
-    fun cursorImage(token: android.os.IBinder, image: WaylandCursor.Image, deviceId: Int): Boolean {
-        check(Looper.myLooper() === handler.looper)
-        val window = taskForToken(token)?.let(windows::get) ?: return false
-        return if (deviceId == 0) remote.setCursorImage(window.task.id, window.task.generation, image.width, image.height,
-            image.hotspotX, image.hotspotY, image.frameMillis, image.pixels)
-        else input.tabletDeviceGeneration(deviceId)?.let {
-            remote.setTabletCursorImage(window.task.id, window.task.generation, deviceId, it, image.width, image.height,
-                image.hotspotX, image.hotspotY, image.frameMillis, image.pixels)
-        } ?: false
+    private val androidCapture = AndroidPointerCapture { token ->
+        android.hardware.input.IInputManager.Stub.asInterface(
+            android.os.ServiceManager.getService(android.content.Context.INPUT_SERVICE))
+            .requestPointerCapture(token, false)
     }
     fun pointerCapture(token: android.os.IBinder?, sequence: Int) {
         check(Looper.myLooper() === handler.looper)
+        androidCapture.requested(token, sequence)
         capture.request(token, sequence)
     }
     // Binder serializes oneway calls per target object. One callback for the
@@ -269,12 +262,11 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
                 queuedTestInput = sequence
             }
         override fun seatCapabilities(sourceGeneration: Int, capabilities: Int) =
-            deliverSeat { publishCapabilities(sourceGeneration, capabilities) }
+            deliverSeat { input.seatCapabilities(capabilities) }
         override fun tabletDevice(deviceId: Int, sourceGeneration: Int, toolType: Int,
             capabilities: Int, present: Boolean) = deliverSeat {
                 val device = WaylandTabletInput.Device(deviceId, sourceGeneration, toolType, capabilities)
                 input.tabletDevice(device, present)
-                publishTablet(device, present)
             }
         override fun tablet(taskId: Int, generation: Long, deviceId: Int, deviceGeneration: Int,
             action: Int, button: Int, pressed: Boolean, axes: FloatArray) = deliver(taskId, generation) {

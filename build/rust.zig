@@ -74,6 +74,9 @@ pub const Builder = struct {
             .staticlib => "staticlib",
             .bin => "bin",
         }, "--cfg", "soong", "-Copt-level=2", "-Crelocation-model=pic", "-Coverflow-checks=on", "-Csymbol-mangling-version=v0", "-Awarnings" });
+        // Soong's rust/config/lints.go caps every lint for third-party crates;
+        // their own #![deny(...)] attributes assume upstream feature sets.
+        if (std.mem.startsWith(u8, crate.directory, "external/")) run.addArgs(&.{ "--cap-lints", "allow" });
         if (test_options) |options| {
             run.addArg("--test");
             run.addPrefixedFileArg("-Clinker=", options.linker.getEmittedBin());

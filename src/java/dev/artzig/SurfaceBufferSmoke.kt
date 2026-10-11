@@ -82,7 +82,6 @@ object SurfaceBufferSmoke {
             val died = java.util.concurrent.CountDownLatch(1)
             checkNotNull(android.os.ServiceManager.checkService("SurfaceFlingerAIDL"))
                 .linkToDeath({ died.countDown() }, 0)
-            HostInputDispatcherSmoke.run()
             blastFrames()
             taskOutputs()
             dev.artzig.window.StockTunnelModeSmoke.disconnect(::liveTunnelListeners) {

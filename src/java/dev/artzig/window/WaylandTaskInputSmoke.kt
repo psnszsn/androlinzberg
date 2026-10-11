@@ -1,402 +1,229 @@
 package dev.artzig.window
 
-import android.view.InputEvent
-import android.view.KeyEvent
-import android.view.MotionEvent
-
-/** Assertions at the stock InputEvent boundary, independent of app/root internals. */
+/**
+ * Assertions at the reader's device boundary: the evdev packets the Wayland
+ * seat hands the host event hub. Stock InputReader turns these into Android
+ * events; the UI tests cover that half.
+ */
 object WaylandTaskInputSmoke {
+    private const val EV_SYN = 0; private const val EV_KEY = 1; private const val EV_REL = 2; private const val EV_ABS = 3
+
+    private class Hub : WaylandTaskInput.Hub {
+        val kinds = mutableMapOf<Int, Int>()
+        val maps = mutableMapOf<Int, String?>()
+        val packets = mutableListOf<Pair<Int, List<Int>>>()
+        private var next = 1
+        override fun addDevice(kind: Int, name: String, width: Int, height: Int, keyCharacterMap: String?, axes: Int): Int {
+            check(kind != HostInputDispatcher.DEVICE_KEYBOARD || width == 0)
+            check(kind == HostInputDispatcher.DEVICE_KEYBOARD || kind == HostInputDispatcher.DEVICE_MOUSE ||
+                (width == 1920 && height == 1080)) { "Absolute device without the display's range" }
+            return next++.also { kinds[it] = kind; maps[it] = keyCharacterMap }
+        }
+        override fun removeDevice(deviceId: Int) { checkNotNull(kinds.remove(deviceId)) }
+        override fun setKeyCharacterMap(deviceId: Int, contents: String): Boolean {
+            check(deviceId in kinds); maps[deviceId] = contents; return true
+        }
+        override fun events(deviceId: Int, whenNanos: Long, values: IntArray) {
+            check(deviceId in kinds && values.size % 3 == 0)
+            check(values.takeLast(3) == listOf(0, 0, 0)) { "Packet without SYN_REPORT" }
+            packets.add(deviceId to values.dropLast(3))
+        }
+        fun device(kind: Int) = kinds.entries.single { it.value == kind }.key
+        /** The packets since the last call, without their SYN_REPORT. */
+        fun take(): List<Pair<Int, List<Int>>> = packets.toList().also { packets.clear() }
+    }
+
     fun run() {
-        val events = mutableListOf<InputEvent>()
-        val order = mutableListOf<String>()
+        val hub = Hub()
         val focus = mutableListOf<Int>()
         val repeats = mutableListOf<Triple<Int, Int, Boolean>>()
         var keyboardActive = false
-        var layouts = 0
-        var lastLayoutFlags = 0
+        var hoverEnds = 0
         var time = 100L
         val seat = WaylandTaskInput(object : WaylandTaskInput.Android {
             override fun keyboardFocus(task: TaskGeometry.Task?) { keyboardActive = task != null }
-            override fun focusTask(taskId: Int) { focus.add(taskId); order.add("focus:$taskId") }
-            override fun keyboardLayout(map: android.view.KeyCharacterMap, supportedKeyCodes: IntArray, keyboard: android.view.KeyCharacterMap) { layouts++ }
+            override fun focusTask(taskId: Int) { focus.add(taskId) }
             override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) {
                 repeats.add(Triple(timeoutMillis, delayMillis, enabled))
             }
-            override fun dispatch(event: InputEvent, repeatable: Boolean, owner: TaskGeometry.Task?, layoutFlags: Int) {
-                lastLayoutFlags = layoutFlags
-                check(event.displayId == 0)
-                if (event is KeyEvent) {
-                    checkNotNull(owner) { "Key lost its originating task" }
-                    if (event.isFromSource(android.view.InputDevice.SOURCE_KEYBOARD)) check(event.deviceId == 1)
-                    else check(event.deviceId == 0 || event.deviceId == 5)
-                }
-                events.add(event.copy())
-                order.add(when (event) {
-                    is KeyEvent -> "key:${event.action}:${event.keyCode}:${event.isCanceled}"
-                    is MotionEvent -> "motion:${event.actionMasked}"
-                    else -> error("Unexpected input type")
-                })
-            }
-        }, { ++time })
-        fun clear() { events.forEach { it.recycle() }; events.clear(); order.clear() }
+            override fun displaySize() = 1920 to 1080
+            override fun endHover() { hoverEnds++ }
+        }, { ++time }, hub)
+
+        seat.seatCapabilities(7)
+        val keyboard = hub.device(HostInputDispatcher.DEVICE_KEYBOARD)
+        val mouse = hub.device(HostInputDispatcher.DEVICE_MOUSE)
+        val touch = hub.device(HostInputDispatcher.DEVICE_TOUCHSCREEN)
+        seat.seatCapabilities(7)
+        check(hub.kinds.size == 3)
+
+        seat.repeatConfiguration(50, 300)
+        seat.repeatConfiguration(50, 300)
+        check(repeats == listOf(Triple(300, 20, true)))
+        seat.repeatConfiguration(0, 300)
+        check(repeats.last().third == false)
+
+        val characters = IntArray(WaylandKeyboardMap.SCAN_COUNT * WaylandKeyboardMap.STATE_COUNT)
+        for (state in 0 until WaylandKeyboardMap.STATE_COUNT) characters[30 * 64 + state] = 'q'.code
+        seat.keyboardLayout(2, characters)
+        check(hub.maps[keyboard]!!.startsWith("type FULL") && "key A {" in hub.maps[keyboard]!!)
+        seat.keyboardLayout(1, IntArray(1)) // Stale generation: not parsed, not applied.
+
         val first = seat.open(TaskGeometry.Task(1, 1))
         val second = seat.open(TaskGeometry.Task(2, 2))
-        try {
-            seat.repeatConfiguration(50, 300)
-            seat.repeatConfiguration(50, 300)
-            check(repeats == listOf(Triple(300, 20, true)))
-            first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x110, true, 10f, 20f)
-            check(events.isEmpty()) // No input before a committed projection.
-            first.keyboardFocus(true)
-            check(focus.isEmpty() && keyboardActive)
-            first.committed(TaskGeometry.Bounds(100, 200, 400, 300), WaylandTaskShell.Size(200, 150))
-            second.committed(TaskGeometry.Bounds(1000, 400, 400, 300), WaylandTaskShell.Size(200, 150))
-            check(focus == listOf(1))
-            val pen = WaylandTabletInput.Device(3, 1, 0x140, WaylandTabletInput.PRESSURE or WaylandTabletInput.TILT)
-            val eraser = WaylandTabletInput.Device(4, 2, 0x141, WaylandTabletInput.PRESSURE)
-            seat.tabletDevice(pen, true); seat.tabletDevice(eraser, true)
-            val penAxes = floatArrayOf(10f, 20f, .6f, .2f, 30f, -15f, 90f, -.5f, 0f)
-            fun tablet(device: WaylandTabletInput.Device, action: Int) =
-                WaylandTabletInput.Sample(device.id, device.generation, action, 0, false, penAxes)
-            first.tablet(tablet(pen, WaylandTabletInput.ENTER))
-            val hoverPen = events.single() as MotionEvent
-            check(hoverPen.source == (android.view.InputDevice.SOURCE_STYLUS or android.view.InputDevice.SOURCE_MOUSE) && hoverPen.deviceId == 3 &&
-                hoverPen.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS && hoverPen.x == 120f && hoverPen.y == 240f)
-            check(kotlin.math.abs(hoverPen.pressure - .6f) < .001f &&
-                kotlin.math.abs(hoverPen.getAxisValue(MotionEvent.AXIS_TILT) -
-                    kotlin.math.acos(kotlin.math.cos(Math.PI / 6) * kotlin.math.cos(-Math.PI / 12)).toFloat()) < .001f)
-            clear()
-            first.tablet(tablet(pen, WaylandTabletInput.DOWN))
-            first.tablet(tablet(pen, WaylandTabletInput.MOVE))
-            check(events.map { (it as MotionEvent).actionMasked } == listOf(
-                MotionEvent.ACTION_HOVER_EXIT, MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE))
-            clear()
-            second.tablet(tablet(eraser, WaylandTabletInput.ENTER))
-            check((events.single() as MotionEvent).getToolType(0) == MotionEvent.TOOL_TYPE_ERASER)
-            clear()
-            first.cancelTablet()
-            check((events.single() as MotionEvent).actionMasked == MotionEvent.ACTION_CANCEL &&
-                (events.single() as MotionEvent).flags and MotionEvent.FLAG_CANCELED != 0)
-            clear()
-            first.tablet(tablet(pen, WaylandTabletInput.UP))
-            check(events.isEmpty())
-            second.tablet(tablet(eraser, WaylandTabletInput.MOVE))
-            check((events.single() as MotionEvent).actionMasked == MotionEvent.ACTION_HOVER_MOVE)
-            clear()
-            seat.tabletDevice(pen, false)
-            seat.tabletDevice(pen, true) // Tombstoned generation cannot be revived.
-            first.tablet(tablet(pen, WaylandTabletInput.DOWN))
-            check(events.isEmpty())
-            val nextPen = pen.copy(generation = 3, capabilities = 0)
-            seat.tabletDevice(nextPen, true)
-            first.tablet(tablet(nextPen, WaylandTabletInput.DOWN))
-            check((events.single() as MotionEvent).pressure == 1f)
-            clear()
-            first.tablet(tablet(pen, WaylandTabletInput.UP))
-            check(events.isEmpty())
-            first.tablet(tablet(nextPen, WaylandTabletInput.UP))
-            check(events.map { (it as MotionEvent).actionMasked } == listOf(MotionEvent.ACTION_UP, MotionEvent.ACTION_HOVER_ENTER))
-            check((events.last() as MotionEvent).pressure == 0f && focus == listOf(1))
-            first.cancelTablet(); second.cancelTablet()
-            clear()
-            first.tablet(tablet(nextPen, WaylandTabletInput.DOWN))
-            clear()
-            first.captureChanged(true)
-            check((events.single() as MotionEvent).actionMasked == MotionEvent.ACTION_CANCEL)
-            clear()
-            first.tablet(tablet(nextPen, WaylandTabletInput.MOVE))
-            first.tablet(tablet(nextPen, WaylandTabletInput.DOWN))
-            check(events.isEmpty())
-            first.captureChanged(false)
-            first.tablet(tablet(nextPen, WaylandTabletInput.UP))
-            check(events.isEmpty())
-            first.tablet(tablet(nextPen, WaylandTabletInput.MOVE))
-            check(events.map { (it as MotionEvent).actionMasked } == listOf(MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE))
-            first.cancelTablet(); clear()
-            val tabletMouse = WaylandTabletInput.Device(5, 4, 0x146, 0)
-            seat.tabletDevice(tabletMouse, true)
-            fun mouseButton(code: Int, pressed: Boolean) = first.tablet(
-                WaylandTabletInput.Sample(5, 4, WaylandTabletInput.BUTTON, code, pressed, penAxes))
-            mouseButton(0x110, true)
-            check(events.map { (it as MotionEvent).actionMasked } == listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_BUTTON_PRESS))
-            check((events.first() as MotionEvent).getToolType(0) == MotionEvent.TOOL_TYPE_MOUSE)
-            clear()
-            mouseButton(0x110, false)
-            check(events.map { (it as MotionEvent).actionMasked } == listOf(MotionEvent.ACTION_BUTTON_RELEASE, MotionEvent.ACTION_UP, MotionEvent.ACTION_HOVER_ENTER))
-            clear()
-            mouseButton(0x113, true)
-            check((events.first() as KeyEvent).keyCode == KeyEvent.KEYCODE_BACK && (events.first() as KeyEvent).deviceId == 5)
-            clear()
-            first.cancelTablet()
-            check((events.first() as KeyEvent).action == KeyEvent.ACTION_UP &&
-                (events.first() as KeyEvent).flags and KeyEvent.FLAG_CANCELED != 0)
-            seat.tabletDevice(tabletMouse, false)
-            seat.tabletDevice(nextPen, false); seat.tabletDevice(eraser, false)
-            clear()
-            first.pointer(WaylandTaskInput.POINTER_ENTER, 0, false, 10f, 20f)
-            second.pointer(WaylandTaskInput.POINTER_ENTER, 0, false, 20f, 30f)
-            check(focus == listOf(1)) // Pointer hover cannot steal keyboard focus.
-            check((events[0] as MotionEvent).x == 120f && (events[0] as MotionEvent).y == 240f)
-            check((events[1] as MotionEvent).x == 1040f && (events[1] as MotionEvent).rawY == 460f)
-            clear()
-            first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x110, true, 10f, 20f)
-            first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x110, false, 12f, 22f)
-            check(events.map { (it as MotionEvent).actionMasked } == listOf(
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_BUTTON_PRESS,
-                MotionEvent.ACTION_BUTTON_RELEASE, MotionEvent.ACTION_UP, MotionEvent.ACTION_HOVER_MOVE))
-            check((events[1] as MotionEvent).actionButton == MotionEvent.BUTTON_PRIMARY)
-            check((events[2] as MotionEvent).buttonState == 0)
-            val downTime = (events.first() as MotionEvent).downTime
-            check(events.all { (it as MotionEvent).downTime == downTime })
-            clear()
-            first.captureChanged(true)
-            check((events.single() as MotionEvent).action == MotionEvent.ACTION_HOVER_EXIT)
-            clear()
-            first.relativePointer(3f, -4f)
-            val relative = events.single() as MotionEvent
-            check(relative.source == android.view.InputDevice.SOURCE_MOUSE_RELATIVE)
-            check(relative.action == MotionEvent.ACTION_MOVE && relative.x == 6f && relative.y == -8f)
-            check(relative.getAxisValue(MotionEvent.AXIS_RELATIVE_X) == 6f)
-            check(relative.getAxisValue(MotionEvent.AXIS_RELATIVE_Y) == -8f)
-            clear()
-            first.pointer(WaylandTaskInput.POINTER_MOVE, 0, false, 99f, 99f)
-            check(events.isEmpty()) // wl_pointer absolute motion is irrelevant while locked.
-            first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x110, true, 99f, 99f)
-            first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x110, false, 99f, 99f)
-            check(events.map { (it as MotionEvent).actionMasked } == listOf(
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_BUTTON_PRESS,
-                MotionEvent.ACTION_BUTTON_RELEASE, MotionEvent.ACTION_UP))
-            check(events.all { (it as MotionEvent).source == android.view.InputDevice.SOURCE_MOUSE_RELATIVE && it.x == 0f && it.y == 0f })
-            clear()
-            first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x110, true, 99f, 99f)
-            clear()
-            first.captureChanged(false)
-            check((events.single() as MotionEvent).action == MotionEvent.ACTION_CANCEL)
-            check((events.single() as MotionEvent).source == android.view.InputDevice.SOURCE_MOUSE_RELATIVE)
-            clear()
-            first.relativePointer(5f, 5f)
-            check(events.isEmpty())
-            first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x113, true, 10f, 20f)
-            first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x114, true, 10f, 20f)
-            clear()
-            first.cancelPointer()
-            val canceledButtons = events.filterIsInstance<KeyEvent>()
-            check(canceledButtons.map { it.keyCode } == listOf(KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_FORWARD))
-            check(canceledButtons.all { it.action == KeyEvent.ACTION_UP && it.isCanceled })
-            clear()
-            first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x113, false, 10f, 20f)
-            first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x114, false, 10f, 20f)
-            check(events.isEmpty())
-            first.key(42, true) // Left shift.
-            first.key(30, true) // A.
-            first.key(30, true) // Repeats retain the initial down time.
-            val key = events[1] as KeyEvent
-            check(key.keyCode == KeyEvent.KEYCODE_A && key.isShiftPressed)
-            check((events[2] as KeyEvent).downTime == key.downTime)
-            clear()
-            second.scroll(3f, 4f, 0f, 1f)
-            check((events.single() as MotionEvent).metaState and KeyEvent.META_SHIFT_ON != 0)
-            clear()
-            second.keyboardFocus(true)
-            check(order == listOf("key:1:${KeyEvent.KEYCODE_A}:true",
-                "key:1:${KeyEvent.KEYCODE_SHIFT_LEFT}:true", "focus:2"))
-            clear()
-            first.key(30, true); first.key(30, false); second.key(30, false)
-            check(events.isEmpty())
-            second.scroll(3f, 4f, -2f, 1.5f)
-            val scroll = events.single() as MotionEvent
-            check(scroll.x == 1006f && scroll.y == 408f && scroll.action == MotionEvent.ACTION_SCROLL)
-            check(scroll.getAxisValue(MotionEvent.AXIS_HSCROLL) == -2f &&
-                scroll.getAxisValue(MotionEvent.AXIS_VSCROLL) == 1.5f)
-            clear()
-            first.touch(0, 1234, 10f, 20f, 8f, 4f, 0f)
-            second.touch(0, 9000, 30f, 40f, 8f, 4f, 0f)
-            val multi = events.last() as MotionEvent
-            check(multi.actionMasked == MotionEvent.ACTION_POINTER_DOWN && multi.actionIndex == 1)
-            check(multi.pointerCount == 2 && multi.getPointerId(0) == 0 && multi.getPointerId(1) == 1)
-            check(first.nativeTouchId(0) == 1234 && second.nativeTouchId(1) == 9000)
-            check(first.nativeTouchId(1) == null && second.nativeTouchId(0) == null)
-            check(first.nativeTouchId(1234) == null) // A native ID is not an Android pointer ID.
-            check(multi.getX(0) == 120f && multi.getX(1) == 1060f)
-            check(multi.getTouchMajor(0) == 16f && multi.getTouchMinor(0) == 8f)
-            first.touch(1, 1234, 11f, 21f, 8f, 4f, 0f)
-            check(first.nativeTouchId(0) == null && second.nativeTouchId(1) == 9000)
-            check((events.last() as MotionEvent).actionMasked == MotionEvent.ACTION_POINTER_UP)
-            second.touch(1, 9000, 31f, 41f, 8f, 4f, 0f)
-            check((events.last() as MotionEvent).actionMasked == MotionEvent.ACTION_UP)
-            clear()
-            first.touch(0, 70, 10f, 20f, 4f, 2f, 0f)
-            second.touch(0, 80, 30f, 40f, 4f, 2f, 0f)
-            check(first.nativeTouchId(0) == 70 && second.nativeTouchId(1) == 80)
-            clear()
-            first.cancelTouches()
-            check(first.nativeTouchId(0) == null && second.nativeTouchId(1) == 80)
-            val canceled = events.single() as MotionEvent
-            check(canceled.actionMasked == MotionEvent.ACTION_POINTER_UP &&
-                canceled.flags and MotionEvent.FLAG_CANCELED != 0)
-            canceled.split(1).also { check(it.actionMasked == MotionEvent.ACTION_CANCEL); it.recycle() }
-            canceled.split(2).also { check(it.actionMasked == MotionEvent.ACTION_MOVE); it.recycle() }
-            clear()
-            first.touch(1, 70, 10f, 20f, 4f, 2f, 0f)
-            check(events.isEmpty()) // A later physical release cannot finish the canceled contact.
-            second.touch(2, 80, 31f, 41f, 4f, 2f, 0f)
-            check((events.single() as MotionEvent).pointerCount == 1 &&
-                (events.single() as MotionEvent).getPointerId(0) == 1)
-            second.touch(1, 80, 31f, 41f, 4f, 2f, 0f)
-            check((events.last() as MotionEvent).actionMasked == MotionEvent.ACTION_UP)
-            clear()
-            first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x110, true, 10f, 20f)
-            first.touch(0, 5, 10f, 20f, 4f, 2f, 0f)
-            clear()
-            first.committed(TaskGeometry.Bounds(500, 800, 200, 100), WaylandTaskShell.Size(200, 100))
-            check(first.nativeTouchId(0) == null)
-            check(events.filterIsInstance<MotionEvent>().count { it.action == MotionEvent.ACTION_CANCEL } == 2)
-            clear()
-            first.pointer(WaylandTaskInput.POINTER_MOVE, 0, false, 10f, 20f)
-            check((events.single() as MotionEvent).x == 510f && (events.single() as MotionEvent).y == 820f)
-            clear()
-            second.key(30, true)
-            clear()
-            second.close()
-            check(events.filterIsInstance<KeyEvent>().single().isCanceled)
-            clear()
-            second.keyboardFocus(true); second.key(30, true)
-            second.pointer(WaylandTaskInput.POINTER_MOVE, 0, false, 10f, 20f)
-            check(events.isEmpty())
-            val replacement = seat.open(TaskGeometry.Task(2, 3))
-            replacement.committed(TaskGeometry.Bounds(1000, 0, 400, 300), WaylandTaskShell.Size(200, 150))
-            replacement.keyboardFocus(true)
-            second.keyboardFocus(false)
-            replacement.key(30, true)
-            check(events.filterIsInstance<KeyEvent>().single().action == KeyEvent.ACTION_DOWN)
-            clear()
-            seat.repeatConfiguration(0, 400)
-            check(events.filterIsInstance<KeyEvent>().single().isCanceled)
-            check(repeats.last() == Triple(400, 1, false))
-            clear()
-            replacement.key(30, false)
-            check(events.isEmpty()) // The canceled stream still had a physical key held.
-            seat.modifiers(KeyEvent.META_SHIFT_ON or KeyEvent.META_CAPS_LOCK_ON)
-            replacement.key(48, true) // Shift/Caps were held before this task entered.
-            check((events.single() as KeyEvent).isShiftPressed && (events.single() as KeyEvent).isCapsLockOn)
-            clear()
-            replacement.scroll(2f, 3f, 0f, 1f)
-            check((events.single() as MotionEvent).metaState and KeyEvent.META_SHIFT_ON != 0)
-            clear()
-            seat.keyboardLayout(1, IntArray(WaylandKeyboardMap.SCAN_COUNT * WaylandKeyboardMap.STATE_COUNT))
-            check(events.filterIsInstance<KeyEvent>().single().isCanceled)
-            check(layouts == 1)
-            seat.keyboardLayout(1, IntArray(0)); seat.keyboardLayout(0, IntArray(0))
-            check(layouts == 1) // Duplicate/stale snapshots neither parse nor cancel again.
-            clear()
-            seat.modifiers(0)
-            replacement.key(86, true)
-            check((events.single() as KeyEvent).keyCode == KeyEvent.KEYCODE_RO)
-            check(!(events.single() as KeyEvent).isShiftPressed)
-            val symbols = IntArray(WaylandKeyboardMap.SCAN_COUNT).apply {
-                this[58] = 0xffe3; this[29] = 0xffe3
-                this[42] = 0xffe1; this[54] = 0xffe2
-                this[30] = 'a'.code; this[48] = 'b'.code
-            }
-            seat.keyboardLayout(2, IntArray(WaylandKeyboardMap.SCAN_COUNT * WaylandKeyboardMap.STATE_COUNT), symbols)
-            check((events.last() as KeyEvent).isCanceled) // Old layout's held ISO key is released.
-            symbols[58] = 0xffe5 // Caller mutation cannot change the installed layout.
-            clear()
-            val keyboardSource = android.view.InputDevice.SOURCE_KEYBOARD
-            check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_CTRL_LEFT) == 0)
-            check(seat.scanCodeState(-1, keyboardSource, 58) == 0)
-            replacement.key(58, true)
-            check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_CTRL_LEFT) == 1)
-            check(seat.scanCodeState(-1, keyboardSource, 58) == 1)
-            check(seat.scanCodeState(1, keyboardSource, 58) == 1)
-            check(seat.keyCodeState(1, keyboardSource, KeyEvent.KEYCODE_CTRL_LEFT) == 1)
-            check(seat.keyCodeState(2, keyboardSource, KeyEvent.KEYCODE_CTRL_LEFT) == -1)
-            check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_CAPS_LOCK) == -1)
-            check(seat.keyCodeState(0, keyboardSource, KeyEvent.KEYCODE_CTRL_LEFT) == -1)
-            check(seat.keyCodeState(-1, android.view.InputDevice.SOURCE_MOUSE, KeyEvent.KEYCODE_CTRL_LEFT) == -1)
-            check(seat.keyCodeState(-1, android.view.InputDevice.SOURCE_CLASS_BUTTON, KeyEvent.KEYCODE_CTRL_LEFT) == -1)
-            check(seat.scanCodeState(-1, keyboardSource, 767) == -1)
-            check(seat.scanCodeState(-1, keyboardSource, -1) == -1)
-            replacement.key(30, true)
-            check((events[0] as KeyEvent).keyCode == KeyEvent.KEYCODE_CTRL_LEFT)
-            check((events[1] as KeyEvent).isCtrlPressed && !(events[1] as KeyEvent).isCapsLockOn)
-            clear()
-            replacement.key(29, true) // Both physical keys now mean Control_L.
-            replacement.key(58, false)
-            check(seat.scanCodeState(-1, keyboardSource, 58) == 0)
-            check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_CTRL_LEFT) == 1)
-            check((events.last() as KeyEvent).isCtrlPressed)
-            replacement.key(29, false)
-            check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_CTRL_LEFT) == 0)
-            check(!(events.last() as KeyEvent).isCtrlPressed)
-            replacement.keyboardFocus(false)
-            check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_CTRL_LEFT) == -1)
-            clear()
-            seat.modifiers(KeyEvent.META_SHIFT_ON)
-            replacement.keyboardFocus(true, intArrayOf(42)) // Left Shift held in another desktop application.
-            check(events.isEmpty()) // Enter must not synthesize a key-down.
-            check(seat.scanCodeState(-1, keyboardSource, 42) == 1)
-            check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_SHIFT_LEFT) == 1)
-            replacement.key(54, true)
-            replacement.key(54, false) // Effective Shift mask stayed set; Wayland need not send modifiers.
-            replacement.key(30, true)
-            val shifted = events.last() as KeyEvent
-            check(shifted.isShiftPressed && shifted.metaState and KeyEvent.META_SHIFT_LEFT_ON != 0)
-            check(shifted.metaState and KeyEvent.META_SHIFT_RIGHT_ON == 0)
-            val beforeInheritedRelease = events.size
-            replacement.key(42, false)
-            check(events.size == beforeInheritedRelease) // No unmatched key-up for the inherited press.
-            check(seat.scanCodeState(-1, keyboardSource, 42) == 0)
-            replacement.key(48, true)
-            check(!(events.last() as KeyEvent).isShiftPressed)
-            replacement.key(30, false); replacement.key(48, false)
-            clear()
-            seat.modifiers(KeyEvent.META_SHIFT_ON, KeyEvent.META_SHIFT_ON) // Latched or locked by XKB.
-            replacement.key(42, true); replacement.key(42, false)
-            replacement.key(30, true)
-            check((events.last() as KeyEvent).isShiftPressed)
-            seat.modifiers(0, 0)
-            replacement.key(30, false); replacement.key(48, true)
-            check(!(events.last() as KeyEvent).isShiftPressed)
-            replacement.close()
-            check(!keyboardActive)
-            check(seat.scanCodeState(-1, keyboardSource, 42) == -1)
-            clear()
-            val pending = seat.open(TaskGeometry.Task(3, 4))
-            try {
-                pending.keyboardFocus(true)
-                pending.key(30, true)
-                check(events.isEmpty() && seat.scanCodeState(-1, keyboardSource, 30) == 1)
-                pending.committed(TaskGeometry.Bounds(2000, 0, 400, 300), WaylandTaskShell.Size(200, 150))
-                pending.key(30, false)
-                check(events.isEmpty() && seat.scanCodeState(-1, keyboardSource, 30) == 0)
-                pending.key(30, true)
-                clear()
-                seat.repeatConfiguration(25, 200)
-                check((events.single() as KeyEvent).isCanceled)
-                check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_A) == 1)
-                clear()
-                pending.key(30, false)
-                check(events.isEmpty() && seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_A) == 0)
-                pending.key(466, true, false)
-                check((events.single() as KeyEvent).keyCode == KeyEvent.KEYCODE_F1 && lastLayoutFlags == 4)
-                pending.keyboardFocus(false)
-                check((events.last() as KeyEvent).isCanceled && lastLayoutFlags == 4)
-                pending.keyboardFocus(true)
-                clear()
-                val highSymbols = IntArray(WaylandKeyboardMap.SCAN_COUNT).apply { this[466] = 0xff1b }
-                seat.keyboardLayout(3, IntArray(WaylandKeyboardMap.SCAN_COUNT * 64), highSymbols)
-                pending.key(466, true, false)
-                check((events.single() as KeyEvent).keyCode == KeyEvent.KEYCODE_ESCAPE && lastLayoutFlags == 0)
-                pending.key(466, false, false)
-                clear()
-                pending.key(464, true, false)
-                seat.modifiers(0) // XKB has no standard Fn modifier bit.
-                pending.key(30, true, false)
-                check((events.last() as KeyEvent).isFunctionPressed)
-            } finally { pending.close() }
-            check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_A) == -1)
-        } finally { first.close(); second.close(); clear() }
-        println("Wayland task input: projection, button ordering, focus, key cancellation, touch IDs and stale generations passed")
+        first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x110, true, 10f, 20f)
+        first.keyboardFocus(true, intArrayOf(29, 30))
+        check(focus.isEmpty() && keyboardActive)
+        // Ctrl held across enter keeps its meaning; A was pressed for another client.
+        check(hub.take() == listOf(keyboard to listOf(EV_KEY, 29, 1)))
+        first.key(31, true)
+        check(hub.take().isEmpty()) // No delivery before a committed projection.
+        first.committed(TaskGeometry.Bounds(100, 200, 400, 300), WaylandTaskShell.Size(200, 150))
+        second.committed(TaskGeometry.Bounds(1000, 400, 400, 300), WaylandTaskShell.Size(200, 150))
+        check(focus == listOf(1))
+
+        // The mouse cursor is pinned to the origin once, then moved by exact deltas.
+        first.pointer(WaylandTaskInput.POINTER_ENTER, 0, false, 10f, 20f)
+        check(hub.take() == listOf(mouse to listOf(EV_REL, 0, -(1 shl 20), EV_REL, 1, -(1 shl 20)),
+            mouse to listOf(EV_REL, 0, 120, EV_REL, 1, 240)))
+        first.pointer(WaylandTaskInput.POINTER_MOVE, 0, false, 10f, 20f)
+        check(hub.take().isEmpty())
+        second.pointer(WaylandTaskInput.POINTER_BUTTON, 0x111, true, 0f, 0f)
+        second.pointer(WaylandTaskInput.POINTER_BUTTON, 0x111, true, 0f, 0f)
+        check(hub.take() == listOf(mouse to listOf(EV_REL, 0, 880, EV_REL, 1, 160), mouse to listOf(EV_KEY, 0x111, 1)))
+        second.scroll(0f, 0f, 0f, .5f)
+        second.scroll(0f, 0f, .004f, 0f) // Below one hi-res unit: carried, not sent.
+        check(hub.take() == listOf(mouse to listOf(EV_REL, 0x0b, 60, EV_REL, 0x0c, 0)))
+        // Another task's resize or close leaves this gesture alone.
+        first.cancelPointer()
+        check(hub.take().isEmpty())
+        // Leaving mid-gesture keeps the compositor's grab; nothing ends.
+        second.pointer(WaylandTaskInput.POINTER_LEAVE, 0, false, 0f, 0f)
+        check(hoverEnds == 0 && hub.take().isEmpty())
+        // An early end resets the mouse alone (Android cancels its gesture) and
+        // releases the button inside the dropped packet.
+        second.pointer(WaylandTaskInput.POINTER_CANCEL, 0, false, 0f, 0f)
+        check(hub.take() == listOf(mouse to listOf(EV_SYN, 3, 0, EV_KEY, 0x111, 0)))
+        second.pointer(WaylandTaskInput.POINTER_CANCEL, 0, false, 0f, 0f)
+        check(hub.take().isEmpty())
+        // A grab reaches past the display; the model follows Android's clamped cursor.
+        first.pointer(WaylandTaskInput.POINTER_MOVE, 0, false, -80f, 20f)
+        check(hub.take() == listOf(mouse to listOf(EV_REL, 0, -1000, EV_REL, 1, -160)))
+        first.pointer(WaylandTaskInput.POINTER_MOVE, 0, false, 10f, 20f)
+        check(hub.take() == listOf(mouse to listOf(EV_REL, 0, 120, EV_REL, 1, 0)))
+        // Leaving for the desktop ends Android's hover; re-entering where it
+        // left re-announces hover with a pixel round trip.
+        first.pointer(WaylandTaskInput.POINTER_LEAVE, 0, false, 10f, 20f)
+        check(hoverEnds == 1 && hub.take().isEmpty())
+        first.pointer(WaylandTaskInput.POINTER_ENTER, 0, false, 10f, 20f)
+        check(hub.take() == listOf(mouse to listOf(EV_REL, 0, 1, EV_REL, 1, 0), mouse to listOf(EV_REL, 0, -1, EV_REL, 1, 0)))
+        first.pointer(WaylandTaskInput.POINTER_ENTER, 0, false, 10f, 20f)
+        check(hub.take().isEmpty())
+
+        // Keys reach the reader only from the focused task and end with its focus.
+        second.key(30, true)
+        first.key(30, true)
+        first.key(30, true)
+        check(hub.take() == listOf(keyboard to listOf(EV_KEY, 30, 1)))
+        second.keyboardFocus(true)
+        check(hub.take() == listOf(keyboard to listOf(EV_KEY, 30, 0), keyboard to listOf(EV_KEY, 29, 0)))
+        first.key(30, false)
+        check(hub.take().isEmpty())
+
+        // A lock set while another client had the keyboard is replayed as its
+        // key; the reader's own lock-key edges keep the two in agreement.
+        seat.modifiers(android.view.KeyEvent.META_CAPS_LOCK_ON)
+        check(hub.take() == listOf(keyboard to listOf(EV_KEY, 58, 1), keyboard to listOf(EV_KEY, 58, 0)))
+        seat.modifiers(android.view.KeyEvent.META_CAPS_LOCK_ON)
+        check(hub.take().isEmpty())
+        second.key(58, true)
+        second.key(58, false)
+        check(hub.take() == listOf(keyboard to listOf(EV_KEY, 58, 1), keyboard to listOf(EV_KEY, 58, 0)))
+        seat.modifiers(0)
+        check(hub.take().isEmpty())
+        // A latched Shift applies to the next key, as XKB's sticky modifiers do.
+        seat.modifiers(0, android.view.KeyEvent.META_SHIFT_ON)
+        second.key(30, true)
+        second.key(30, false)
+        check(hub.take() == listOf(keyboard to listOf(EV_KEY, 42, 1), keyboard to listOf(EV_KEY, 30, 1),
+            keyboard to listOf(EV_KEY, 30, 0), keyboard to listOf(EV_KEY, 42, 0)))
+        // Overlapping keys share the synthetic Shift, and a physical Shift joins it.
+        second.key(30, true)
+        second.key(31, true)
+        second.key(30, false)
+        second.key(31, false)
+        check(hub.take() == listOf(keyboard to listOf(EV_KEY, 42, 1), keyboard to listOf(EV_KEY, 30, 1),
+            keyboard to listOf(EV_KEY, 31, 1), keyboard to listOf(EV_KEY, 30, 0),
+            keyboard to listOf(EV_KEY, 31, 0), keyboard to listOf(EV_KEY, 42, 0)))
+        second.key(30, true)
+        second.key(42, true)
+        second.key(30, false)
+        second.key(42, false)
+        check(hub.take() == listOf(keyboard to listOf(EV_KEY, 42, 1), keyboard to listOf(EV_KEY, 30, 1),
+            keyboard to listOf(EV_KEY, 30, 0), keyboard to listOf(EV_KEY, 42, 0)))
+        seat.modifiers(0)
+
+        // Multitouch: slots and tracking IDs per contact, BTN_TOUCH for the first and last.
+        first.touch(0, 7, 10f, 20f, 2f, 1f, 0f)
+        val down = hub.take().single()
+        check(down.first == touch && down.second.take(9) == listOf(EV_ABS, 0x2f, 0, EV_ABS, 0x39, 0, EV_ABS, 0x37, 0))
+        check(down.second.drop(9) == listOf(EV_ABS, 0x2f, 0, EV_ABS, 0x35, 120, EV_ABS, 0x36, 240,
+            EV_ABS, 0x30, 4, EV_ABS, 0x31, 2, EV_ABS, 0x34, 0, EV_KEY, 0x14a, 1))
+        first.touch(0, 8, 20f, 20f, 0f, 0f, 0f)
+        check(hub.take().single().second.subList(3, 6) == listOf(EV_ABS, 0x39, 1))
+        check(first.nativeTouchId(1) == 8 && second.nativeTouchId(1) == null)
+        second.touch(2, 8, 0f, 0f, 0f, 0f, 0f) // Another task cannot move this contact.
+        check(hub.take().isEmpty())
+        first.touch(1, 7, 10f, 20f, 0f, 0f, 0f)
+        check(hub.take().single().second.takeLast(3) == listOf(EV_ABS, 0x39, -1))
+        first.cancelTouches()
+        check(hub.take() == listOf(touch to listOf(EV_ABS, 0x2f, 1, EV_ABS, 0x37, 2),
+            touch to listOf(EV_ABS, 0x2f, 1, EV_ABS, 0x39, -1, EV_KEY, 0x14a, 0)))
+
+        // Tablet tools: one drawing-tablet device each, proximity through BTN_TOOL_*.
+        val pen = WaylandTabletInput.Device(3, 1, 0x140, WaylandTabletInput.PRESSURE or WaylandTabletInput.TILT)
+        seat.tabletDevice(pen, true)
+        val stylus = hub.device(HostInputDispatcher.DEVICE_STYLUS)
+        val axes = floatArrayOf(10f, 20f, .5f, .2f, 30f, -15f, 90f, -.5f, 0f)
+        fun sample(action: Int) = WaylandTabletInput.Sample(pen.id, pen.generation, action, 0, false, axes)
+        fun frame(window: WaylandTaskInput.Window, vararg actions: Int) {
+            for (action in actions) window.tablet(sample(action))
+            window.tablet(sample(WaylandTabletInput.FRAME))
+        }
+        first.tablet(sample(WaylandTabletInput.ENTER))
+        check(hub.take().isEmpty()) // A frame is one packet.
+        first.tablet(sample(WaylandTabletInput.FRAME))
+        check(hub.take() == listOf(stylus to listOf(EV_ABS, 0, 120, EV_ABS, 1, 240, EV_ABS, 0x18, 32768,
+            EV_ABS, 0x1a, 30, EV_ABS, 0x1b, -15, EV_KEY, 0x140, 1)))
+        frame(first, WaylandTabletInput.DOWN)
+        check(hub.take().single().second.takeLast(3) == listOf(EV_KEY, 0x14a, 1))
+        frame(second, WaylandTabletInput.UP) // A release from another surface.
+        check(hub.take().isEmpty())
+        first.cancelTablet()
+        check(hub.take() == listOf(stylus to listOf(EV_SYN, 3, 0, EV_KEY, 0x14a, 0, EV_KEY, 0x140, 0)))
+        // Removing a tool in contact leaves the cancel to the reader's device reset.
+        frame(first, WaylandTabletInput.DOWN)
+        hub.take()
+        seat.tabletDevice(pen, false)
+        check(hub.take().isEmpty() && HostInputDispatcher.DEVICE_STYLUS !in hub.kinds.values)
+
+        // Pointer capture: the compositor's relative motion, scaled to the display.
+        first.keyboardFocus(true)
+        hub.take()
+        first.captureChanged(true)
+        first.relativePointer(1.25f, 0f)
+        first.relativePointer(.25f, -1f)
+        first.pointer(WaylandTaskInput.POINTER_MOVE, 0, false, 50f, 50f)
+        check(hub.take() == listOf(mouse to listOf(EV_REL, 0, 2, EV_REL, 1, 0), mouse to listOf(EV_REL, 0, 1, EV_REL, 1, -2)))
+        second.relativePointer(5f, 5f)
+        check(hub.take().isEmpty())
+        first.captureChanged(false)
+        first.relativePointer(5f, 5f)
+        check(hub.take().isEmpty())
+
+        first.close(); second.close()
+        seat.seatCapabilities(0)
+        check(hub.kinds.isEmpty())
+        println("Wayland task input: seat devices, cursor pinning, buttons, scroll, key focus, multitouch, tablet and capture packets passed")
     }
 }

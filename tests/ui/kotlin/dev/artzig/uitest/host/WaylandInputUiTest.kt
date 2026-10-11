@@ -42,6 +42,22 @@ class WaylandInputUiTest {
         await(By.text("Counter: 1"))
     }
 
+    /** Wheel notches reach stock InputReader as hi-res wheel axes and scroll the fixture's ScrollView. */
+    @Test
+    fun wheelScrollsTheView() {
+        assertNotNull("the fixture content does not scroll", await(By.scrollable(true)))
+        val top = geometry(By.text("Counter: 0")) { it.visibleBounds.top }
+        WaylandSeat.scroll(geometry(By.text("INCREMENT COUNTER")) { it.visibleCenter }, 5)
+        val deadline = android.os.SystemClock.uptimeMillis() + TIMEOUT
+        while (true) {
+            val now = device.findObject(By.text("Counter: 0"))?.visibleBounds?.top
+            if (now == null || now < top) return
+            assertTrue("the wheel did not scroll the view: counter top $top -> $now",
+                android.os.SystemClock.uptimeMillis() < deadline)
+            Thread.sleep(50)
+        }
+    }
+
     @Test
     fun overlappingChildrenInterceptionAndRemoval() {
         tap(By.text("SHOW INPUT ROUTING"))

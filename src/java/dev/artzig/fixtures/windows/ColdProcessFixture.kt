@@ -78,18 +78,6 @@ open class ColdProcessActivity : Activity() {
             .setLabel(intent.getStringExtra("title") ?: "Cyan task").build())
         setContentView(object : TextView(this) {
             private val marker = android.graphics.Paint()
-            private fun tabletCursor(color: Int): android.view.PointerIcon {
-                val bitmap = android.graphics.Bitmap.createBitmap(16, 16, android.graphics.Bitmap.Config.ARGB_8888)
-                bitmap.eraseColor(color)
-                return android.view.PointerIcon.create(bitmap, 2f, 3f)
-            }
-            private val penCursor by lazy { tabletCursor(android.graphics.Color.GREEN) }
-            private val eraserCursor by lazy { tabletCursor(android.graphics.Color.BLUE) }
-            override fun onResolvePointerIcon(event: android.view.MotionEvent, pointerIndex: Int): android.view.PointerIcon? {
-                if (event.isFromSource(android.view.InputDevice.SOURCE_STYLUS))
-                    return if (event.getToolType(pointerIndex) == android.view.MotionEvent.TOOL_TYPE_ERASER) eraserCursor else penCursor
-                return super.onResolvePointerIcon(event, pointerIndex)
-            }
             private var tabletX = -1f
             private var tabletY = -1f
             private var tabletColor = android.graphics.Color.WHITE

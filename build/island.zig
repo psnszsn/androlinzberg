@@ -27,6 +27,13 @@ pub const Options = struct {
     input: @import("input.zig").Library,
     input_dispatcher: *std.Build.Step.Compile,
     input_dispatcher_jni: *std.Build.Step.Compile,
+    /// Stock inputflinger (InputManager and its stages), its external closure,
+    /// its generated headers and the Rust staticlib that also carries the
+    /// input crate's verifier exports.
+    inputflinger: *std.Build.Step.Compile,
+    inputflinger_external: *std.Build.Step.Compile,
+    inputflinger_headers: std.Build.LazyPath,
+    inputflinger_rust: std.Build.LazyPath,
     perfetto: @import("perfetto.zig").Result,
     protobuf: *std.Build.Step.Compile,
     input_headers: std.Build.LazyPath,
@@ -869,6 +876,31 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_android_internal_content_om_OverlayManagerImpl.cpp"}, webview_includes, &.{});
 
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_matrix.cpp"}, hwui_includes, &hwui_flags);
+    // Stock InputManagerService JNI over inputflinger's InputManager, with
+    // libinputservice's sprite PointerController and the viewport and topology
+    // JNI it converts display state with.
+    const inputflinger_includes = hwui_includes ++ &[_]std.Build.LazyPath{
+        o.aosp.path(b, "frameworks/base/libs"),                                 o.aosp.path(b, "frameworks/base/libs/input"),
+        o.aosp.path(b, "frameworks/native/services"),                           o.aosp.path(b, "frameworks/native/services/inputflinger"),
+        o.aosp.path(b, "frameworks/native/services/inputflinger/include"),      o.aosp.path(b, "frameworks/native/services/inputflinger/dispatcher/include"),
+        o.aosp.path(b, "frameworks/native/services/inputflinger/reader/include"), o.aosp.path(b, "frameworks/native/services/inputflinger/rust/ffi"),
+        o.aosp.path(b, "frameworks/native/services/batteryservice/include"),    o.aosp.path(b, "external/libchrome-gestures"),
+        o.aosp.path(b, "external/libchrome-gestures/include"),                  o.aosp.path(b, "frameworks/native/libs/attestation/include"),
+        o.aosp.path(b, "frameworks/base/services/core/jni"),                     o.aosp.path(b, "system/server_configurable_flags/libflags/include"),
+        o.input_dispatcher_headers,                                              o.inputflinger_headers,
+        // The dispatcher's StatsD and processgroup closure (input_dispatcher.zig).
+        o.aosp.path(b, "packages/modules/StatsD/lib/libkll/include"),           o.aosp.path(b, "packages/modules/StatsD/lib/libstatspull/include"),
+        o.aosp.path(b, "packages/modules/StatsD/lib/libstatssocket/include"),   o.aosp.path(b, "system/core/libprocessgroup/include"),
+        o.aosp.path(b, "hardware/libhardware_legacy/include"),
+    };
+    g.add(o.aosp.path(b, "frameworks/base/libs/input"), &.{ "PointerController.cpp", "PointerControllerContext.cpp", "MouseCursorController.cpp", "TouchSpotController.cpp", "SpriteController.cpp", "SpriteIcon.cpp" }, inputflinger_includes, &hwui_flags);
+    g.add(o.aosp.path(b, "frameworks/base/services/core/jni"), &.{"com_android_server_input_InputManagerService.cpp"}, inputflinger_includes, &hwui_flags);
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "android_hardware_display_DisplayViewport.cpp", "android_hardware_display_DisplayTopology.cpp", "android_view_PointerIcon.cpp", "android_view_VerifiedKeyEvent.cpp", "android_view_VerifiedMotionEvent.cpp" }, inputflinger_includes, &hwui_flags);
+    // Bionic's libc++ reaches <algorithm> transitively; the host's does not.
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_os_UEventObserver.cpp"}, inputflinger_includes, &(hwui_flags ++ [_][]const u8{ "-include", "algorithm" }));
+    g.add(b.path("src/native/input"), &.{"HostUserActivity.cpp"}, inputflinger_includes, &hwui_flags);
+    // UEventObserver's netlink listener, as libhardware_legacy provides it.
+    g.add(o.aosp.path(b, "hardware/libhardware_legacy"), &.{"uevent.c"}, &.{o.aosp.path(b, "hardware/libhardware_legacy/include")}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/services/core/jni"), &.{ "com_android_server_display_DisplayControl.cpp", "com_android_server_wm_TaskFpsCallbackController.cpp" }, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc }, &.{});
     // Stock AppFuseBridge JNI over libappfuse: the bridge loop itself needs no
     // FUSE device; vold's mountAppFuse supplies one, which the host declines.
@@ -1062,7 +1094,11 @@ pub fn build(b: *std.Build, o: Options) Result {
     link.addFileArg(o.input_dispatcher.getEmittedBin());
     link.addFileArg(o.protobuf.getEmittedBin());
     link.addFileArg(o.input.native.getEmittedBin());
-    link.addFileArg(o.input.verifier);
+    link.addFileArg(o.inputflinger.getEmittedBin());
+    link.addFileArg(o.inputflinger_external.getEmittedBin());
+    // libinputflinger_rs links the input crate, so it also provides the
+    // verifier's bridge exports; linking both staticlibs would duplicate std.
+    link.addFileArg(o.inputflinger_rust);
     {
         const codec2 = o.codec2;
         link.addArg("-Wl,--wrap=fopen,--wrap=stat,--wrap=opendir,--wrap=FT_Open_Face");

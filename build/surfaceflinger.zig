@@ -326,8 +326,10 @@ pub fn buildServiceCore(b: *std.Build, target: std.Build.ResolvedTarget, aosp: s
     return b.addLibrary(.{ .name = "surfaceflinger_core", .root_module = mod });
 }
 
-pub fn buildHostComposer(b: *std.Build, target: std.Build.ResolvedTarget, aosp: std.Build.LazyPath, gui: Generated, renderengine: Generated, generated: Generated) *std.Build.Step.Compile {
-    const mod = b.createModule(.{ .root_source_file = b.path("src/platform/host_composer.zig"), .target = target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true, .pic = true });
+/// `presenter` supplies the `aidl` runtime and `task_presenter_aidl` client
+/// modules of the cursor plane (src/platform/cursor_plane.zig).
+pub fn buildHostComposer(b: *std.Build, target: std.Build.ResolvedTarget, aosp: std.Build.LazyPath, gui: Generated, renderengine: Generated, generated: Generated, presenter: []const std.Build.Module.Import) *std.Build.Step.Compile {
+    const mod = b.createModule(.{ .root_source_file = b.path("src/platform/host_composer.zig"), .target = target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true, .pic = true, .imports = presenter });
     configure(b, mod, aosp, gui, renderengine, generated);
     mod.linkSystemLibrary("EGL", .{});
     mod.addCSourceFile(.{ .file = b.path("src/native/graphics/HostComposer.cpp"), .flags = cppFlags(b) });

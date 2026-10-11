@@ -2665,6 +2665,22 @@ pub const Window = struct {
         if (self.session.display.flush() != .SUCCESS) return error.FlushFailed;
     }
 
+    /// A wheel scroll of `detents` notches (positive scrolls down) at an output
+    /// point, as one wl_pointer frame through the compositor.
+    pub fn testScrollAtOutput(self: *Window, point: [2]u32, extent: [2]u32, local: ?[2]u32, detents: i32) !void {
+        if (extent[0] == 0 or extent[1] == 0 or point[0] >= extent[0] or point[1] >= extent[1]) return error.InvalidTestPoint;
+        if (detents == 0 or detents < -32 or detents > 32) return error.InvalidTestScroll;
+        const pointer = try self.session.ensureVirtualPointer();
+        const time = inputTimestamp(self.io);
+        pointer.motionAbsolute(time, point[0], point[1], extent[0], extent[1]);
+        pointer.frame();
+        if (local) |expected| try self.verifyTestPointer(expected);
+        pointer.axisSource(.wheel);
+        pointer.axisDiscrete(time, .vertical_scroll, wl.Fixed.fromInt(@intCast(15 * detents)), detents);
+        pointer.frame();
+        if (self.session.display.flush() != .SUCCESS) return error.FlushFailed;
+    }
+
     /// Relative virtual-device motion still travels through the compositor and
     /// its active pointer constraint before reaching the normal seat listener.
     pub fn testRelativeMotion(self: *Window, dx: f64, dy: f64) !void {

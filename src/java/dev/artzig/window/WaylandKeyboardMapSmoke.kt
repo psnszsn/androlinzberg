@@ -1,12 +1,8 @@
 package dev.artzig.window
 
-import android.hardware.input.IInputDevicesChangedListener
-import android.os.Handler
-import android.os.Looper
 import android.os.Parcel
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
-import dev.artzig.system.HostedInputManagerService
 
 object WaylandKeyboardMapSmoke {
     fun run() {
@@ -16,8 +12,6 @@ object WaylandKeyboardMapSmoke {
         check(layout.androidKeyCodeForScanCode(582) == KeyEvent.KEYCODE_VOICE_ASSIST)
         check(layout.androidKeyCodeForScanCode(659) == KeyEvent.KEYCODE_MACRO_4)
         check(layout.androidKeyCodeForScanCode(466) == KeyEvent.KEYCODE_F1)
-        check(layout.androidKeyFlagsForScanCode(466, KeyEvent.KEYCODE_F1) == 4)
-        check(layout.androidKeyFlagsForScanCode(466, KeyEvent.KEYCODE_ESCAPE) == 0)
         check(layout.androidKeyCodeForScanCode(-1) == KeyEvent.KEYCODE_UNKNOWN)
         check(layout.androidKeyCodeForScanCode(768) == KeyEvent.KEYCODE_UNKNOWN)
         val characters = IntArray(WaylandKeyboardMap.SCAN_COUNT * WaylandKeyboardMap.STATE_COUNT)
@@ -77,82 +71,12 @@ object WaylandKeyboardMapSmoke {
             val copy = KeyCharacterMap.CREATOR.createFromParcel(parcel)
             check(copy.get(KeyEvent.KEYCODE_A, 0) == 'q'.code)
         } finally { parcel.recycle() }
-        val looper = checkNotNull(Looper.myLooper())
-        val service = HostedInputManagerService(Handler(looper))
-        val previous = checkNotNull(service.getInputDevice(KeyCharacterMap.VIRTUAL_KEYBOARD))
-        val changes = mutableListOf<IntArray>()
-        val listener = object : IInputDevicesChangedListener.Stub() {
-            override fun onInputDevicesChanged(info: IntArray) {
-                changes.add(info)
-                // Callback can reenter device lookup: no service lock is held.
-                check(service.getInputDevice(info[0])!!.generation == info[1])
-            }
-        }
-        service.registerInputDevicesChangedListener(listener)
-        check(runCatching { service.registerInputDevicesChangedListener(listener) }.exceptionOrNull() is SecurityException)
-        check(runCatching { service.registerInputDevicesChangedListener(null) }.exceptionOrNull() is NullPointerException)
-        service.publishKeyboardMap(map, supported, keyboardMap)
-        service.publishKeyboardMap(map, supported, keyboardMap)
-        val queriedKeys = intArrayOf(KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_DEL, KeyEvent.KEYCODE_CAPS_LOCK, Int.MAX_VALUE)
-        val exists = BooleanArray(5) { true }
-        check(service.hasKeys(-1, android.view.InputDevice.SOURCE_KEYBOARD, queriedKeys, exists))
-        check(exists.contentEquals(booleanArrayOf(true, true, false, false, true)))
-        check(!service.hasKeys(999, android.view.InputDevice.SOURCE_ANY, queriedKeys, exists))
-        check(exists.contentEquals(booleanArrayOf(false, false, false, false, true)))
-        check(!service.hasKeys(-1, android.view.InputDevice.SOURCE_CLASS_BUTTON, queriedKeys, exists))
-        check(runCatching { service.hasKeys(-1, android.view.InputDevice.SOURCE_KEYBOARD, queriedKeys, BooleanArray(1)) }
-            .exceptionOrNull() is IllegalArgumentException)
-        val current = checkNotNull(service.getInputDevice(KeyCharacterMap.VIRTUAL_KEYBOARD))
-        check(current.generation == previous.generation + 2)
-        check(previous.keyCharacterMap.get(KeyEvent.KEYCODE_A, 0) == 0)
-        check(current.keyCharacterMap.get(KeyEvent.KEYCODE_A, 0) == 'q'.code)
-        dev.artzig.BoundedLooper.await("keyboard map change") { changes.isNotEmpty() }
-        check(changes.single().contentEquals(intArrayOf(KeyCharacterMap.VIRTUAL_KEYBOARD, current.generation)))
-        fun awaitDeviceNotice(count: Int) {
-            dev.artzig.BoundedLooper.await("input device notice $count") { changes.size >= count }
-        }
-        service.publishSeatCapabilities(1, 15)
-        check(service.inputDeviceIds.contentEquals(intArrayOf(-1, 0, 1, 2)))
-        val keyboard = checkNotNull(service.getInputDevice(1))
-        check(!keyboard.isVirtual && keyboard.isExternal)
-        check(keyboard.keyboardType == android.view.InputDevice.KEYBOARD_TYPE_ALPHABETIC)
-        check(checkNotNull(keyboard.keyCharacterMap.getEvents(charArrayOf('q'))).all { it.deviceId == 1 })
-        check(service.hasKeys(1, android.view.InputDevice.SOURCE_KEYBOARD, queriedKeys, exists))
-        check(exists.contentEquals(booleanArrayOf(true, true, false, false, true)))
-        val pointer = checkNotNull(service.getInputDevice(0))
-        check(!service.hasKeys(0, android.view.InputDevice.SOURCE_MOUSE, queriedKeys, exists))
-        check(pointer.supportsSource(android.view.InputDevice.SOURCE_MOUSE))
-        check(pointer.supportsSource(android.view.InputDevice.SOURCE_MOUSE_RELATIVE))
-        check(pointer.keyboardType == android.view.InputDevice.KEYBOARD_TYPE_NONE)
-        check(checkNotNull(service.getInputDevice(2)).supportsSource(android.view.InputDevice.SOURCE_TOUCHSCREEN))
-        check(service.getInputDevice(99) == null)
-        awaitDeviceNotice(2)
-        check(changes.last().filterIndexed { index, _ -> index % 2 == 0 } == listOf(-1, 0, 1, 2))
-        service.publishSeatCapabilities(2, 2)
-        check(service.getInputDevice(0) == null && service.getInputDevice(2) == null)
-        check(service.inputDeviceIds.contentEquals(intArrayOf(-1, 1)))
-        awaitDeviceNotice(3)
-        service.publishSeatCapabilities(3, 3)
-        val reappeared = checkNotNull(service.getInputDevice(0))
-        check(reappeared.generation > pointer.generation)
-        check(!reappeared.supportsSource(android.view.InputDevice.SOURCE_MOUSE_RELATIVE))
-        service.publishSeatCapabilities(1, 15) // Late callback from an older seat state.
-        check(service.getInputDevice(0) === reappeared && service.getInputDevice(2) == null)
-        check(runCatching { service.publishSeatCapabilities(3, 7) }.exceptionOrNull() is IllegalArgumentException)
-        check(runCatching { service.publishSeatCapabilities(4, 16) }.exceptionOrNull() is IllegalArgumentException)
-        awaitDeviceNotice(4)
-        service.publishKeyboardMap(map, supported.filter { it != KeyEvent.KEYCODE_Q }.toIntArray(), keyboardMap)
-        check(checkNotNull(service.getInputDevice(1)).keyboardType == android.view.InputDevice.KEYBOARD_TYPE_NON_ALPHABETIC)
-        check(keyboard.keyboardType == android.view.InputDevice.KEYBOARD_TYPE_ALPHABETIC) // Immutable old snapshot.
-        awaitDeviceNotice(5)
-        service.publishSeatCapabilities(4, 0)
-        check(service.inputDeviceIds.contentEquals(intArrayOf(-1)))
-        check(!service.hasKeys(1, android.view.InputDevice.SOURCE_KEYBOARD, queriedKeys, exists))
-        check(service.hasKeys(-1, android.view.InputDevice.SOURCE_KEYBOARD, queriedKeys, exists))
-        awaitDeviceNotice(6)
+        // Stock KeyCharacterMap parses the same text the seat hands the reader's keyboard.
+        val text = WaylandKeyboardMap.compileText(characters, symbols)
+        check(text.startsWith("type FULL") && "key A {" in text)
         check(runCatching { WaylandKeyboardMap.compile(IntArray(1)) }.exceptionOrNull() is IllegalArgumentException)
         characters[30 * 64] = 0x1f600
         check(runCatching { WaylandKeyboardMap.compile(characters) }.exceptionOrNull() is IllegalArgumentException)
-        println("Wayland keyboard map: layout, modifiers, ISO key, dead accents, parcel and seat device lifecycle passed")
+        println("Wayland keyboard map: layout, modifiers, ISO key, dead accents, parcel and KCM text passed")
     }
 }

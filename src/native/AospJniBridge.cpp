@@ -487,6 +487,16 @@ extern int register_android_hardware_display_DisplayManagerGlobal(JNIEnv*);
 namespace android {
 extern int register_com_android_server_display_DisplayControl(JNIEnv*);
 extern void register_android_server_storage_AppFuse(JNIEnv*);
+// Stock view converters the InputManagerService JNI uses.
+extern int register_android_view_PointerIcon(JNIEnv*);
+extern int register_android_view_VerifiedKeyEvent(JNIEnv*);
+extern int register_android_view_VerifiedMotionEvent(JNIEnv*);
+// Stock InputManagerService's JNI, the display converters services onload.cpp
+// registers before it, and the UEventObserver its controllers use.
+extern int register_android_hardware_display_DisplayViewport(JNIEnv*);
+extern int register_android_hardware_display_DisplayTopology(JNIEnv*);
+extern int register_android_server_InputManager(JNIEnv*);
+extern int register_android_os_UEventObserver(JNIEnv*);
 }  // namespace android
 // The stock AppFuseBridge registrar aborts on failure instead of returning it.
 static int registerAppFuseBridge(JNIEnv* env) {
@@ -794,6 +804,13 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_android_hardware_display_DisplayManagerGlobal),
             E(android::register_com_android_server_display_DisplayControl),
             E(registerAppFuseBridge),
+            E(android::register_android_view_PointerIcon),
+            E(android::register_android_view_VerifiedKeyEvent),
+            E(android::register_android_view_VerifiedMotionEvent),
+            E(android::register_android_hardware_display_DisplayViewport),
+            E(android::register_android_hardware_display_DisplayTopology),
+            E(android::register_android_server_InputManager),
+            E(android::register_android_os_UEventObserver),
             // InputWindowHandle field lookup initializes SurfaceControl.
             E(android::register_android_view_InputWindowHandle),
             E(android::register_android_view_DisplayEventReceiver),

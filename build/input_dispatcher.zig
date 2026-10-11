@@ -162,6 +162,9 @@ pub fn buildJni(b: *std.Build, o: Options) *std.Build.Step.Compile {
         "frameworks/base/native/include",   "libnativehelper/include",
         "libnativehelper/include_jni",      "libnativehelper/header_only_include",
         "libnativehelper/include_platform",
+        // HostEventHub.h implements the reader's EventHubInterface.
+        "frameworks/native/services/batteryservice/include",
+        "external/libchrome-gestures/include",
     }) |path| mod.addIncludePath(o.aosp.path(b, path));
     var flags: std.ArrayList([]const u8) = .empty;
     flags.appendSlice(b.allocator, input.cppFlags(b)) catch @panic("oom");

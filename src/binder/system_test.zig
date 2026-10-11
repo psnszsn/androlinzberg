@@ -26,12 +26,14 @@ pub fn main(init: std.process.Init) !void {
     for (raw_args, args) |raw, *arg|
         arg.* = if (std.mem.startsWith(u8, raw, "-")) raw else Io.Dir.cwd().realPathFileAlloc(io, raw, arena) catch raw;
     // The session owner's mount view, before any thread exists: the stock
-    // storage service validates app directories below /storage/emulated/0.
+    // storage service validates app directories below /storage/emulated/0,
+    // and stock services name /data paths literally.
     const storage_view = @import("StorageView.zig");
     const data_root = init.minimal.environ.getPosix("ARTZIG_DATA_DIR") orelse return error.MissingApplicationDataRoot;
     const external_root = init.minimal.environ.getPosix("EXTERNAL_STORAGE") orelse try std.fs.path.join(arena, &.{ data_root, "external" });
     try Io.Dir.cwd().createDirPath(io, external_root);
-    try storage_view.enter(io, arena, init.minimal.environ, external_root);
+    try Io.Dir.cwd().createDirPath(io, data_root);
+    try storage_view.enter(io, arena, init.minimal.environ, data_root, external_root);
     if ((args.len == 6 or args.len == 7) and std.mem.eql(u8, args[1], "--cold-window"))
         return coldWindow(init, args);
     if (args.len < 12) {

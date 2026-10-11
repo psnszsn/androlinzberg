@@ -1,13 +1,17 @@
-//! Android's mount layout for one session: `/storage/emulated/<user>` over the
-//! host directory that backs the emulated volume. On a device init and vold
-//! supply these mounts; here a user and mount namespace owned by the host
+//! Android's mount layout for one session: `/data` over the session's data
+//! partition and `/storage/emulated/<user>` over the host directory that backs
+//! the emulated volume. On a device init and vold supply these mounts; here a user and mount namespace owned by the host
 //! user carries them, built once by the session owner and inherited by every
 //! process it starts. A launcher joining from a foreign shell enters the
 //! owner's namespaces, so paths that the stock StorageManagerService
 //! validates and canonicalizes (`/storage/<volume>/<user>/Android/...`)
 //! resolve identically in every session process.
 //!
-//! The view is the host root with `/storage` added: a tmpfs root receives a
+//! Stock code that names `/data/...` literally (InputManagerService's
+//! PersistentDataStore) reaches the same files as Environment's data
+//! directory, which stays the partition's host path.
+//!
+//! The view is the host root with `/data` and `/storage` added: a tmpfs root receives a
 //! recursive bind of each top-level host entry, then becomes the root by
 //! pivot_root. Nothing is hidden; the per-app sandbox is a later phase.
 const std = @import("std");
@@ -20,9 +24,13 @@ pub const env_marker = "AZK_STORAGE_VIEW";
 /// The system user's directory of vold's EmulatedVolume (`/storage/emulated`).
 pub const primary = "/storage/emulated/0";
 
-/// Enters the view, binding `external_root` at `/storage/emulated/0`. Must run
-/// while the process is single-threaded (a user namespace requirement).
-pub fn enter(io: Io, a: std.mem.Allocator, environ: std.process.Environ, external_root: []const u8) !void {
+/// Android's mount point of the data partition.
+pub const data_mount = "/data";
+
+/// Enters the view, binding `data_root` at `/data` and `external_root` at
+/// `/storage/emulated/0`. Must run while the process is single-threaded (a
+/// user namespace requirement).
+pub fn enter(io: Io, a: std.mem.Allocator, environ: std.process.Environ, data_root: []const u8, external_root: []const u8) !void {
     if (environ.getPosix(env_marker) != null) return;
     const uid = linux.getuid();
     const gid = linux.getgid();
@@ -51,6 +59,8 @@ pub fn enter(io: Io, a: std.mem.Allocator, environ: std.process.Environ, externa
     try cwd.createDirPath(io, base);
     const external_dir = try cwd.openDir(io, external_root, .{});
     defer external_dir.close(io);
+    const data_dir = try cwd.openDir(io, data_root, .{});
+    defer data_dir.close(io);
     var host_root = try Io.Dir.openDirAbsolute(io, "/", .{ .iterate = true });
     defer host_root.close(io);
     try mount("tmpfs", base, "tmpfs", linux.MS.NOSUID | linux.MS.NODEV);
@@ -58,8 +68,8 @@ pub fn enter(io: Io, a: std.mem.Allocator, environ: std.process.Environ, externa
     try cwd.createDirPath(io, try std.fmt.allocPrint(a, "{s}/oldroot", .{new_root}));
     var entries = host_root.iterate();
     while (try entries.next(io)) |entry| {
-        // The view owns /storage; a host directory of that name is not visible.
-        if (std.mem.eql(u8, entry.name, "storage")) continue;
+        // The view owns /data and /storage; host entries of those names are not visible.
+        if (std.mem.eql(u8, entry.name, "storage") or std.mem.eql(u8, entry.name, data_mount[1..])) continue;
         const source = try std.fmt.allocPrintSentinel(a, "/{s}", .{entry.name}, 0);
         const target = try std.fmt.allocPrintSentinel(a, "{s}/{s}", .{ new_root, entry.name }, 0);
         switch (entry.kind) {
@@ -83,6 +93,9 @@ pub fn enter(io: Io, a: std.mem.Allocator, environ: std.process.Environ, externa
     const primary_target = try std.fmt.allocPrintSentinel(a, "{s}{s}", .{ new_root, primary }, 0);
     try cwd.createDirPath(io, primary_target);
     try mount(try std.fmt.allocPrintSentinel(a, "/proc/self/fd/{d}", .{external_dir.handle}, 0), primary_target, null, linux.MS.BIND | linux.MS.REC);
+    const data_target = try std.fmt.allocPrintSentinel(a, "{s}{s}", .{ new_root, data_mount }, 0);
+    try cwd.createDirPath(io, data_target);
+    try mount(try std.fmt.allocPrintSentinel(a, "/proc/self/fd/{d}", .{data_dir.handle}, 0), data_target, null, linux.MS.BIND | linux.MS.REC);
     // pivot_root takes a mount point: bind the assembled root over itself.
     try mount(new_root, new_root, null, linux.MS.BIND | linux.MS.REC);
     try check(linux.chdir(new_root));

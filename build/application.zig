@@ -30,6 +30,8 @@ pub const Options = struct {
     webview_provider: LazyPath,
     /// Pinned frameworks/base/data/etc permission and preinstall data.
     aosp_platform_data: LazyPath,
+    /// Pinned frameworks/base/data/keyboards key layouts and character maps.
+    aosp_keyboards: LazyPath,
     /// System-partition APKs, laid out as Soong installs them.
     system_apps: []const @import("system_apks.zig").SystemApp,
 };
@@ -113,6 +115,11 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
         _ = tree.addCopyFile(options.aosp_platform_data.path(b, name), "etc/permissions/" ++ name);
     }
     _ = tree.addCopyDirectory(b.path("src/system-image/etc"), "etc", .{});
+    // Soong installs these under /system/usr; ANDROID_ROOT is bin/art here,
+    // where KeyMap::load and KeyCharacterMap look for them.
+    inline for (.{ "keylayout/Generic.kl", "keychars/Generic.kcm", "keychars/Virtual.kcm" }) |entry| {
+        _ = tree.addCopyFile(options.aosp_keyboards.path(b, std.fs.path.basename(entry)), "bin/art/usr/" ++ entry);
+    }
     // The bionic bridge needs a filesystem ELF instead of an apk!/lib path.
     const webview_library = b.addSystemCommand(&.{ "unzip", "-p" });
     webview_library.addFileArg(options.webview_provider);

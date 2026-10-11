@@ -93,7 +93,6 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     // Original Binder/Parcel/ServiceManager JNI in the native island; the
     // shared NDK runtime retains only the host bootstrap and conversion seam.
     if (ndk.registerBinderFrameworkNatives(env_opaque) != 0) return -1;
-    @import("pointer_icon_jni.zig").register(env, &g_platform_library) catch return -1;
     @import("egl_interop_test.zig").register(env) catch return -1;
     const register_startup = g_platform_library.lookup(
         *const fn (JNIEnvPtr) callconv(.c) c_int,

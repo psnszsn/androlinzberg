@@ -3,6 +3,7 @@
 #include "Codec2VideoFixtures.h"
 #include "GpuBufferRenderer.h"
 #include "../../src/codec/azk_codec.h"
+#include <android-base/properties.h>
 #include <C2PlatformSupport.h>
 #include <C2Config.h>
 #include <codec2/aidl/ComponentStore.h>
@@ -252,8 +253,9 @@ static void nativeMediaCodec(bool video, bool aac = false) {
 int codec2ProcessTestMain(int argc, char **argv) {
     ABinderProcess_startThreadPool();
     if (argc > 1 && std::strcmp(argv[1], "server") == 0) {
-        assert(property_set("ro.vendor.api_level", "202404") == 0);
-        assert(property_set("media.c2.hal.selection", "aidl") == 0);
+        // The broker seeds the vendor API level and HAL transport, as init does.
+        assert(android::base::GetIntProperty("ro.vendor.api_level", 0) == 202404);
+        assert(android::base::GetProperty("media.c2.hal.selection", "") == "aidl");
         const auto mask = std::to_string((1u << android::C2PlatformAllocatorStore::BLOB) | (1u << android::C2PlatformAllocatorStore::BUFFERQUEUE));
         assert(property_set("debug.stagefright.c2-poolmask", mask.c_str()) == 0);
         auto service = ndk::SharedRefBase::make<HalStore>(azk::codec2::createStore(C2Component::DOMAIN_AUDIO));

@@ -57,8 +57,9 @@ pub fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, j
     const broker_exe = try std.fs.path.join(arena, &.{ tree, "bin", "azk-binder-broker" });
     const launcher_exe = try std.fs.path.join(arena, &.{ tree, "bin", "androlinzberg" });
     const storage = try sessionStorage(init);
-    // Every session process inherits /storage/emulated/0 from here.
-    try StorageView.enter(init.io, arena, init.minimal.environ, storage.external_storage);
+    // Every session process inherits /data and /storage/emulated/0 from here.
+    try std.Io.Dir.cwd().createDirPath(init.io, storage.application_data);
+    try StorageView.enter(init.io, arena, init.minimal.environ, storage.application_data, storage.external_storage);
     // Exports the storage environment, including the view marker.
     try applySessionStorage(init, storage);
     binder.* = try binder_session.Session.start(init.gpa, init.io, .{

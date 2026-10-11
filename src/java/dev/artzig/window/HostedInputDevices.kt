@@ -1,14 +1,12 @@
 package dev.artzig.window
 
-import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
-import android.view.MotionEvent
 
-/** Host device descriptions around pinned KeyCharacterMap/KeyLayoutMap and
- * CursorInputMapper event metadata. Native InputDispatcher owns delivery. */
+/** The pinned KeyLayoutMap and KeyCharacterMap parsers for the seat's keymap
+ * compiler (WaylandKeyboardMap). Stock InputReader and the host event hub own
+ * the keyboard device itself. */
 internal object HostedInputDevices {
-    const val HOST_KEYBOARD_DEVICE_ID = 1
     const val HOST_SCAN_COUNT = 768
     /**
      * Creates the character map installed on the hosted physical keyboard.
@@ -38,83 +36,6 @@ internal object HostedInputDevices {
         contents: String,
     ): KeyCharacterMap
 
-    internal fun createMouseEvent(
-        downTime: Long,
-        eventTime: Long,
-        action: Int,
-        buttonState: Int,
-        actionButton: Int,
-        x: Float,
-        y: Float,
-        horizontalScroll: Float = 0f,
-        verticalScroll: Float = 0f,
-        metaState: Int = 0,
-    ): MotionEvent = createEvent(
-        downTime,
-        eventTime,
-        action,
-        InputDevice.SOURCE_MOUSE,
-        MotionEvent.TOOL_TYPE_MOUSE,
-        buttonState,
-        actionButton,
-        x,
-        y,
-        horizontalScroll,
-        verticalScroll,
-        metaState,
-    )
-
-    private fun createEvent(
-        downTime: Long,
-        eventTime: Long,
-        action: Int,
-        source: Int,
-        toolType: Int,
-        buttonState: Int,
-        actionButton: Int,
-        x: Float,
-        y: Float,
-        horizontalScroll: Float,
-        verticalScroll: Float,
-        metaState: Int = 0,
-    ): MotionEvent {
-        val properties = MotionEvent.PointerProperties().apply {
-            id = 0
-            this.toolType = toolType
-        }
-        val coordinates = MotionEvent.PointerCoords().apply {
-            this.x = x
-            this.y = y
-            // AOSP CursorInputMapper reports pressure 1 while a primary/secondary/tertiary mouse
-            // button holds the pointer down, and 0 once the pointer returns to hover.
-            pressure = if (buttonState and POINTER_DOWN_BUTTONS != 0) 1f else 0f
-            setAxisValue(MotionEvent.AXIS_HSCROLL, horizontalScroll)
-            setAxisValue(MotionEvent.AXIS_VSCROLL, verticalScroll)
-        }
-        return MotionEvent.obtain(
-            downTime,
-            eventTime,
-            action,
-            1,
-            arrayOf(properties),
-            arrayOf(coordinates),
-            metaState,
-            buttonState,
-            1f,
-            1f,
-            0,
-            0,
-            source,
-            0,
-        ).apply {
-            if (action == MotionEvent.ACTION_BUTTON_PRESS ||
-                action == MotionEvent.ACTION_BUTTON_RELEASE
-            ) {
-                setActionButton(actionButton)
-            }
-        }
-    }
-
     /** EventHub loads Generic.kl through KeyLayoutMap. Retain its parser,
      * usage/key syntax and flags; XKB remaps are overlaid by WaylandKeyboardMap. */
     private val genericKeyLayout: IntArray by lazy {
@@ -127,12 +48,5 @@ internal object HostedInputDevices {
     internal fun androidKeyCodeForScanCode(scanCode: Int): Int =
         if (scanCode in 0 until HOST_SCAN_COUNT) genericKeyLayout[scanCode * 2] else KeyEvent.KEYCODE_UNKNOWN
 
-    /** EventHub clears layout flags when an explicit KCM remap wins. */
-    internal fun androidKeyFlagsForScanCode(scanCode: Int, keyCode: Int): Int =
-        if (scanCode in 0 until HOST_SCAN_COUNT && keyCode == androidKeyCodeForScanCode(scanCode))
-            genericKeyLayout[scanCode * 2 + 1] else 0
-
     @JvmStatic private external fun nativeLoadKeyLayout(contents: String): IntArray
-    private const val POINTER_DOWN_BUTTONS =
-        MotionEvent.BUTTON_PRIMARY or MotionEvent.BUTTON_SECONDARY or MotionEvent.BUTTON_TERTIARY
 }

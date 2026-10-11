@@ -43,6 +43,8 @@ object WaylandSeat {
 
     fun tap(at: Point) = inject(TAP, at, at, "")
     fun drag(from: Point, to: Point) = inject(DRAG, from, to, "")
+    /** Turns the Wayland pointer's wheel `detents` notches at `at`; positive scrolls down. */
+    fun scroll(at: Point, detents: Int) = inject(SCROLL, at, Point(detents, 0), "")
     /** Taps `at` for keyboard focus, then types `text` on the Wayland keyboard. */
     fun tapThenType(at: Point, text: String) = inject(TAP_THEN_TEXT, at, at, text)
     /** Taps `at` for keyboard focus, then presses the named key (e.g. "F11"). */
@@ -66,5 +68,6 @@ object WaylandSeat {
     private const val DRAG = 1
     private const val TAP_THEN_TEXT = 4
     private const val TAP_THEN_KEY = 5
+    private const val SCROLL = 6
     private const val TIMEOUT = 30_000L
 }

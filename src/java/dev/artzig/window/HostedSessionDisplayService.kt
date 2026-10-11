@@ -54,6 +54,36 @@ class HostedSessionDisplayService(private val context: Context, private val hand
         manager.requestTraversalFromDisplayManager()
     }
 
+    @Volatile private var input: com.android.server.input.InputManagerInternal? = null
+
+    /** DisplayManagerService.updateViewportsLocked for stock InputManagerService.
+     * Source note: this is DisplayManagerService's role; the session keeps its
+     * display service until the DisplayManagerService replacement (process-design
+     * phase 2) lands, so the reader's viewport is published here meanwhile. */
+    fun attachInput(manager: com.android.server.input.InputManagerInternal) {
+        check(input == null)
+        input = manager
+        publishViewports()
+    }
+
+    private fun publishViewports() {
+        val target = input ?: return
+        val info = display.getDisplayInfo(Display.DEFAULT_DISPLAY) ?: return
+        val viewport = android.hardware.display.DisplayViewport().apply {
+            valid = true
+            isActive = true
+            displayId = Display.DEFAULT_DISPLAY
+            orientation = info.rotation
+            logicalFrame.set(0, 0, info.logicalWidth, info.logicalHeight)
+            physicalFrame.set(0, 0, info.logicalWidth, info.logicalHeight)
+            deviceWidth = info.logicalWidth
+            deviceHeight = info.logicalHeight
+            uniqueId = info.uniqueId
+            type = android.hardware.display.DisplayViewport.VIEWPORT_INTERNAL
+        }
+        target.setDisplayViewports(listOf(viewport))
+    }
+
     private fun updateMinimalPostProcessingAllowed() {
         minimalPostProcessingAllowed = android.provider.Settings.Secure.getIntForUser(
             context.contentResolver, android.provider.Settings.Secure.MINIMAL_POST_PROCESSING_ALLOWED,
@@ -114,6 +144,7 @@ class HostedSessionDisplayService(private val context: Context, private val hand
 
     private fun displayChanged() {
         invalidateDisplayCache()
+        handler.post { publishViewports() }
         handler.post {
             val listeners = synchronized(lock) {
                 (0 until callbacks.size()).map { callbacks.valueAt(it) }.filter {
@@ -181,6 +212,15 @@ class HostedSessionDisplayService(private val context: Context, private val hand
     fun getDisplayWindowPolicyController(displayId: Int): android.window.DisplayWindowPolicyController? = null
     fun getHostUsiVersion(displayId: Int): android.hardware.input.HostUsiVersion? = null
     fun isProximitySensorAvailable(displayId: Int): Boolean = false
+    /** DMS.getAmbientLightSensorData for a display without a device config
+     * file: DisplayDeviceConfig's default, SensorData.loadAmbientLightSensorConfig. */
+    fun getAmbientLightSensorData(displayId: Int): DisplayManagerInternal.AmbientLightSensorData? =
+        if (displayId != Display.DEFAULT_DISPLAY) null
+        else DisplayManagerInternal.AmbientLightSensorData("",
+            context.resources.getString(com.android.internal.R.string.config_displayLightSensorType))
+    /** DMS forwards this to each DisplayPowerController's automatic brightness,
+     * which the session display does not run. */
+    fun stylusGestureStarted(eventTimeMillis: Long) {}
     fun getRefreshRateForDisplayAndSensor(displayId: Int, name: String?, type: String?):
         android.view.SurfaceControl.RefreshRateRange? = null
     fun getRefreshRateLimitations(displayId: Int): List<DisplayManagerInternal.RefreshRateLimitation> = emptyList()

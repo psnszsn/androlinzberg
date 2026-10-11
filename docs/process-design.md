@@ -26,7 +26,14 @@ session-wide user and mount namespace that supplies `/storage/emulated/0`
 canonicalizes app directories as `/storage/<volume>/<user>/Android/...`.
 The session also seeds `ro.vendor.api_level` before any process starts; the
 media service used to set it at runtime, so services that read it during boot
-(telephony feature gating) saw a different device than later clients.
+(telephony feature gating) saw a different device than later clients; it seeds
+the codec HAL selection the same way. Stock `InputManagerService` replaced the
+hosted input services over a host event hub that presents the Wayland seat as
+evdev devices to stock InputReader (see
+[Input manager replacement](#input-manager-replacement)); the session's mount
+view now also binds the data partition at `/data`. Remaining in phase 2:
+`LockSettingsService`, `DisplayManagerService`, and `ActivityManagerService`
+with `UserController`.
 
 A prototype answered the single-account half of the two-user feasibility gate;
 see [Two-user prototype findings](#two-user-prototype-findings). It was built on
@@ -425,7 +432,7 @@ with `tools/aosp-closure.py closure` against the live framework JAR:
 | `PermissionPolicyService` (done) | `HostedWindowPermissionPolicy` | 1 | 0 |
 | `DeviceStorageMonitorService` (done) | nothing; absent before | 1 | 0 |
 | `StorageManagerService` (done) | `HostedStorageManagerService` | 13 | 5 |
-| `InputManagerService` | `HostInputManagerBridge`, `HostedInputDevices` | 40 | 5 |
+| `InputManagerService` (done) | `HostInputManagerBridge`, `HostedInputManagerService` | 40 | 5 |
 | `LockSettingsService` | `HostedLockSettingsService` | 77 | 19 |
 | `DisplayManagerService` | `HostedSessionDisplayService`, `HostedLogicalDisplay` | 289 | 71 |
 | `ActivityManagerService` with `UserController` | `HostedActivityManagerService`, `HostedUserLifecycle` | 510 | 75 |
@@ -433,6 +440,88 @@ with `tools/aosp-closure.py closure` against the live framework JAR:
 The blocker counts are what the tool reports before any work; most are sources
 not yet in the package manifest, and the remainder are JNI natives, AIDL files
 outside the include roots, absent HIDL classes and unwired generators.
+
+## Input manager replacement
+
+Stock `InputManagerService` replaces `HostInputManagerBridge`,
+`HostedInputManagerService`, the generated `InputManagerInternal` and the
+Kotlin seat translation in `WaylandTaskInput`. Its Java closure is 40 sources,
+but its JNI constructs inputflinger's whole `InputManager`, so the native
+closure is the larger part: InputReader and its mappers, PointerChoreographer,
+InputProcessor, the interaction blockers (Chromium palm rejection over the
+libchrome units it links), InputFilter (a Rust crate with Binder AIDL crates),
+the ChromeOS touchpad gestures library, expresslog, libinputservice's
+PointerController, and the IMS, viewport and topology JNI.
+
+Decisions:
+
+- The device boundary is the reader's `EventHubInterface`. Stock `EventHub`
+  reads `/dev/input` with evdev ioctls, which an unprivileged session cannot
+  provide, so a host event hub (`src/native/input/HostEventHub.cpp`) presents
+  the Wayland seat as evdev devices (keyboard, relative mouse with wheels,
+  multi-touch screen, a stylus per tablet tool) plus EventHub's
+  `Virtual` keyboard, and a host `createInputReader` constructs the stock
+  `InputReader` over it. Stock mappers then produce every Android event;
+  nothing above the hub is host-specific. Each seat device has its own
+  location or, for tablet tools sharing the tablet's port, unique id, which
+  InputReader also uses to keep devices apart (`isSubDevice`). Tablet tools are
+  external pen-display styluses (direct mode): a tool reports absolute positions
+  on the task, and the pinned reader reports stylus buttons only in direct mode.
+  The session associates the tablet's port with its display.
+  Key maps load from the stock `Generic.kl`, `Generic.kcm` and `Virtual.kcm`
+  the image installs under `ANDROID_ROOT/usr`, with the compositor's keymap as
+  the keyboard's character map.
+- The Wayland pointer is a relative mouse. The compositor has already
+  accelerated it, so the session disables mouse scaling for its display through
+  the stock `InputManagerInternal.setMouseScalingEnabled`, as virtual devices
+  do, and the hub emits exact deltas between absolute positions. Scaling
+  applies to a mouse associated with the display, so the session associates
+  the pointer's input port with it (`addUniqueIdAssociationByPort`). The seat
+  pins its cursor model once to the display origin (clamping makes that exact)
+  and again only when the device is re-added. A gesture the seat ends early
+  (resize, compositor cancel) ends by resetting that device alone: a
+  `SYN_DROPPED` packet, after which the reader resets the device and the
+  dispatcher cancels only its events. Hover ends when the pointer leaves for the
+  desktop through the stock `cancelCurrentTouch`, issued only while no device has
+  a gesture; a device reset there would make that device's next drag reach WM's
+  drag window offset.
+- Pointer capture keeps stock semantics: a host wrapper of the reader policy
+  observes the capture request in the reader configuration and asks the
+  presenter to lock the Wayland pointer and send relative motion. When the
+  compositor refuses or revokes that lock, the session releases Android's
+  capture through the stock `requestPointerCapture`, as the window would.
+- The cursor model is clamped to the display as `MouseCursorController`
+  clamps the cursor, so deltas after a grab past the edge stay exact. Wheel
+  notches are high-resolution wheel axes, which the reader reads because the
+  pinned BP2A release enables `high_resolution_scroll`; the flag's C++ and Java
+  values come from that release configuration.
+- The reader's keyboard mapper keeps lock state from lock-key edges alone. A
+  Caps Lock or Num Lock state set while another client had the keyboard is
+  replayed as that lock key once a session task has focus, and modifiers XKB
+  latches or locks without a held key (sticky keys) are pressed around the key
+  they apply to.
+- The cursor shape follows stock PointerController: its sprite is a
+  cursor-flagged SurfaceFlinger layer that the host composer keeps as a CURSOR
+  layer, the cursor plane of a device composer. The composer advertises the
+  `CursorInfo` generic metadata SpriteController publishes for a host OS (the
+  ARC++ arrangement) and hands the sprite's pixels and hotspot to the presenter
+  (`setDisplayCursor`), which sets the Wayland cursor. The sprite's buffers live
+  on its BLAST child, so the host composition engine forwards the child's
+  inherited `CursorInfo`.
+- The dispatcher keeps the hosted keyboard-task and native-drag patches. A host
+  `createInputDispatcher` gives host native code the instance stock
+  `InputManager` owns, so those patches remain reachable without a Java bridge,
+  and subscribes it to SurfaceFlinger's window infos as the stock constructor
+  does on a device. The keyboard-task scoping of patch 0008 stays inert: stock
+  focus already follows the compositor's keyboard focus through
+  `setFocusedTask`.
+- Stock code that names `/data/...` literally (`PersistentDataStore`) reaches
+  the data partition because the session's mount view binds it at `/data`.
+
+Status: done. Stock `InputManagerService` runs with its JNI, WMS patch 0039 is
+reverted, and the hosted input classes, the Kotlin cursor loader and its JNI
+are deleted. The Wayland tablet's wheel, slider and barrel axes have no stock
+reader counterpart and are not reported, as on a device.
 
 ## Desktop, display and audio boundaries
 

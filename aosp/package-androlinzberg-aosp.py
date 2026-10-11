@@ -35,7 +35,6 @@ framework_patches = tuple(
         (34, "-PackageUserState-match-nullable-splash-theme-contract.patch"),
         (35, "-WM-route-process-helpers-through-host-authority.patch"),
         (38, "-ProtoLog-use-stock-host-logging-backend.patch"),
-        (39, "-WM-use-compositor-input-service-boundary.patch"),
         (40, "-PendingIntent-use-host-session-authorities.patch"),
         (41, "-WM-match-host-SF-capability-properties.patch"),
         (46, "-WM-reuse-stock-session-diagnostics.patch"),

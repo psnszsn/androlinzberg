@@ -215,3 +215,8 @@ platform/tools/tradefederation
 system/timezone
 toolchain/pgo-profiles
 tools/platform-compat
+platform/external/libchrome
+platform/external/libpalmrejection
+platform/external/libchrome-gestures
+platform/external/libtextclassifier
+platform/external/libcap

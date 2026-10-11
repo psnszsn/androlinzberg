@@ -10,7 +10,8 @@ const Self = @This();
 pub const max_tools = 16;
 pub const first_device = 3;
 pub const Device = struct { id: i32, generation: i32, kind: i32, capabilities: i32, present: bool };
-pub const Action = enum(i32) { enter, move, down, up, button, leave, cancel };
+/// `frame` ends one protocol frame for its target, as SYN_REPORT ends an evdev packet.
+pub const Action = enum(i32) { enter, move, down, up, button, leave, cancel, frame };
 pub const Sample = struct {
     id: i32,
     generation: i32,
@@ -276,14 +277,26 @@ pub const Tool = struct {
             self.owner.failed = error.IncompleteTabletTool;
             return;
         }
+        // Each target's run of samples ends with its frame.
+        var framed: ?*anyopaque = null;
+        var pending = false;
+        const Publish = struct {
+            fn sample(tool: *Tool, target: *anyopaque, value: Sample, last: *?*anyopaque, open: *bool) void {
+                if (open.* and last.* != target) tool.owner.emit(last.*, .{ .sample = tool.sample(.frame) });
+                tool.owner.emit(target, .{ .sample = value });
+                last.* = target;
+                open.* = true;
+            }
+        };
         if (self.edge_count == 0 and self.dirty) {
-            if (self.target) |target| self.owner.emit(target, .{ .sample = self.sample(.move) });
+            if (self.target) |target| Publish.sample(self, target, self.sample(.move), &framed, &pending);
         } else {
             for (self.edges[0..self.edge_count]) |edge_value|
-                self.owner.emit(edge_value.target, .{ .sample = edge_value.sample });
+                Publish.sample(self, edge_value.target, edge_value.sample, &framed, &pending);
             if (self.axes[8] != 0) if (self.target) |target|
-                self.owner.emit(target, .{ .sample = self.sample(.move) });
+                Publish.sample(self, target, self.sample(.move), &framed, &pending);
         }
+        if (pending) self.owner.emit(framed, .{ .sample = self.sample(.frame) });
         self.edge_count = 0;
         self.dirty = false;
         self.axes[8] = 0;
@@ -485,7 +498,8 @@ test "tablet frames publish final axes with ordered edges and one wheel delta" {
     tool.unit(2, 32768);
     tool.axis(8, 2);
     tool.frame();
-    try std.testing.expectEqual(@as(usize, 3), recorder.count);
+    try std.testing.expectEqual(@as(usize, 4), recorder.count);
+    try std.testing.expectEqual(Action.frame, recorder.events[3].sample.action);
     for (recorder.events[0..3], 0..) |event, index| {
         try std.testing.expectEqual(([_]Action{ .enter, .down, .move })[index], event.sample.action);
         try std.testing.expectEqual(@as(f32, 50), event.sample.axes[0]);
@@ -495,7 +509,7 @@ test "tablet frames publish final axes with ordered edges and one wheel delta" {
         try std.testing.expectEqual(@as(?*anyopaque, &target), recorder.targets[index]);
     }
     tool.frame();
-    try std.testing.expectEqual(@as(usize, 3), recorder.count);
+    try std.testing.expectEqual(@as(usize, 4), recorder.count);
 }
 
 test "tablet proximity handover retains old coordinates and detaches only its owner" {
@@ -512,17 +526,21 @@ test "tablet proximity handover retains old coordinates and detaches only its ow
     tool.edge(.enter, 0, false);
     tool.axis(0, 90);
     tool.frame();
-    try std.testing.expectEqual(@as(usize, 2), recorder.count);
+    // The old surface's run ends with its own frame before the new one's.
+    try std.testing.expectEqual(@as(usize, 4), recorder.count);
     try std.testing.expectEqual(@as(f32, 10), recorder.events[0].sample.axes[0]);
-    try std.testing.expectEqual(@as(f32, 90), recorder.events[1].sample.axes[0]);
+    try std.testing.expectEqual(Action.frame, recorder.events[1].sample.action);
+    try std.testing.expectEqual(@as(?*anyopaque, &targets[0]), recorder.targets[1]);
+    try std.testing.expectEqual(@as(f32, 90), recorder.events[2].sample.axes[0]);
+    try std.testing.expectEqual(Action.frame, recorder.events[3].sample.action);
     tool.edge(.down, 0, true);
     owner.detachTarget(&targets[0]);
     tool.frame();
-    try std.testing.expectEqual(@as(usize, 3), recorder.count);
+    try std.testing.expectEqual(@as(usize, 6), recorder.count);
     tool.edge(.up, 0, false);
     owner.detachTarget(&targets[1]);
     tool.frame();
-    try std.testing.expectEqual(@as(usize, 3), recorder.count);
+    try std.testing.expectEqual(@as(usize, 6), recorder.count);
 }
 
 test "tablet invalid pressure and frame overflow fail without partial delivery" {

@@ -35,7 +35,6 @@ const Entry = struct {
     hold_output: bool = false,
     suspended: bool = false,
     test_frame_pending: bool = false,
-    cursor_icon: ?i32 = null,
     fn inputGeometryReady(self: *const Entry) bool {
         return self.has_content and !self.suspended and !self.window.suspended and self.pending_queue == null and self.configuration_generation == self.window.configuration_generation and
             self.presented_output_generation == self.output_generation;
@@ -77,6 +76,8 @@ const Server = struct {
     completed_round: i64 = 0,
     test_placement: ?TestPlacement = null,
     test_input_sequence: i64 = 0,
+    /// The last cursor plane SurfaceFlinger reported; null keeps the compositor's.
+    display_cursor: ?struct { hotspot: [2]i32, width: i32, height: i32, pixels: []const i32 } = null,
     outbound: ?struct {
         key: Key,
         token: u64,
@@ -288,7 +289,10 @@ const Server = struct {
                 .keyboard_focus => |focused| if (!focused.active or (!entry.suspended and !entry.window.suspended)) try sendFocus(entry, focused),
                 .keyboard_reset => try entry.events.keyboardFocus(entry.key.id, entry.key.generation, false, &.{}),
                 .pointer_motion => |p| try pointer(entry, 0, 0, false, p.x, p.y),
-                .pointer_enter => |p| try pointer(entry, 1, 0, false, p.x, p.y),
+                .pointer_enter => |p| {
+                    try pointer(entry, 1, 0, false, p.x, p.y);
+                    try self.applyDisplayCursor(entry);
+                },
                 .pointer_leave => |p| try pointer(entry, 2, 0, false, p.x, p.y),
                 .pointer_button => |p| try pointer(entry, 3, p.button, p.pressed, p.x, p.y),
                 .pointer_cancel => try pointer(entry, 4, 0, false, 0, 0),
@@ -374,6 +378,13 @@ const Server = struct {
                 }
             },
             2, 3 => {},
+            6 => {
+                const placement = self.test_placement orelse return 0;
+                const at = try placement.point(entry.bounds[0..4].*, .{ entry.window.width, entry.window.height }, points[0], points[1]);
+                const extent = [2]u32{ @intCast(placement.output_width), @intCast(placement.output_height) };
+                const local = [2]u32{ at[0] - @as(u32, @intCast(placement.left)), at[1] - @as(u32, @intCast(placement.top)) };
+                try entry.window.testScrollAtOutput(at, extent, local, points[2]);
+            },
             else => return 0,
         }
         if (kind >= 4 and kind <= 5) {
@@ -772,41 +783,26 @@ const Server = struct {
         };
         return .{ ._result = true };
     }
-    fn noteCursorIcon(self: *Server, entry: *Entry, icon: i32) void {
-        if (entry.cursor_icon == icon) return;
-        entry.cursor_icon = icon;
-        if (self.inspection_enabled) std.log.info("task cursor task={d} type={d} applied=true", .{ entry.key.id, icon });
+    /// The display cursor follows the compositor pointer into whichever task
+    /// window holds it; each window re-applies it when the pointer enters.
+    fn applyDisplayCursor(self: *Server, entry: *Entry) !void {
+        const cursor = self.display_cursor orelse return;
+        if (!entry.inputGeometryReady() or self.session.pointer_focus != entry.window) return;
+        const applied = if (cursor.width == 0)
+            entry.window.setPointerIcon(0)
+        else
+            try entry.window.setCursorImage(cursor.width, cursor.height, cursor.hotspot[0], cursor.hotspot[1], 0, cursor.pixels);
+        if (applied and self.inspection_enabled) std.log.info("task cursor task={d} size={d}x{d} hotspot={d},{d}", .{ entry.key.id, cursor.width, cursor.height, cursor.hotspot[0], cursor.hotspot[1] });
     }
-    fn setPointerIcon(self: *Server, _: *Request, _: std.mem.Allocator, args: M.setPointerIcon.Args) !M.setPointerIcon.Reply {
-        const entry = self.find(try taskKey(args.taskId, args.generation)) orelse return error.StaleTask;
-        const applied = entry.inputGeometryReady() and entry.window.setPointerIcon(args.type);
-        if (applied) self.noteCursorIcon(entry, args.type);
-        return .{ ._result = applied };
-    }
-    fn setTabletPointerIcon(self: *Server, _: *Request, _: std.mem.Allocator, args: M.setTabletPointerIcon.Args) !M.setTabletPointerIcon.Reply {
-        const entry = self.find(try taskKey(args.taskId, args.generation)) orelse return error.StaleTask;
-        const applied = entry.inputGeometryReady() and entry.window.setTabletPointerIcon(args.deviceId, args.deviceGeneration, args.type);
-        if (applied) self.noteCursorIcon(entry, args.type);
-        return .{ ._result = applied };
-    }
-    fn noteCursorImage(self: *Server, key: Key, width: i32, height: i32, hotspot: [2]i32, pixels: []const i32) void {
-        if (self.inspection_enabled) std.log.info("task bitmap cursor task={d} size={d}x{d} frames={d} hotspot={d},{d}", .{ key.id, width, height, pixels.len / @as(usize, @intCast(width * height)), hotspot[0], hotspot[1] });
-    }
-    fn setCursorImage(self: *Server, _: *Request, _: std.mem.Allocator, args: M.setCursorImage.Args) !M.setCursorImage.Reply {
-        const key = try taskKey(args.taskId, args.generation);
-        const entry = self.find(key) orelse return error.StaleTask;
-        const pixels = try boundedPixels(args.pixels);
-        const applied = entry.inputGeometryReady() and try entry.window.setCursorImage(args.width, args.height, args.hotspotX, args.hotspotY, args.frameMillis, pixels);
-        if (applied) self.noteCursorImage(key, args.width, args.height, .{ args.hotspotX, args.hotspotY }, pixels);
-        return .{ ._result = applied };
-    }
-    fn setTabletCursorImage(self: *Server, _: *Request, _: std.mem.Allocator, args: M.setTabletCursorImage.Args) !M.setTabletCursorImage.Reply {
-        const key = try taskKey(args.taskId, args.generation);
-        const entry = self.find(key) orelse return error.StaleTask;
-        const pixels = try boundedPixels(args.pixels);
-        const applied = entry.inputGeometryReady() and try entry.window.setTabletCursorImage(args.deviceId, args.deviceGeneration, args.width, args.height, args.hotspotX, args.hotspotY, args.frameMillis, pixels);
-        if (applied) self.noteCursorImage(key, args.width, args.height, .{ args.hotspotX, args.hotspotY }, pixels);
-        return .{ ._result = applied };
+    fn setDisplayCursor(self: *Server, _: *Request, _: std.mem.Allocator, args: M.setDisplayCursor.Args) !M.setDisplayCursor.Reply {
+        const hidden = args.width == 0 and args.height == 0 and args.pixels.len == 0;
+        if (!hidden and (!dimension(args.width) or !dimension(args.height) or
+            args.pixels.len != @as(usize, @intCast(args.width)) * @as(usize, @intCast(args.height)))) return error.InvalidCursorImage;
+        const pixels = if (hidden) &.{} else try self.gpa.dupe(i32, try boundedPixels(args.pixels));
+        if (self.display_cursor) |previous| self.gpa.free(previous.pixels);
+        self.display_cursor = .{ .hotspot = .{ args.hotspotX, args.hotspotY }, .width = args.width, .height = args.height, .pixels = pixels };
+        for (&self.entries) |*slot| if (slot.*) |*entry| try self.applyDisplayCursor(entry);
+        return .{};
     }
 
     /// Transport status of one admitted request. The generated tables supply
@@ -828,7 +824,10 @@ const Server = struct {
         // A host test tool (the broker's inspector, Android's shell uid) drives
         // the inspection methods only; everything else is the system server's.
         if (request.uid != system_uid and !inspection) return permission_denied;
-        if (!inspection and comptime !std.mem.eql(u8, name, "connectSeat")) {
+        // SurfaceFlinger's composer, a separate system-uid process, reports the
+        // cursor plane; it changes no task state.
+        const cursor_plane = comptime std.mem.eql(u8, name, "setDisplayCursor");
+        if (!inspection and !cursor_plane and comptime !std.mem.eql(u8, name, "connectSeat")) {
             if (self.owner_pid != 0 and self.owner_pid != request.pid) return permission_denied;
             if (drag_source and self.owner == null) return permission_denied;
         }
@@ -840,7 +839,7 @@ const Server = struct {
         try request.input.expectEnd();
         const outcome = try @field(Server, name)(self, request, arena.allocator(), args);
         const reply: Method.Reply = if (@TypeOf(outcome) == ?Method.Reply) outcome orelse return aidl.status_ok else outcome;
-        try aidl.encodeReply(Method, request.output, reply);
+        if (!Method.oneway) try aidl.encodeReply(Method, request.output, reply);
         return aidl.status_ok;
     }
 };
@@ -1023,6 +1022,8 @@ fn run(init: std.process.Init) !void {
             entry.deinit();
             slot.* = null;
         };
+        if (server.display_cursor) |cursor| server.gpa.free(cursor.pixels);
+        server.display_cursor = null;
     }
     try aidl.addService(binder, "dev.artzig.window.presenter");
     var stdin_group: Io.Group = .init;

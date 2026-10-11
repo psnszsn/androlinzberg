@@ -21,7 +21,6 @@ object StockColdLaunchSmoke {
         val context = HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")),
             320, 240, 120, 0)
         dev.artzig.StockReadbackSmoke.verifyGeometry()
-        WaylandCursorSmoke.run(context)
         StockClientServiceSmoke.run()
         val manager = context.getSystemService(ActivityManager::class.java)
         val pkg = "dev.artzig.fixtures.windows"
@@ -32,10 +31,11 @@ object StockColdLaunchSmoke {
             val input = android.hardware.input.IInputManager.Stub.asInterface(
                 android.os.ServiceManager.getService(Context.INPUT_SERVICE))
             val keyboard = checkNotNull(input.getInputDevice(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD))
-            val seatKeyboard = checkNotNull(input.getInputDevice(1))
+            // Stock InputReader numbers devices; the seat keyboard is the host event hub's.
+            val seatKeyboard = checkNotNull(seatDevice(input, "Wayland keyboard"))
             check(!seatKeyboard.isVirtual && seatKeyboard.isExternal)
             check(seatKeyboard.keyboardType == android.view.InputDevice.KEYBOARD_TYPE_ALPHABETIC)
-            check(checkNotNull(seatKeyboard.keyCharacterMap.getEvents(charArrayOf('a'))).all { it.deviceId == 1 })
+            check(checkNotNull(seatKeyboard.keyCharacterMap.getEvents(charArrayOf('a'))).all { it.deviceId == seatKeyboard.id })
             check(keyboard.generation > 0)
             check(keyboard.keyCharacterMap.get(android.view.KeyEvent.KEYCODE_A, 0) == 'a'.code)
             check(keyboard.keyCharacterMap.get(android.view.KeyEvent.KEYCODE_A,
@@ -44,7 +44,7 @@ object StockColdLaunchSmoke {
             check(input.hasKeys(-1, android.view.InputDevice.SOURCE_KEYBOARD,
                 intArrayOf(android.view.KeyEvent.KEYCODE_A, android.view.KeyEvent.KEYCODE_DEL), supported))
             check(supported.all { it })
-            check(input.hasKeys(1, android.view.InputDevice.SOURCE_KEYBOARD,
+            check(input.hasKeys(seatKeyboard.id, android.view.InputDevice.SOURCE_KEYBOARD,
                 intArrayOf(android.view.KeyEvent.KEYCODE_A, android.view.KeyEvent.KEYCODE_DEL), supported))
             check(supported.all { it })
             check(ActivityManager.getService().configuration.keyboard == android.content.res.Configuration.KEYBOARD_QWERTY) {
@@ -296,7 +296,7 @@ object StockColdLaunchSmoke {
         val task = applicationTasks().single()
         val inputDevices = android.hardware.input.IInputManager.Stub.asInterface(
             android.os.ServiceManager.getService(android.content.Context.INPUT_SERVICE))
-        check(inputDevices.getInputDevice(0) == null)
+        check(seatDevice(inputDevices, "Wayland pointer") == null)
         val commands = System.`in`.bufferedReader()
         fun pixels(marker: String, taskId: Int) {
             println("$marker $taskId")
@@ -319,22 +319,22 @@ object StockColdLaunchSmoke {
             return mask and 1 != 0
         }
         check(pointerCapability("POINTER_DEVICE_CREATE"))
-        await("Wayland pointer device publication") { inputDevices.getInputDevice(0) != null }
-        val pointer = checkNotNull(inputDevices.getInputDevice(0))
+        await("Wayland pointer device publication") { seatDevice(inputDevices, "Wayland pointer") != null }
+        val pointer = checkNotNull(seatDevice(inputDevices, "Wayland pointer"))
         check(pointer.isEnabled && pointer.supportsSource(android.view.InputDevice.SOURCE_MOUSE))
         val retained = pointerCapability("POINTER_DEVICE_REMOVE")
         // A compositor may retain its aggregate pointer capability after the
         // last physical/test device disappears. Follow wl_seat, not our helper's
         // device lifetime; only an actual capability loss removes Android input.
-        await("Wayland pointer capability after device removal") { (inputDevices.getInputDevice(0) != null) == retained }
+        await("Wayland pointer capability after device removal") { (seatDevice(inputDevices, "Wayland pointer") != null) == retained }
         check(inputDevices.getInputDevice(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD) != null)
         check(pointerCapability("POINTER_DEVICE_RECREATE"))
-        await("Wayland pointer device reappearance") { inputDevices.getInputDevice(0) != null }
-        val currentPointer = checkNotNull(inputDevices.getInputDevice(0))
+        await("Wayland pointer device reappearance") { seatDevice(inputDevices, "Wayland pointer") != null }
+        val currentPointer = checkNotNull(seatDevice(inputDevices, "Wayland pointer"))
         check(if (retained) currentPointer.generation >= pointer.generation else currentPointer.generation > pointer.generation)
         println("Stock Wayland pointer: absence and compositor capability lifecycle passed; retained=$retained")
         await("Compositor character map was not published to stock input clients") {
-            val keyboard = inputDevices.getInputDevice(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD)
+            val keyboard = seatDevice(inputDevices, "Wayland keyboard")
             keyboard != null && keyboard.generation > 0 &&
                 keyboard.keyCharacterMap.get(android.view.KeyEvent.KEYCODE_A, 0) == 'a'.code &&
                 keyboard.keyCharacterMap.get(android.view.KeyEvent.KEYCODE_A, android.view.KeyEvent.META_SHIFT_ON) == 'A'.code
@@ -345,7 +345,7 @@ object StockColdLaunchSmoke {
             intArrayOf(android.view.KeyEvent.KEYCODE_A, android.view.KeyEvent.KEYCODE_DEL,
                 android.view.KeyEvent.KEYCODE_UNKNOWN, Int.MAX_VALUE), keySupport))
         check(keySupport.contentEquals(booleanArrayOf(true, true, false, false)))
-        check(!inputDevices.hasKeys(0, android.view.InputDevice.SOURCE_MOUSE,
+        check(!inputDevices.hasKeys(currentPointer.id, android.view.InputDevice.SOURCE_MOUSE,
             intArrayOf(android.view.KeyEvent.KEYCODE_A), BooleanArray(1)))
         val firstBounds = android.graphics.Rect(applicationTasks().single().configuration.windowConfiguration.bounds)
         check(tasks.startActivity(null, "android", null,
@@ -418,17 +418,17 @@ object StockColdLaunchSmoke {
             presenter.testWindow(task.taskId).isEmpty() && presenter.testWindow(second.taskId).isEmpty()
         }
         val windowlessRetained = pointerCapability("WINDOWLESS_POINTER_REMOVE")
-        await("Seat update was lost without task windows") { (inputDevices.getInputDevice(0) != null) == windowlessRetained }
+        await("Seat update was lost without task windows") { (seatDevice(inputDevices, "Wayland pointer") != null) == windowlessRetained }
         check(pointerCapability("WINDOWLESS_POINTER_RECREATE"))
-        await("Seat capability did not reappear without task windows") { inputDevices.getInputDevice(0) != null }
-        if (!windowlessRetained) check(checkNotNull(inputDevices.getInputDevice(0)).generation > currentPointer.generation)
+        await("Seat capability did not reappear without task windows") { seatDevice(inputDevices, "Wayland pointer") != null }
+        if (!windowlessRetained) check(checkNotNull(seatDevice(inputDevices, "Wayland pointer")).generation > currentPointer.generation)
         for ((marker, expected) in listOf("WINDOWLESS_KEYBOARD_GERMAN" to '"', "WINDOWLESS_KEYBOARD_US" to '@')) {
-            val previous = checkNotNull(inputDevices.getInputDevice(-1)).generation
+            val previous = checkNotNull(seatDevice(inputDevices, "Wayland keyboard")).generation
             println(marker)
             System.out.flush()
             check(commands.readLine() == "keyboard updated")
             await("Keyboard layout update was lost without task windows: $marker") {
-                val keyboard = checkNotNull(inputDevices.getInputDevice(-1))
+                val keyboard = seatDevice(inputDevices, "Wayland keyboard") ?: return@await false
                 keyboard.generation > previous && keyboard.keyCharacterMap.get(
                     android.view.KeyEvent.KEYCODE_2, android.view.KeyEvent.META_SHIFT_ON) == expected.code
             }
@@ -458,7 +458,8 @@ object StockColdLaunchSmoke {
                 if (ready(current)) return current
                 SystemClock.sleep(5)
             } while (SystemClock.uptimeMillis() < deadline)
-            error("$description: ${events()}")
+            error("$description: ${events().map { "${android.view.MotionEvent.actionToString(it.getInt("action"))}/" +
+                "tool=${it.getInt("tool")}/buttons=${it.getInt("buttons")}/device=${it.getInt("device")}" }}")
         }
         fun near(actual: Float, expected: Float) { check(kotlin.math.abs(actual - expected) < .01f) { "$actual != $expected" } }
         command("pen-down")
@@ -613,7 +614,7 @@ object StockColdLaunchSmoke {
         val inputDevices = android.hardware.input.IInputManager.Stub.asInterface(
             android.os.ServiceManager.getService(android.content.Context.INPUT_SERVICE))
         val pointerDeadline = SystemClock.uptimeMillis() + 5_000
-        while (inputDevices.getInputDevice(0) == null) {
+        while (seatDevice(inputDevices, "Wayland pointer") == null) {
             check(SystemClock.uptimeMillis() < pointerDeadline) { "Initial pointer device was not published" }
             SystemClock.sleep(5)
         }
@@ -826,4 +827,8 @@ object StockColdLaunchSmoke {
             finally { tasks.forEach { it.leash.release() } }
         }
     }
+
+    /** Stock InputReader numbers devices; a seat device is found by its host event hub name. */
+    private fun seatDevice(input: android.hardware.input.IInputManager, name: String): android.view.InputDevice? =
+        input.inputDeviceIds.asList().mapNotNull { input.getInputDevice(it) }.singleOrNull { it.name == name }
 }

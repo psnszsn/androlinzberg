@@ -40,6 +40,8 @@ const ByteArrayAllocator = *const fn (?*anyopaque, i32, ?*?[*]i8) callconv(.c) b
 extern fn AIBinder_Class_define([*:0]const u8, ?*const fn (?*anyopaque) callconv(.c) ?*anyopaque, ?*const fn (?*anyopaque) callconv(.c) void, ?OnTransact) callconv(.c) *AIBinderClass;
 extern fn AIBinder_new(*const AIBinderClass, ?*anyopaque) callconv(.c) *AIBinder;
 extern fn AIBinder_associateClass(?*AIBinder, ?*const AIBinderClass) callconv(.c) bool;
+extern fn AIBinder_getClass(?*AIBinder) callconv(.c) ?*const AIBinderClass;
+extern fn AIBinder_Class_getDescriptor(*const AIBinderClass) callconv(.c) [*:0]const u8;
 extern fn AIBinder_getUserData(?*AIBinder) callconv(.c) ?*anyopaque;
 extern fn AIBinder_incStrong(?*AIBinder) callconv(.c) void;
 extern fn AIBinder_decStrong(?*AIBinder) callconv(.c) void;
@@ -390,7 +392,11 @@ pub fn addService(binder: Binder, name: [*:0]const u8) Error!void {
 
 /// Associate a Binder with `Interface` so transactions carry its token.
 pub fn associate(comptime Interface: type, binder: Binder) Error!void {
-    if (!AIBinder_associateClass(binder.handle, ClassOf(Interface).get())) return error.BadParcelable;
+    if (AIBinder_associateClass(binder.handle, ClassOf(Interface).get())) return;
+    // As NDK fromBinder: an in-process object of another definition of this
+    // interface keeps its class and is called through the proxy.
+    const original = AIBinder_getClass(binder.handle) orelse return error.BadParcelable;
+    if (!std.mem.eql(u8, std.mem.span(AIBinder_Class_getDescriptor(original)), Interface.descriptor)) return error.BadParcelable;
 }
 
 /// The allocator of a proxy call whose reply cannot allocate.
