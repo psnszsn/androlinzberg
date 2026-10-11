@@ -25,6 +25,9 @@ fn writeMap(io: Io, path: []const u8, contents: []const u8) !void {
     try file.writeStreamingAll(io, contents);
 }
 
+/// The nsfs inode of `pid`'s user namespace. The kernel resolves the link
+/// only under ptrace read access: for a peer holding capabilities the caller
+/// lacks, stat reports a procfs inode instead, so the comparison fails closed.
 pub fn identity(io: Io, pid: i32) !Io.File.INode {
     var buffer: [64]u8 = undefined;
     return (try Io.Dir.cwd().statFile(io, try std.fmt.bufPrint(&buffer, "/proc/{d}/ns/user", .{pid}), .{})).inode;

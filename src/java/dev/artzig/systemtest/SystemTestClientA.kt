@@ -1190,17 +1190,18 @@ internal object SystemTestClientA {
         check(telephony.callState == android.telephony.TelephonyManager.CALL_STATE_IDLE, "call state idle")
         check(!telephony.hasCarrierPrivileges(), "no carrier privileges")
         check(telephony.networkOperatorName == "", "no network operator")
+        // At vendor API 2024Q2 a device declaring no FEATURE_TELEPHONY_* has no
+        // logical modem, so TelephonyRegistry has no phone whose state it could
+        // report: the callback registers, and no initial service state follows.
+        check(telephony.activeModemCount == 0, "no active modem without telephony features")
         val serviceStateSeen = CountDownLatch(1)
-        var initialServiceState = -1
         val telephonyCallback = object : android.telephony.TelephonyCallback(), android.telephony.TelephonyCallback.ServiceStateListener {
             override fun onServiceStateChanged(serviceState: android.telephony.ServiceState) {
-                initialServiceState = serviceState.state
                 serviceStateSeen.countDown()
             }
         }
         telephony.registerTelephonyCallback(context.mainExecutor, telephonyCallback)
-        check(serviceStateSeen.await(30, TimeUnit.SECONDS), "telephony callback delivers the initial service state")
-        check(initialServiceState == android.telephony.ServiceState.STATE_OUT_OF_SERVICE, "initial service state is out of service")
+        check(!serviceStateSeen.await(1, TimeUnit.SECONDS), "no phone, so no initial service state")
         telephony.unregisterTelephonyCallback(telephonyCallback)
         val subscriptions = checkNotNull(context.getSystemService(android.telephony.SubscriptionManager::class.java))
         check(subscriptions.activeSubscriptionInfoList.orEmpty().isEmpty(), "no active subscriptions")

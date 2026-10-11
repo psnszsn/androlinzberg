@@ -1,24 +1,25 @@
 //! Android Environment's data partition over persistent storage. Application
 //! data and the package database that owns it (/data/system) persist together,
-//! as on a device's single data partition. Android's mount layout is supplied
-//! before Java starts; ART's dalvik-cache stays shared without changing any
-//! framework path getters.
+//! as on a device's single data partition: the persistent root is the
+//! partition itself, so the canonical path of every file below it stays
+//! inside Environment.getDataDirectory(), which stock StorageManager and
+//! PackageInstaller rely on when they resolve a path to its volume. Only ART's
+//! shared dalvik-cache and the legacy `data` alias are links. Android's mount
+//! layout is supplied before Java starts, without changing any framework path
+//! getter.
 const std = @import("std");
 const Io = std.Io;
 
 pub const Options = struct {
     persistent_root: []const u8,
-    /// Shared session directory. Its session supervisor owns removal. If absent,
-    /// this runtime owns a private layout under its cache root.
-    directory: ?[]const u8 = null,
 };
 
 pub const Partition = struct {
     path: []const u8,
-    owned: bool,
-
+    /// The partition is the caller's persistent root: nothing to remove.
     pub fn release(self: Partition, io: Io) void {
-        if (self.owned) Io.Dir.cwd().deleteTree(io, self.path) catch {};
+        _ = self;
+        _ = io;
     }
 };
 
@@ -26,7 +27,6 @@ const persistent_children = [_][]const u8{
     "user",      "user_de",   "app",      "app-staging", "misc",   "misc_ce",   "misc_de",
     "vendor_ce", "vendor_de", "preloads", "local",       "system", "system_ce", "system_de",
 };
-
 /// Application data of a root that predates its package database.
 pub const legacy_app_data = "legacy-app-data";
 const app_data_roots = [_][]const u8{ "user/0", "user_de/0" };
@@ -37,32 +37,19 @@ pub fn create(a: std.mem.Allocator, io: Io, cache_root: []const u8, options: Opt
     try cwd.createDirPath(io, cache_root);
     const persistent = try cwd.realPathFileAlloc(io, options.persistent_root, a);
     const cache = try cwd.realPathFileAlloc(io, cache_root, a);
-    const owned = options.directory == null;
-    const path = options.directory orelse blk: {
-        var nonce: [16]u8 = undefined;
-        io.random(&nonce);
-        break :blk try std.fmt.allocPrint(a, "{s}/data-{s}", .{ cache, std.fmt.bytesToHex(nonce, .lower) });
-    };
-    if (owned) try cwd.createDir(io, path, .fromMode(0o700)) else try cwd.createDirPath(io, path);
-    errdefer if (owned) cwd.deleteTree(io, path) catch {};
-    const absolute = try cwd.realPathFileAlloc(io, path, a);
-    if (std.mem.eql(u8, absolute, persistent) or std.mem.eql(u8, absolute, cache))
-        return error.OverlappingDataRoots;
-    const partition: Partition = .{ .path = absolute, .owned = owned };
-
+    if (std.mem.eql(u8, persistent, cache)) return error.OverlappingDataRoots;
     try adoptPackageDatabase(a, io, persistent);
     for (persistent_children) |child| {
-        const target = try std.fs.path.join(a, &.{ persistent, child });
-        try cwd.createDirPath(io, target);
-        try link(a, io, absolute, child, target);
+        try cwd.createDirPath(io, try std.fs.path.join(a, &.{ persistent, child }));
     }
     const legacy = try std.fs.path.join(a, &.{ persistent, "user", "0" });
     try cwd.createDirPath(io, legacy);
-    try link(a, io, absolute, "data", legacy);
+    try link(a, io, persistent, "data", legacy, false);
     const compiled = try std.fs.path.join(a, &.{ cache, "dalvik-cache" });
     try cwd.createDirPath(io, compiled);
-    try link(a, io, absolute, "dalvik-cache", compiled);
-    return partition;
+    // The cache root may move between sessions; compiled code is disposable.
+    try link(a, io, persistent, "dalvik-cache", compiled, true);
+    return .{ .path = persistent };
 }
 
 /// PackageManagerService destroys application data that no installed package
@@ -107,15 +94,18 @@ fn adoptPackageDatabase(a: std.mem.Allocator, io: Io, persistent: []const u8) !v
     try cwd.createDirPath(io, system);
 }
 
-fn link(a: std.mem.Allocator, io: Io, directory: []const u8, name: []const u8, target: []const u8) !void {
+fn link(a: std.mem.Allocator, io: Io, directory: []const u8, name: []const u8, target: []const u8, replaceable: bool) !void {
     const path = try std.fs.path.join(a, &.{ directory, name });
     Io.Dir.cwd().symLink(io, target, path, .{}) catch |err| switch (err) {
         error.PathAlreadyExists => {
             // Concurrent app startup may encounter the system process's layout.
-            // Accept that exact layout, never replace another storage target.
+            // Accept that exact layout; never replace another storage target.
             var buffer: [std.fs.max_path_bytes]u8 = undefined;
             const size = try Io.Dir.cwd().readLink(io, path, &buffer);
-            if (!std.mem.eql(u8, buffer[0..size], target)) return error.DataPartitionTargetMismatch;
+            if (std.mem.eql(u8, buffer[0..size], target)) return;
+            if (!replaceable) return error.DataPartitionTargetMismatch;
+            try Io.Dir.cwd().deleteFile(io, path);
+            try Io.Dir.cwd().symLink(io, target, path, .{});
         },
         else => return err,
     };
@@ -134,40 +124,33 @@ test "data layouts retain application bytes, package database and cache across s
     const persistent = try std.fs.path.join(a, &.{ temporary, "persistent" });
     const cache = try std.fs.path.join(a, &.{ temporary, "cache" });
     const first = try create(a, io, cache, .{ .persistent_root = persistent });
-    const second = try create(a, io, cache, .{ .persistent_root = persistent });
-    defer second.release(io);
     const user = try std.fs.path.join(a, &.{ first.path, "user", "0", "example" });
     try Io.Dir.cwd().createDirPath(io, user);
     try testWrite(io, try std.fs.path.join(a, &.{ user, "saved" }), "persistent application state");
     try testWrite(io, try std.fs.path.join(a, &.{ first.path, "system", "policy" }), "session one");
     try testWrite(io, try std.fs.path.join(a, &.{ first.path, "dalvik-cache", "compiled" }), "shared cache");
-    const shared = try create(a, io, cache, .{ .persistent_root = persistent, .directory = first.path });
-    try std.testing.expect(!shared.owned);
-    shared.release(io);
-    try testRead(a, io, try std.fs.path.join(a, &.{ shared.path, "system", "policy" }), "session one");
     first.release(io);
-    try std.testing.expectError(error.FileNotFound, Io.Dir.cwd().access(io, first.path, .{}));
+    // The partition is the persistent root itself: every canonical path stays inside it.
+    try std.testing.expectEqualStrings(try Io.Dir.cwd().realPathFileAlloc(io, persistent, a), first.path);
+    const canonical_user = try Io.Dir.cwd().realPathFileAlloc(io, user, a);
+    try std.testing.expect(std.mem.startsWith(u8, canonical_user, first.path));
+    const second = try create(a, io, cache, .{ .persistent_root = persistent });
     try testRead(a, io, try std.fs.path.join(a, &.{ second.path, "user", "0", "example", "saved" }), "persistent application state");
     try testRead(a, io, try std.fs.path.join(a, &.{ second.path, "data", "example", "saved" }), "persistent application state");
     try testRead(a, io, try std.fs.path.join(a, &.{ second.path, "dalvik-cache", "compiled" }), "shared cache");
     // The package database persists with the application data it owns.
     try testRead(a, io, try std.fs.path.join(a, &.{ second.path, "system", "policy" }), "session one");
-    // A caller may rejoin a layout, but may not redirect its application storage.
-    try std.testing.expectError(error.DataPartitionTargetMismatch, create(a, io, cache, .{
-        .persistent_root = try std.fs.path.join(a, &.{ temporary, "other" }),
-        .directory = second.path,
-    }));
-    try testRead(a, io, try std.fs.path.join(a, &.{ second.path, "user", "0", "example", "saved" }), "persistent application state");
-    // A filesystem failure during construction must not leave a private layout.
+    // A moved cache root replaces the disposable compiled-code link only.
+    const other_cache = try std.fs.path.join(a, &.{ temporary, "other-cache" });
+    const third = try create(a, io, other_cache, .{ .persistent_root = persistent });
+    try testWrite(io, try std.fs.path.join(a, &.{ third.path, "dalvik-cache", "fresh" }), "new cache");
+    try testRead(a, io, try std.fs.path.join(a, &.{ other_cache, "dalvik-cache", "fresh" }), "new cache");
+    try testRead(a, io, try std.fs.path.join(a, &.{ third.path, "data", "example", "saved" }), "persistent application state");
+    // A persistent root whose entries are not directories is rejected.
     const blocked = try std.fs.path.join(a, &.{ temporary, "blocked" });
     try Io.Dir.cwd().createDirPath(io, blocked);
     try testWrite(io, try std.fs.path.join(a, &.{ blocked, "user" }), "not a directory");
-    const before = try testEntryCount(io, cache);
-    if (create(a, io, cache, .{ .persistent_root = blocked })) |unexpected| {
-        unexpected.release(io);
-        return error.AcceptedInvalidDataDirectory;
-    } else |_| {}
-    try std.testing.expectEqual(before, try testEntryCount(io, cache));
+    try std.testing.expectError(error.NotDir, create(a, io, cache, .{ .persistent_root = blocked }));
 }
 
 test "application data that predates the package database moves to legacy storage once" {

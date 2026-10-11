@@ -1719,6 +1719,12 @@ pub fn build(b: *std.Build) void {
                 .target = target,
                 .optimize = optimize,
             }) },
+            // A host tool joining a live session enters its storage view first.
+            .{ .name = "storage_view", .module = b.createModule(.{
+                .root_source_file = b.path("src/binder/StorageView.zig"),
+                .target = target,
+                .optimize = optimize,
+            }) },
         },
     }) });
     presenter_probe.root_module.linkLibrary(binder_ndk);

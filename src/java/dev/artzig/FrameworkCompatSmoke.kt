@@ -682,8 +682,14 @@ public final class FrameworkCompatSmoke {
             val partition = android.os.Environment.getDataDirectory()
             require(partition.path == System.getenv("ANDROID_DATA"), "Environment reads the runtime's Android partition")
             require(android.os.Environment.getDataUserCeDirectory(null, 0).canonicalPath == java.io.File(dataRoot, "user/0").canonicalPath, "session CE directory retains persistent application storage")
+            // Environment reports the primary emulated volume where Android mounts
+            // it; the session's storage view backs it with the data root's
+            // external directory, so it persists with the application data.
             val external = android.os.Environment.getExternalStorageDirectory()
-            require(external.canonicalPath.startsWith(dataRoot.canonicalPath + "/"), "external storage lives under the data root: " + external)
+            require(external.path == "/storage/emulated/0", "external storage is the primary emulated volume: " + external)
+            val mounted = android.system.Os.stat(external.path)
+            val backing = android.system.Os.stat(java.io.File(dataRoot, "external").path)
+            require(mounted.st_dev == backing.st_dev && mounted.st_ino == backing.st_ino, "the emulated volume is backed by the data root")
             require(android.os.Environment.getExternalStorageState() == android.os.Environment.MEDIA_MOUNTED, "external storage mounted")
             require(android.os.Environment.isExternalStorageEmulated() && !android.os.Environment.isExternalStorageRemovable(), "external storage emulated, not removable")
             require(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS).parentFile?.canonicalPath == external.canonicalPath, "public directories under the external root")

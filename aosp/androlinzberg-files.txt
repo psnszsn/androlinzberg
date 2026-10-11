@@ -6178,9 +6178,11 @@ F aosp frameworks/base/services/core/java/android/app/usage/UsageStatsManagerInt
 F aosp frameworks/base/services/core/java/android/content/pm/TestUtilityService.java
 F aosp frameworks/base/services/core/java/com/android/server/AlarmManagerInternal.java
 F aosp frameworks/base/services/core/java/com/android/server/AnimationThread.java
+F aosp frameworks/base/services/core/java/com/android/server/AppFuseMountException.java
 F aosp frameworks/base/services/core/java/com/android/server/DisplayThread.java
 F aosp frameworks/base/services/core/java/com/android/server/LocalManagerRegistry.java
 F aosp frameworks/base/services/core/java/com/android/server/LockGuard.java
+F aosp frameworks/base/services/core/java/com/android/server/MountServiceIdler.java
 F aosp frameworks/base/services/core/java/com/android/server/SystemClockTime.java
 F aosp frameworks/base/services/core/java/com/android/server/SystemTimeZone.java
 F aosp frameworks/base/services/core/java/com/android/server/ThreadPriorityBooster.java
@@ -9114,6 +9116,8 @@ F aosp frameworks/base/core/java/com/android/internal/content/om/OverlayManagerI
 F aosp frameworks/base/services/core/java/com/android/server/Watchdog.java
 F aosp frameworks/base/services/core/java/com/android/server/WatchdogDiagnostics.java
 F aosp frameworks/base/services/core/java/com/android/server/ResourcePressureUtil.java
+F aosp frameworks/base/services/core/java/com/android/server/SmartStorageMaintIdler.java
+F aosp frameworks/base/services/core/java/com/android/server/StorageManagerService.java
 F aosp frameworks/base/services/core/java/com/android/server/am/TraceErrorLogger.java
 F aosp frameworks/base/services/core/java/com/android/server/am/DropboxRateLimiter.java
 F aosp frameworks/base/core/sysprop/WatchdogProperties.sysprop
@@ -9181,6 +9185,7 @@ F aosp frameworks/base/core/java/android/service/dreams/DreamManagerInternal.jav
 F aosp frameworks/base/core/java/com/android/internal/app/DisableCarModeActivity.java
 F aosp frameworks/base/services/core/java/com/android/server/UiModeManagerInternal.java
 F aosp frameworks/base/services/core/java/com/android/server/UiModeManagerService.java
+F aosp frameworks/base/services/core/java/com/android/server/ZramWriteback.java
 F aosp frameworks/base/services/core/java/com/android/server/dreams/DreamController.java
 F aosp frameworks/base/services/core/java/com/android/server/dreams/DreamManagerService.java
 F aosp frameworks/base/services/core/java/com/android/server/dreams/DreamShellCommand.java
@@ -10490,6 +10495,7 @@ F aosp frameworks/base/core/jni/android_os_VintfRuntimeInfo.cpp
 F aosp frameworks/base/services/core/java/com/android/server/power/hint/HintManagerService.java
 F aosp frameworks/base/services/core/java/com/android/server/power/hint/flags.aconfig
 F aosp frameworks/base/services/core/jni/com_android_server_hint_HintManagerService.cpp
+F aosp frameworks/base/services/core/jni/com_android_server_storage_AppFuseBridge.cpp
 F aosp frameworks/base/core/jni/android_os_PerformanceHintManager.cpp
 F aosp frameworks/base/native/android/performance_hint.cpp
 F aosp frameworks/base/native/android/tests/performance_hint/PerformanceHintNativeTest.cpp
@@ -10643,6 +10649,9 @@ F aosp frameworks/base/core/jni/android_os_Debug.h
 D aosp packages/modules/Connectivity/bpf/headers/include
 D aosp packages/modules/Connectivity/bpf/syscall_wrappers/include
 D aosp system/memory/libmemtrack/include
+F aosp system/memory/mmd/MmdProperties.sysprop
+F aosp system/memory/mmd/aidl/android/os/IMmd.aidl
+F aosp system/memory/mmd/flags.aconfig
 D aosp frameworks/native/libs/binderdebug/include
 D aosp system/core/debuggerd/include
 D aosp system/core/debuggerd/common/include
@@ -10674,6 +10683,7 @@ F aosp system/core/libprocessgroup/util/include/processgroup/cgroup_controller.h
 F aosp system/core/libprocessgroup/util/include/processgroup/cgroup_descriptor.h
 F aosp system/core/libprocessgroup/util/include/processgroup/util.h
 F aosp system/core/libprocessgroup/util/util.cpp
+F aosp system/core/storaged/binder/android/os/IStoraged.aidl
 F aosp bionic/libc/include/android/set_abort_message.h
 F aosp bionic/libc/private/bionic_futex.h
 F aosp bionic/libc/private/bionic_lock.h
@@ -10797,6 +10807,8 @@ F aosp frameworks/base/core/java/android/os/UpdateEngineCallback.java
 F aosp frameworks/base/core/java/android/os/UpdateEngine.java
 F aosp frameworks/base/core/java/android/provider/AlarmClock.java
 F aosp frameworks/base/core/java/android/service/dataloader/DataLoaderService.java
+F aosp frameworks/base/core/java/android/service/storage/ExternalStorageService.java
+F aosp frameworks/base/core/java/android/service/storage/IExternalStorageService.aidl
 F aosp frameworks/base/core/java/android/speech/IModelDownloadListener.aidl
 F aosp frameworks/base/core/java/android/speech/IRecognitionListener.aidl
 F aosp frameworks/base/core/java/android/speech/IRecognitionService.aidl
@@ -10832,6 +10844,7 @@ F aosp frameworks/base/packages/SettingsProvider/src/com/android/providers/setti
 F aosp frameworks/base/services/core/java/com/android/server/am/SettingsToPropertiesMapper.java
 F aosp frameworks/base/services/core/java/com/android/server/appop/AppOpMigrationHelperImpl.java
 F aosp frameworks/base/services/core/java/com/android/server/appop/AppOpMigrationHelper.java
+F aosp frameworks/base/services/core/java/com/android/server/memory/ZramMaintenance.java
 F aosp frameworks/base/services/core/java/com/android/server/om/DumpState.java
 F aosp frameworks/base/services/core/java/com/android/server/om/IdmapDaemon.java
 F aosp frameworks/base/services/core/java/com/android/server/om/IdmapManager.java
@@ -11022,7 +11035,12 @@ F aosp frameworks/base/services/core/java/com/android/server/rollback/ApexdRever
 F aosp frameworks/base/services/core/java/com/android/server/rollback/RollbackManagerInternal.java
 F aosp frameworks/base/services/core/java/com/android/server/security/FileIntegrity.java
 F aosp frameworks/base/services/core/java/com/android/server/storage/DeviceStorageMonitorInternal.java
+F aosp frameworks/base/services/core/java/com/android/server/storage/AppFuseBridge.java
 F aosp frameworks/base/services/core/java/com/android/server/storage/DeviceStorageMonitorService.java
+F aosp frameworks/base/services/core/java/com/android/server/storage/ImmutableVolumeInfo.java
+F aosp frameworks/base/services/core/java/com/android/server/storage/StorageSessionController.java
+F aosp frameworks/base/services/core/java/com/android/server/storage/StorageUserConnection.java
+F aosp frameworks/base/services/core/java/com/android/server/storage/WatchedVolumeInfo.java
 F aosp frameworks/base/services/core/java/com/android/server/utils/WatchedSparseBooleanMatrix.java
 F aosp frameworks/base/services/core/java/com/android/server/utils/WatchedSparseSetArray.java
 F aosp frameworks/base/services/net/java/android/net/ConnectivityModuleConnector.java

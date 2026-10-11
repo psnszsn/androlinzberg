@@ -6,6 +6,7 @@ const image = @import("install_tree.zig");
 const installTree = image.root;
 const sessionStorage = @import("runtime_storage.zig").sessionStorage;
 const applySessionStorage = @import("runtime_storage.zig").applySessionStorage;
+const StorageView = @import("binder/StorageView.zig");
 extern "c" fn azk_art_prepare_signals() c_int;
 extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 
@@ -32,7 +33,11 @@ pub fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, j
     const arena = init.arena.allocator();
     if (join_dir) |dir| {
         const info = try joinSession(init, dir);
-        if (info.storage) |storage| try applySessionStorage(init, storage);
+        if (info.storage) |storage| {
+            // The owner's mount view: the broker authenticates peers by user namespace.
+            try StorageView.join(init.io, arena, init.minimal.environ, info.pid);
+            try applySessionStorage(init, storage);
+        }
         _ = setenv(binder_session.socket_env, try arena.dupeSentinel(u8, info.socket, 0), 1);
         if (runtime_identity.isInspector(init.minimal.environ)) {
             // A host test tool: the broker admits it as Android's shell uid and
@@ -52,6 +57,9 @@ pub fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, j
     const broker_exe = try std.fs.path.join(arena, &.{ tree, "bin", "azk-binder-broker" });
     const launcher_exe = try std.fs.path.join(arena, &.{ tree, "bin", "androlinzberg" });
     const storage = try sessionStorage(init);
+    // Every session process inherits /storage/emulated/0 from here.
+    try StorageView.enter(init.io, arena, init.minimal.environ, storage.external_storage);
+    // Exports the storage environment, including the view marker.
     try applySessionStorage(init, storage);
     binder.* = try binder_session.Session.start(init.gpa, init.io, .{
         .broker_exe = broker_exe,

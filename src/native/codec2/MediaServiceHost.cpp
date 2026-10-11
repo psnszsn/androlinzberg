@@ -17,15 +17,18 @@
 
 extern "C" int azk_media_service_start() {
     ABinderProcess_startThreadPool();
+    // init starts mediaserver without ordering it after system_server; the
+    // resource services resolve these clients when first used. Wait for them
+    // here so the session's failure path stays explicit instead of lazy.
     for (const char *name : {"activity", "processinfo", "batterystats"}) {
-        AIBinder *service = AServiceManager_checkService(name);
+        AIBinder *service = AServiceManager_waitForService(name);
         if (!service) return -1;
         AIBinder_decStrong(service);
     }
     // Match the hosted allocator and the declared AIDL HAL transport. All clients
-    // read the same session property area before creating their first codec.
-    if (property_set("ro.vendor.api_level", "202404") != 0 ||
-        property_set("media.c2.hal.selection", "aidl") != 0 ||
+    // read the same session property area before creating their first codec;
+    // the session seeds ro.vendor.api_level (2024Q2) before any process starts.
+    if (property_set("media.c2.hal.selection", "aidl") != 0 ||
         // Use the existing compositor's real frame times through CCodec's
         // standard configuration, rather than its requested-time fallback.
         property_set("persist.device_config.media_native.render_metrics_enabled", "true") != 0) return -1;

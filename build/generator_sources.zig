@@ -2348,6 +2348,9 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/storage/IStorageManager.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/storage/IStorageShutdownObserver.aidl" },
     .{ .source = .aosp, .path = "system/vold/binder/android/os/IVoldTaskListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/storage/IExternalStorageService.aidl" },
+    .{ .source = .aosp, .path = "system/core/storaged/binder/android/os/IStoraged.aidl" },
+    .{ .source = .aosp, .path = "system/memory/mmd/aidl/android/os/IMmd.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/usage/IUsageStatsManager.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IBatteryPropertiesRegistrar.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/app/IBatteryStats.aidl" },
@@ -2748,6 +2751,7 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "com.android.server.power.hint", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/services/core/java/com/android/server/power/hint/flags.aconfig"} },
     .{ .package = "com.android.system.virtualmachine.flags", .container = "com.android.virt", .source = .aosp, .declarations = &.{"packages/modules/Virtualization/build/avf_flags.aconfig"} },
     .{ .package = "android.chre.flags", .container = "system", .source = .aosp, .declarations = &.{"system/chre/chre_flags.aconfig"} },
+    .{ .package = "android.mmd.flags", .container = "system", .source = .aosp, .declarations = &.{"system/memory/mmd/flags.aconfig"} },
     .{ .package = "com.android.adservices.ondevicepersonalization.flags", .container = "com.android.ondevicepersonalization", .source = .aosp, .declarations = &.{"packages/modules/OnDevicePersonalization/flags/ondevicepersonalization_flags.aconfig"} },
     .{ .package = "com.android.devicelock.flags", .container = "com.android.devicelock", .source = .aosp, .declarations = &.{"packages/modules/DeviceLock/flags/flags.aconfig"} },
     .{ .package = "android.app.contextualsearch.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/contextualsearch/flags.aconfig"} },
@@ -2888,6 +2892,7 @@ pub const aconfig = [_]Aconfig{
 
 pub const sysprop = [_]Sysprop{
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/HypervisorProperties.sysprop" } },
+    .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/memory/mmd/MmdProperties.sysprop" } },
     .{ .scope = "public", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/MediaProperties.sysprop" } },
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "frameworks/base/core/sysprop/ViewProperties.sysprop" } },
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "frameworks/base/core/sysprop/WatchdogProperties.sysprop" } },

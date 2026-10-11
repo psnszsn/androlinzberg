@@ -486,7 +486,13 @@ extern "C" int android_get_application_target_sdk_version() {
 extern int register_android_hardware_display_DisplayManagerGlobal(JNIEnv*);
 namespace android {
 extern int register_com_android_server_display_DisplayControl(JNIEnv*);
+extern void register_android_server_storage_AppFuse(JNIEnv*);
 }  // namespace android
+// The stock AppFuseBridge registrar aborts on failure instead of returning it.
+static int registerAppFuseBridge(JNIEnv* env) {
+    android::register_android_server_storage_AppFuse(env);
+    return 0;
+}
 
 extern int register_android_os_Process(JNIEnv*);
 extern "C" int azk_process_backend_initialize();
@@ -787,6 +793,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_graphics_BLASTBufferQueue),
             E(register_android_hardware_display_DisplayManagerGlobal),
             E(android::register_com_android_server_display_DisplayControl),
+            E(registerAppFuseBridge),
             // InputWindowHandle field lookup initializes SurfaceControl.
             E(android::register_android_view_InputWindowHandle),
             E(android::register_android_view_DisplayEventReceiver),

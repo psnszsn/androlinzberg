@@ -177,11 +177,13 @@ internal object SystemServices {
         val storageStats = HostedStorageStatsService()
         storageStats.packageService = packageManager
         android.os.ServiceManager.addService(Context.STORAGE_STATS_SERVICE, storageStats)
-        // AOSP StorageManager uses the historical ServiceManager name "mount";
-        // Context.STORAGE_SERVICE is the Context wrapper name, not the transport.
-        val storage = HostedStorageManagerService(packageManager)
-        LocalServices.addService(android.os.storage.StorageManagerInternal::class.java, storage.local)
-        android.os.ServiceManager.addService("mount", storage)
+        // SystemServer "StartStorageManagerService": stock StorageManagerService
+        // over the session's vold and storaged stand-ins, which it connects to
+        // by name on start.
+        android.os.ServiceManager.addService("vold", HostedVold())
+        android.os.ServiceManager.addService("storaged", HostedStoraged())
+        // The stock class is package-private; SystemServiceManager loads it by name.
+        manager.startService("com.android.server.StorageManagerService\$Lifecycle")
         // SystemServer.startOtherServices: AppHibernationService and ART Service
         // after the core services (usage stats, job scheduler, storage).
         StockPackageServices.startOther(context, packages)
@@ -309,19 +311,54 @@ internal object SystemServices {
                 // The session's preinstalled packages (`pm install` before an
                 // instrumentation run) are present when the session reports ready.
                 val preinstalled = System.getenv("AZK_SESSION_INSTALL")?.split(':')?.filter { it.isNotEmpty() }.orEmpty()
-                if (preinstalled.isEmpty()) onBootComplete() else kotlin.concurrent.thread(name = "session-install") {
+                val ready = { awaitPrimaryStorage(context, completionHandler, onBootComplete) }
+                if (preinstalled.isEmpty()) ready() else kotlin.concurrent.thread(name = "session-install") {
                     val failure = runCatching {
                         for (apk in preinstalled) Log.i(TAG, "preinstalled " + StockPackageServices.installApk(context, java.io.File(apk)))
                     }.exceptionOrNull()
                     // A failed preinstall is a failed boot: rethrow on the main
                     // thread, so the system process dies with the install error
                     // and the session reports it instead of waiting for ready.
-                    if (failure == null) onBootComplete()
+                    if (failure == null) ready()
                     else check(completionHandler.post { throw IllegalStateException("Session preinstall failed", failure) })
                 }
             })
         }
         stockWindows.bootCompleted()
+    }
+
+    private const val PRIMARY_STORAGE_TIMEOUT_MS = 20_000L
+    private const val PRIMARY_STORAGE_POLL_MS = 100L
+
+    /**
+     * A process started after the session reports ready sees a booted device,
+     * including the system user's primary emulated volume. Stock
+     * StorageManagerService mounts it asynchronously after user start (vold,
+     * then the MediaProvider's ExternalStorageService) and reports it unmounted
+     * until its own unlock handling completes. The state is read through
+     * IStorageManager directly: StorageManager's client cache may hold the
+     * answer from before the unlock. Runs on [handler]'s looper.
+     */
+    private fun awaitPrimaryStorage(context: Context, handler: android.os.Handler, then: () -> Unit) {
+        val service = android.os.storage.IStorageManager.Stub.asInterface(
+            android.os.ServiceManager.getService("mount"))
+        val deadline = android.os.SystemClock.uptimeMillis() + PRIMARY_STORAGE_TIMEOUT_MS
+        val poll = object : Runnable {
+            override fun run() {
+                val primary = service.getVolumeList(UserHandle.USER_SYSTEM, context.opPackageName, 0)
+                    .firstOrNull { it.isPrimary }
+                if (primary?.state == android.os.Environment.MEDIA_MOUNTED) {
+                    Log.i(TAG, "primary storage mounted at " + primary.pathFile)
+                    then()
+                } else if (android.os.SystemClock.uptimeMillis() >= deadline) {
+                    throw IllegalStateException("primary storage not mounted after " +
+                        PRIMARY_STORAGE_TIMEOUT_MS + " ms: " + (primary?.state ?: "no primary volume"))
+                } else {
+                    handler.postDelayed(this, PRIMARY_STORAGE_POLL_MS)
+                }
+            }
+        }
+        check(handler.post(poll))
     }
 
 }

@@ -785,6 +785,11 @@ fn systemApps(b: *std.Build, aosp: *std.Build.Dependency, framework: @import("sy
             .name = "ExtServices",
             .manifest = b.path("testdata/ext-services/AndroidManifest.xml"),
         }) },
+        .{ .name = "MediaProvider", .privileged = true, .apk = apps.build(b, aosp, framework, .{
+            .name = "MediaProvider",
+            .manifest = b.path("testdata/media-provider/AndroidManifest.xml"),
+            .kotlin = &.{b.path("src/java/dev/artzig/mediaprovider/MediaProviderStandIns.kt")},
+        }) },
         .{ .name = "PermissionController", .privileged = true, .apk = apps.build(b, aosp, framework, .{
             .name = "PermissionController",
             .manifest = b.path("testdata/permission-controller/AndroidManifest.xml"),

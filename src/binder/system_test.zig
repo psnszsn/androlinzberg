@@ -25,6 +25,13 @@ pub fn main(init: std.process.Init) !void {
     const args = try arena.alloc([]const u8, raw_args.len);
     for (raw_args, args) |raw, *arg|
         arg.* = if (std.mem.startsWith(u8, raw, "-")) raw else Io.Dir.cwd().realPathFileAlloc(io, raw, arena) catch raw;
+    // The session owner's mount view, before any thread exists: the stock
+    // storage service validates app directories below /storage/emulated/0.
+    const storage_view = @import("StorageView.zig");
+    const data_root = init.minimal.environ.getPosix("ARTZIG_DATA_DIR") orelse return error.MissingApplicationDataRoot;
+    const external_root = init.minimal.environ.getPosix("EXTERNAL_STORAGE") orelse try std.fs.path.join(arena, &.{ data_root, "external" });
+    try Io.Dir.cwd().createDirPath(io, external_root);
+    try storage_view.enter(io, arena, init.minimal.environ, external_root);
     if ((args.len == 6 or args.len == 7) and std.mem.eql(u8, args[1], "--cold-window"))
         return coldWindow(init, args);
     if (args.len < 12) {
@@ -43,6 +50,8 @@ pub fn main(init: std.process.Init) !void {
 
     var env = try init.minimal.environ.createMap(gpa);
     defer env.deinit();
+    try env.put("EXTERNAL_STORAGE", storage_view.primary);
+    try env.put(storage_view.env_marker, "1");
     // `pm install` of the peers' packages before they run as those packages;
     // the system process works from "/", so it receives absolute paths.
     var installs: std.ArrayList(u8) = .empty;

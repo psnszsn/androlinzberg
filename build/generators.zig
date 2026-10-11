@@ -194,6 +194,8 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "system/hardware/interfaces/keystore2/aidl/",
         "system/core/gatekeeperd/binder/",
         "system/vold/binder/",
+        "system/core/storaged/binder/",
+        "system/memory/mmd/aidl/",
         "hardware/interfaces/graphics/common/aidl/",
         "hardware/interfaces/health/aidl/",
         "frameworks/native/services/surfaceflinger/PowerAdvisor/aidl/",
@@ -263,6 +265,8 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
     run.addPrefixedDirectoryArg("-I", aosp.path("hardware/interfaces/power/aidl"));
     run.addPrefixedDirectoryArg("-I", aosp.path("hardware/interfaces/contexthub/aidl"));
     run.addPrefixedDirectoryArg("-I", aosp.path("frameworks/native/cmds/dumpstate/binder"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("system/core/storaged/binder"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("system/memory/mmd/aidl"));
     run.addPrefixedDirectoryArg("-I", aosp.path("frameworks/base/packages/Vcn/framework-b/src"));
     run.addPrefixedDirectoryArg("-I", aosp.path("frameworks/base/packages/NeuralNetworks/framework/module/java"));
     run.addPrefixedDirectoryArg("-I", aosp.path("frameworks/base/apex/blobstore/framework/java"));

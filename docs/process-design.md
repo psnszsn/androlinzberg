@@ -14,9 +14,19 @@ rather than silently using standalone state. Executable separation does not
 establish multi-user safety.
 
 Phase 2 has started: stock `PermissionPolicyService` replaced
-`HostedWindowPermissionPolicy`, and stock `DeviceStorageMonitorService` runs;
-the PermissionController stand-in answers the callbacks the stock policy
-service issues on user start.
+`HostedWindowPermissionPolicy`, stock `DeviceStorageMonitorService` runs, and
+stock `StorageManagerService` replaced `HostedStorageManagerService` over the
+`HostedVold` and `HostedStoraged` daemon stand-ins and a MediaProvider stand-in
+that hosts the stock `ExternalStorageService` binding. Two host facts surfaced
+below that Java and are now part of the session: the media service starts
+beside the system process (the stock storage service enumerates codecs through
+`media.player` at its systemReady), and every session process runs in a
+session-wide user and mount namespace that supplies `/storage/emulated/0`
+(`src/binder/StorageView.zig`), because the stock service validates and
+canonicalizes app directories as `/storage/<volume>/<user>/Android/...`.
+The session also seeds `ro.vendor.api_level` before any process starts; the
+media service used to set it at runtime, so services that read it during boot
+(telephony feature gating) saw a different device than later clients.
 
 A prototype answered the single-account half of the two-user feasibility gate;
 see [Two-user prototype findings](#two-user-prototype-findings). It was built on
@@ -315,6 +325,23 @@ Background execution after logout can be an explicit administrator policy.
 Decided direction; not implemented. It applies to both deployment modes and
 sits in the pre-ART setup of `azk-app-process`, behind the same launch boundary.
 
+The session already runs inside one user and mount namespace owned by the
+host user (`src/binder/StorageView.zig`): a tmpfs root carrying recursive
+binds of the host's top-level directories plus `/storage/emulated/0` over the
+session's external storage root, entered by the session owner before the
+broker starts and joined (`setns`) by a launcher started from a foreign
+shell. Joining needs no privilege: a same-UID process in the parent namespace
+holds every capability in the session's namespace. Both the owner and a joiner
+drop all capabilities once inside, matching session children (which lose them
+on exec): the broker authenticates trusted peers by user namespace, and it can
+read a peer's namespace only when the peer holds no capability it lacks. The
+view hides nothing; it is the mount layout init and vold provide, and the
+per-app namespaces below nest inside it. Other users' `/storage/emulated/<n>`
+binds are not supplied yet (`HostedVold` declines their emulated volumes).
+Because the owner drops its capabilities once the view exists, the two-user
+gate needs a component that keeps mount rights in the session namespace and
+performs vold's bind at user start, below Java.
+
 Keep the single-UID mapping of `src/binder/ProcessNamespace.zig`: each app has
 its own user namespace mapping its Android UID to the owning account's host
 UID. Do not allocate subordinate UID ranges (`newuidmap`, `/etc/subuid`) to give
@@ -397,7 +424,7 @@ with `tools/aosp-closure.py closure` against the live framework JAR:
 | --- | --- | --- | --- |
 | `PermissionPolicyService` (done) | `HostedWindowPermissionPolicy` | 1 | 0 |
 | `DeviceStorageMonitorService` (done) | nothing; absent before | 1 | 0 |
-| `StorageManagerService` | `HostedStorageManagerService` | 13 | 5 |
+| `StorageManagerService` (done) | `HostedStorageManagerService` | 13 | 5 |
 | `InputManagerService` | `HostInputManagerBridge`, `HostedInputDevices` | 40 | 5 |
 | `LockSettingsService` | `HostedLockSettingsService` | 77 | 19 |
 | `DisplayManagerService` | `HostedSessionDisplayService`, `HostedLogicalDisplay` | 289 | 71 |

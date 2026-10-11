@@ -62,7 +62,14 @@ synthetic bounds without becoming another Android display.
 The standalone supervisor owns the session's Android data root and exports it to every
 process it starts: `ARTZIG_DATA_DIR` (default `$XDG_DATA_HOME/artzig`, else
 `~/.local/share/artzig`) is `Environment.getDataDirectory()`, with
-`DOWNLOAD_CACHE` and `EXTERNAL_STORAGE` (the one emulated volume) beneath it.
+`DOWNLOAD_CACHE` and the directory backing the one emulated volume (`external`)
+beneath it. Session processes reach that volume as `/storage/emulated/0`, the
+path stock `StorageManagerService` validates: the session owner enters a user
+and mount namespace that binds the backing directory there
+(`src/binder/StorageView.zig`), and exports `EXTERNAL_STORAGE=/storage/emulated/0`.
+A launcher joining from a foreign shell enters the owner's user and mount
+namespaces (the owner's pid is recorded in `session.json`); the broker
+authenticates peers by user namespace, so one session has one view.
 Application data and the package database that owns it (`system`,
 `system_ce`, `system_de`) persist together, as on a device's data partition,
 and one session at a time owns a data root (`.session.lock`); another launcher

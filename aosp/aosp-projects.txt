@@ -194,6 +194,7 @@ platform/system/memory/libion
 platform/system/memory/libmeminfo
 platform/system/memory/libmemtrack
 platform/system/memory/libmemunreachable
+platform/system/memory/mmd
 platform/system/netd
 platform/system/security
 platform/system/sepolicy

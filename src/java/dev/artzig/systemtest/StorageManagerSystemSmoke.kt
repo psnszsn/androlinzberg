@@ -100,7 +100,9 @@ internal object StorageManagerSystemSmoke {
                 },
             )
         }.exceptionOrNull()
-        check(proxyFailure is IOException && proxyFailure.message == "Failed to mount proxy bridge") {
+        // AppFuseMountScope.open wraps vold's refusal in AppFuseMountException,
+        // which StorageManagerService rethrows as a parcelable IllegalStateException.
+        check(proxyFailure is IllegalStateException && proxyFailure.message == "Failed to mount") {
             "the original client reports the absent AppFuse bridge: $proxyFailure"
         }
         check(storage.proxyFileDescriptorMountPointId == -1)
@@ -141,12 +143,14 @@ internal object StorageManagerSystemSmoke {
                 check(client.mountObb(file.path, null, listener))
                 check(results.poll(5, java.util.concurrent.TimeUnit.SECONDS) ==
                     (file.path to android.os.storage.OnObbStateChangeListener.ERROR_COULD_NOT_MOUNT))
+                // StorageManagerService.unmountObb logs an unknown mount and
+                // queues no action: the listener hears nothing.
                 check(client.unmountObb(file.path, false, listener))
-                check(results.poll(5, java.util.concurrent.TimeUnit.SECONDS) ==
-                    (file.path to android.os.storage.OnObbStateChangeListener.ERROR_NOT_MOUNTED))
+                check(results.poll(1, java.util.concurrent.TimeUnit.SECONDS) == null)
                 val token = object : android.os.storage.IObbActionListener.Stub() {
                     override fun onObbResult(path: String?, nonce: Int, status: Int) { results.add(path to status) }
                 }
+                // validateObbInfo rejects an OBB whose path names another package.
                 info.packageName = "foreign.package"
                 check(runCatching { transport.mountObb(file.path, file.canonicalPath, token, 1, info) }.exceptionOrNull() is SecurityException)
                 check(results.isEmpty())

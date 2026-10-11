@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Host stand-in for the MediaProvider module (packages/providers/MediaProvider).
+     Stock StorageManagerService mounts an emulated volume only when the system
+     app holding the MediaStore authority offers an ExternalStorageService; the
+     media index and the FUSE daemon of the real module are not built here. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.android.providers.media.module"
+    android:versionCode="1"
+    android:versionName="hosted"
+    coreApp="true">
+
+    <application android:label="Media storage"
+        android:defaultToDeviceProtectedStorage="true"
+        android:directBootAware="true"
+        android:allowBackup="false">
+
+        <provider android:name="dev.artzig.mediaprovider.MediaStoreProvider"
+            android:authorities="media"
+            android:exported="true"
+            android:directBootAware="true" />
+
+        <service android:name="dev.artzig.mediaprovider.HostedExternalStorageService"
+            android:exported="true"
+            android:directBootAware="true"
+            android:permission="android.permission.BIND_EXTERNAL_STORAGE_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.storage.ExternalStorageService" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

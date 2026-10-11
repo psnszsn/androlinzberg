@@ -34,7 +34,9 @@ pub fn main(init: std.process.Init) !void {
         .{ .mode = "media-eof", .failure = error.MediaServiceNotReady, .expected = "broker start\nsf start\nsystem start\nmedia start\nsystem stop\nsf stop\nbroker stop\n" },
         .{ .mode = "media-bad-ready", .failure = error.MediaServiceNotReady, .expected = "broker start\nsf start\nsystem start\nmedia start\nsystem stop\nsf stop\nbroker stop\n" },
         .{ .mode = "media-timeout", .failure = error.ServiceReadyTimeout, .expected = "broker start\nsf start\nsystem start\nmedia start\nsystem stop\nsf stop\nbroker stop\n" },
-        .{ .mode = "media-system-eof", .failure = error.SystemProcessNotReady, .expected = "broker start\nsf start\nsystem start\nsf stop\nbroker stop\n" },
+        // The media service is spawned beside the system process; a system
+        // process that exits before ready takes the already running media down.
+        .{ .mode = "media-system-eof", .failure = error.SystemProcessNotReady, .expected = "broker start\nsf start\nsystem start\nmedia start\nmedia stop\nsf stop\nbroker stop\n" },
         .{ .mode = "media-shutdown-timeout", .failure = null, .expected = "broker start\nsf start\nsystem start\nmedia start\nmedia stop\nsystem stop\nsf stop\nbroker stop\n" },
         .{ .mode = "presenter-normal", .failure = null, .expected = "broker start\nsf start\npresenter start\nsystem start\nsystem stop\npresenter stop\nsf stop\nbroker stop\n" },
         .{ .mode = "presenter-spawn", .failure = error.TaskPresenterNotReady, .expected = "broker start\nsf start\nsf stop\nbroker stop\n" },
@@ -207,8 +209,21 @@ fn fixture(init: std.process.Init, args: []const [:0]const u8) !void {
             return;
         }
     }
-    if (std.mem.eql(u8, role, "system") and (std.mem.eql(u8, mode, "system-eof") or std.mem.eql(u8, mode, "media-system-eof"))) return;
+    if (std.mem.eql(u8, role, "system") and std.mem.eql(u8, mode, "system-eof")) return;
+    if (std.mem.eql(u8, role, "system") and std.mem.eql(u8, mode, "media-system-eof")) {
+        // Exit once the media fixture listens, so its stop is observable.
+        const marker = try std.fmt.allocPrint(init.arena.allocator(), "{s}.media-listening", .{init.minimal.environ.getPosix("AZK_SESSION_FIXTURE_LOG").?});
+        while (true) {
+            if (Io.Dir.cwd().access(init.io, marker, .{})) |_| break else |_| {}
+            try Io.sleep(init.io, .{ .nanoseconds = 5 * std.time.ns_per_ms }, .awake);
+        }
+        return;
+    }
     try Io.File.stdout().writeStreamingAll(init.io, "ready\n");
+    if (std.mem.eql(u8, role, "media") and std.mem.eql(u8, mode, "media-system-eof")) {
+        const marker = try std.fmt.allocPrint(init.arena.allocator(), "{s}.media-listening", .{init.minimal.environ.getPosix("AZK_SESSION_FIXTURE_LOG").?});
+        (try Io.Dir.cwd().createFile(init.io, marker, .{})).close(init.io);
+    }
     var bytes: [32]u8 = undefined;
     while (true) {
         const count = Io.File.stdin().readStreaming(init.io, &.{&bytes}) catch |err| switch (err) {

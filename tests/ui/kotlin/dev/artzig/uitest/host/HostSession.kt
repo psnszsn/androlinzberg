@@ -29,7 +29,7 @@ object HostSession {
         val owned = setOf("ANDROID_DATA", "ARTZIG_DATA_DIR", "ARTZIG_RUNTIME_CACHE_DIR", "EXTERNAL_STORAGE", "DOWNLOAD_CACHE", "AZK_PROP_AREA")
         return String(run(
             checkNotNull(System.getenv("AZK_TEST_LAUNCHER")), "--join", directory, "--javatest",
-            File(directory, "android-data").path, storage.getString("application_data"),
+            storage.getString("application_data"), storage.getString("application_data"),
             timeoutMillis = 30_000, mergeError = true,
         ) { variables ->
             variables.keys.removeAll { it.startsWith("AZK_BINDER_") || it.startsWith("AZK_TEST_") || it in owned }

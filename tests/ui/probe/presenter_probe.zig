@@ -12,7 +12,7 @@ const Presenter = @import("task_presenter_aidl").@"dev.artzig.window.IWaylandTas
 extern fn AServiceManager_waitForService(instance: [*:0]const u8) callconv(.c) ?*aidl.AIBinder;
 extern fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 
-const SessionInfo = struct { socket: []const u8, inspector_cookie: ?[]const u8 = null, prop_area: []const u8 };
+const SessionInfo = struct { socket: []const u8, inspector_cookie: ?[]const u8 = null, prop_area: []const u8, pid: i32 };
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -26,6 +26,8 @@ pub fn main(init: std.process.Init) !void {
     const text = try Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(4096));
     const info = try std.json.parseFromSliceLeaky(SessionInfo, arena, text, .{ .ignore_unknown_fields = true });
     const cookie = info.inspector_cookie orelse return error.SessionDoesNotPermitInspection;
+    // The broker admits trusted peers from the session's user namespace only.
+    try @import("storage_view").join(io, arena, init.minimal.environ, info.pid);
     _ = setenv("AZK_BINDER_SOCKET", try arena.dupeSentinel(u8, info.socket, 0), 1);
     _ = setenv("AZK_BINDER_COOKIE", try arena.dupeSentinel(u8, cookie, 0), 1);
     _ = setenv("AZK_BINDER_PACKAGE", "com.android.shell", 1);

@@ -870,6 +870,9 @@ pub fn build(b: *std.Build, o: Options) Result {
 
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_matrix.cpp"}, hwui_includes, &hwui_flags);
     g.add(o.aosp.path(b, "frameworks/base/services/core/jni"), &.{ "com_android_server_display_DisplayControl.cpp", "com_android_server_wm_TaskFpsCallbackController.cpp" }, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc }, &.{});
+    // Stock AppFuseBridge JNI over libappfuse: the bridge loop itself needs no
+    // FUSE device; vold's mountAppFuse supplies one, which the host declines.
+    g.add(o.aosp.path(b, "frameworks/base/services/core/jni"), &.{"com_android_server_storage_AppFuseBridge.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), o.aosp.path(b, "system/core/libappfuse/include"), binder_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, hwui_includes, &hwui_flags);
     // Pinned HWUI codecs and PDF writer, with their original Soong dependency closure.
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{ "jni/Movie.cpp", "jni/MovieImpl.cpp", "jni/GIFMovie.cpp", "jni/YuvToJpegEncoder.cpp", "jni/pdf/PdfDocument.cpp" }, hwui_includes ++ &[_]std.Build.LazyPath{ o.aosp.path(b, "external/giflib"), o.aosp.path(b, "external/libultrahdr/lib/include"), o.aosp.path(b, "external/libultrahdr"), o.aosp.path(b, "external/skia/include/docs") }, &hwui_flags);

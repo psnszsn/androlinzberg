@@ -342,6 +342,10 @@ fn seedProperties(props: *prop_area.Area) prop_area.Error!void {
         .{ "ro.product.name", "artzig" },
         .{ "ro.product.board", "artzig" },
         .{ "ro.product.first_api_level", "24" },
+        // init reads the vendor partition's API level before any process runs;
+        // every reader (TelephonyManager feature gating, the codec HAL selection)
+        // must see one value for the whole session. 2024Q2.
+        .{ "ro.vendor.api_level", "202404" },
         .{ "ro.product.cpu.abi", "x86_64" },
         .{ "ro.product.cpu.abilist", "x86_64,arm64-v8a" },
         .{ "ro.product.cpu.abilist64", "x86_64,arm64-v8a" },
@@ -746,8 +750,12 @@ fn handleHello(peer: *Peer, header: Client.Message.Header, body: []const u8) Ser
         // entering its namespace or after its grant has been revoked.
         const user_namespace = ProcessNamespace.identity(io, peer.pid) catch
             return protocolError(peer, "cannot authenticate peer namespace");
-        if (user_namespace != b.user_namespace or b.launches.isBoundProcess(peer.pid))
+        if (user_namespace != b.user_namespace or b.launches.isBoundProcess(peer.pid)) {
+            log.warn("peer {d} (pid {d}): user namespace {d}, session namespace {d}, bound={}", .{
+                peer.id, peer.pid, user_namespace, b.user_namespace, b.launches.isBoundProcess(peer.pid),
+            });
             return protocolError(peer, "peer requires a supervised launch grant");
+        }
         if (std.mem.eql(u8, cookie, b.system_cookie)) {
             peer.role = .system;
             peer.android_uid = Client.system_uid;

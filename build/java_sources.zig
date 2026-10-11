@@ -4848,6 +4848,18 @@ fn collectPackageManager(c: *StaticCollector) !void {
     try c.file("$FB/services/core/java/com/android/server/security/FileIntegrity.java");
     try c.file("$FB/services/core/java/com/android/server/storage/DeviceStorageMonitorInternal.java");
     try c.file("$FB/services/core/java/com/android/server/storage/DeviceStorageMonitorService.java");
+    try c.file("$CJ/android/service/storage/ExternalStorageService.java");
+    try c.file("$FB/services/core/java/com/android/server/AppFuseMountException.java");
+    try c.file("$FB/services/core/java/com/android/server/MountServiceIdler.java");
+    try c.file("$FB/services/core/java/com/android/server/SmartStorageMaintIdler.java");
+    try c.file("$FB/services/core/java/com/android/server/StorageManagerService.java");
+    try c.file("$FB/services/core/java/com/android/server/ZramWriteback.java");
+    try c.file("$FB/services/core/java/com/android/server/memory/ZramMaintenance.java");
+    try c.file("$FB/services/core/java/com/android/server/storage/AppFuseBridge.java");
+    try c.file("$FB/services/core/java/com/android/server/storage/ImmutableVolumeInfo.java");
+    try c.file("$FB/services/core/java/com/android/server/storage/StorageSessionController.java");
+    try c.file("$FB/services/core/java/com/android/server/storage/StorageUserConnection.java");
+    try c.file("$FB/services/core/java/com/android/server/storage/WatchedVolumeInfo.java");
     try c.file("$FB/services/core/java/com/android/server/utils/WatchedSparseBooleanMatrix.java");
     try c.file("$FB/services/core/java/com/android/server/utils/WatchedSparseSetArray.java");
     try c.file("$FB/services/net/java/android/net/ConnectivityModuleConnector.java");

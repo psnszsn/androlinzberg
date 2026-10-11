@@ -72,15 +72,9 @@ pub fn configureDataRoot(init: std.process.Init) !void {
     }
 }
 
-pub fn dataPartitionOptions(init: std.process.Init) !art.DataPartition.Options {
+pub fn dataPartitionOptions() !art.DataPartition.Options {
     const persistent = getenv("ARTZIG_DATA_DIR") orelse return error.MissingApplicationDataRoot;
-    return .{
-        .persistent_root = std.mem.span(persistent),
-        .directory = if (getenv("AZK_BINDER_SESSION_DIR")) |session|
-            try std.fs.path.join(init.arena.allocator(), &.{ std.mem.span(session), "android-data" })
-        else
-            null,
-    };
+    return .{ .persistent_root = std.mem.span(persistent) };
 }
 
 pub fn sessionStorage(init: std.process.Init) !binder_session.Storage {

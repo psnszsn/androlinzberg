@@ -29,17 +29,23 @@ pub const session_file = "session.json";
 /// launchers. These are filesystem locations, never Binder role credentials.
 pub const Storage = struct {
     application_data: []const u8,
+    /// Backs the emulated volume; processes reach it as
+    /// `StorageView.primary` inside the session's mount view.
     external_storage: []const u8,
     download_cache: []const u8,
     runtime_cache: []const u8,
 
     pub const Entry = struct { name: [:0]const u8, value: []const u8 };
-    pub fn environment(self: Storage) [4]Entry {
+    pub fn environment(self: Storage) [5]Entry {
+        const view = @import("StorageView.zig");
         return .{
             .{ .name = "ARTZIG_DATA_DIR", .value = self.application_data },
-            .{ .name = "EXTERNAL_STORAGE", .value = self.external_storage },
+            .{ .name = "EXTERNAL_STORAGE", .value = view.primary },
             .{ .name = "DOWNLOAD_CACHE", .value = self.download_cache },
             .{ .name = "ARTZIG_RUNTIME_CACHE_DIR", .value = self.runtime_cache },
+            // Session children and joiners are inside the owner's view already;
+            // app children that re-join by `--join` must not enter it again.
+            .{ .name = view.env_marker, .value = "1" },
         };
     }
 };
@@ -136,8 +142,13 @@ pub const Session = struct {
         if (options.task_presenter_exe) |exe| try session.startTaskPresenter(options, exe);
         try session.startSystemProcess(options);
         if (options.media_service_exe) |exe| {
+            // init runs mediaserver beside system_server: the system server's
+            // StorageManagerService reaches media.player at its systemReady,
+            // before the session's ready line. The media service waits for the
+            // system services it needs, so neither process gates the other.
+            try session.spawnMediaService(options, exe);
             try session.awaitSystemReady();
-            try session.startMediaService(options, exe);
+            try session.awaitMediaReady();
         }
         return session;
     }
@@ -276,7 +287,7 @@ pub const Session = struct {
     }
 
     /// Starts the native resource services after their system dependencies.
-    fn startMediaService(s: *Session, options: Options, exe: []const u8) !void {
+    fn spawnMediaService(s: *Session, options: Options, exe: []const u8) !void {
         var env = try options.environ.createMap(s.gpa);
         defer env.deinit();
         try env.put(socket_env, s.socket_path);
@@ -292,10 +303,16 @@ pub const Session = struct {
             .stdout = .pipe,
             .stderr = .inherit,
         });
-        awaitReady(s.io, s.media.?.stdout.?, s.ready_timeout) catch |err| {
+    }
+
+    /// Blocks until the media service printed `ready` (its services are
+    /// registered), then keeps its stdout drained.
+    fn awaitMediaReady(s: *Session) !void {
+        const media = &(s.media orelse return error.NoMediaService);
+        awaitReady(s.io, media.stdout.?, s.ready_timeout) catch |err| {
             return if (err == error.NotReady) error.MediaServiceNotReady else err;
         };
-        try s.drain.concurrent(s.io, drainPipe, .{ s.io, s.media.?.stdout.? });
+        try s.drain.concurrent(s.io, drainPipe, .{ s.io, media.stdout.? });
     }
 
     /// Spawns the configured system entry point with the trusted service cookie.
@@ -516,13 +533,11 @@ fn drainPipe(io: Io, pipe: Io.File) void {
     }
 }
 
-/// Give a system process session-scoped Android policy storage while preserving
-/// application storage. Shared by the production launcher and multi-process harness.
+/// Name the session to a system process. Its Android data partition is the
+/// persistent application root (artzig data_partition), prepared by
+/// Runtime.create before the original Environment class initializes.
 pub fn configureSystemData(gpa: std.mem.Allocator, io: Io, child_env: *std.process.Environ.Map, session_dir: []const u8) !void {
+    _ = gpa;
+    _ = io;
     try child_env.put("AZK_BINDER_SESSION_DIR", session_dir);
-    // Runtime.create fills the session partition with persistent app-storage and
-    // shared ART-cache links before the original Environment class initializes.
-    const data_dir = try std.fs.path.join(gpa, &.{ session_dir, "android-data" });
-    defer gpa.free(data_dir);
-    try Io.Dir.createDirAbsolute(io, data_dir, @fromBackingInt(@intCast(0o700)));
 }
