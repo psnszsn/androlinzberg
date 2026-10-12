@@ -97,6 +97,7 @@ pub fn main(init: std.process.Init) !void {
         .platform_root = std.fs.path.dirname(std.fs.path.dirname(launcher).?).?,
         .system_args = &.{"--javatest"},
         .environ = session_env,
+        .credential = try session_module.CredentialDaemons.installed(init.arena.allocator(), std.fs.path.dirname(std.fs.path.dirname(launcher).?).?),
     });
     defer session.stop();
     try session.awaitSystemReady();
@@ -214,6 +215,8 @@ fn coldWindow(init: std.process.Init, args: []const []const u8) !void {
         .surfaceflinger_exe = args[4],
         .task_presenter_exe = if (args.len == 7) args[6] else null,
         .environ = init.minimal.environ,
+        .platform_root = std.fs.path.dirname(std.fs.path.dirname(args[2]).?).?,
+        .credential = try session_module.CredentialDaemons.installed(init.arena.allocator(), std.fs.path.dirname(std.fs.path.dirname(args[2]).?).?),
     });
     defer session.stop();
     try session.awaitSystemReady();

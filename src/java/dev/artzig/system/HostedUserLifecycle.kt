@@ -57,6 +57,24 @@ internal class HostedUserLifecycle {
             user.state == UserState.STATE_RUNNING_UNLOCKED)
     }
 
+    /**
+     * UserController.maybeUnlockUser (LockSettingsService after verifying a
+     * credential). The host's CE storage is always available: a running user
+     * either is still being unlocked by [start], which reports to the listener,
+     * or is already unlocked, which finishes the listener at once.
+     */
+    fun unlockUser(userId: Int, listener: android.os.IProgressListener?): Boolean {
+        val unlocking = synchronized(lock) {
+            if (userId != UserHandle.USER_SYSTEM || !started) return@synchronized false
+            user.mUnlockProgress.addListener(listener)
+            user.state == UserState.STATE_BOOTING || user.state == UserState.STATE_RUNNING_LOCKED
+        }
+        if (!unlocking) {
+            try { listener?.onFinished(userId, null) } catch (ignored: android.os.RemoteException) {}
+        }
+        return unlocking
+    }
+
     /** Returns false on a repeated start; a failed bootstrap is not partially replayed. */
     fun start(services: Services): Boolean {
         synchronized(lock) {

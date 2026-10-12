@@ -144,9 +144,8 @@ class ApkHost private constructor() {
             // The package is installed before its process starts (by a launcher
             // or the session's preinstalls); this process runs with its uid.
             HostContexts.prepareApplicationEnvironment(frameworkRes)
-            if (java.security.Security.getProvider("AndroidKeyStore") == null) {
-                java.security.Security.insertProviderAt(ArtzigKeyStoreProvider(), 1)
-            }
+            // ZygoteInit.preload's warmUpJcaProviders, which forked apps inherit.
+            android.security.keystore2.AndroidKeyStoreProvider.install()
             // ProcessList uses the manifest application process name. Provider
             // discovery is scoped to that name and UID during bindApplication.
             // AOSP ordering: attach first, then bindApplication (providers

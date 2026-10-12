@@ -67,6 +67,7 @@ packager.SOURCE_MANIFEST = HERE / "androlinzberg-files.txt"
 packager.PACKAGE_NAME = "androlinzberg"
 packager.PATCH_SERIES = framework_patches + (
     ("system/netd", patch_root / "system/netd/0001-host-route-fwmark-operations-to-Linux-policy.patch"),
+    ("system/libhidl", patch_root / "system/libhidl/0001-answer-absent-hwbinder-as-hidl-less-device.patch"),
     ("packages/modules/Connectivity", patch_root / "packages-modules-Connectivity/0001-match-host-resolution-JNI-signature.patch"),
     ("frameworks/native", patch_root / "frameworks-native/0012-sensorservice-initialize-mode-without-HAL.patch"),
     ("system/core/libcutils", patch_root / "system/libcutils/0001-use-stock-memfd-operations-for-host-ndk-shared-memory.patch"),

@@ -87,6 +87,7 @@ open class WindowFixtureActivity : Activity() {
         button("Show input routing") { startActivity(Intent(this, InputRoutingFixtureActivity::class.java)) }
         button("Show activity PendingIntent") { startActivity(Intent(this, PendingIntentFixtureActivity::class.java)) }
         button("Show audio focus") { startActivity(Intent(this, AudioFocusFixtureActivity::class.java)) }
+        button("Show keystore") { startActivity(Intent(this, KeyStoreFixtureActivity::class.java)) }
         button("Show dialog contracts") { startActivity(Intent(this, DialogFixtureActivity::class.java)) }
         setContentView(android.widget.ScrollView(this).apply { addView(content) })
     }

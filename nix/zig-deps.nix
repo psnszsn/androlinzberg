@@ -27,7 +27,7 @@ in
 linkFarm "androlinzberg-zig-packages" [
   # build.zig.zon: .aosp
   {
-    name = "N-V-__8AAH7XekTF3tuyrLdZDG-hEyr22ABoDHBnRJqdPPCN";
+    name = "N-V-__8AADNEB0tyd_RoR40-6K96MR0SVFEtmApvxfTDX42u";
     path = unpackWithKotlinc "androlinzberg-aosp" aospArchives.androlinzberg;
   }
   # build.zig.zon: .webview

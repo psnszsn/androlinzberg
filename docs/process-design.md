@@ -31,9 +31,12 @@ the codec HAL selection the same way. Stock `InputManagerService` replaced the
 hosted input services over a host event hub that presents the Wayland seat as
 evdev devices to stock InputReader (see
 [Input manager replacement](#input-manager-replacement)); the session's mount
-view now also binds the data partition at `/data`. Remaining in phase 2:
-`LockSettingsService`, `DisplayManagerService`, and `ActivityManagerService`
-with `UserController`.
+view now also binds the data partition at `/data`. Stock `LockSettingsService`
+and `TrustManagerService` replaced their hosted counterparts over stock
+keystore2, gatekeeperd and the software KeyMint and gatekeeper HALs, and apps
+use the stock AndroidKeyStore provider (see
+[Lock settings replacement](#lock-settings-replacement)). Remaining in phase 2:
+`DisplayManagerService` and `ActivityManagerService` with `UserController`.
 
 A prototype answered the single-account half of the two-user feasibility gate;
 see [Two-user prototype findings](#two-user-prototype-findings). It was built on
@@ -433,7 +436,8 @@ with `tools/aosp-closure.py closure` against the live framework JAR:
 | `DeviceStorageMonitorService` (done) | nothing; absent before | 1 | 0 |
 | `StorageManagerService` (done) | `HostedStorageManagerService` | 13 | 5 |
 | `InputManagerService` (done) | `HostInputManagerBridge`, `HostedInputManagerService` | 40 | 5 |
-| `LockSettingsService` | `HostedLockSettingsService` | 77 | 19 |
+| `LockSettingsService` (done) | `HostedLockSettingsService`, `ArtzigKeyStoreProvider` | 77 | 19 |
+| `TrustManagerService` (done) | `HostedTrustManagerService` | 11 | 0 |
 | `DisplayManagerService` | `HostedSessionDisplayService`, `HostedLogicalDisplay` | 289 | 71 |
 | `ActivityManagerService` with `UserController` | `HostedActivityManagerService`, `HostedUserLifecycle` | 510 | 75 |
 
@@ -522,6 +526,86 @@ Status: done. Stock `InputManagerService` runs with its JNI, WMS patch 0039 is
 reverted, and the hosted input classes, the Kotlin cursor loader and its JNI
 are deleted. The Wayland tablet's wheel, slider and barrel axes have no stock
 reader counterpart and are not reported, as on a device.
+
+## Lock settings replacement
+
+Stock `LockSettingsService` replaces `HostedLockSettingsService`. Its Java
+closure is 77 sources, but the service is a client of Android's credential
+stack: it creates a synthetic password for every user, protected by keys in the
+AndroidKeyStore provider (keystore2), reports unlocks to keystore2's
+authorization service and enrolls credentials with gatekeeper. Those are native
+daemons reached over stock AIDL, so they run below Java as stock code, not as
+repository stand-ins: key storage applies to a host user as much as to a device.
+
+Decisions:
+
+- keystore2 (Rust, SQLite) runs as Android runs it, with the software
+  ("nonsecure") KeyMint, secure clock and shared-secret services that emulators
+  use, built from `hardware/interfaces/security/keymint` over `system/keymint`.
+  Gatekeeper is stock `gatekeeperd` over the software gatekeeper HAL. There is
+  no trusted execution environment on the host; these are the same software
+  implementations Android uses without one.
+- Each daemon is its own supervised session process from its stock `main`,
+  started beside the system process like the media service, with the system
+  identity. Their state lives where Android keeps it (`/data/misc/keystore`,
+  `/data/misc/gatekeeper`) in the session's data partition.
+- The weaver, AuthSecret and RebootEscrow HALs are absent, as on devices
+  without them; their AIDL is compiled so the stock lookups return none.
+- Apps then use stock AndroidKeyStore over keystore2, and the hosted
+  `ArtzigKeyStoreProvider` is deleted.
+- The host kernel enforces no Android SELinux policy. keystore2's libselinux
+  calls (`src/native/credential/keystore_selinux.zig`) answer as libselinux does
+  with SELinux disabled: access checks permit, keystore2 runs in its init
+  domain, and key namespaces resolve through the stock
+  `keystore2_key_contexts`. keystore2's uid, namespace and grant checks still
+  apply. Binder delivers a caller context only to binders that request one
+  (`AIBinder_setRequestingSid`), labelled from the caller's uid as
+  seapp_contexts assigns domains.
+- The host has no hwbinder device or hwservicemanager. libhidl answers as on a
+  device without HIDL support (`NoHwServiceManager`, a libhidl host patch), and
+  the hosted libhidl enforces the VINTF manifest as every full-Treble product
+  does, so keystore2's legacy Keymaster lookups find nothing without waiting.
+- BoringSSL, SQLite, the Rust crates (with Soong's bindgen, aconfig and
+  rust_protobuf generators) and the AIDL backends build from the pinned tree in
+  `build/keystore.zig`. The daemons do not link the native island, whose host
+  OpenSSL would collide with their static BoringSSL. The bionic property ABI the
+  stock Rust and C++ call (find, read, foreach, wait) runs over the session
+  property area; waits wake on the broker's change announcements.
+
+Stages, each verified before the next: (1) the native daemons build and serve
+their stock interfaces in a session, checked by a native keystore2 client; (2)
+stock `LockSettingsService` with its closure and JNI replaces the hosted
+service; (3) stock AndroidKeyStore replaces the hosted provider in apps; (4) the
+full test set.
+
+All four stages are done:
+
+- `keymint-service-test` and `keystore2-service-test` run the daemons under a
+  broker; `LockSettingsUiTest` enrolls, verifies, rejects and clears a PIN as
+  `cmd lock_settings` does; `WindowFixtureUiTest#appKeysUseAndroidKeyStore`
+  uses AES and EC keys from an app.
+- Every session that starts a system process starts the four daemons before
+  it, as init's `early_hal` class precedes zygote. The system process performs
+  init's post-fs-data steps before its services (`keystore.boot_level` 30 and
+  `vdc keymaster earlyBootEnded`, which waits for keystore2), and the hosted
+  apexd stand-in reports `apexd.status=activated`, so keystore2 sends module
+  information to KeyMint. The daemons exit with their session's broker.
+- `AndroidKeyStoreProvider.install()` runs where zygote's `warmUpJcaProviders`
+  would: in the system process and in every app process entry.
+- `SystemServices` now calls `LockSettingsService.systemReady()`, starts
+  `PHASE_LOCK_SETTINGS_READY` and reports `onThirdPartyAppsStarted()` in
+  SystemServer's order; user 0 gets its synthetic password on first boot.
+- Stock `TrustManagerService` replaced `HostedTrustManagerService`, whose
+  `isDeviceSecure` was hardcoded. The hosted `DevicePolicyManagerService`
+  answers the password and keyguard policy queries LockSettings and Trust make
+  as stock does on a device without `android.software.device_admin`; replacing
+  it is blocked on the stock service's own closure. The hosted
+  `ActivityManagerService` answers `unlockUser2` with UserController's
+  semantics until AMS is replaced. Both extensions depart from this phase's
+  "no hosted service was extended" exit criterion; each carries a source note
+  naming its blocker.
+- The device declares `android.software.secure_lock_screen` and installs the
+  KeyMint service's `android.hardware.hardware_keystore` feature file.
 
 ## Desktop, display and audio boundaries
 

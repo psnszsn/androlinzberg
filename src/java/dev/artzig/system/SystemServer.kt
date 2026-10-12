@@ -26,6 +26,17 @@ internal object SystemServer {
         // looper: stock MessageQueue uses these to choose its implementation.
         BinderSession.setIdentity("android", true)
         Process.setArgV0("system_server")
+        // ZygoteInit.preload's warmUpJcaProviders, which system_server inherits.
+        android.security.keystore2.AndroidKeyStoreProvider.install()
+        // init's post-fs-data, which zygote follows: keystore's first boot level
+        // and `vdc keymaster earlyBootEnded`, which waits for keystore2.
+        android.os.SystemProperties.set("keystore.boot_level", "30")
+        try {
+            android.security.maintenance.IKeystoreMaintenance.Stub.asInterface(
+                android.os.ServiceManager.waitForService("android.security.maintenance")).earlyBootEnded()
+        } catch (e: android.os.RemoteException) {
+            android.util.Log.e("SystemServer", "keystore2 earlyBootEnded failed", e)
+        }
         Looper.prepareMainLooper()
         val uid = BinderSession.assignedUid()
         check(uid == Process.SYSTEM_UID) { "broker assigned uid " + uid + " to the system process" }

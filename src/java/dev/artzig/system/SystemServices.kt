@@ -49,11 +49,14 @@ internal object SystemServices {
         // manager; PackageManagerService.main then creates the user, permission
         // and app-filter services and scans the system image.
         android.os.ServiceManager.addService("apexservice", HostedApexService())
+        // apexd's activation step: no APEX needs mounting on the host.
+        android.os.SystemProperties.set("apexd.status", "activated")
         val platformCompat = com.android.server.compat.PlatformCompat(context)
         android.os.ServiceManager.addService(Context.PLATFORM_COMPAT_SERVICE, platformCompat)
         android.os.ServiceManager.addService(Context.PLATFORM_COMPAT_NATIVE_SERVICE,
             com.android.server.compat.PlatformCompatNative(platformCompat))
         val activityManager = HostedActivityManagerService(context)
+        activityManager.userLifecycle = userLifecycle
         activityManager.platformCompat = platformCompat
         android.os.ServiceManager.addService(Context.ACTIVITY_SERVICE, activityManager, true,
             android.os.IServiceManager.DUMP_FLAG_PRIORITY_CRITICAL or android.os.IServiceManager.DUMP_FLAG_PRIORITY_NORMAL or
@@ -233,8 +236,11 @@ internal object SystemServices {
         manager.startService("com.android.server.UiModeManagerService")
         // ATMS owns package overrides, configuration delivery and persistence.
         manager.startService(com.android.server.grammaticalinflection.GrammaticalInflectionService::class.java)
-        android.os.ServiceManager.addService(Context.TRUST_SERVICE, HostedTrustManagerService(hostedPermissions))
-        android.os.ServiceManager.addService("lock_settings", HostedLockSettingsService(hostedPermissions))
+        // SystemServer.startOtherServices: LOCK_SETTINGS_SERVICE_CLASS, over
+        // gatekeeperd and keystore2.
+        manager.startService("com.android.server.locksettings.LockSettingsService\$Lifecycle")
+        // SystemServer "StartTrustManager", which reads LockSettings' state.
+        manager.startService(com.android.server.trust.TrustManagerService::class.java)
         android.os.ServiceManager.addService(Context.SEARCH_SERVICE, HostedSearchManagerService(context, packageManager))
         android.os.ServiceManager.addService(Context.DROPBOX_SERVICE, HostedDropBoxManagerService(context, hostedPermissions))
         android.os.ServiceManager.addService(Context.OVERLAY_SERVICE, HostedOverlayManagerService(hostedPermissions))
@@ -264,6 +270,11 @@ internal object SystemServices {
         // content services can receive package broadcasts and settings changes.
         platformCompat.registerPackageReceiver(context)
         platformCompat.registerContentObserver()
+        // SystemServer "MakeLockSettingsServiceReady", then the phase DevicePolicy
+        // and other lock-screen clients wait for.
+        com.android.internal.widget.ILockSettings.Stub.asInterface(
+            android.os.ServiceManager.getService("lock_settings")).systemReady()
+        manager.startBootPhase(trace, SystemService.PHASE_LOCK_SETTINGS_READY)
         manager.preSystemReady()
         // SystemServer "StartPermissionPolicyService": the launch policy and the
         // per-user permission/app-op synchronization. The PermissionController
@@ -281,6 +292,10 @@ internal object SystemServices {
         com.android.server.webkit.HostedWebViewUpdateService(context, hostedPermissions,
             processLauncher::selectWebViewProvider).start()
         manager.startBootPhase(trace, SystemService.PHASE_THIRD_PARTY_APPS_CAN_START)
+        // SystemServer "LockSettingsThirdPartyAppsStarted", before AMS starts the
+        // system user: synthetic-password work deferred until weaver could exist.
+        LocalServices.getService(com.android.internal.widget.LockSettingsInternal::class.java)
+            .onThirdPartyAppsStarted()
         val userManager = com.android.server.pm.UserManagerService.getInstance()
         val userManagerInternal = LocalServices.getService(com.android.server.pm.UserManagerInternal::class.java)
         userLifecycle.start(object : HostedUserLifecycle.Services {

@@ -2656,6 +2656,19 @@ class HostedActivityManagerService(private val context: android.content.Context?
         }
     }
 
+    @Volatile internal var userLifecycle: HostedUserLifecycle? = null
+
+    /** UserController.unlockUser over the host's user lifecycle. */
+    override fun unlockUser2(userId: Int, listener: android.os.IProgressListener?): Boolean {
+        enforceCallingPermission(android.Manifest.permission.INTERACT_ACROSS_USERS_FULL, "unlockUser")
+        val token = android.os.Binder.clearCallingIdentity()
+        try {
+            return checkNotNull(userLifecycle) { "user lifecycle is not started" }.unlockUser(userId, listener)
+        } finally {
+            android.os.Binder.restoreCallingIdentity(token)
+        }
+    }
+
     override fun isUserRunning(userid: Int, flags: Int): Boolean = userid == android.os.UserHandle.USER_SYSTEM
     override fun getRunningUserIds(): IntArray? = intArrayOf(android.os.UserHandle.USER_SYSTEM)
     override fun getCurrentUser(): android.content.pm.UserInfo? = android.content.pm.UserInfo(

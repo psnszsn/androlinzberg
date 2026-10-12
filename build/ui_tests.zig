@@ -9,6 +9,7 @@ const command = @import("command.zig");
 pub const sources = [_][]const u8{
     "tests/ui/kotlin/dev/artzig/uitest/FDroidUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/HostInstrumentation.kt",
+    "tests/ui/kotlin/dev/artzig/uitest/LockSettingsUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/NewPipeUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/UiTestMain.kt",
     "tests/ui/kotlin/dev/artzig/uitest/WebViewUiTest.kt",
@@ -30,12 +31,14 @@ pub const sources = [_][]const u8{
 /// the launch size and headless output mode of that test's session.
 pub const tests = [_][]const u8{
     "dev.artzig.uitest.SessionDiagnosticsUiTest#unsupportedFrameworkCallIsJournalled",
+    "dev.artzig.uitest.LockSettingsUiTest#pinIsEnrolledVerifiedAndCleared",
     "dev.artzig.uitest.WindowFixtureUiTest#launchesAndUpdatesState@412x915",
     "dev.artzig.uitest.WindowFixtureUiTest#dialogRemainsAttachedToTheActivity@412x915",
     "dev.artzig.uitest.WindowFixtureUiTest#dialogLifecycleRestoresStateAndPreservesCallbackOrder@412x915",
     "dev.artzig.uitest.WindowFixtureUiTest#sharedBackCallbackRemainsScopedToEachDialogWindow@412x915",
     "dev.artzig.uitest.WindowFixtureUiTest#activityPendingIntentsLaunchAndDeliverResults@412x915",
     "dev.artzig.uitest.WindowFixtureUiTest#visibleActivityReceivesAudioFocusCallbacks@412x915",
+    "dev.artzig.uitest.WindowFixtureUiTest#appKeysUseAndroidKeyStore@412x915",
     "dev.artzig.uitest.WindowFixtureUiTest#recreationRestoresSavedCounter@412x915",
     "dev.artzig.uitest.WindowFixtureUiTest#permissionRequestReturnsConfiguredGrants@412x915",
     "dev.artzig.uitest.WindowFixtureUiTest#textureViewRendersResizesAndReleases@412x915",

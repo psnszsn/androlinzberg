@@ -561,7 +561,7 @@ stock KeyEvent publication/consumption, finished replies and peer close.
 records the Soong host crate/features/cfg closure; `build/rust.zig` compiles it
 with the packaged AOSP Rust 1.83.0 toolchain. The CXX generator is built from
 pinned source, and AIDL/bindgen generate the input constants and Binder types.
-`tools/input-bindgen.py` supplies Zig's libc++ configuration to bindgen's
+`tools/rust-bindgen.py` supplies Zig's libc++ configuration to bindgen's
 libclang, avoiding mixed C++ standard-library headers. Native consumers link
 both the C++ transport archive and Rust verifier through `input.Library.link`.
 Rust test executables use Zig's C++ linker to preserve the native runtime ABI.

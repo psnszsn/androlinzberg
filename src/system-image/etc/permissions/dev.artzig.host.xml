@@ -9,4 +9,6 @@
     <feature name="android.software.app_widgets" />
     <feature name="android.software.companion_device_setup" />
     <feature name="android.software.webview" />
+    <!-- LockSettingsService over gatekeeperd and keystore2. -->
+    <feature name="android.software.secure_lock_screen" />
 </permissions>

@@ -73,10 +73,44 @@ pub const SessionInfo = struct {
     }
 };
 
+/// Android's credential daemons, which init starts before the system server
+/// (early_hal and core classes) with their state under /data/misc.
+pub const CredentialDaemons = struct {
+    keymint: []const u8,
+    gatekeeper_hal: []const u8,
+    gatekeeperd: []const u8,
+    keystore2: []const u8,
+
+    /// The daemons as the application tree installs them.
+    pub fn installed(arena: std.mem.Allocator, tree: []const u8) !CredentialDaemons {
+        const dir = try std.fs.path.join(arena, &.{ tree, "libexec", "androlinzberg" });
+        return .{
+            .keymint = try std.fs.path.join(arena, &.{ dir, "android.hardware.security.keymint-service.nonsecure" }),
+            .gatekeeper_hal = try std.fs.path.join(arena, &.{ dir, "android.hardware.gatekeeper-service.nonsecure" }),
+            .gatekeeperd = try std.fs.path.join(arena, &.{ dir, "gatekeeperd" }),
+            .keystore2 = try std.fs.path.join(arena, &.{ dir, "keystore2" }),
+        };
+    }
+};
+
+/// The service manager declarations of the credential HALs' stock VINTF
+/// fragments and keystore2's own.
+pub const credential_declarations = [_][]const u8{
+    "android.hardware.security.keymint.IKeyMintDevice/default",
+    "android.hardware.security.keymint.IRemotelyProvisionedComponent/default",
+    "android.hardware.security.secureclock.ISecureClock/default",
+    "android.hardware.security.sharedsecret.ISharedSecret/default",
+    "android.hardware.security.sharedsecret.ISharedSecret/gatekeeper",
+    "android.hardware.gatekeeper.IGatekeeper/default",
+    "android.system.keystore2.IKeystoreService/default",
+};
+
 pub const Session = struct {
     io: Io,
     gpa: std.mem.Allocator,
     child: std.process.Child,
+    /// keymint, gatekeeper HAL, keystore2, gatekeeperd.
+    credential: [4]?std.process.Child = @splat(null),
     surfaceflinger: ?std.process.Child = null,
     presenter: ?std.process.Child = null,
     system: ?std.process.Child = null,
@@ -124,6 +158,9 @@ pub const Session = struct {
         /// installed take broker uids from the top, so the two never collide.
         first_app_uid: u32 = 19000,
         declared_services: []const []const u8 = &.{},
+        /// Their databases live in the data partition: `storage`, else the
+        /// environment's ARTZIG_DATA_DIR.
+        credential: ?CredentialDaemons = null,
         /// Admit host test tools as the broker's `inspector` role.
         inspection: bool = false,
     };
@@ -140,6 +177,7 @@ pub const Session = struct {
         try session.writeInfo(options.launcher_exe, options.storage);
         if (options.surfaceflinger_exe) |exe| try session.startSurfaceFlinger(options, exe);
         if (options.task_presenter_exe) |exe| try session.startTaskPresenter(options, exe);
+        if (options.credential) |daemons| try session.startCredentialDaemons(options, daemons);
         try session.startSystemProcess(options);
         if (options.media_service_exe) |exe| {
             // init runs mediaserver beside system_server: the system server's
@@ -197,6 +235,8 @@ pub const Session = struct {
         defer broker_args.deinit(gpa);
         try broker_args.appendSlice(gpa, &.{ options.broker_exe, "--socket", socket_path, "--prop-area", prop_area_path, "--session-dir", dir, "--first-app-uid", uid_text });
         for (options.declared_services) |name| try broker_args.appendSlice(gpa, &.{ "--declare-service", name });
+        // The device manifest names the credential HALs where they are installed.
+        if (options.credential != null) for (credential_declarations) |name| try broker_args.appendSlice(gpa, &.{ "--declare-service", name });
         var child = try spawnService(gpa, io, .{
             .argv = broker_args.items,
             .environ_map = &child_env,
@@ -284,6 +324,43 @@ pub const Session = struct {
         awaitReady(s.io, s.presenter.?.stdout.?, s.ready_timeout) catch |err| {
             return if (err == error.NotReady) error.TaskPresenterNotReady else err;
         };
+    }
+
+    /// Starts the HALs, keystore2 and gatekeeperd from their stock mains, as
+    /// init's services: they register their interfaces by name and clients
+    /// wait for them, so no process gates another.
+    fn startCredentialDaemons(s: *Session, options: Options, daemons: CredentialDaemons) !void {
+        const data_root = if (options.storage) |storage| storage.application_data else options.environ.getPosix("ARTZIG_DATA_DIR") orelse
+            return error.CredentialDaemonsNeedDataPartition;
+        var env = try options.environ.createMap(s.gpa);
+        defer env.deinit();
+        try env.put(socket_env, s.socket_path);
+        try env.put(cookie_env, s.cookie);
+        try env.put(system_cookie_env, s.system_cookie);
+        try env.put(prop_area_env, s.prop_area_path);
+        if (options.platform_root) |root| try env.put("ARTZIG_PLATFORM_ROOT", root);
+        try env.put("AZK_BINDER_EXIT_ON_DISCONNECT", "1");
+        const keystore_dir = try std.fs.path.join(s.gpa, &.{ data_root, "misc", "keystore" });
+        defer s.gpa.free(keystore_dir);
+        const gatekeeper_dir = try std.fs.path.join(s.gpa, &.{ data_root, "misc", "gatekeeper" });
+        defer s.gpa.free(gatekeeper_dir);
+        for ([_][]const u8{ keystore_dir, gatekeeper_dir }) |dir| try Io.Dir.cwd().createDirPath(s.io, dir);
+        const services = [_]struct { argv: []const []const u8, package: []const u8 }{
+            .{ .argv = &.{daemons.keymint}, .package = "android:keymint" },
+            .{ .argv = &.{daemons.gatekeeper_hal}, .package = "android:gatekeeper" },
+            .{ .argv = &.{ daemons.keystore2, keystore_dir }, .package = "android:keystore2" },
+            .{ .argv = &.{ daemons.gatekeeperd, gatekeeper_dir }, .package = "android:gatekeeperd" },
+        };
+        for (services, &s.credential) |service, *slot| {
+            try env.put("AZK_BINDER_PACKAGE", service.package);
+            slot.* = try spawnService(s.gpa, s.io, .{
+                .argv = service.argv,
+                .environ_map = &env,
+                .stdin = .ignore,
+                .stdout = .inherit,
+                .stderr = .inherit,
+            });
+        }
     }
 
     /// Starts the native resource services after their system dependencies.
@@ -375,6 +452,9 @@ pub const Session = struct {
         s.media = null;
         if (s.system) |*system| stopChild(io, system, s.shutdown_timeout);
         s.system = null;
+        // init stops services with SIGTERM; the stock daemons take its default.
+        for (&s.credential) |*slot| if (slot.*) |*daemon| daemon.kill(io);
+        s.credential = @splat(null);
         if (s.presenter) |*presenter| stopChild(io, presenter, s.shutdown_timeout);
         s.presenter = null;
         if (s.surfaceflinger) |*surfaceflinger| stopChild(io, surfaceflinger, s.shutdown_timeout);

@@ -902,6 +902,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     // UEventObserver's netlink listener, as libhardware_legacy provides it.
     g.add(o.aosp.path(b, "hardware/libhardware_legacy"), &.{"uevent.c"}, &.{o.aosp.path(b, "hardware/libhardware_legacy/include")}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/services/core/jni"), &.{ "com_android_server_display_DisplayControl.cpp", "com_android_server_wm_TaskFpsCallbackController.cpp" }, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc }, &.{});
+    // LockSettingsService's natives: Scrypt over libscrypt_static (PBKDF2 from
+    // the island's libcrypto) and SyntheticPasswordManager's gatekeeper
+    // password-handle reader.
+    g.add(o.aosp.path(b, "external/scrypt/lib/crypto"), &.{"crypto_scrypt-sse.c"}, &.{ o.aosp.path(b, "external/scrypt"), o.aosp.path(b, "external/scrypt/lib/util"), o.aosp.path(b, "external/scrypt/lib/crypto") }, &.{ "-DHAVE_CONFIG_H", "-DUSE_OPENSSL_PBKDF2", "-Wno-unused-variable" });
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_security_Scrypt.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), o.aosp.path(b, "external/scrypt/lib/crypto"), binder_inc }, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/services/core/jni"), &.{"com_android_server_locksettings_SyntheticPasswordManager.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), o.aosp.path(b, "system/gatekeeper/include"), o.aosp.path(b, "hardware/libhardware/include"), binder_inc }, &.{});
     // Stock AppFuseBridge JNI over libappfuse: the bridge loop itself needs no
     // FUSE device; vold's mountAppFuse supplies one, which the host declines.
     g.add(o.aosp.path(b, "frameworks/base/services/core/jni"), &.{"com_android_server_storage_AppFuseBridge.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), o.aosp.path(b, "system/core/libappfuse/include"), binder_inc }, &.{});

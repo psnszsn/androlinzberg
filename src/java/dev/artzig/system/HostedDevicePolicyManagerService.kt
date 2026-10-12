@@ -1,6 +1,7 @@
 package dev.artzig.system
 
 import android.app.admin.IDevicePolicyManager
+import android.app.admin.PasswordMetrics
 import android.app.admin.ParcelableResource
 import android.content.ComponentName
 import android.os.IBinder
@@ -15,6 +16,13 @@ import android.os.UserHandle
  * and enterprise network backends do not exist in the hosted session. Mutating
  * operations therefore stay on [unsupported] and report a structured failure,
  * while stock client queries see one stable, unmanaged user.
+ *
+ * Stock LockSettingsService and TrustManagerService ask this service for the
+ * password and keyguard policy they enforce. Those answers follow DevicePolicyManagerService on a device without
+ * `android.software.device_admin` (no admin can exist): no minimum, no
+ * history, and password changes have nothing to update. Blocker for the stock
+ * service: DevicePolicyManagerService's closure (its policy engine, KeyChain
+ * and provisioning collaborators) is not yet compiled.
  */
 class HostedDevicePolicyManagerService :
     IDevicePolicyManager.Stub(),
@@ -47,4 +55,49 @@ class HostedDevicePolicyManagerService :
     override fun isSafeOperation(reason: Int): Boolean = true
     override fun getDrawable(drawableId: String?, drawableStyle: String?, drawableSource: String?): ParcelableResource? = null
     override fun getString(stringId: String?): ParcelableResource? = null
+
+    override fun getPasswordMinimumMetrics(userHandle: Int, deviceWideOnly: Boolean): PasswordMetrics {
+        require(userHandle >= 0) { "Invalid userId" }
+        return PasswordMetrics.merge(emptyList())
+    }
+    override fun getPasswordHistoryLength(who: ComponentName?, userHandle: Int, parent: Boolean): Int = 0
+    override fun reportPasswordChanged(metrics: PasswordMetrics?, userId: Int) {}
+    // LockPatternUtils' password policy queries.
+    override fun getAggregatedPasswordComplexityForUser(userId: Int, deviceWideOnly: Boolean): Int =
+        android.app.admin.DevicePolicyManager.PASSWORD_COMPLEXITY_NONE
+    override fun getPasswordQuality(who: ComponentName?, userHandle: Int, parent: Boolean): Int =
+        android.app.admin.DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED
+    override fun getPasswordMinimumLength(who: ComponentName?, userHandle: Int, parent: Boolean): Int = 0
+    override fun getMaximumFailedPasswordsForWipe(who: ComponentName?, userHandle: Int, parent: Boolean): Int = 0
+    // TrustManagerService's keyguard policy.
+    override fun getKeyguardDisabledFeatures(who: ComponentName?, userHandle: Int, parent: Boolean): Int = 0
+    override fun getTrustAgentConfiguration(admin: ComponentName?, agent: ComponentName?, userHandle: Int, parent: Boolean): MutableList<android.os.PersistableBundle>? = null
+    override fun getMaximumTimeToLock(who: ComponentName?, userHandle: Int, parent: Boolean): Long = 0
+    override fun getRequiredStrongAuthTimeout(who: ComponentName?, userId: Int, parent: Boolean): Long =
+        android.app.admin.DevicePolicyManager.DEFAULT_STRONG_AUTH_TIMEOUT_MS
+
+    // Keyguard's attempt reports: DevicePolicyData.mFailedPasswordAttempts per
+    // user. The hosted service keeps no policy file, so the count lasts for
+    // the session.
+    private val failedAttempts = HashMap<Int, Int>()
+    private fun enforceAttemptReport(userHandle: Int) {
+        require(userHandle >= 0) { "Invalid userId" }
+        // Context.enforceCallingOrSelfPermission: the system server itself holds it.
+        if (android.os.Binder.getCallingPid() != android.os.Process.myPid() &&
+            android.app.ActivityManager.checkComponentPermission(android.Manifest.permission.BIND_DEVICE_ADMIN,
+                android.os.Binder.getCallingUid(), -1, true) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+            throw SecurityException("report password attempt requires " + android.Manifest.permission.BIND_DEVICE_ADMIN)
+    }
+    override fun reportFailedPasswordAttempt(userHandle: Int, parent: Boolean) {
+        enforceAttemptReport(userHandle)
+        synchronized(failedAttempts) { failedAttempts[userHandle] = (failedAttempts[userHandle] ?: 0) + 1 }
+    }
+    override fun reportSuccessfulPasswordAttempt(userHandle: Int) {
+        enforceAttemptReport(userHandle)
+        synchronized(failedAttempts) { failedAttempts.remove(userHandle) }
+    }
+    override fun getCurrentFailedPasswordAttempts(callerPackageName: String?, userHandle: Int, parent: Boolean): Int {
+        require(userHandle >= 0) { "Invalid userId" }
+        return synchronized(failedAttempts) { failedAttempts[userHandle] ?: 0 }
+    }
 }

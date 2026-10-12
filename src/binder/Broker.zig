@@ -346,6 +346,13 @@ fn seedProperties(props: *prop_area.Area) prop_area.Error!void {
         // every reader (TelephonyManager feature gating, the codec HAL selection)
         // must see one value for the whole session. 2024Q2.
         .{ "ro.vendor.api_level", "202404" },
+        // The vendor build's and bootloader's security patch levels and boot
+        // state, which the KeyMint HAL reports to its TA at start. The host has
+        // no verified boot: an unlocked bootloader's report.
+        .{ "ro.vendor.build.security_patch", "2026-08-01" },
+        .{ "ro.vendor.boot_security_patch", "2026-08-01" },
+        .{ "ro.boot.vbmeta.device_state", "unlocked" },
+        .{ "ro.boot.verifiedbootstate", "orange" },
         // The vendor's codec HAL transport, set by its init script before any
         // codec client (StorageManagerService queries MediaCodecList at boot,
         // also in sessions without the media service). No declared AIDL store

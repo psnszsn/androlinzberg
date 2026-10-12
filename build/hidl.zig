@@ -23,7 +23,9 @@ pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, aosp: std.Build.La
     const uapi = b.addWriteFiles();
     _ = uapi.addCopyFile(aosp.path(b, "bionic/libc/kernel/uapi/linux/android/binder.h"), "linux/android/binder.h");
     mod.addIncludePath(uapi.getDirectory());
-    const flags = &.{ "-std=gnu++23", "-fno-exceptions", "-fno-rtti", "-fno-sanitize=undefined", "-D_GNU_SOURCE", "-D__ANDROID_HOST__", "-DARTZIG_HOST_THREAD_PRIORITY", "-DANDROID_UTILS_CALLSTACK_ENABLED=0", "-D__INTRODUCED_IN(x)=", "-Wno-deprecated-declarations", "-Wno-deprecated-enum-enum-conversion", "-Wno-deprecated-anon-enum-enum-conversion", "-Wno-nontrivial-memcall", "-include", b.pathResolve(&.{"src/native/azk_prelude.h"}) };
+    // ENFORCE_VINTF_MANIFEST: libhidl's enforce_vintf_manifest product
+    // variable, set by every full-Treble product.
+    const flags = &.{ "-std=gnu++23", "-fno-exceptions", "-fno-rtti", "-fno-sanitize=undefined", "-D_GNU_SOURCE", "-D__ANDROID_HOST__", "-DENFORCE_VINTF_MANIFEST", "-DARTZIG_HOST_THREAD_PRIORITY", "-DANDROID_UTILS_CALLSTACK_ENABLED=0", "-D__INTRODUCED_IN(x)=", "-Wno-deprecated-declarations", "-Wno-deprecated-enum-enum-conversion", "-Wno-deprecated-anon-enum-enum-conversion", "-Wno-nontrivial-memcall", "-include", b.pathResolve(&.{"src/native/azk_prelude.h"}) };
     mod.addCSourceFiles(.{ .root = aosp.path(b, "system/libhidl/base"), .files = &.{ "HidlSupport.cpp", "HidlInternal.cpp", "Status.cpp", "TaskRunner.cpp" }, .flags = flags });
     mod.addCSourceFiles(.{ .root = aosp.path(b, "system/libhidl/transport"), .files = &.{ "HidlBinderSupport.cpp", "HidlLazyUtils.cpp", "HidlPassthroughSupport.cpp", "HidlTransportSupport.cpp", "HidlTransportUtils.cpp", "LegacySupport.cpp", "ServiceManagement.cpp", "Static.cpp", "token/1.0/utils/HybridInterface.cpp", "allocator/1.0/utils/FrameworkUtils.cpp" }, .flags = flags });
     mod.addCSourceFiles(.{ .root = aosp.path(b, "system/libhwbinder"), .files = &.{ "Binder.cpp", "BpHwBinder.cpp", "BufferedTextOutput.cpp", "Debug.cpp", "IInterface.cpp", "IPCThreadState.cpp", "Parcel.cpp", "ProcessState.cpp", "Static.cpp", "TextOutput.cpp", "Utils.cpp" }, .flags = flags });

@@ -8,6 +8,12 @@ pub const Options = struct {
     broker: LazyPath,
     surfaceflinger: LazyPath,
     media_service: LazyPath,
+    /// Stock credential daemons, installed under their Android names.
+    credential: [4]NamedLibrary,
+    /// system/sepolicy's keystore2_key_contexts, as plat_keystore2_key_contexts.
+    keystore2_key_contexts: LazyPath,
+    /// android.hardware.hardware_keystore.xml from the KeyMint service.
+    keymint_feature: LazyPath,
     task_presenter: LazyPath,
     island: LazyPath,
     pdfclient: LazyPath,
@@ -67,6 +73,9 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     _ = tree.addCopyFile(options.broker, "bin/azk-binder-broker");
     _ = tree.addCopyFile(options.surfaceflinger, "bin/azk-surfaceflinger");
     _ = tree.addCopyFile(options.media_service, "bin/azk-media-service");
+    for (options.credential) |daemon| _ = tree.addCopyFile(daemon.file, b.pathJoin(&.{ "libexec", "androlinzberg", daemon.name }));
+    // Soong installs it in /system/etc/selinux; ANDROID_ROOT is bin/art here.
+    _ = tree.addCopyFile(options.keystore2_key_contexts, "bin/art/etc/selinux/plat_keystore2_key_contexts");
     _ = tree.addCopyFile(options.task_presenter, "bin/azk-task-presenter");
     _ = tree.addCopyDirectory(options.art_runtime, "bin/art", .{});
     _ = tree.addCopyFile(options.island, "lib/libandroid_platform.so");
@@ -115,6 +124,8 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
         _ = tree.addCopyFile(options.aosp_platform_data.path(b, name), "etc/permissions/" ++ name);
     }
     _ = tree.addCopyDirectory(b.path("src/system-image/etc"), "etc", .{});
+    // The software KeyMint service's `required` vendor feature file.
+    _ = tree.addCopyFile(options.keymint_feature, "etc/permissions/android.hardware.hardware_keystore.xml");
     // Soong installs these under /system/usr; ANDROID_ROOT is bin/art here,
     // where KeyMap::load and KeyCharacterMap look for them.
     inline for (.{ "keylayout/Generic.kl", "keychars/Generic.kcm", "keychars/Virtual.kcm" }) |entry| {

@@ -72,6 +72,7 @@ pub fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, j
         .media_service_exe = try std.fs.path.join(arena, &.{ tree, "bin", "azk-media-service" }),
         .platform_root = tree,
         .declared_services = &.{ "android.hardware.media.c2.IComponentStore/software", "android.hardware.media.c2.IComponentStore/default" },
+        .credential = try binder_session.CredentialDaemons.installed(arena, tree),
         .task_presenter_exe = if (present_tasks)
             try std.fs.path.join(arena, &.{ tree, "bin", "azk-task-presenter" })
         else

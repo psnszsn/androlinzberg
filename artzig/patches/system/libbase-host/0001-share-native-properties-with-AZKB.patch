@@ -6,14 +6,30 @@ use the same snapshots as SystemProperties; writes use broker authorization.
 Disable the separate host map, including its eager static initialization.
 CachedProperty, which the stock AudioSystem JNI uses for its property
 listener, reads the shared area and polls for changes because the area
-exposes no per-property serials. The ART source package does not select
-this patch.
+exposes no per-property serials. WaitForProperty and WaitForPropertyCreation
+keep bionic's implementation over the session area's find/read/wait ABI. The
+ART source package does not select this patch.
 
 diff --git a/include/android-base/properties.h b/include/android-base/properties.h
-index 067fbf4..22fdb45 100644
+index 067fbf4..7ea4c4e 100644
 --- a/include/android-base/properties.h
 +++ b/include/android-base/properties.h
-@@ -71,7 +71,7 @@ bool WaitForPropertyCreation(const std::string& key, std::chrono::milliseconds r
+@@ -58,7 +58,7 @@ bool SetProperty(const std::string& key, const std::string& value);
+ // Waits for the system property `key` to have the value `expected_value`.
+ // Times out after `relative_timeout`.
+ // Returns true on success, false on timeout.
+-#if defined(__BIONIC__)
++#if defined(__BIONIC__) || defined(ARTZIG_SHARED_PROPERTIES)
+ bool WaitForProperty(const std::string& key, const std::string& expected_value,
+                      std::chrono::milliseconds relative_timeout = std::chrono::milliseconds::max());
+ #endif
+@@ -66,12 +66,12 @@ bool WaitForProperty(const std::string& key, const std::string& expected_value,
+ // Waits for the system property `key` to be created.
+ // Times out after `relative_timeout`.
+ // Returns true on success, false on timeout.
+-#if defined(__BIONIC__)
++#if defined(__BIONIC__) || defined(ARTZIG_SHARED_PROPERTIES)
+ bool WaitForPropertyCreation(const std::string& key, std::chrono::milliseconds relative_timeout =
                                                           std::chrono::milliseconds::max());
  #endif
  
@@ -23,21 +39,24 @@ index 067fbf4..22fdb45 100644
  // this class helps optimize those lookups.
  class CachedProperty {
 diff --git a/properties.cpp b/properties.cpp
-index 9fd44a8..0f3e04e 100644
+index 9fd44a8..2e0efa7 100644
 --- a/properties.cpp
 +++ b/properties.cpp
-@@ -16,6 +16,10 @@
+@@ -16,6 +16,13 @@
  
  #include "android-base/properties.h"
  
 +#if defined(ARTZIG_SHARED_PROPERTIES)
 +#include <azk/binder.h>
++// Bionic's find/read/wait over the session area, for the waits below.
++#include <azk/native_properties.h>
++#include <time.h>
 +#endif
 +
  #if defined(__BIONIC__)
  #include <sys/system_properties.h>
  #endif
-@@ -25,13 +29,14 @@
+@@ -25,13 +32,14 @@
  #include <limits>
  #include <set>
  #include <string>
@@ -53,7 +72,7 @@ index 9fd44a8..0f3e04e 100644
  
  // Here lies a rudimentary implementation of system properties for non-Bionic
  // platforms. We are using weak symbols here because we want to allow
-@@ -158,6 +163,13 @@ template uint64_t GetUintProperty(const std::string&, uint64_t, uint64_t);
+@@ -158,6 +166,13 @@ template uint64_t GetUintProperty(const std::string&, uint64_t, uint64_t);
  
  std::string GetProperty(const std::string& key, const std::string& default_value) {
    std::string property_value;
@@ -67,7 +86,7 @@ index 9fd44a8..0f3e04e 100644
    const prop_info* pi = __system_property_find(key.c_str());
    if (pi == nullptr) return default_value;
  
-@@ -168,6 +180,7 @@ std::string GetProperty(const std::string& key, const std::string& default_value
+@@ -168,6 +183,7 @@ std::string GetProperty(const std::string& key, const std::string& default_value
          *property_value = value;
        },
        &property_value);
@@ -75,7 +94,7 @@ index 9fd44a8..0f3e04e 100644
    // If the property exists but is empty, also return the default value.
    // Since we can't remove system properties, "empty" is traditionally
    // the same as "missing" (this was true for cutils' property_get).
-@@ -175,7 +188,11 @@ std::string GetProperty(const std::string& key, const std::string& default_value
+@@ -175,10 +191,14 @@ std::string GetProperty(const std::string& key, const std::string& default_value
  }
  
  bool SetProperty(const std::string& key, const std::string& value) {
@@ -86,8 +105,23 @@ index 9fd44a8..0f3e04e 100644
 +#endif
  }
  
- #if defined(__BIONIC__)
-@@ -366,5 +383,69 @@ bool CachedBoolProperty::Get(bool default_value) {
+-#if defined(__BIONIC__)
++#if defined(__BIONIC__) || defined(ARTZIG_SHARED_PROPERTIES)
+ 
+ struct WaitForPropertyData {
+   bool done;
+@@ -265,6 +285,10 @@ bool WaitForPropertyCreation(const std::string& key,
+   return (WaitForPropertyCreation(key, relative_timeout, start_time) != nullptr);
+ }
+ 
++#endif
++
++#if defined(__BIONIC__)
++
+ CachedProperty::CachedProperty(std::string property_name)
+     : property_name_(std::move(property_name)),
+       prop_info_(nullptr),
+@@ -366,5 +390,69 @@ bool CachedBoolProperty::Get(bool default_value) {
  
  #endif
  

@@ -68,6 +68,16 @@ class WindowFixtureUiTest {
     }
 
     @Test
+    fun appKeysUseAndroidKeyStore() {
+        click("SHOW KEYSTORE")
+        expectVisible("Keystore ready")
+        click("CHECK KEYSTORE")
+        expectVisible("Keystore keys verified")
+        assertLog("KeyStoreFixture", "app keys: AES-GCM round trip, EC signature over the KeyMint certificate, listing and deletion verified")
+        assertColorArea(CYAN, 5_000)
+    }
+
+    @Test
     fun visibleActivityReceivesAudioFocusCallbacks() {
         click("SHOW AUDIO FOCUS")
         expectVisible("Audio focus ready")

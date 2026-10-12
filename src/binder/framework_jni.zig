@@ -68,6 +68,7 @@ pub export fn azk_property_write(name: [*:0]const u8, value: [*:0]const u8) call
 const ReportPropertiesFn = *const fn () callconv(.c) void;
 var g_report_properties: std.atomic.Value(?ReportPropertiesFn) = .init(null);
 pub fn onPropertyChanged() void {
+    @import("native_properties.zig").notifyChanged();
     const report = g_report_properties.load(.acquire) orelse return;
     if (ndk.jniEnv() != null) report();
 }

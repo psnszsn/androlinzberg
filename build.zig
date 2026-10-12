@@ -458,6 +458,18 @@ pub fn build(b: *std.Build) void {
     const input_dispatcher = @import("build/input_dispatcher.zig").build(b, dispatcher_options);
     const inputflinger_external = @import("build/inputflinger.zig").buildExternal(b, dispatcher_options, generated.native.inputflinger);
     const inputflinger = @import("build/inputflinger.zig").build(b, dispatcher_options, generated.native.inputflinger);
+    const credential_daemons = @import("build/keystore.zig").build(b, .{
+        .target = target,
+        .aosp = aosp,
+        .aidl_tool = generated.aidl_tool,
+        .rust = generated.native.input.rust.?,
+        .binder = binder_cpp,
+        .ndk = binder_ndk,
+        .broker = binder_broker,
+        .hidl = hidl,
+        .hidl_headers = generated.native.hidl_header_roots,
+        .protoc = protobuf.protoc,
+    });
     generated.native.inputflinger.rust.addStepDependencies(b.step("inputflinger-rust", "Build the pinned Rust InputFilter and its AIDL crates"));
     const perfetto_test_mod = b.createModule(.{ .target = target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
     perfetto_build.configure(b, perfetto_test_mod, aosp, generated.native.perfetto);
@@ -1175,6 +1187,14 @@ pub fn build(b: *std.Build) void {
         .broker = pinnedLoader(b, host_loader, binder_broker.getEmittedBin(), "azk-binder-broker"),
         .surfaceflinger = pinnedLoader(b, host_loader, sf_service.getEmittedBin(), "azk-surfaceflinger"),
         .media_service = pinnedLoader(b, host_loader, media_service.getEmittedBin(), "azk-media-service"),
+        .credential = .{
+            .{ .name = "android.hardware.security.keymint-service.nonsecure", .file = pinnedLoader(b, host_loader, credential_daemons.keymint, "android.hardware.security.keymint-service.nonsecure") },
+            .{ .name = "android.hardware.gatekeeper-service.nonsecure", .file = pinnedLoader(b, host_loader, credential_daemons.gatekeeper_hal, "android.hardware.gatekeeper-service.nonsecure") },
+            .{ .name = "gatekeeperd", .file = pinnedLoader(b, host_loader, credential_daemons.gatekeeperd, "gatekeeperd") },
+            .{ .name = "keystore2", .file = pinnedLoader(b, host_loader, credential_daemons.keystore2, "keystore2") },
+        },
+        .keystore2_key_contexts = aosp.path(b, "system/sepolicy/private/keystore2_key_contexts"),
+        .keymint_feature = aosp.path(b, "hardware/interfaces/security/keymint/aidl/default/android.hardware.hardware_keystore.xml"),
         .task_presenter = pinnedLoader(b, host_loader, task_presenter.getEmittedBin(), "azk-task-presenter"),
         .island = island.file,
         .idmap2 = idmap2.file,

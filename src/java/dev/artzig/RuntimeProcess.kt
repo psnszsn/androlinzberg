@@ -40,8 +40,8 @@ object RuntimeProcess {
             HostContexts.prepareForActivityThreadMain(frameworkRes)
             dev.artzig.testing.ProcessInspection.observeActivityMainStartup()
         } else HostContexts.prepareApplicationEnvironment(frameworkRes)
-        if (java.security.Security.getProvider("AndroidKeyStore") == null)
-            java.security.Security.insertProviderAt(ArtzigKeyStoreProvider(), 1)
+        // ZygoteInit.preload's warmUpJcaProviders, which forked apps inherit.
+        android.security.keystore2.AndroidKeyStoreProvider.install()
         android.os.Process.setArgV0(checkNotNull(System.getenv("AZK_APP_PROCESS_NAME")))
         ApplicationEntry().run(config.getInt("targetSdk"), disabled, entry)
     }

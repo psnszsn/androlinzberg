@@ -183,6 +183,11 @@ pub const Reader = struct {
     pub fn globalSerial(r: *const Reader) u32 {
         return @atomicLoad(u32, atomicPtr(r.map, off_global_serial), .acquire);
     }
+
+    /// Number of published slots; slot `i` is at `header_len + i * slot_len`.
+    pub fn count(r: *const Reader) usize {
+        return @atomicLoad(u32, atomicPtr(r.map, off_count), .acquire);
+    }
 };
 
 fn atomicPtr(map: []align(std.heap.page_size_min) u8, offset: usize) *u32 {

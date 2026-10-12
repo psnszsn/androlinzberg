@@ -17,27 +17,44 @@ pub const Builder = struct {
     aosp: LazyPath,
     runner: *std.Build.Step.Compile,
     generated: std.StringHashMapUnmanaged(LazyPath) = .empty,
+    out_dirs: std.StringHashMapUnmanaged(LazyPath) = .empty,
     artifacts: std.StringHashMapUnmanaged(Artifact) = .empty,
 
     pub fn addGenerated(self: *Builder, name: []const u8, source: LazyPath) void {
         self.generated.put(self.b.allocator, name, source) catch @panic("oom");
     }
 
+    /// A crate whose source includes generated files from `OUT_DIR` (Soong
+    /// passes a source provider's outputs the same way).
+    pub fn addOutDir(self: *Builder, name: []const u8, directory: LazyPath) void {
+        self.out_dirs.put(self.b.allocator, name, directory) catch @panic("oom");
+    }
+
     pub fn build(self: *Builder, name: []const u8) Artifact {
-        return self.compile(name, null);
+        return self.compile(name, null, false);
     }
 
     pub const Test = struct {
         linker: *std.Build.Step.Compile,
         native: []const LazyPath,
+        /// RUNPATH entries for an installed binary (e.g. "$ORIGIN/../lib/art").
+        rpaths: []const []const u8 = &.{},
+        /// Directories for the native libraries crates name with #[link].
+        library_dirs: []const LazyPath = &.{},
     };
 
     pub fn buildTest(self: *Builder, name: []const u8, options: Test) Artifact {
-        return self.compile(name, options);
+        return self.compile(name, options, true);
     }
 
-    fn compile(self: *Builder, name: []const u8, test_options: ?Test) Artifact {
+    /// A rust_binary linked by Zig's C++ driver with its native inputs.
+    pub fn buildBinary(self: *Builder, name: []const u8, options: Test) Artifact {
+        return self.compile(name, options, false);
+    }
+
+    fn compile(self: *Builder, name: []const u8, link_options: ?Test, is_test: bool) Artifact {
         const b = self.b;
+        const test_options = if (is_test) link_options else null;
         const key_name = if (test_options != null) b.fmt("{s}-test", .{name}) else name;
         if (self.artifacts.get(key_name)) |artifact| return artifact;
         const crate: sources.Crate = if (std.mem.eql(u8, name, "inputconstants-rust")) .{
@@ -74,26 +91,35 @@ pub const Builder = struct {
             .staticlib => "staticlib",
             .bin => "bin",
         }, "--cfg", "soong", "-Copt-level=2", "-Crelocation-model=pic", "-Coverflow-checks=on", "-Csymbol-mangling-version=v0", "-Awarnings" });
+        // Soong gives every crate a distinct metadata hash; extra_versions
+        // crates share a crate name with their current versions.
+        run.addArg(b.fmt("-Cmetadata={s}", .{key_name}));
         // Soong's rust/config/lints.go caps every lint for third-party crates;
         // their own #![deny(...)] attributes assume upstream feature sets.
         if (std.mem.startsWith(u8, crate.directory, "external/")) run.addArgs(&.{ "--cap-lints", "allow" });
-        if (test_options) |options| {
-            run.addArg("--test");
+        if (link_options) |options| {
+            if (test_options != null) run.addArg("--test");
             run.addPrefixedFileArg("-Clinker=", options.linker.getEmittedBin());
             run.setFileEnvironment("AZK_RUST_LINK_ZIG", .zig_exe);
             for (options.native) |native| run.addPrefixedFileArg("-Clink-arg=", native);
+            for (options.rpaths) |rpath| run.addArg(b.fmt("-Clink-arg=-Wl,-rpath,{s}", .{rpath}));
+            for (options.library_dirs) |dir| run.addPrefixedDirectoryArg("-Clink-arg=-L", dir);
         } else run.addArg("-Clinker=cc");
         if (crate.kind == .proc_macro) run.addArgs(&.{ "--extern", "proc_macro" });
         for (crate.features) |feature| run.addArgs(&.{ "--cfg", b.fmt("feature=\"{s}\"", .{feature}) });
         for (crate.cfgs) |cfg| run.addArgs(&.{ "--cfg", cfg });
+        if (crate.android) run.addArgs(&.{ "--cfg", "target_os=\"android\"", "-Aexplicit_builtin_cfgs_in_flags" });
         var dependencies: std.ArrayList(LazyPath) = .empty;
         for (crate.deps) |dep_name| {
             const dep = self.build(dep_name);
             const dep_crate = if (std.mem.eql(u8, dep_name, "inputconstants-rust")) "inputconstants" else if (std.mem.eql(u8, dep_name, "libinput_bindgen")) "input_bindgen" else for (sources.crates) |entry| {
                 if (std.mem.eql(u8, entry.name, dep_name)) break entry.crate_name;
             } else unreachable;
+            const extern_name = for (crate.aliases) |alias| {
+                if (std.mem.eql(u8, alias[0], dep_name)) break alias[1];
+            } else dep_crate;
             run.addArg("--extern");
-            run.addPrefixedFileArg(b.fmt("{s}=", .{dep_crate}), dep.file);
+            run.addPrefixedFileArg(b.fmt("{s}=", .{extern_name}), dep.file);
             dependencies.appendSlice(b.allocator, dep.dependencies) catch @panic("oom");
             dependencies.append(b.allocator, dep.file) catch @panic("oom");
         }
@@ -119,6 +145,7 @@ pub const Builder = struct {
         run.setPathEnvironment("CARGO_MANIFEST_DIR", if (crate.directory.len == 0) source.dirname() else self.aosp.path(b, crate.directory));
         if (std.mem.eql(u8, name, "libbinder_ndk_sys"))
             run.setPathEnvironment("OUT_DIR", self.generated.get("binder-bindings").?.dirname());
+        if (self.out_dirs.get(name)) |directory| run.setPathEnvironment("OUT_DIR", directory);
         run.run.addArgs(&.{ "--prefix", "--emit=link,dep-info=" });
         const depfile = run.run.addOutputFileArg(b.fmt("{s}.d", .{key_name}));
         run.addArg("-o");

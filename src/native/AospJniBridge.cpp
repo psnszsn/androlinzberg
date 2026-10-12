@@ -497,6 +497,9 @@ extern int register_android_hardware_display_DisplayViewport(JNIEnv*);
 extern int register_android_hardware_display_DisplayTopology(JNIEnv*);
 extern int register_android_server_InputManager(JNIEnv*);
 extern int register_android_os_UEventObserver(JNIEnv*);
+// LockSettingsService's synthetic-password natives.
+extern int register_android_security_Scrypt(JNIEnv*);
+extern int register_android_server_SyntheticPasswordManager(JNIEnv*);
 }  // namespace android
 // The stock AppFuseBridge registrar aborts on failure instead of returning it.
 static int registerAppFuseBridge(JNIEnv* env) {
@@ -811,6 +814,8 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_hardware_display_DisplayTopology),
             E(android::register_android_server_InputManager),
             E(android::register_android_os_UEventObserver),
+            E(android::register_android_security_Scrypt),
+            E(android::register_android_server_SyntheticPasswordManager),
             // InputWindowHandle field lookup initializes SurfaceControl.
             E(android::register_android_view_InputWindowHandle),
             E(android::register_android_view_DisplayEventReceiver),

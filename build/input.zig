@@ -98,7 +98,7 @@ pub fn generate(b: *std.Build, aosp: std.Build.LazyPath, runner: *std.Build.Step
 
 fn bindings(b: *std.Build, aosp: std.Build.LazyPath, gui: graphics.Generated, input: Generated, aidl: []const std.Build.LazyPath, kind: enum { binder, input }) std.Build.LazyPath {
     const run = b.addSystemCommand(&.{"python3"});
-    run.addFileArg(b.path("tools/input-bindgen.py"));
+    run.addFileArg(b.path("tools/rust-bindgen.py"));
     run.addArgs(&.{ "--zig", b.graph.zig_exe, "--zig-lib" });
     run.addDirectoryArg(.zig_lib);
     run.addArgs(&.{ "--kind", @tagName(kind), "--wrapper" });

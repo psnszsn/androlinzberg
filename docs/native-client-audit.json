@@ -64,6 +64,7 @@
         "system/incremental_delivery/incfs/util/include/util/map_ptr.h",
         "system/libbase/include/android-base/properties.h",
         "system/libbase/properties.cpp",
+        "system/libhidl/transport/ServiceManagement.cpp",
         "system/netd/client/FwmarkClient.cpp"
       ],
       "added": [],

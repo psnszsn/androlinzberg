@@ -1,0 +1,26 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] libhidl: answer an absent hwbinder device as a HIDL-less device
+
+A hosted session has no /dev/hwbinder. Stock libhidl returns no service
+manager in that case, which devices never reach for clients such as
+keystore2's HAL-name lookup. When no hwservicemanager is installed, answer as
+Android does on a device without HIDL support: NoHwServiceManager, with no
+services and no registrations.
+
+diff --git a/transport/ServiceManagement.cpp b/transport/ServiceManagement.cpp
+index 447701f..81ea890 100644
+--- a/transport/ServiceManagement.cpp
++++ b/transport/ServiceManagement.cpp
+@@ -363,6 +363,12 @@ sp<IServiceManager1_2> defaultServiceManager1_2() {
+         }
+ 
+         if (access("/dev/hwbinder", F_OK|R_OK|W_OK) != 0) {
++            // A hosted session has no hwbinder device. Without an installed
++            // hwservicemanager it answers as a device without HIDL support.
++            if (!isHidlSupported()) {
++                gDefaultServiceManager = sp<NoHwServiceManager>::make();
++                return gDefaultServiceManager;
++            }
+             // HwBinder not available on this device or not accessible to
+             // this process.
+             return nullptr;

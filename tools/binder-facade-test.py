@@ -19,6 +19,10 @@ p.add_argument('--probe', type=Path, required=True)
 p.add_argument('--server', type=Path, help='Use a production service executable in place of the probe server mode')
 p.add_argument('--support-service', type=Path, action='append', default=[],
                help='Start a production dependency with ready/stdin-EOF supervision')
+p.add_argument('--daemon', type=Path, action='append', default=[],
+               help='Start a stock daemon: no ready line; clients wait for its services; stopped by SIGTERM as init stops services')
+p.add_argument('--daemon-with-dir', type=Path, action='append', default=[],
+               help='A stock daemon whose argv[1] is its data directory (as init passes /data/misc/<name>)')
 p.add_argument('--broker', type=Path, required=True)
 p.add_argument('--declare-service', action='append', default=[], help='Immutable session AIDL declaration')
 p.add_argument('--library', type=Path, action='append', default=[])
@@ -47,6 +51,7 @@ env.update(
     AZK_PROP_AREA=str(d / 'props'),
 )
 children = []
+daemons = []
 intentional_crashes = set()
 logs = []
 result = {}
@@ -89,6 +94,17 @@ try:
         )
         children.append(support)
         assert line(support).startswith('ready')
+    for index, (executable, with_dir) in enumerate([(p, False) for p in a.daemon] + [(p, True) for p in a.daemon_with_dir]):
+        log = (d / f'daemon-{index}.log').open('w')
+        logs.append(log)
+        argv = [str(executable.resolve())]
+        if with_dir:
+            data = d / f'daemon-{index}-data'
+            data.mkdir(exist_ok=True)
+            argv.append(str(data))
+        daemon = subprocess.Popen(argv, env=env, cwd=r, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+        children.append(daemon)
+        daemons.append(daemon)
     if a.standalone:
         log = (d / 'client.log').open('w')
         logs.append(log)
@@ -200,6 +216,15 @@ try:
 except (AssertionError, RuntimeError, OSError, subprocess.TimeoutExpired) as e:
     result['error'] = str(e)
 finally:
+    for p in daemons:
+        if p.poll() is None:
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                continue
+            if p.returncode == -15:
+                intentional_crashes.add(p)
     for p in reversed(children):
         if p.stdin and not p.stdin.closed:
             p.stdin.close()
@@ -220,7 +245,8 @@ finally:
     result['sha256'] = {
         str(p): hashlib.sha256(p.read_bytes()).hexdigest()
         for p in [a.probe.resolve(), a.broker.resolve(), *(p.resolve() for p in a.library),
-                  *([a.server.resolve()] if a.server else []), *(p.resolve() for p in a.support_service)]
+                  *([a.server.resolve()] if a.server else []), *(p.resolve() for p in a.support_service),
+                  *(p.resolve() for p in a.daemon), *(p.resolve() for p in a.daemon_with_dir)]
     }
     (d / 'results.json').write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2))

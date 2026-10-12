@@ -8,7 +8,21 @@ const framework = @import("framework_jni.zig");
 const ndk = @import("ndk.zig");
 const Info = opaque {};
 const Callback = *const fn (?*anyopaque, [*:0]const u8, [*:0]const u8, u32) callconv(.c) void;
+const ForeachCallback = *const fn (*const Info, ?*anyopaque) callconv(.c) void;
+const Timespec = extern struct { sec: isize, nsec: isize };
 const long_legacy = "Must use __system_property_read_callback() to read";
+
+/// The broker announces every property change to every peer; waiters re-check
+/// serials on each announcement instead of a futex on the shared area.
+var change_mutex: std.Io.Mutex = .init;
+var change_condition: std.Io.Condition = .init;
+
+pub fn notifyChanged() void {
+    const io = ndk.frameworkIo();
+    change_mutex.lockUncancelable(io);
+    defer change_mutex.unlock(io);
+    change_condition.broadcast(io);
+}
 
 fn slotOf(reader: *const area.Reader, info: ?*const Info) ?usize {
     const pointer = @intFromPtr(info orelse return null);
@@ -67,6 +81,37 @@ export fn bionic___system_property_serial(info: ?*const Info) callconv(.c) u32 {
 }
 export fn bionic___system_property_area_serial() callconv(.c) u32 {
     return if (framework.props()) |reader| reader.globalSerial() else 0;
+}
+export fn bionic___system_property_foreach(callback: ForeachCallback, cookie: ?*anyopaque) callconv(.c) c_int {
+    const reader = framework.props() orelse return -1;
+    for (0..reader.count()) |index| callback(@ptrCast(reader.map.ptr + area.header_len + index * area.slot_len), cookie);
+    return 0;
+}
+/// Bionic's wait: until `info`'s serial (or the area serial for null) differs
+/// from `old_serial`; false when `relative_timeout` passes first.
+export fn bionic___system_property_wait(info: ?*const Info, old_serial: u32, new_serial: ?*u32, relative_timeout: ?*const Timespec) callconv(.c) bool {
+    const reader = framework.props() orelse return false;
+    if (info != null and slotOf(reader, info) == null) return false;
+    const io = ndk.frameworkIo();
+    const deadline: ?std.Io.Clock.Timestamp = if (relative_timeout) |timeout|
+        std.Io.Clock.Timestamp.now(io, .awake).addDuration(.{ .raw = .fromNanoseconds(@as(i96, timeout.sec) * std.time.ns_per_s + timeout.nsec), .clock = .awake })
+    else
+        null;
+    change_mutex.lockUncancelable(io);
+    defer change_mutex.unlock(io);
+    while (true) {
+        const serial = if (info != null) bionic___system_property_serial(info) else reader.globalSerial();
+        if (serial != old_serial) {
+            if (new_serial) |out| out.* = serial;
+            return true;
+        }
+        if (deadline) |at| {
+            change_condition.waitTimeout(io, &change_mutex, .{ .deadline = at }) catch |err| switch (err) {
+                error.Timeout => return false,
+                error.Canceled => return false,
+            };
+        } else change_condition.waitUncancelable(io, &change_mutex);
+    }
 }
 export fn bionic___system_property_set(key: ?[*:0]const u8, value: ?[*:0]const u8) callconv(.c) c_int {
     const name = std.mem.span(key orelse return -1);

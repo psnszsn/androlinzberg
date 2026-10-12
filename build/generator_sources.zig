@@ -791,6 +791,17 @@ pub const hidl = [_]Hidl{
         "android/hidl/manager/V1_2/IClientCallback.java",
         "android/hidl/manager/V1_2/IServiceManager.java",
     } },
+    // LockSettingsService's HIDL fallbacks for the weaver and AuthSecret HALs.
+    .{ .fqname = "android.hardware.weaver@1.0", .language = .java, .outputs = &.{
+        "android/hardware/weaver/V1_0/IWeaver.java",
+        "android/hardware/weaver/V1_0/WeaverConfig.java",
+        "android/hardware/weaver/V1_0/WeaverReadResponse.java",
+        "android/hardware/weaver/V1_0/WeaverReadStatus.java",
+        "android/hardware/weaver/V1_0/WeaverStatus.java",
+    } },
+    .{ .fqname = "android.hardware.authsecret@1.0", .language = .java, .outputs = &.{
+        "android/hardware/authsecret/V1_0/IAuthSecret.java",
+    } },
     .{ .fqname = "android.hardware.cas@1.0", .language = .java, .outputs = &.{
         "android/hardware/cas/V1_0/HidlCasPluginDescriptor.java",
         "android/hardware/cas/V1_0/ICas.java",
@@ -1094,6 +1105,11 @@ pub const device_state_aidl = .{
 
 pub const VersionedAidl = struct { prefix: []const u8, version: []const u8, hash: []const u8 };
 pub const versioned_aidl = [_]VersionedAidl{
+    // LockSettingsService's frozen HALs: weaver-V2, authsecret-V1 and
+    // rebootescrow-V1, hashes from aidl_api/<package>/<version>/.hash.
+    .{ .prefix = "hardware/interfaces/weaver/aidl/", .version = "2", .hash = "0d60d74c2704ad281e219244514516db8482ef3d" },
+    .{ .prefix = "hardware/interfaces/authsecret/aidl/", .version = "1", .hash = "729cca96cb4732246b6ed1b3d15e2cbe63413afd" },
+    .{ .prefix = "hardware/interfaces/rebootescrow/aidl/", .version = "1", .hash = "ba450432e0dab8ee7bbc30013819ea8aef12054b" },
     .{ .prefix = "hardware/interfaces/power/aidl/", .version = "6", .hash = "13171cf98a48de298baf85167633376ea3db4ea0" },
     // hardware/interfaces/cas/aidl/Android.bp: frozen V1 and its original API hash.
     .{ .prefix = "hardware/interfaces/cas/aidl/android/hardware/cas/", .version = "1", .hash = "bc51d8d70a55ec4723d3f73d0acf7003306bf69f" },
@@ -1103,6 +1119,25 @@ pub const versioned_aidl = [_]VersionedAidl{
 };
 
 pub const aidl = [_]SourcePath{
+    // TrustManagerService's trust agents and significant-place provider.
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/location/ISignificantPlaceProvider.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/location/ISignificantPlaceProviderManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/trust/ITrustAgentService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/trust/ITrustAgentServiceCallback.aidl" },
+    // LockSettingsService: keystore2 authorization, the weaver, AuthSecret and
+    // RebootEscrow HALs, and resume-on-reboot.
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/resumeonreboot/IResumeOnRebootService.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/authsecret/aidl/android/hardware/authsecret/IAuthSecret.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/rebootescrow/aidl/android/hardware/rebootescrow/IRebootEscrow.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/security/keymint/aidl/android/hardware/security/keymint/HardwareAuthToken.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/security/secureclock/aidl/android/hardware/security/secureclock/TimeStampToken.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/security/secureclock/aidl/android/hardware/security/secureclock/Timestamp.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/weaver/aidl/android/hardware/weaver/IWeaver.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/weaver/aidl/android/hardware/weaver/WeaverConfig.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/weaver/aidl/android/hardware/weaver/WeaverReadResponse.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/weaver/aidl/android/hardware/weaver/WeaverReadStatus.aidl" },
+    .{ .source = .aosp, .path = "system/security/keystore2/aidl/android/security/authorization/AuthorizationTokens.aidl" },
+    .{ .source = .aosp, .path = "system/security/keystore2/aidl/android/security/authorization/IKeystoreAuthorization.aidl" },
     .{ .source = .aosp, .path = "frameworks/native/services/surfaceflinger/PowerAdvisor/aidl/android/adpf/ISessionManager.aidl" },
     .{ .source = .aosp, .path = "hardware/interfaces/power/aidl/android/hardware/power/CompositionData.aidl" },
     .{ .source = .aosp, .path = "hardware/interfaces/power/aidl/android/hardware/power/CompositionUpdate.aidl" },
@@ -2821,7 +2856,7 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.app.wearable", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/wearable/flags.aconfig"} },
     .{ .package = "android.hardware.radio", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/hardware/radio/flags.aconfig"} },
     .{ .package = "android.net.vcn", .container = "com.android.tethering", .source = .aosp, .declarations = &.{"frameworks/base/packages/Vcn/flags/flags.aconfig"} },
-    .{ .package = "android.security.keystore2", .container = "system", .source = .aosp, .declarations = &.{"system/security/keystore2/aconfig/flags.aconfig"} },
+    .{ .package = "android.security.keystore2", .container = "system", .source = .aosp, .declarations = &.{"system/security/keystore2/aconfig/flags.aconfig"}, .values = &.{ "build/release/aconfig/bp2a/android.security.keystore2/attest_modules_flag_values.textproto", "build/release/aconfig/bp2a/android.security.keystore2/use_blob_state_column_flag_values.textproto" } },
     .{ .package = "android.service.appprediction.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/service/appprediction/flags/flags.aconfig"} },
     .{ .package = "com.android.adservices.flags", .container = "com.android.adservices", .source = .aosp, .declarations = &.{"packages/modules/AdServices/adservices/flags/adservices_flags.aconfig"} },
     .{ .package = "com.android.nearby.flags", .container = "com.android.tethering", .source = .aosp, .declarations = &.{"packages/modules/Connectivity/common/nearby_flags.aconfig"} },

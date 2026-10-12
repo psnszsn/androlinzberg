@@ -565,6 +565,9 @@ const AIBinder = struct {
     /// the control block alive (and promotable-or-null) after the payload is
     /// destroyed. Defaults to 1 for the implicit strong-held reference.
     weak: std.atomic.Value(u32) = .init(1),
+    /// local: AIBinder_setRequestingSid; its transactions carry the caller's
+    /// security context.
+    requesting_sid: std.atomic.Value(bool) = .init(false),
 
     /// Process-local object ids, assigned without connecting to the broker: a
     /// local object needs no broker involvement until it is exported (sent or
@@ -768,6 +771,8 @@ const Runtime = struct {
     threadlocal var current_caller_uid: u32 = 0;
     threadlocal var current_caller_pid: i32 = 0;
     threadlocal var current_flags: u32 = 0;
+    /// The local binder the current transaction was delivered to.
+    threadlocal var current_target: ?*AIBinder = null;
     threadlocal var serving_stack: ?*const anyopaque = null;
 
     fn get() *Runtime {
@@ -784,6 +789,9 @@ const Runtime = struct {
     fn connect() !*Runtime {
         const io = g_io;
         const socket = getenv("AZK_BINDER_SOCKET") orelse return error.NoSocket;
+        // A supervised native daemon's binder context is its session: it ends
+        // with the broker, as Android's services end with their init.
+        if (getenv(exit_on_disconnect_env) != null) g_exit_on_disconnect.store(true, .monotonic);
         const system_cookie = getenv("AZK_BINDER_SYSTEM_COOKIE");
         const app_cookie = getenv("AZK_BINDER_COOKIE") orelse "";
         var anon_buf: [64]u8 = undefined;
@@ -1171,8 +1179,10 @@ const Runtime = struct {
             const prev_in_transaction = current_in_transaction;
             const prev_flags = current_flags;
             const prev_stack = serving_stack;
+            const prev_target = current_target;
             current_flags = in.flags;
             serving_stack = &prev_flags;
+            current_target = target;
             current_routing = if (oneway) 0 else in.routing_id;
             current_in_transaction = true;
             current_caller_uid = in.caller_uid;
@@ -1183,6 +1193,7 @@ const Runtime = struct {
             policy.restore();
             current_flags = prev_flags;
             serving_stack = prev_stack;
+            current_target = prev_target;
             current_in_transaction = prev_in_transaction;
             current_routing = prev_routing;
             current_caller_uid = prev_uid;
@@ -1456,7 +1467,10 @@ const Runtime = struct {
         // after an application has installed a syscall sandbox. There is no
         // surviving caller to notify in this mode. Ordinary Binder clients keep
         // the complete failure, death notification and ownership cleanup below.
-        if (g_exit_on_disconnect.load(.monotonic)) g_process_exit.load(.acquire).?(0);
+        if (g_exit_on_disconnect.load(.monotonic)) {
+            if (g_process_exit.load(.acquire)) |process_exit| process_exit(0);
+            std.process.exit(0);
+        }
         var links = std.ArrayListUnmanaged(*DeathLink).empty;
         r.mu.lockUncancelable(g_io);
         var it = r.pending.valueIterator();
@@ -2974,13 +2988,31 @@ export fn AIBinder_setMinSchedulerPolicy(binder: *AIBinder, policy: i32, priorit
     _ = priority;
 }
 export fn AIBinder_setRequestingSid(binder: *AIBinder, requesting_sid: bool) callconv(.c) void {
-    _ = binder;
-    _ = requesting_sid;
+    binder.requesting_sid.store(requesting_sid, .release);
 }
+threadlocal var calling_sid_buffer: [64]u8 = undefined;
 export fn AIBinder_getCallingSid() callconv(.c) ?[*:0]const u8 {
-    // Hosted peers carry no SELinux context; AOSP also returns null when the
-    // kernel does not supply one.
-    return null;
+    // As the binder driver does, a context reaches only binders that asked for
+    // it. The host kernel has no SELinux and labels no peer; the session
+    // labels each caller by its uid as seapp_contexts assigns domains.
+    const target = Runtime.current_target orelse return null;
+    if (!Runtime.current_in_transaction or !target.requesting_sid.load(.acquire)) return null;
+    return callerContext(Runtime.current_caller_uid, &calling_sid_buffer);
+}
+
+/// seapp_contexts' domain for a uid: the system server for the system uid,
+/// shell, and app domains with levelFrom=all categories for app ids.
+fn callerContext(uid: u32, buffer: *[64]u8) [*:0]const u8 {
+    const user = uid / 100000;
+    const app = uid % 100000;
+    const text = if (app >= 10000 and app < 20000) blk: {
+        const id = app - 10000;
+        break :blk std.fmt.bufPrintSentinel(buffer, "u:r:untrusted_app:s0:c{d},c{d},c{d},c{d}", .{ id & 0xff, 256 + ((id >> 8) & 0xff), 512 + (user & 0xff), 768 + ((user >> 8) & 0xff) }, 0) catch unreachable;
+    } else if (app == 2000)
+        std.fmt.bufPrintSentinel(buffer, "u:r:shell:s0", .{}, 0) catch unreachable
+    else
+        std.fmt.bufPrintSentinel(buffer, "u:r:system_server:s0", .{}, 0) catch unreachable;
+    return text.ptr;
 }
 
 // ----- AIBinder_Weak: a non-owning handle that re-promotes to a strong ref.
@@ -3366,6 +3398,8 @@ var g_has_identity_override: bool = false;
 /// When set, a lost broker connection exits the process (a windowless service
 /// host has no reason to outlive its session).
 var g_exit_on_disconnect = std.atomic.Value(bool).init(false);
+/// Set by the session for the stock native daemons it supervises.
+pub const exit_on_disconnect_env = "AZK_BINDER_EXIT_ON_DISCONNECT";
 const ProcessExitFn = *const fn (c_int) callconv(.c) noreturn;
 var g_process_exit = std.atomic.Value(?ProcessExitFn).init(null);
 
