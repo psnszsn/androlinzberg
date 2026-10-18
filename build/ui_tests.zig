@@ -7,6 +7,7 @@ const std = @import("std");
 const command = @import("command.zig");
 
 pub const sources = [_][]const u8{
+    "tests/ui/kotlin/dev/artzig/uitest/ChatGptUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/FDroidUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/HostInstrumentation.kt",
     "tests/ui/kotlin/dev/artzig/uitest/LockSettingsUiTest.kt",
@@ -30,6 +31,8 @@ pub const sources = [_][]const u8{
 /// `Class#method[@WxH]`: the orchestrator's default selection. A size suffix is
 /// the launch size and headless output mode of that test's session.
 pub const tests = [_][]const u8{
+    "dev.artzig.uitest.ChatGptUiTest#launchesWelcomeWithoutRuntimeIssues@412x915@chatgpt",
+    "dev.artzig.uitest.ChatGptUiTest#sendsGuestMessageWithoutRuntimeIssues@412x915@chatgpt",
     "dev.artzig.uitest.SessionDiagnosticsUiTest#unsupportedFrameworkCallIsJournalled",
     "dev.artzig.uitest.LockSettingsUiTest#pinIsEnrolledVerifiedAndCleared",
     "dev.artzig.uitest.WindowFixtureUiTest#launchesAndUpdatesState@412x915",
@@ -77,6 +80,7 @@ pub const tests = [_][]const u8{
 
 /// tests/apks.json: `--pinned-apk` arguments of the orchestrator.
 pub const pinned_apks = [_][]const u8{
+    "--pinned-apk", "chatgpt=AZK_APK_CHATGPT_1_2026_279=cd7af30278fcca6b37cb0a7ee77aebc2fd562039b05a2ea4263c6498698e3c8f",
     "--pinned-apk", "newpipe=AZK_APK_NEWPIPE_0_29_1=18447bfb1e06d113edc88df93f471827280de06f6f3d4dc42f56f28b9c1bab79",
     "--pinned-apk", "fdroid=AZK_APK_FDROID_2_0_1=83d3fe522281c3cb89fce3bc05038f81b3c3b32c108536941f184c5f9bb53778",
 };

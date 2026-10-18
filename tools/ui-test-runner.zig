@@ -237,6 +237,7 @@ fn runTest(init: std.process.Init, options: Options, class: []const u8, method: 
     try runner_env.put("AZK_TEST_SESSION_DIR", session_dir);
     // The APK the session launched, for a host-path test's joined launcher.
     try runner_env.put("AZK_TEST_SESSION_APK", try Io.Dir.cwd().realPathFileAlloc(io, options.apk, arena));
+    try runner_env.put("AZK_TEST_ARTIFACTS", try Io.Dir.cwd().realPathFileAlloc(io, directory, arena));
     if (options.seat) |helper| try runner_env.put("AZK_TEST_SEAT", try Io.Dir.cwd().realPathFileAlloc(io, helper, arena));
     const argv: []const []const u8 = if (std.mem.eql(u8, class, "probe"))
         &.{ options.probe, session_dir, method }

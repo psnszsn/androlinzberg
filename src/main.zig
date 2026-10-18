@@ -5,7 +5,7 @@ const image = @import("install_tree.zig");
 const usage =
     \\androlinzberg — run an Android APK as a Wayland application
     \\
-    \\usage: androlinzberg [--standalone] [--join <session-dir>] <app.apk>
+    \\usage: androlinzberg [--standalone] [--join <session-dir>] <app.apk|bundle.apkm|bundle.xapk|apk-directory>
     \\  --standalone          use a private single-user Android instance (default)
     \\  --join <session-dir>  launch in an existing private instance
     \\

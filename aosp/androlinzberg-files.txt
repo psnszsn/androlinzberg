@@ -3720,6 +3720,7 @@ F aosp frameworks/base/core/java/android/inputmethodservice/InlineSuggestionSess
 F aosp frameworks/base/core/java/android/inputmethodservice/InlineSuggestionSessionController.java
 F aosp frameworks/base/core/java/android/inputmethodservice/InputMethodService.java
 F aosp frameworks/base/core/java/android/inputmethodservice/InputMethodServiceInternal.java
+F aosp frameworks/base/core/java/android/inputmethodservice/Keyboard.java
 F aosp frameworks/base/core/java/android/inputmethodservice/NavigationBarController.java
 F aosp frameworks/base/core/java/android/inputmethodservice/RemoteInputConnection.java
 F aosp frameworks/base/core/java/android/inputmethodservice/SoftInputWindow.java

@@ -19,6 +19,8 @@ internal object StockNdkGraphicsSmoke {
     private fun verifyNativeOwners() {
         val owners = mapOf(
             "AIBinder_new" to "libbinder_ndk.so",
+            "AAssetManager_fromJava" to "libandroid_platform.so",
+            "AAssetManager_open" to "libandroid_platform.so",
             "AParcel_create" to "libbinder_ndk.so",
             "AHardwareBuffer_allocate" to "libandroid_platform.so",
             "AMediaCodec_createDecoderByType" to "libandroid_platform.so",

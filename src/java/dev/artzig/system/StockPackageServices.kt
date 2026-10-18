@@ -101,23 +101,26 @@ object StockPackageServices {
 
     /**
      * Pinned PackageManagerShellCommand.runInstall/doCommitSession for a
-     * single APK file: a PackageInstaller session written with the APK,
+     * single APK or split APK directory: a PackageInstaller session written with all APKs,
      * committed, and awaited through a local IntentSender. Returns the
      * installed package name; the caller holds INSTALL_PACKAGES (system).
      */
     @JvmStatic
     fun installApk(context: Context, apk: java.io.File): String {
+        val files = dev.artzig.ApkHost.parsePackage(apk.absolutePath).allApkPaths.map { java.io.File(it) }
         val installer = context.packageManager.packageInstaller
         val params = android.content.pm.PackageInstaller.SessionParams(
             android.content.pm.PackageInstaller.SessionParams.MODE_FULL_INSTALL)
         params.setInstallReason(android.content.pm.PackageManager.INSTALL_REASON_USER)
-        params.setSize(apk.length())
+        params.setSize(files.sumOf { it.length() })
         val sessionId = installer.createSession(params)
         val receiver = LocalIntentReceiver()
         installer.openSession(sessionId).use { session ->
-            session.openWrite("base.apk", 0, apk.length()).use { out ->
-                apk.inputStream().use { it.copyTo(out) }
-                session.fsync(out)
+            for ((index, file) in files.withIndex()) {
+                session.openWrite(if (index == 0) "base.apk" else "split_$index.apk", 0, file.length()).use { out ->
+                    file.inputStream().use { it.copyTo(out) }
+                    session.fsync(out)
+                }
             }
             session.commit(receiver.intentSender)
         }

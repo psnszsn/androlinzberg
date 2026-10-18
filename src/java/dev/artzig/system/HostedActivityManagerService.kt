@@ -2624,6 +2624,40 @@ class HostedActivityManagerService(private val context: android.content.Context?
         outInfo.foregroundAppThreshold = 0
     }
 
+    /** Pinned AMS permission checks followed by AppStartInfoTracker.getStartInfo's
+     * disabled-collection behavior. The generated android.app.app_start_info flag
+     * is disabled in this image, so AOSP returns an empty list.
+     *
+     * Replacement blocker: AppStartInfoTracker.init requires stock AMS/ProcessList,
+     * including CachedAppOptimizer/Freezer and LowMemDetector JNI. The closure
+     * reports 507 sources and 73 blockers. Do not silently claim empty history if
+     * collection is enabled before that stock process-service closure is wired. */
+    override fun getHistoricalProcessStartReasons(packageName: String?, maxNum: Int,
+        userId: Int): android.content.pm.ParceledListSlice<android.app.ApplicationStartInfo> {
+        val uid = Binder.getCallingUid()
+        if (UserHandle.isIsolated(uid)) throw SecurityException("Isolated process cannot query start history")
+        require(userId != UserHandle.USER_ALL && userId != UserHandle.USER_CURRENT) { "Unsupported userId" }
+        com.android.server.LocalServices.getService(android.app.ActivityManagerInternal::class.java)
+            .handleIncomingUser(Binder.getCallingPid(), uid, userId, true, android.app.ActivityManagerInternal.ALLOW_NON_FULL,
+                "getHistoricalProcessStartReasons", null)
+        val target = if (packageName.isNullOrEmpty()) uid else {
+            val sandbox = android.os.Process.isSdkSandboxUid(uid) &&
+                systemPackages { it.sdkSandboxPackageName } == packageName
+            val packageUid = if (sandbox) uid else systemPackages {
+                it.getPackageUid(packageName,
+                    (android.content.pm.PackageManager.MATCH_DIRECT_BOOT_AWARE or
+                        android.content.pm.PackageManager.MATCH_DIRECT_BOOT_UNAWARE).toLong(), userId)
+            } ?: -1
+            if (UserHandle.getAppId(packageUid) != UserHandle.getAppId(uid))
+                enforceCallingPermission(android.Manifest.permission.DUMP, "getHistoricalProcessStartReasons")
+            packageUid
+        }
+        if (target != -1 && android.app.Flags.appStartInfo())
+            throw dev.artzig.ArtzigTestDiagnostics.unsupported("IActivityManager", "getHistoricalProcessStartReasons",
+                "Enabled start-history collection requires stock AMS/ProcessList/AppStartInfoTracker")
+        return android.content.pm.ParceledListSlice(emptyList())
+    }
+
     /** Pinned AMS.getHistoricalProcessExitReasons permission order over host records. */
     override fun getHistoricalProcessExitReasons(packageName: String?, pid: Int, maxNum: Int,
         userId: Int): android.content.pm.ParceledListSlice<android.app.ApplicationExitInfo> {

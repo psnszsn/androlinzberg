@@ -97,6 +97,11 @@ Use an absolute path for the APK file:
 zig build -j10 run -- /absolute/path/to/app.apk
 ```
 
+The launcher also accepts a directory containing a base APK and its splits,
+or a flat `.apkm`/`.xapk` archive of those APKs. It installs the original signed
+APKs together through Android's PackageInstaller; native libraries must include
+x86_64. Expansion-file (OBB) installation is not supported.
+
 Launching an APK installs it through Android's PackageManagerService, then
 starts its launcher activity. Installed packages, their Android uids and their
 application data persist in the data root, `$XDG_DATA_HOME/artzig` by default

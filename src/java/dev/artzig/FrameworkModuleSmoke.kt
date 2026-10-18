@@ -1026,6 +1026,15 @@ internal object FrameworkModuleSmoke {
         check(process.processState == ActivityManager.PROCESS_STATE_CACHED_EMPTY)
         check(process.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_CACHED)
         check(manager.getHistoricalProcessExitReasons(null, Int.MAX_VALUE, 1).isEmpty())
+        if (!android.app.Flags.appStartInfo()) {
+            check(manager.getHistoricalProcessStartReasons(0).isEmpty())
+            check(manager.getHistoricalProcessStartReasons(1).isEmpty())
+        }
+        for (user in intArrayOf(UserHandle.USER_ALL, UserHandle.USER_CURRENT)) {
+            check(runCatching {
+                ActivityManager.getService().getHistoricalProcessStartReasons(null, 0, user)
+            }.exceptionOrNull() is IllegalArgumentException)
+        }
         val task = android.app.ActivityManager.TaskDescription.Builder()
             .setLabel("Stock task").setPrimaryColor(android.graphics.Color.BLUE)
             .setBackgroundColor(android.graphics.Color.RED).build()

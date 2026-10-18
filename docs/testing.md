@@ -103,6 +103,20 @@ the main looper running while the test executes.
 zig build -j10 ui-test -- --class WindowInputUiTest --method clickingButtonUpdatesStatus
 ```
 
+The external-app cases require the SHA-256-pinned packages listed in
+`build/ui_tests.zig`: `AZK_APK_NEWPIPE_0_29_1`, `AZK_APK_FDROID_2_0_1`, and
+`AZK_APK_CHATGPT_1_2026_279`. Set each to an absolute path. ChatGPT uses the
+[1.2026.279 universal APKMirror bundle](https://www.apkmirror.com/apk/openai/chatgpt/chatgpt-1-2026-279-release/chatgpt-1-2026-279-android-apk-download/)
+(version code 2627907), SHA-256
+`cd7af30278fcca6b37cb0a7ee77aebc2fd562039b05a2ea4263c6498698e3c8f`.
+Its base APK signer SHA-256 is
+`b24f4bfbb3cf293f938703b9d87027c1102cc36dc4fa206910e08927db40473c`.
+The original APKs are installed without merging or re-signing.
+`ChatGptUiTest` opens guest chat and sends a prompt to verify a rendered reply;
+the message test needs access to ChatGPT's live service. Each case retains
+`screen.png` and `window.xml` alongside its `app.log` and `test.log` under
+`zig-out/test-results/ui/dev.artzig.uitest.ChatGptUiTest.<method>/`.
+
 Ordinary tests inject input through `UiAutomation`. The host seam has its own
 coverage in the same suite: `dev.artzig.uitest.host` tests ask the task
 presenter's inspection methods (`WaylandSeat`) for real Wayland pointer and key

@@ -214,7 +214,8 @@ enum State { UNKNOWN = 0; }
                 aosp_closure.Classes([root / "classes"]), aosp_closure.Stubs(root / "stubs"))
             fqn = "android.view.ViewProtoEnums"
             self.assertEqual("generated", resolver.node(fqn).kind)
-            self.assertEqual("generated", aosp_closure.classify_stub(resolver, fqn)[0])
+            self.assertEqual("proto generator (build/generator_sources.zig)",
+                             resolver.node(fqn).generated)
             rendered = aosp_closure.render_closure(resolver, [fqn], resolver.closure([fqn]))
             self.assertIn("F aosp enums.proto", rendered)
             self.assertIn('path = "enums.proto"', rendered)
@@ -392,8 +393,9 @@ class MethodAbiTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             aosp = root / "aosp"
-            host = root / "framework"
-            stubs = root / "framework-stubs"
+            # Production indexes all repository-owned JVM sources in src/java.
+            host = root / "src/java"
+            stubs = host
             classes = root / "classes"
             for directory in (aosp / "seed", aosp / "host", host / "host", stubs / "seed", classes / "java/lang"):
                 directory.mkdir(parents=True, exist_ok=True)
@@ -452,7 +454,7 @@ public class Factory {
             sources.write_text("")
 
             indexed = aosp_closure.SourceIndex(aosp, None)
-            hosted = aosp_closure.Stubs(stubs, framework_root=host)
+            hosted = aosp_closure.Stubs(host)
             resolver = aosp_closure.Resolver(
                 aosp,
                 indexed,
@@ -479,7 +481,8 @@ public class Factory {
                 "existing host class seed.Factory instantiates abstract class seed.Seed",
                 blockers,
             )
-            self.assertEqual({"seed.Child", "seed.Factory"}, set(hosted.audit_by_fqn))
+            self.assertEqual({"host.Target", "seed.Child", "seed.Factory"},
+                             set(hosted.by_fqn))
 
             resolver.nodes = {}
             closure = resolver.closure(["seed.Seed", "host.Target"], absent={"seed.Seed", "host.Target"})

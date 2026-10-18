@@ -71,7 +71,7 @@ class ApkHost private constructor() {
             // NativeLibraryHelper owns ABI filtering, CRC/timestamp reuse,
             // permissions, temporary-file cleanup and atomic replacement.
             com.android.internal.content.NativeLibraryHelper.Handle.create(
-                listOf(apkPath), false, true, false, false,
+                parsePackage(apkPath).allApkPaths, false, true, false, false,
             ).use { handle ->
                 val result = com.android.internal.content.NativeLibraryHelper.copyNativeBinariesForSupportedAbi(
                     handle, dir, arrayOf("x86_64"), false, false,
@@ -104,6 +104,11 @@ class ApkHost private constructor() {
          * parse (ApkLiteParseUtils) — no binder identity needed. */
         @JvmStatic
         private fun parseApkLitePackageName(apkPath: String): String {
+            return withPackage(apkPath) { parsePackage(it).packageName }
+        }
+
+        @JvmStatic
+        fun parsePackage(apkPath: String): android.content.pm.parsing.PackageLite {
             // Not forDefaultParsing(): that resolves the platform-compat
             // service through ServiceManager, which would connect the hosted
             // Binder runtime anonymously before bootstrap fixes this
@@ -117,15 +122,43 @@ class ApkHost private constructor() {
             if (result.isError) {
                 throw IllegalStateException("cannot read package name of " + apkPath + ": " + result.errorMessage)
             }
-            return result.result.packageName
+            return result.result
+        }
+
+        /** APKM/XAPK are transport archives; Android still verifies and installs
+         * the original signed APKs together in one PackageInstaller session. */
+        private fun <T> withPackage(path: String, action: (String) -> T): T {
+            if (!path.endsWith(".apkm", true) && !path.endsWith(".xapk", true)) return action(path)
+            val directory = java.nio.file.Files.createTempDirectory("azk-package-").toFile()
+            try {
+                java.util.zip.ZipFile(path).use { archive ->
+                    val entries = archive.entries()
+                    while (entries.hasMoreElements()) {
+                        val entry = entries.nextElement()
+                        if (entry.isDirectory || !entry.name.endsWith(".apk")) continue
+                        require(entry.name == File(entry.name).name && !entry.name.contains('\\')) {
+                            "Nested APK archive entry: ${entry.name}"
+                        }
+                        val target = File(directory, entry.name)
+                        check(target.createNewFile()) { "Duplicate APK archive entry: ${entry.name}" }
+                        archive.getInputStream(entry).use { input -> target.outputStream().use { input.copyTo(it) } }
+                    }
+                }
+                return action(directory.absolutePath)
+            } finally {
+                directory.listFiles()?.forEach { it.delete() }
+                directory.delete()
+            }
         }
 
         /** Install an APK for ATMS to launch in its own process. The desktop
          * controller has already selected its Binder identity before this call. */
         @JvmStatic fun installForDesktop(): String {
             val path = checkNotNull(System.getenv("ARTZIG_APK"))
-            return checkNotNull(HostedServiceClient.installerOrNull())
-                .installPackage(path, extractNativeLibraries(path))
+            return withPackage(path) { packagePath ->
+                checkNotNull(HostedServiceClient.installerOrNull())
+                    .installPackage(packagePath, extractNativeLibraries(packagePath))
+            }
         }
 
         /** AOSP bindApplication supplies resources, class loading and application

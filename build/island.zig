@@ -1010,6 +1010,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(b.path("src/native/audio"), &audio_host_srcs, audio_includes.items, &audio_flags);
     bridge_includes.append(b.allocator, o.aosp.path(b, "frameworks/native/opengl/libs/EGL")) catch @panic("OOM");
     g.add(b.path(""), &our_srcs, bridge_includes.items, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{"asset_manager.cpp"}, bridge_includes.items, &(android_abi_flags ++ .{"-D__RENAME_IF_FILE_OFFSET64(x)="}));
     g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{"hardware_buffer_jni.cpp"}, hwui_includes, &android_abi_flags);
     const platform_files_index = objects.items.len;
     g.add(b.path("src/native"), &.{"PlatformFiles.cpp"}, &.{}, &.{});

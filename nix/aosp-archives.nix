@@ -24,7 +24,7 @@ let
     '';
   };
 in {
-  androlinzberg = archive "androlinzberg-aosp-android-16.0.0_r1.tar.gz" "sha256-swhtAEL/M0GiPvJQysFlbFK7k3SbH3XYMCBD0Z5CVE0=";
+  androlinzberg = archive "androlinzberg-aosp-android-16.0.0_r1.tar.gz" "sha256-EDhVrMJVxbTLvQvPfzCPnPNmCBErHgkTrP/hrgpkqHY=";
   webview = archive "androlinzberg-webview-140.0.7339.15.tar.gz" "sha256-/3itPGDoUaX/PSF9Oi0WB09FPxgUpMS70QW1SZbpkY0=";
   artzig = archive "artzig-aosp-android-16.0.0_r1.tar.gz" "sha256-wSJ1DzRpNL+b/59LXrMxFZoIMX8FmV1tZZGqe+VoxoQ=";
 }
