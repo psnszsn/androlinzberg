@@ -5445,6 +5445,14 @@ fn collectCronetApi(c: *StaticCollector) !void {
     try c.file("$FB/keystore/java/android/security/KeyStoreAuthorization.java");
     try c.file("$FB/libs/securebox/src/com/android/security/SecureBox.java");
     try c.file("$FB/services/core/java/com/android/server/biometrics/BiometricHandlerProvider.java");
+    try c.file("$FB/services/core/java/com/android/server/locales/AppLocaleChangedAtomRecord.java");
+    try c.file("$FB/services/core/java/com/android/server/locales/AppSupportedLocalesChangedAtomRecord.java");
+    try c.file("$FB/services/core/java/com/android/server/locales/LocaleManagerBackupHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/locales/LocaleManagerInternal.java");
+    try c.file("$FB/services/core/java/com/android/server/locales/LocaleManagerService.java");
+    try c.file("$FB/services/core/java/com/android/server/locales/LocaleManagerServicePackageMonitor.java");
+    try c.file("$FB/services/core/java/com/android/server/locales/LocaleManagerShellCommand.java");
+    try c.file("$FB/services/core/java/com/android/server/locales/SystemAppUpdateTracker.java");
     try c.file("$FB/services/core/java/com/android/server/locksettings/AesEncryptionUtil.java");
     try c.file("$FB/services/core/java/com/android/server/locksettings/AuthSecretHidlAdapter.java");
     try c.file("$FB/services/core/java/com/android/server/locksettings/BiometricDeferredQueue.java");

@@ -7,6 +7,7 @@ const std = @import("std");
 const command = @import("command.zig");
 
 pub const sources = [_][]const u8{
+    "tests/ui/kotlin/dev/artzig/uitest/BootServicesUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/ChatGptUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/FDroidUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/HostInstrumentation.kt",
@@ -31,6 +32,8 @@ pub const sources = [_][]const u8{
 /// `Class#method[@WxH]`: the orchestrator's default selection. A size suffix is
 /// the launch size and headless output mode of that test's session.
 pub const tests = [_][]const u8{
+    "dev.artzig.uitest.BootServicesUiTest#publishesAndroidBootCompletion",
+    "dev.artzig.uitest.BootServicesUiTest#applicationLocalesRoundTrip",
     "dev.artzig.uitest.ChatGptUiTest#launchesWelcomeWithoutRuntimeIssues@412x915@chatgpt",
     "dev.artzig.uitest.ChatGptUiTest#sendsGuestMessageWithoutRuntimeIssues@412x915@chatgpt",
     "dev.artzig.uitest.SessionDiagnosticsUiTest#unsupportedFrameworkCallIsJournalled",

@@ -236,6 +236,9 @@ internal object SystemServices {
         manager.startService("com.android.server.UiModeManagerService")
         // ATMS owns package overrides, configuration delivery and persistence.
         manager.startService(com.android.server.grammaticalinflection.GrammaticalInflectionService::class.java)
+        // SystemServer StartLocaleManagerService: reuse ATMS package configuration
+        // updates, persistence, broadcasts and the stock locale backup observers.
+        manager.startService(com.android.server.locales.LocaleManagerService::class.java)
         // SystemServer.startOtherServices: LOCK_SETTINGS_SERVICE_CLASS, over
         // gatekeeperd and keystore2.
         manager.startService("com.android.server.locksettings.LockSettingsService\$Lifecycle")
@@ -321,6 +324,10 @@ internal object SystemServices {
                 // BatteryService publishes its sticky broadcast once the broadcast queue is up.
                 battery.start()
                 stockWindows.verifyStartup()
+                // AMS.finishBooting publishes these after PHASE_BOOT_COMPLETED.
+                // Native daemons (notably keystore2) wait on the standard property.
+                android.os.SystemProperties.set("sys.boot_completed", "1")
+                android.os.SystemProperties.set("dev.bootcomplete", "1")
                 android.os.SystemProperties.set("sys.azk.boot_completed", "1")
                 Log.i(TAG, "system services started for " + context.packageName)
                 // The session's preinstalled packages (`pm install` before an

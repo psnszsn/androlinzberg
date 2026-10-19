@@ -11422,3 +11422,13 @@ F aosp frameworks/base/core/java/android/security/keymaster/KeymasterDateArgumen
 F aosp frameworks/base/core/java/android/security/keymaster/KeymasterIntArgument.java
 F aosp frameworks/base/core/java/android/security/keymaster/KeymasterLongArgument.java
 F aosp frameworks/base/keystore/java/android/security/KeyPairGeneratorSpec.java
+
+# Stock per-application locale service and its backup/package observers.
+F aosp frameworks/base/services/core/java/com/android/server/locales/AppLocaleChangedAtomRecord.java
+F aosp frameworks/base/services/core/java/com/android/server/locales/AppSupportedLocalesChangedAtomRecord.java
+F aosp frameworks/base/services/core/java/com/android/server/locales/LocaleManagerBackupHelper.java
+F aosp frameworks/base/services/core/java/com/android/server/locales/LocaleManagerInternal.java
+F aosp frameworks/base/services/core/java/com/android/server/locales/LocaleManagerService.java
+F aosp frameworks/base/services/core/java/com/android/server/locales/LocaleManagerServicePackageMonitor.java
+F aosp frameworks/base/services/core/java/com/android/server/locales/LocaleManagerShellCommand.java
+F aosp frameworks/base/services/core/java/com/android/server/locales/SystemAppUpdateTracker.java
