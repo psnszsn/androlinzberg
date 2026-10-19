@@ -130,7 +130,15 @@ internal class StockTaskOrganizer(private val handler: Handler,
         val oldBounds = info.configuration.windowConfiguration.bounds
         val parentX = oldBounds.left - info.positionInParent.x
         val parentY = oldBounds.top - info.positionInParent.y
+        // Pinned WOC.applyChanges applies bounds and CONFIG_DENSITY together;
+        // TaskFragment.computeConfigResourceOverrides derives the dp size and
+        // ActivityRecord delivers/relaunches for the resulting configuration.
+        // Always scale the shared display density, never a previous task override.
+        val baseDensity = checkNotNull(android.hardware.display.DisplayManagerGlobal.getInstance()
+            .getDisplayInfo(info.displayId)).logicalDensityDpi
+        val density = ((baseDensity.toLong() * size.scale120 + 60) / 120).toInt().coerceAtLeast(1)
         val transaction = WindowContainerTransaction()
+            .setDensityDpi(info.token, density)
             .setWindowingMode(info.token, WindowConfiguration.WINDOWING_MODE_FREEFORM)
             .setBounds(info.token, Rect(bounds.left, bounds.top, bounds.right.toInt(), bounds.bottom.toInt()))
         organizer.applySyncTransaction(transaction, object : WindowContainerTransactionCallback() {

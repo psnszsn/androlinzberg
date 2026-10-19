@@ -527,12 +527,16 @@ object StockColdLaunchSmoke {
         val resources = presenter.testResources()
         fun checkGeometry(id: Int, initial: LongArray): LongArray {
             val state = ready(id)
-            check(state.sliceArray(0..8).contentEquals(initial.sliceArray(0..8))) {
+            check(listOf(0, 5, 6, 7, 8).all { state[it] == initial[it] } &&
+                state[3] == state[14] && state[4] == state[15]) {
                 "Output change altered task identity or logical geometry: ${state.contentToString()}"
             }
             val task = tasks.getTasks(10, false, true, android.view.Display.DEFAULT_DISPLAY)
                 .single { it.taskId == id }
             check(task.displayId == android.view.Display.DEFAULT_DISPLAY)
+            check(task.configuration.densityDpi == ((density * state[14] + state[7] / 2) / state[7]).toInt()) {
+                "Task density did not follow its output resolution: ${task.configuration}"
+            }
             check(task.configuration.windowConfiguration.bounds == android.graphics.Rect(
                 state[1].toInt(), state[2].toInt(), (state[1] + state[3]).toInt(), (state[2] + state[4]).toInt()))
             check(ActivityManager.getService().configuration.densityDpi == density) {

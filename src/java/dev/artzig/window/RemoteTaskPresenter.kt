@@ -221,13 +221,13 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
             })
         }
         override fun configure(taskId: Int, generation: Long, width: Int, height: Int,
-            bufferWidth: Int, bufferHeight: Int, configurationGeneration: Long, serial: Long) =
+            bufferWidth: Int, bufferHeight: Int, configurationGeneration: Long, serial: Long, scale120: Int) =
             deliver(taskId, generation) {
                 // createWindow returns the latest snapshot after its initial
                 // roundtrips. Older callbacks queued during creation are covered.
                 if (configurationGeneration > it.size.configurationGeneration) {
                     it.size = WaylandTaskShell.Size(width, height, bufferWidth, bufferHeight,
-                        configurationGeneration, serial)
+                        configurationGeneration, serial, scale120)
                     it.events.configure(it.size)
                 }
             }
@@ -290,7 +290,7 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
     override fun open(task: TaskGeometry.Task, appId: String, title: String,
         size: WaylandTaskShell.Size, events: WaylandTaskShell.WindowEvents): WaylandTaskShell.Window {
         check(Looper.myLooper() === handler.looper)
-        val configuration = LongArray(6)
+        val configuration = LongArray(7)
         check(windows[task.id] == null) { "Presenter task already exists" }
         val window = Window(task, events)
         windows[task.id] = window
@@ -298,7 +298,7 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
             window.surface = remote.createWindow(task.id, task.generation, size.width, size.height,
                 appId, title, callback, configuration)
             window.size = WaylandTaskShell.Size(configuration[0].toInt(), configuration[1].toInt(),
-                configuration[2].toInt(), configuration[3].toInt(), configuration[4], configuration[5])
+                configuration[2].toInt(), configuration[3].toInt(), configuration[4], configuration[5], configuration[6].toInt())
             return window
         } catch (failure: Throwable) {
             try { window.close() } catch (cleanup: Throwable) { failure.addSuppressed(cleanup) }

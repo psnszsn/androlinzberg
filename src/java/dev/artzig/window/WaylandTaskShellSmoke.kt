@@ -256,8 +256,8 @@ object WaylandTaskShellSmoke {
         scaleAndroid.configurations.single().done(true)
         val scaleWindow = scaleDesktop.windows.single()
         val originalBounds = scaleWindow.commits.single().first
-        scaleWindow.events.configure(WaylandTaskShell.Size(100, 80, 150, 120, 1, 10))
-        scaleWindow.events.configure(WaylandTaskShell.Size(100, 80, 200, 160, 2, 11))
+        scaleWindow.events.configure(WaylandTaskShell.Size(100, 80, 150, 120, 1, 10, 180))
+        scaleWindow.events.configure(WaylandTaskShell.Size(100, 80, 200, 160, 2, 11, 240))
         scaleWindow.events.configure(WaylandTaskShell.Size(100, 80, 100, 80, 3, 12))
         check(scaleAndroid.configurations.size == 2)
         scaleAndroid.configurations[1].done(true)
@@ -267,8 +267,44 @@ object WaylandTaskShellSmoke {
             coalesced.change.after == originalBounds)
         coalesced.done(true)
         check(scaleWindow.commits.last().second.configurationGeneration == 3L)
-        check(scaleWindow.commits.all { it.first == originalBounds })
+        check(scaleWindow.commits[1].first == originalBounds.copy(width = 150, height = 120))
+        check(scaleWindow.commits.last().first == originalBounds)
+        scaleWindow.events.configure(WaylandTaskShell.Size(100, 80, 200, 160, 4, 13, 240))
+        scaleAndroid.configurations.last().done(true)
+        check(scaleWindow.commits.last().first == originalBounds.copy(width = 200, height = 160))
         scaleShell.close()
+        val fixedAndroid = Android()
+        val fixedDesktop = Desktop()
+        val fixedTask = task(32, resizable = false)
+        fixedAndroid.initial = listOf(fixedTask)
+        val fixedShell = WaylandTaskShell(fixedAndroid, fixedDesktop, TaskGeometry(300, 300))
+        fixedShell.start()
+        fixedAndroid.configurations.single().done(true)
+        val fixedWindow = fixedDesktop.windows.single()
+        for (scale in listOf(180, 240, 120)) {
+            fixedWindow.events.configure(WaylandTaskShell.Size(100, 80, 100 * scale / 120,
+                80 * scale / 120, scale120 = scale))
+            val pending = fixedAndroid.configurations.last()
+            check(pending.change.after.width == 100 * scale / 120 &&
+                pending.change.after.height == 80 * scale / 120)
+            pending.done(true)
+            // Android reports pixel bounds back after every accepted override.
+            fixedAndroid.events.changed(fixedTask.info.copy(width = pending.change.after.width,
+                height = pending.change.after.height))
+        }
+        // A subsequent Android-driven orientation/size change still wins for
+        // an unresizable task, including when the next output has higher density.
+        fixedAndroid.events.changed(fixedTask.info.copy(width = 80, height = 100))
+        fixedAndroid.configurations.last().let {
+            check(it.change.after.width == 80 && it.change.after.height == 100)
+            it.done(true)
+        }
+        fixedWindow.events.configure(WaylandTaskShell.Size(100, 80, 150, 120, scale120 = 180))
+        fixedAndroid.configurations.last().let {
+            check(it.change.after.width == 120 && it.change.after.height == 150)
+            it.done(true)
+        }
+        fixedShell.close()
         println("WaylandTaskShell: initial tasks, deduplication, generations, resize coalescing, Android close and cleanup passed")
     }
 }

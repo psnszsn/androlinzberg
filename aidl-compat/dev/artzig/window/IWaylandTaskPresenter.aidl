@@ -6,6 +6,7 @@ import dev.artzig.window.IWaylandTaskEvents;
 /** System-UID-only session presentation boundary. IDs include a task generation;
  * Android lifecycle and synthetic task bounds remain with the task organizer. */
 interface IWaylandTaskPresenter {
+    /** configuration: logical width/height, pixel width/height, generation, serial, scale in 120ths. */
     Surface createWindow(int taskId, long generation, int width, int height,
         String appId, String title, IWaylandTaskEvents events, out long[] configuration);
     void destroyWindow(int taskId, long generation);

@@ -264,7 +264,7 @@ const Server = struct {
                     // Cancel before the Android bounds transaction, including
                     // active gestures whose physical release arrives later.
                     try cancelInput(entry);
-                    try entry.events.configure(entry.key.id, entry.key.generation, size.width, size.height, size.buffer_width, size.buffer_height, size.generation, size.serial);
+                    try entry.events.configure(entry.key.id, entry.key.generation, size.width, size.height, size.buffer_width, size.buffer_height, size.generation, size.serial, @intCast(size.scale_120));
                 },
                 .suspended_changed => |suspended| {
                     entry.suspended = suspended;
@@ -685,7 +685,7 @@ const Server = struct {
         if (!dimension(args.width) or !dimension(args.height)) return error.InvalidSize;
         const app_id = try boundedText(arena, args.appId);
         const title = try boundedText(arena, args.title);
-        if (args.configuration_length != 6) return error.InvalidConfigurationArray;
+        if (args.configuration_length != 7) return error.InvalidConfigurationArray;
         var free: ?*?Entry = null;
         for (&self.entries) |*slot| {
             if (slot.*) |entry| {
@@ -701,7 +701,7 @@ const Server = struct {
         queue.pace_frames = true;
         errdefer queue.deinit();
         if (self.owner == null) try self.adoptOwner(args.events, request.pid);
-        const configuration = try arena.dupe(i64, &.{ window.width, window.height, window.bufferWidth(), window.bufferHeight(), window.configuration_generation, window.configure_serial });
+        const configuration = try arena.dupe(i64, &.{ window.width, window.height, window.bufferWidth(), window.bufferHeight(), window.configuration_generation, window.configure_serial, window.scale_120 });
         slot.* = .{ .key = key, .window = window, .queue = queue, .events = .{ .remote = args.events.remote.clone() } };
         return .{ ._result = .{ .queue = queue }, .configuration = configuration };
     }

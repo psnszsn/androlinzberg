@@ -301,6 +301,7 @@ pub const Event = union(enum) {
         height: i32,
         buffer_width: i32 = 0,
         buffer_height: i32 = 0,
+        scale_120: u32 = 120,
         generation: i64 = 0,
         serial: u32 = 0,
     },
@@ -1914,6 +1915,7 @@ pub const Window = struct {
             .height = self.height,
             .buffer_width = self.bufferWidth(),
             .buffer_height = self.bufferHeight(),
+            .scale_120 = self.scale_120,
             .generation = self.configuration_generation,
             .serial = self.configure_serial,
         } });

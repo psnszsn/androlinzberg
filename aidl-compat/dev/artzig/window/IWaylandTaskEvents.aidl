@@ -3,7 +3,7 @@ package dev.artzig.window;
 /** Private session shell callbacks, delivered on the shell's serial handler. */
 oneway interface IWaylandTaskEvents {
     void configure(int taskId, long generation, int width, int height,
-        int bufferWidth, int bufferHeight, long configurationGeneration, long serial);
+        int bufferWidth, int bufferHeight, long configurationGeneration, long serial, int scale120);
     void closeRequested(int taskId, long generation);
     void keyboardFocus(int taskId, long generation, boolean gained, in int[] heldScanCodes);
     void pointer(int taskId, long generation, int kind, int button, boolean pressed, float x, float y);

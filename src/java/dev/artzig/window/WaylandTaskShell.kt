@@ -18,11 +18,13 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
     data class Appeared<Token, Leash>(val info: Info<Token>, val leash: Leash)
     data class Size(val width: Int, val height: Int,
         val bufferWidth: Int = width, val bufferHeight: Int = height,
-        val configurationGeneration: Long = 0, val serial: Long = 0) {
+        val configurationGeneration: Long = 0, val serial: Long = 0,
+        val scale120: Int = 120) {
         init {
             require(width in 1..16384 && height in 1..16384 &&
                 bufferWidth in 1..16384 && bufferHeight in 1..16384)
             require(configurationGeneration >= 0 && serial in 0..0xffffffffL)
+            require(scale120 in 1..15360)
         }
     }
     interface Events<Token, Leash> {
@@ -64,6 +66,10 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
         fun rejected(reason: TaskGeometry.Rejection)
     }
     private inner class Entry(val key: TaskGeometry.Task, var info: Info<Token>, val leash: Leash) {
+        // Android owns fixed task dimensions; retain them in logical units so
+        // repeated output scale changes cannot multiply a previous override.
+        var fixedWidth = info.width
+        var fixedHeight = info.height
         var window: Window? = null
         var pending: TaskGeometry.Proposal.Change? = null
         var desired: Size? = null
@@ -181,7 +187,14 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
             // Stock ActivityStarter/LaunchParams can change a reused task's
             // bounds when another activity starts inside it. Reconcile through
             // the same WCT path; the compositor still owns the output size.
-            resize(entry, checkNotNull(entry.presentationSize))
+            val size = checkNotNull(entry.presentationSize)
+            if (!info.resizable && (bounds.width != info.width || bounds.height != info.height)) {
+                // Android may change a fixed task's size (for example orientation).
+                // Its reported bounds are pixels at the accepted task density.
+                entry.fixedWidth = ((info.width.toLong() * 120 + size.scale120 / 2) / size.scale120).toInt().coerceAtLeast(1)
+                entry.fixedHeight = ((info.height.toLong() * 120 + size.scale120 / 2) / size.scale120).toInt().coerceAtLeast(1)
+            }
+            resize(entry, size)
         }
     }
 
@@ -191,8 +204,12 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
         entry.desired = size
         val window = entry.window ?: return
         if (entry.pending != null) return // Coalesce a configure storm behind one Android sync.
-        val width = if (entry.info.resizable) size.width else entry.info.width
-        val height = if (entry.info.resizable) size.height else entry.info.height
+        // WM/HWUI must render at the output pixel size. Scaling a logical-size
+        // task only in SurfaceFlinger magnifies already-rasterized text.
+        val width = if (entry.info.resizable) size.bufferWidth
+            else ((entry.fixedWidth.toLong() * size.scale120 + 119) / 120).toInt()
+        val height = if (entry.info.resizable) size.bufferHeight
+            else ((entry.fixedHeight.toLong() * size.scale120 + 119) / 120).toInt()
         val proposal = geometry.prepare(entry.key, width, height)
         if (proposal is TaskGeometry.Proposal.Rejected) {
             entry.desired = null
