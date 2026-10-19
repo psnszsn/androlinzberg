@@ -1,11 +1,15 @@
 #pragma once
 #include <cerrno>
 #include <unistd.h>
-// This host glibc pidfd header omits its C++ linkage guard. Import the real
-// declarations as C before the original JNI includes the header again.
+// This host glibc pidfd header omits its C++ linkage guard and tests _PIDFD_H
+// without defining it. Import the real declarations as C and complete its
+// guard before the original JNI includes it again (2.44 adds pidfd_info).
 extern "C" {
 #include <sys/pidfd.h>
 }
+#ifndef _PIDFD_H
+#define _PIDFD_H 1
+#endif
 extern "C" int azk_process_uid_change(uid_t);
 extern "C" int azk_process_gid_change(gid_t);
 // Share libcore's immutable identity decision. Real namespace children still
