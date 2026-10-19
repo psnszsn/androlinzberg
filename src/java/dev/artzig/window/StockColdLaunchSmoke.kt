@@ -291,8 +291,12 @@ object StockColdLaunchSmoke {
         check(display.logicalWidth == TaskGeometry.DESKTOP_SIZE && display.logicalHeight == TaskGeometry.DESKTOP_SIZE)
         val physical = android.view.SurfaceControl.getDynamicDisplayInfo(
             com.android.server.display.DisplayControl.getPhysicalDisplayIds().single())
-        check(physical.supportedDisplayModes.single().width == 1280 &&
-            physical.supportedDisplayModes.single().height == 720) { "Synthetic metadata resized the physical framebuffer" }
+        // The physical mode covers task/cursor coordinates. FramebufferSurface's
+        // max_graphics properties independently bound the actual client buffer.
+        check(physical.supportedDisplayModes.single().width == TaskGeometry.DESKTOP_SIZE &&
+            physical.supportedDisplayModes.single().height == TaskGeometry.DESKTOP_SIZE) {
+            "Composer mode does not cover the task coordinate plane"
+        }
         val task = applicationTasks().single()
         val inputDevices = android.hardware.input.IInputManager.Stub.asInterface(
             android.os.ServiceManager.getService(android.content.Context.INPUT_SERVICE))
