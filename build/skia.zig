@@ -99,9 +99,9 @@ pub fn build(b: *std.Build, o: Options) Result {
         for (g.files) |file| {
             const is_c = std.mem.endsWith(u8, file, ".c");
             const compile = b.addSystemCommand(&.{
-                b.graph.zig_exe,                                           if (is_c) "cc" else "c++", "-c", "-target",
-                o.target.query.zigTriple(b.allocator) catch @panic("oom"), "-O3",
+                b.graph.zig_exe, if (is_c) "cc" else "c++", "-c", "-O3",
             });
+            @import("cc_target.zig").add(b, compile, o.target);
             compile.step.name = b.fmt("compile Skia {s}", .{file});
             compile.addArgs(if (is_c) cflags.items else flags.items);
             if (std.mem.eql(u8, file, "src/gpu/ganesh/vk/GrVkCaps.cpp") or

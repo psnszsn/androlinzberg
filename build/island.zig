@@ -270,9 +270,8 @@ pub fn build(b: *std.Build, o: Options) Result {
                 const compiler = if (language == .cpp) "c++" else "cc";
                 const compile = self.b.addSystemCommand(&.{ self.b.graph.zig_exe, compiler, "-c", "-fPIC" });
                 compile.step.name = self.b.fmt("compile {s}", .{file});
+                @import("cc_target.zig").add(self.b, compile, self.target);
                 compile.addArgs(&.{
-                    "-target",
-                    self.target.query.zigTriple(self.b.allocator) catch @panic("oom"),
                     switch (self.optimize) {
                         .Debug => "-O0",
                         .ReleaseSafe => "-O2",
@@ -1081,6 +1080,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         b.graph.zig_exe,                      "c++",                           "-fuse-ld=bfd", "-shared", "-Wl,-z,defs", "-Wl,--gc-sections",
         "-Wl,-soname,libandroid_platform.so", "-Wl,-rpath,$ORIGIN/../lib/art",
     });
+    @import("cc_target.zig").add(b, link, o.target);
     link.step.name = "link libandroid_platform.so";
     link.step.max_rss = 16 * 1024 * 1024 * 1024;
     // The Nix development shell injects every build input, plus outputs/out,
@@ -1145,6 +1145,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     // Original libpdfclient is a separate JNI library with private PDFium
     // globals, preserving the original jni.lds lifetime boundary.
     const pdf_link = b.addSystemCommand(&.{ b.graph.zig_exe, "c++", "-fuse-ld=bfd", "-shared", "-Wl,-z,defs", "-Wl,--gc-sections", "-Wl,-soname,libpdfclient.so", "-Wl,-rpath,$ORIGIN", "-Wl,-rpath,$ORIGIN/..", "-Wl,--wrap=fopen,--wrap=stat,--wrap=opendir,--wrap=FT_Open_Face" });
+    @import("cc_target.zig").add(b, pdf_link, o.target);
     pdf_link.step.name = "link original libpdfclient.so";
     pdf_link.removeEnvironmentVariable("NIX_LDFLAGS");
     pdf_link.addPrefixedFileArg("-Wl,--version-script,", pdf_root.path(b, "jni.lds"));

@@ -80,6 +80,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         b.graph.zig_exe,            "c++",                           "-shared",             "-fuse-ld=bfd", "-Wl,-z,defs",
         "-Wl,-soname,libidmap2.so", "-Wl,-rpath,$ORIGIN:$ORIGIN/..", "-Wl,--whole-archive",
     });
+    @import("cc_target.zig").add(b, link, o.target);
     link.removeEnvironmentVariable("NIX_LDFLAGS");
     link.addArtifactArg(library);
     link.addArg("-Wl,--no-whole-archive");
