@@ -46,6 +46,7 @@
             android:authorities="dev.artzig.fixtures.windows.retry" />
         <service android:name=".RetryProcessService" android:process=":retry" android:exported="false" />
         <activity android:name=".SecondActivity" android:resizeableActivity="true" />
+        <activity android:name=".CursorEdgesActivity" android:resizeableActivity="true" />
         <activity android:name=".IndependentTaskActivity" android:resizeableActivity="true"
             android:taskAffinity="dev.artzig.fixtures.windows.independent" />
         <activity android:name=".HandledResizeActivity" android:resizeableActivity="true"

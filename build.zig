@@ -1804,7 +1804,7 @@ pub fn build(b: *std.Build) void {
     inline for (.{
         .{ .step = "stock-clipboard-test", .directory = "stock-clipboard", .environment = "AZK_TEST_CLIPBOARD", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopClipboardUiTest#representationsCrossTheDesktopSelectionInBothDirections"} },
         .{ .step = "stock-drag-test", .directory = "stock-drag", .environment = "AZK_TEST_CLIPBOARD", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopDragUiTest#dragsCrossTasksAndTheDesktopInBothDirections"} },
-        .{ .step = "stock-desktop-launcher-test", .directory = "stock-desktop-launcher", .environment = "", .tests = &[_][]const u8{ "dev.artzig.uitest.host.DesktopLauncherUiTest#taskWindowsTakeDesktopInputIndependently", "dev.artzig.uitest.host.DesktopLauncherUiTest#fractionalScalingRendersAtOutputResolution" } },
+        .{ .step = "stock-desktop-launcher-test", .directory = "stock-desktop-launcher", .environment = "", .tests = &[_][]const u8{ "dev.artzig.uitest.host.DesktopLauncherUiTest#taskWindowsTakeDesktopInputIndependently", "dev.artzig.uitest.host.DesktopLauncherUiTest#fractionalScalingRendersAtOutputResolution", "dev.artzig.uitest.host.DesktopLauncherUiTest#cursorRemainsVisibleAtScaledWindowEdges" } },
         .{ .step = "stock-video-test", .directory = "stock-video", .environment = "", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopVideoUiTest#decodedFramesFollowTheirSurface"} },
         .{ .step = "stock-ime-test", .directory = "stock-ime", .environment = "AZK_TEST_IME", .tests = &[_][]const u8{"dev.artzig.uitest.host.DesktopImeUiTest#unicodeCompositionSurvivesFocusAndProtocolChanges"} },
     }) |scenario| {

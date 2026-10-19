@@ -16,6 +16,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -270,9 +271,12 @@ public:
       return Error::BAD_PARAMETER;
     std::lock_guard lock(targetMutex_);
     auto buffer = target ? target : targets_[slot];
+    // FramebufferSurface applies max_graphics_width/height independently of
+    // the display mode. A smaller client target still covers the whole mode;
+    // the host consumes its fence without scanning its pixels out.
     if (!buffer || buffer->initCheck() != OK ||
-        buffer->getWidth() != uint32_t(width_) ||
-        buffer->getHeight() != uint32_t(height_))
+        buffer->getWidth() == 0 || buffer->getWidth() > uint32_t(width_) ||
+        buffer->getHeight() == 0 || buffer->getHeight() > uint32_t(height_))
       return Error::BAD_PARAMETER;
     if (buffer->getUsage() & GraphicBuffer::USAGE_PROTECTED)
       return Error::UNSUPPORTED;
@@ -859,7 +863,15 @@ std::unique_ptr<Composer> createHostComposer(int32_t width, int32_t height,
 std::unique_ptr<Composer> Composer::create(const std::string &serviceName) {
   LOG_ALWAYS_FATAL_IF(serviceName != "default" && serviceName != "host",
                       "Unsupported host composer %s", serviceName.c_str());
-  auto composer = createHostComposer(1280, 720, 16666667);
+  // SurfaceFlinger clips output layers, including the cursor, to this mode.
+  // Task/input coordinates occupy TaskGeometry.DESKTOP_SIZE, so the desktop
+  // mode must cover that same plane. The stock max_graphics_width/height
+  // properties bound the primary framebuffer independently; task virtual
+  // displays still render at their own full output resolution.
+  const char *taskWindows = std::getenv("AZK_TASK_WINDOWS");
+  const bool desktop = taskWindows && std::strcmp(taskWindows, "1") == 0;
+  auto composer = createHostComposer(desktop ? 16384 : 1280,
+                                     desktop ? 16384 : 720, 16666667);
   LOG_ALWAYS_FATAL_IF(!composer, "Cannot create host composer clock");
   return composer;
 }

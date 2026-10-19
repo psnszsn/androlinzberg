@@ -242,6 +242,28 @@ int main() {
            Error::NONE);
     composer.reset();
   }
+  {
+    // The synthetic desktop's mode determines layer visibility; the stock
+    // max_graphics properties keep its actual client framebuffer small.
+    auto composer = createHostComposer(16384, 16384, 5'000'000);
+    assert(composer);
+    Layer layer;
+    assert(composer->createLayer(1, &layer) == Error::NONE);
+    GpuBufferRenderer renderer;
+    auto buffer = sp<GraphicBuffer>::make(720, 720, PIXEL_FORMAT_RGBA_8888, 1,
+        GRALLOC_USAGE_HW_RENDER | GRALLOC_USAGE_HW_TEXTURE, "BoundedDesktopTarget");
+    assert(buffer->initCheck() == OK);
+    auto acquire = renderer.render(buffer, 0xff123456);
+    assert(acquire->isValid());
+    assert(composer->setClientTarget(1, 0, buffer, acquire->dup(), Dataspace::SRGB,
+                                     {}, 1) == Error::NONE);
+    uint32_t count = 0, requests = 0;
+    assert(composer->validateDisplay(1, 0, 5'000'000, &count, &requests) == Error::NONE);
+    int completed = -1;
+    assert(composer->presentDisplay(1, &completed) == Error::NONE && completed >= 0);
+    assert(sp<Fence>::make(completed)->wait(5000) == OK);
+    assert(composer->setClientTarget(1, 0, nullptr, -1, Dataspace::SRGB, {}, 1) == Error::NONE);
+  }
   assert(azk_graphics_live_buffers() == baseline);
   std::cout << "Host composer: client validation, bounded layers, GPU "
                "fence/slot ownership, reentrant vsync and shutdown passed\n";

@@ -55,20 +55,17 @@ class SurfaceFlingerDisplayOutput private constructor() : HostedLogicalDisplay.O
     }
 
     companion object {
-        /** LogicalDisplay.updateLocked normally obtains dimensions and modes from
-         * a DisplayDevice. Our desktop device is a synthetic coordinate plane;
-         * SF's bounded primary output only supplies timing/color capabilities.
-         * Private task outputs allocate their own buffers, never a plane-sized
-         * framebuffer. Publishing this before WMS starts avoids a global resize
-         * of already running applications.
+        /** The composer's real mode must cover the synthetic task plane. Merely
+         * advertising a larger mode to Android leaves SF clipping cursor layers
+         * at the smaller physical boundary. Stock FramebufferSurface separately
+         * caps primary client buffers; task virtual displays keep their own size.
          */
-        internal fun taskDisplayInfo(compositor: DisplayInfo): DisplayInfo = DisplayInfo(compositor).apply {
-            logicalWidth = TaskGeometry.DESKTOP_SIZE; appWidth = logicalWidth
-            logicalHeight = TaskGeometry.DESKTOP_SIZE; appHeight = logicalHeight
-            supportedModes = compositor.supportedModes.map { mode ->
-                Display.Mode(mode.modeId, logicalWidth, logicalHeight, mode.refreshRate,
-                    mode.vsyncRate, mode.alternativeRefreshRates, mode.supportedHdrTypes)
-            }.toTypedArray()
+        internal fun taskDisplayInfo(compositor: DisplayInfo): DisplayInfo {
+            check(compositor.logicalWidth == TaskGeometry.DESKTOP_SIZE &&
+                compositor.logicalHeight == TaskGeometry.DESKTOP_SIZE &&
+                compositor.supportedModes.all { it.physicalWidth == TaskGeometry.DESKTOP_SIZE &&
+                    it.physicalHeight == TaskGeometry.DESKTOP_SIZE }) { "Composer does not cover the task coordinate plane" }
+            return DisplayInfo(compositor)
         }
 
         fun createService(context: Context, handler: Handler): HostedSessionDisplayService {

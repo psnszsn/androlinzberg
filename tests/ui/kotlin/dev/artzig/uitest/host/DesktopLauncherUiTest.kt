@@ -178,6 +178,41 @@ class DesktopLauncherUiTest {
 
     private fun windows() = UiTest.instrumentation.uiAutomation.windows.filter { it.taskId > 0 }
 
+    @Test
+    fun cursorRemainsVisibleAtScaledWindowEdges() {
+        click(label("show cursor edges"))
+        expectVisible("Corner clicks: 0")
+        HostSession.awaitLog("Framebuffer size has been limited to [720x720] from [16384x16384]")
+        val output = checkNotNull(System.getenv("AZK_HEADLESS_OUTPUT"))
+        val desktop = HostSession.capture()
+        var clicks = 0
+        try {
+            for (scale in listOf(1.25, 1.5, 2.0, 2.5, 1.0)) {
+                HostSession.run("wlr-randr", "--output", output, "--custom-mode",
+                    "${(desktop.width * scale).toInt()}x${(desktop.height * scale).toInt()}", "--scale", scale.toString())
+                val deadline = SystemClock.uptimeMillis() + 30_000
+                while (WaylandSeat.window().geometry.let { it[2] != (640 * scale).toInt() || it[3] != (480 * scale).toInt() }) {
+                    check(SystemClock.uptimeMillis() < deadline) { "task did not reach scale $scale" }
+                    SystemClock.sleep(50)
+                }
+                for (corner in listOf("top left", "bottom left", "bottom right", "top right")) {
+                    val point = waitFor(By.desc("Cursor $corner")).visibleCenter
+                    WaylandSeat.tap(point)
+                    expectVisible("Corner clicks: ${++clicks}")
+                    // This task is at the desktop origin; grim -s 1 captures
+                    // logical Wayland coordinates, including the cursor plane.
+                    try {
+                        awaitCursor((point.x / scale).toInt() - 2, (point.y / scale).toInt() - 3)
+                    } finally {
+                        HostSession.run("grim", "-c", "-s", "1", File(HostSession.artifacts, "cursor-$scale-${corner.replace(' ', '-')}.png").path)
+                    }
+                }
+            }
+        } finally {
+            HostSession.run("wlr-randr", "--output", output, "--custom-mode", "${desktop.width}x${desktop.height}", "--scale", "1")
+        }
+    }
+
     private fun awaitWindowTitles(expected: List<Pair<Int, String>>): List<Pair<Int, String?>> {
         val deadline = SystemClock.uptimeMillis() + 30_000
         while (true) {
@@ -216,7 +251,7 @@ class DesktopLauncherUiTest {
     private fun awaitCursor(x: Int, y: Int) {
         val deadline = SystemClock.uptimeMillis() + 10_000
         while (true) {
-            val capture = HostSession.Capture(HostSession.run("grim", "-c", "-t", "ppm", "-"))
+            val capture = HostSession.Capture(HostSession.run("grim", "-c", "-s", "1", "-t", "ppm", "-"))
             val colors = listOf(capture.pixel(x + 8, y + 8), capture.pixel(x + 24, y + 8))
             if (colors == listOf(listOf(255, 0, 255), listOf(0, 255, 255))) return
             check(SystemClock.uptimeMillis() < deadline) { "the custom pointer icon or its hotspot differ: $colors" }

@@ -56,6 +56,7 @@ open class WindowFixtureActivity : Activity() {
             pointerIcon = android.view.PointerIcon.create(bitmap, 2f, 3f)
         }
         button("Next activity in this task") { startActivity(Intent(this, SecondActivity::class.java)) }
+        button("Show cursor edges") { startActivity(Intent(this, CursorEdgesActivity::class.java)) }
         button("Open independent task") {
             startActivity(Intent(this, IndependentTaskActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK))
@@ -139,5 +140,38 @@ open class WindowFixtureActivity : Activity() {
 }
 
 class SecondActivity : WindowFixtureActivity()
+
+/** Corner targets exercise cursor composition independently of the content's scroll position. */
+class CursorEdgesActivity : Activity() {
+    private var clicks = 0
+    override fun onCreate(state: Bundle?) {
+        super.onCreate(state)
+        clicks = state?.getInt("clicks") ?: 0
+        val content = android.widget.FrameLayout(this)
+        val status = TextView(this).apply { text = "Corner clicks: $clicks" }
+        content.addView(status, android.widget.FrameLayout.LayoutParams(-2, -2, android.view.Gravity.CENTER))
+        val bitmap = android.graphics.Bitmap.createBitmap(32, 32, android.graphics.Bitmap.Config.ARGB_8888)
+        bitmap.setPixels(IntArray(32 * 32) { if (it % 32 < 16) Color.MAGENTA else Color.CYAN }, 0, 32, 0, 0, 32, 32)
+        val icon = android.view.PointerIcon.create(bitmap, 2f, 3f)
+        for ((name, gravity) in listOf(
+            "top left" to (android.view.Gravity.TOP or android.view.Gravity.LEFT),
+            "bottom left" to (android.view.Gravity.BOTTOM or android.view.Gravity.LEFT),
+            "bottom right" to (android.view.Gravity.BOTTOM or android.view.Gravity.RIGHT),
+            "top right" to (android.view.Gravity.TOP or android.view.Gravity.RIGHT))) {
+            content.addView(Button(this).apply {
+                text = name
+                contentDescription = "Cursor $name"
+                pointerIcon = icon
+                setPadding(0, 0, 0, 0)
+                setOnClickListener { status.text = "Corner clicks: ${++clicks}" }
+            }, android.widget.FrameLayout.LayoutParams(120, 48, gravity))
+        }
+        setContentView(content)
+    }
+    override fun onSaveInstanceState(state: Bundle) {
+        state.putInt("clicks", clicks)
+        super.onSaveInstanceState(state)
+    }
+}
 class IndependentTaskActivity : WindowFixtureActivity()
 class HandledResizeActivity : WindowFixtureActivity()

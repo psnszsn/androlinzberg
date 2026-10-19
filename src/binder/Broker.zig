@@ -335,6 +335,11 @@ fn seedProperties(props: *prop_area.Area) prop_area.Error!void {
         .{ "ro.build.fingerprint", "artzig/artzig:16" },
         // Logical host-composer display; task outputs apply their own scale.
         .{ "ro.sf.lcd_density", "160" },
+        // The primary composer covers the synthetic desktop for input/cursor
+        // visibility, but has no physical scanout. Pinned FramebufferSurface
+        // caps its client target without limiting task virtual displays.
+        .{ "ro.surface_flinger.max_graphics_width", "1280" },
+        .{ "ro.surface_flinger.max_graphics_height", "720" },
         .{ "ro.product.brand", "artzig" },
         .{ "ro.product.device", "artzig" },
         .{ "ro.product.model", "artzig" },

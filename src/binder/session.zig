@@ -293,6 +293,10 @@ pub const Session = struct {
         try env.put(cookie_env, s.cookie);
         try env.put(system_cookie_env, s.system_cookie);
         try env.put(prop_area_env, s.prop_area_path);
+        // APK launches enable the presenter even when the invoking environment
+        // has no AZK_TASK_WINDOWS. SF and system_server must use that same
+        // resolved session mode for their display/input coordinate plane.
+        try env.put("AZK_TASK_WINDOWS", if (options.task_presenter_exe != null) "1" else "0");
         s.surfaceflinger = try spawnService(s.gpa, s.io, .{
             .argv = &.{exe},
             .environ_map = &env,
@@ -407,7 +411,7 @@ pub const Session = struct {
         }
         try child_env.put("AZK_LAUNCHER_EXE", options.launcher_exe);
         if (options.app_exe) |exe| try child_env.put("AZK_APP_PROCESS_EXE", exe);
-        if (options.task_presenter_exe != null) try child_env.put("AZK_TASK_WINDOWS", "1");
+        try child_env.put("AZK_TASK_WINDOWS", if (options.task_presenter_exe != null) "1" else "0");
         const argv = try s.gpa.alloc([]const u8, options.system_args.len + 1);
         defer s.gpa.free(argv);
         argv[0] = options.system_exe orelse options.launcher_exe;

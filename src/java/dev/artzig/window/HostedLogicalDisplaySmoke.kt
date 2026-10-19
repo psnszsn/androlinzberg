@@ -97,7 +97,13 @@ object HostedLogicalDisplaySmoke {
             display.setDisplayProperties(0, false, false, false)
             check(!display.isMinimalPostProcessingRequested() && traversalRequests == previousRequests + 1)
         }
-        val desktopInfo = SurfaceFlingerDisplayOutput.taskDisplayInfo(base)
+        check(runCatching { SurfaceFlingerDisplayOutput.taskDisplayInfo(base) }.isFailure)
+        val desktopMode = DisplayInfo(base).apply {
+            logicalWidth = TaskGeometry.DESKTOP_SIZE; appWidth = logicalWidth
+            logicalHeight = TaskGeometry.DESKTOP_SIZE; appHeight = logicalHeight
+            supportedModes = arrayOf(Display.Mode(1, logicalWidth, logicalHeight, 60f))
+        }
+        val desktopInfo = SurfaceFlingerDisplayOutput.taskDisplayInfo(desktopMode)
         check(base.logicalWidth == 1280 && base.supportedModes.single().physicalWidth == 1280)
         check(desktopInfo.logicalWidth == TaskGeometry.DESKTOP_SIZE &&
             desktopInfo.logicalHeight == TaskGeometry.DESKTOP_SIZE)
@@ -108,8 +114,8 @@ object HostedLogicalDisplaySmoke {
         val desktop = HostedLogicalDisplay(desktopInfo, object : HostedLogicalDisplay.Output {
             override fun configure(transaction: SurfaceControl.Transaction,
                 projection: HostedLogicalDisplay.Projection) {
-                // Identity input geometry even though the physical compositor
-                // target remains bounded. Task output projections are separate.
+                // Identity input geometry covers the composer's physical mode.
+                // Its framebuffer size and task output projections are separate.
                 check(projection.viewport == Rect(0, 0, TaskGeometry.DESKTOP_SIZE, TaskGeometry.DESKTOP_SIZE))
                 check(projection.frame == projection.viewport && projection.rotation == 0)
             }
