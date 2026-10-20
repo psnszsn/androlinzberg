@@ -9,6 +9,21 @@ import org.junit.Test
 
 class BootServicesUiTest {
     @Test
+    fun audioModeIsNormalWithoutACallOwner() {
+        UiApp.expectVisible("Counter: 0")
+        val audio = UiTest.instrumentation.context.getSystemService(android.media.AudioManager::class.java)
+        assertNotNull("audio service", audio)
+        assertEquals("No application owns a call mode", android.media.AudioManager.MODE_NORMAL, audio.mode)
+        UiApp.click("INCREMENT COUNTER")
+        UiApp.expectVisible("Counter: 1")
+        UiTest.instrumentation.uiAutomation.syncInputTransactions()
+        val artifacts = java.io.File(checkNotNull(System.getenv("AZK_TEST_ARTIFACTS")))
+        java.io.File(artifacts, "screen.png").outputStream().use {
+            UiApp.screenshot().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+        }
+    }
+
+    @Test
     fun roleAndRestrictionsServicesFollowStockContracts() {
         UiApp.expectVisible("Counter: 0")
         // The inspector has Android's shell UID. Restrictions are readable by

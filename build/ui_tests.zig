@@ -36,8 +36,10 @@ pub const sources = [_][]const u8{
 /// the launch size and headless output mode of that test's session.
 pub const tests = [_][]const u8{
     "dev.artzig.uitest.DnsResolverUiTest#rawQueriesReturnDnsPackets",
+    "dev.artzig.uitest.DnsResolverUiTest#hostnameQueriesReturnAddresses",
     "dev.artzig.uitest.DnsResolverUiTest#nameQueriesPreserveNxDomain",
     "dev.artzig.uitest.BootServicesUiTest#publishesAndroidBootCompletion",
+    "dev.artzig.uitest.BootServicesUiTest#audioModeIsNormalWithoutACallOwner",
     "dev.artzig.uitest.BootServicesUiTest#applicationLocalesRoundTrip",
     "dev.artzig.uitest.BootServicesUiTest#roleAndRestrictionsServicesFollowStockContracts",
     "dev.artzig.uitest.BootServicesUiTest#homeResolvesAndAppCanResume",

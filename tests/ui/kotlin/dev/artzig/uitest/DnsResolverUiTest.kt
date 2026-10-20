@@ -12,6 +12,17 @@ import org.junit.Test
 
 class DnsResolverUiTest {
     @Test
+    fun hostnameQueriesReturnAddresses() {
+        UiApp.expectVisible("Counter: 0")
+        val addresses = java.net.InetAddress.getAllByName("praznet.com")
+        assertTrue("Host resolver returns addresses", addresses.isNotEmpty())
+        for (address in addresses) {
+            assertTrue("IPv4 or IPv6 address", address.address.size == 4 || address.address.size == 16)
+            println("DnsResolverUiTest: praznet.com -> ${address.hostAddress}")
+        }
+    }
+
+    @Test
     fun nameQueriesPreserveNxDomain() {
         UiApp.expectVisible("Counter: 0")
         val result = CompletableFuture<Pair<ByteArray, Int>>()

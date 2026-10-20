@@ -53,6 +53,12 @@ internal class HostedAudioService(private val enforcer: PermissionEnforcer, priv
     override fun getNativeInterface(): IAudioManagerNative = native
     override fun isVolumeFixed(): Boolean = true
 
+    // Pinned AudioService.getMode returns MODE_NORMAL when its mode-owner stack
+    // is empty. setMode remains unsupported here, so no caller can own a mode.
+    // Stock AudioService replacement is blocked by SoundEffectsHelper's SoundPool
+    // JNI/backend, which is not yet vendored or wired (aosp-closure.py).
+    override fun getMode(): Int = AudioSystem.MODE_NORMAL
+
     // Pinned AudioService's navigation/home effect switches start disabled and
     // retain the caller's setting. Its full AudioPolicy/SoundPool service cannot
     // run here; preserve the disabled SOUND_EFFECTS_ENABLED early return before
