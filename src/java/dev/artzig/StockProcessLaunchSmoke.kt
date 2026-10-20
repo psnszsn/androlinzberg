@@ -111,6 +111,15 @@ internal object StockProcessLaunchSmoke {
 object StockProcessLaunchEntry {
     @JvmStatic fun main(arguments: Array<String>) {
         val uid = Process.myUid()
+        if (Process.isIsolated()) {
+            val update = checkNotNull(android.webkit.IWebViewUpdateService.Stub.asInterface(
+                ServiceManager.getService(android.content.Context.WEBVIEW_UPDATE_SERVICE))) {
+                "Isolated WebView child cannot find its update service"
+            }
+            val provider = update.waitForAndGetProvider()
+            check(provider.status == android.webkit.WebViewFactory.LIBLOAD_SUCCESS)
+            check(provider.packageInfo?.applicationInfo?.sourceDir == arguments[3])
+        }
         val status = java.io.File("/proc/self/status").inputStream().bufferedReader().use { it.readLines() }
         fun kernelId(name: String) = status.single { it.startsWith("$name:") }
             .substringAfter(':').trim().split(Regex("\\s+")).first().toInt()

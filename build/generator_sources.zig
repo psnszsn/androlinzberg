@@ -204,7 +204,7 @@ pub const Logtags = struct { input: SourcePath, output: []const u8 };
 // Pinned bp2a inherits bp1a RELEASE_ACONFIG_FLAG_DEFAULT_PERMISSION=READ_ONLY.
 // Explicit release values can still grant READ_WRITE; do not invent runtime DeviceConfig
 // dependencies for flags the platform generates as read-only before Application creation.
-pub const Aconfig = struct { package: []const u8, container: []const u8, source: Source, declarations: []const []const u8, values: []const []const u8 = &.{}, cpp_header: bool = false, cpp_source: bool = false, fixed_disabled_flags: []const []const u8 = &.{}, fixed_enabled_flags: []const []const u8 = &.{}, default_permission: enum { read_write, read_only } = .read_only, mode: enum { production, force_read_only } = .production };
+pub const Aconfig = struct { java_relocation: ?struct { package: []const u8, rule: []const u8 } = null, package: []const u8, container: []const u8, source: Source, declarations: []const []const u8, values: []const []const u8 = &.{}, cpp_header: bool = false, cpp_source: bool = false, fixed_disabled_flags: []const []const u8 = &.{}, fixed_enabled_flags: []const []const u8 = &.{}, default_permission: enum { read_write, read_only } = .read_only, mode: enum { production, force_read_only } = .production };
 pub const Sysprop = struct { scope: []const u8, input: SourcePath };
 pub const HidlLanguage = enum { java, java_constants };
 pub const Hidl = struct {
@@ -1509,6 +1509,8 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/hdmi/IHdmiVendorCommandListener.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/incremental/IncrementalFileSystemControlParcel.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/webkit/IWebViewUpdateService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/quickaccesswallet/IQuickAccessWalletServiceCallbacks.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/quickaccesswallet/IQuickAccessWalletService.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/ISensorPrivacyListener.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/ISensorPrivacyManager.aidl" },
     .{ .source = .aosp, .path = "system/vold/binder/android/os/IVold.aidl" },
@@ -2840,6 +2842,7 @@ pub const logtags = [_]Logtags{
 };
 
 pub const aconfig = [_]Aconfig{
+    .{ .package = "android.service.quickaccesswallet", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/service/quickaccesswallet/flags.aconfig"} },
     .{ .package = "android.graphics.pdf.flags", .container = "com.android.mediaprovider", .source = .aosp, .declarations = &.{"packages/providers/MediaProvider/pdf/framework/pdf_viewer_flags.aconfig"} },
     .{ .package = "android.graphics.pdf.flags.readonly", .mode = .force_read_only, .container = "com.android.mediaprovider", .source = .aosp, .declarations = &.{"packages/providers/MediaProvider/pdf/framework/pdf_viewer_flags_readonly.aconfig"} },
     .{ .package = "com.android.hardware.libsensor.flags", .cpp_source = true, .container = "system", .source = .aosp, .declarations = &.{"frameworks/native/libs/sensor/libsensor_flags.aconfig"} },
@@ -2896,17 +2899,17 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.provider.flags", .container = "com.android.configinfrastructure", .source = .aosp, .declarations = &.{"packages/modules/ConfigInfrastructure/framework/flags.aconfig"} },
     .{ .package = "com.android.appsearch.flags", .container = "com.android.appsearch", .source = .aosp, .declarations = &.{"packages/modules/AppSearch/flags/appsearch.aconfig"} },
     .{ .package = "com.android.net.flags", .container = "com.android.tethering", .source = .aosp, .declarations = &.{"packages/modules/Connectivity/common/flags.aconfig"} },
-    .{ .package = "com.android.permission.flags", .container = "com.android.permission", .source = .aosp, .declarations = &.{"packages/modules/Permission/flags/flags.aconfig"} },
+    .{ .package = "com.android.permission.flags", .java_relocation = .{ .package = "com.android.permission.jarjar.com.android.permission.flags", .rule = "packages/modules/Permission/service/jarjar-rules.txt" }, .container = "com.android.permission", .source = .aosp, .declarations = &.{"packages/modules/Permission/flags/flags.aconfig"} },
     .{ .package = "com.android.server.telecom.flags", .container = "system", .source = .aosp, .declarations = &.{ "packages/services/Telecomm/flags/telecom_anomaly_report_flags.aconfig", "packages/services/Telecomm/flags/telecom_api_flags.aconfig", "packages/services/Telecomm/flags/telecom_bluetoothdevicemanager_flags.aconfig", "packages/services/Telecomm/flags/telecom_bluetoothroutemanager_flags.aconfig", "packages/services/Telecomm/flags/telecom_broadcast_flags.aconfig", "packages/services/Telecomm/flags/telecom_call_filtering_flags.aconfig", "packages/services/Telecomm/flags/telecom_call_flags.aconfig", "packages/services/Telecomm/flags/telecom_callaudiomodestatemachine_flags.aconfig", "packages/services/Telecomm/flags/telecom_callaudioroutestatemachine_flags.aconfig", "packages/services/Telecomm/flags/telecom_calllog_flags.aconfig", "packages/services/Telecomm/flags/telecom_calls_manager_flags.aconfig", "packages/services/Telecomm/flags/telecom_connection_service_wrapper_flags.aconfig", "packages/services/Telecomm/flags/telecom_default_phone_account_flags.aconfig", "packages/services/Telecomm/flags/telecom_headless_system_user_mode.aconfig", "packages/services/Telecomm/flags/telecom_incallservice_flags.aconfig", "packages/services/Telecomm/flags/telecom_metrics_flags.aconfig", "packages/services/Telecomm/flags/telecom_non_critical_security_flags.aconfig", "packages/services/Telecomm/flags/telecom_profile_user_flags.aconfig", "packages/services/Telecomm/flags/telecom_remote_connection_service.aconfig", "packages/services/Telecomm/flags/telecom_resolve_hidden_dependencies.aconfig", "packages/services/Telecomm/flags/telecom_ringer_flag_declarations.aconfig", "packages/services/Telecomm/flags/telecom_session_flags.aconfig", "packages/services/Telecomm/flags/telecom_voip_flags.aconfig", "packages/services/Telecomm/flags/telecom_work_profile_flags.aconfig" } },
     .{ .package = "android.app", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/core/java/android/app/activity_manager.aconfig", "frameworks/base/core/java/android/app/background_install_control_manager.aconfig", "frameworks/base/core/java/android/app/grammatical_inflection_manager.aconfig", "frameworks/base/core/java/android/app/keyguard.aconfig", "frameworks/base/core/java/android/app/metrics.aconfig", "frameworks/base/core/java/android/app/multitasking.aconfig", "frameworks/base/core/java/android/app/network-policy.aconfig", "frameworks/base/core/java/android/app/notification.aconfig", "frameworks/base/core/java/android/app/performance.aconfig", "frameworks/base/core/java/android/app/pinner-client.aconfig", "frameworks/base/core/java/android/app/ui_mode_manager.aconfig", "frameworks/base/core/java/android/app/wallpaper.aconfig" } },
-    .{ .package = "android.app.admin.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/admin/flags/flags.aconfig"} },
-    .{ .package = "android.app.appfunctions.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/appfunctions/flags/flags.aconfig"} },
+    .{ .package = "android.app.admin.flags", .java_relocation = .{ .package = "com.android.permission.jarjar.android.app.admin.flags", .rule = "packages/modules/Permission/service/jarjar-rules.txt" }, .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/admin/flags/flags.aconfig"} },
+    .{ .package = "android.app.appfunctions.flags", .java_relocation = .{ .package = "com.android.permission.jarjar.android.app.appfunctions.flags", .rule = "packages/modules/Permission/service/jarjar-rules.txt" }, .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/appfunctions/flags/flags.aconfig"} },
     .{ .package = "android.app.assist.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/assist/flags.aconfig"} },
     .{ .package = "android.app.jank", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/jank/flags.aconfig"} },
     // ContentProvider.attachInfo creates AppOpsManager before SettingsProvider
     // is attached. Keep the optional SDK-feature cache disabled at build time
     // so PackageManager construction does not read DeviceConfig recursively.
-    .{ .package = "android.content.pm", .fixed_disabled_flags = &.{"cache_sdk_system_features"}, .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/content/pm/flags.aconfig"} },
+    .{ .package = "android.content.pm", .java_relocation = .{ .package = "com.android.permission.jarjar.android.content.pm", .rule = "packages/modules/Permission/service/jarjar-rules.txt" }, .fixed_disabled_flags = &.{"cache_sdk_system_features"}, .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/content/pm/flags.aconfig"} },
     // The pinned BP2A manifest requires runtime feature-flag filtering (AAPT retains its gates).
     .{ .package = "android.content.res", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/content/res/flags.aconfig"}, .values = &.{"build/release/aconfig/bp2a/android.content.res/manifest_flagging_flag_values.textproto"} },
     .{ .package = "android.content.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/content/flags/flags.aconfig"} },
@@ -2917,7 +2920,7 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.multiuser", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/content/pm/multiuser.aconfig"} },
     // PerfettoTrace initializes from Message before SystemServer publishes activity/Settings.
     // Use stock read-only defaults: keep exported accessors, avoid DeviceConfig at bootstrap.
-    .{ .package = "android.os", .cpp_source = true, .default_permission = .read_only, .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/os/flags.aconfig"} },
+    .{ .package = "android.os", .java_relocation = .{ .package = "com.android.permission.jarjar.android.os", .rule = "packages/modules/Permission/service/jarjar-rules.txt" }, .cpp_source = true, .default_permission = .read_only, .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/os/flags.aconfig"} },
     .{ .package = "android.os.vibrator", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/os/vibrator/flags.aconfig"} },
     .{ .package = "android.provider", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/provider/flags.aconfig"} },
     .{ .package = "android.view.accessibility", .cpp_header = true, .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/view/accessibility/flags/accessibility_flags.aconfig"} },
@@ -2948,10 +2951,10 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.companion.virtual.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/companion/virtual/flags/deprecated_flags_do_not_edit.aconfig"} },
     // The pinned BP2A release enables high-resolution scrolling, which stock
     // CursorScrollAccumulator needs to read REL_WHEEL_HI_RES.
-    .{ .package = "android.companion.virtualdevice.flags", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/core/java/android/companion/virtual/flags/flags.aconfig", "frameworks/base/core/java/android/companion/virtual/flags/launched_flags.aconfig" }, .values = &.{"build/release/aconfig/bp2a/android.companion.virtualdevice.flags/high_resolution_scroll_flag_values.textproto"} },
+    .{ .package = "android.companion.virtualdevice.flags", .java_relocation = .{ .package = "com.android.permission.jarjar.android.companion.virtualdevice.flags", .rule = "packages/modules/Permission/service/jarjar-rules.txt" }, .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/core/java/android/companion/virtual/flags/flags.aconfig", "frameworks/base/core/java/android/companion/virtual/flags/launched_flags.aconfig" }, .values = &.{"build/release/aconfig/bp2a/android.companion.virtualdevice.flags/high_resolution_scroll_flag_values.textproto"} },
     .{ .package = "android.credentials.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/credentials/flags.aconfig"} },
     .{ .package = "android.nfc", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/nfc-non-updatable/flags/flags.aconfig"} },
-    .{ .package = "android.permission.flags", .cpp_source = true, .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/permission/flags.aconfig"} },
+    .{ .package = "android.permission.flags", .java_relocation = .{ .package = "com.android.permission.jarjar.android.permission.flags", .rule = "packages/modules/Permission/service/jarjar-rules.txt" }, .fixed_enabled_flags = &.{"system_server_role_controller_enabled"}, .cpp_source = true, .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/permission/flags.aconfig"} },
     .{ .package = "android.sdk", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/android-sdk-flags/flags.aconfig"} },
     .{ .package = "android.security", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/core/java/android/security/flags.aconfig", "frameworks/base/core/java/android/security/responsible_apis_flags.aconfig" } },
     .{ .package = "android.service.autofill", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/services/autofill/bugfixes.aconfig", "frameworks/base/services/autofill/features.aconfig" } },
@@ -3066,6 +3069,7 @@ pub const cppstream = [_]struct { input: []const u8, output: []const u8 }{
 };
 
 pub const proto_inputs = [_]SourcePath{
+    .{ .source = .aosp, .path = "packages/modules/Permission/service/proto/role_service.proto" },
     .{ .source = .aosp, .path = "packages/modules/ConfigInfrastructure/aconfigd/proto/aconfigd.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/hardware/location/context_hub_info.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/hardware/sensorprivacy.proto" },
@@ -3221,6 +3225,9 @@ pub const lite_java_protos = .{
 };
 
 pub const proto_outputs = [_][]const u8{
+    "com/android/role/RoleProto.java",
+    "com/android/role/RoleServiceDumpProto.java",
+    "com/android/role/RoleUserStateProto.java",
     "android/app/ActivityManagerProto.java",
     "android/aconfigd/Aconfigd.java",
     "android/hardware/location/ContextHubInfoProto.java",

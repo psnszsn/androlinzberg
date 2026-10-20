@@ -2503,7 +2503,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
         record.exitReason = android.app.ApplicationExitInfo.REASON_USER_REQUESTED
         record.exitSubReason = android.app.ApplicationExitInfo.SUBREASON_REMOVE_TASK
         record.exitDescription = "remove task"
-        try { record.thread.scheduleExit() } catch (_: RemoteException) { }
+        // OomAdjuster kills the owned process for a removed task. scheduleExit
+        // instead asks ActivityThread to quit its non-quittable main Looper and
+        // can crash before the supervisor gets to terminate the child below.
         handleProcessDied(record)
     }
 

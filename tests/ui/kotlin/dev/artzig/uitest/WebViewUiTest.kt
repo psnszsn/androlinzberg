@@ -23,6 +23,28 @@ import kotlin.math.abs
 class WebViewUiTest {
     private val device get() = UiTest.device
 
+    @org.junit.After
+    fun retainUi() {
+        val artifacts = java.io.File(checkNotNull(System.getenv("AZK_TEST_ARTIFACTS")))
+        device.dumpWindowHierarchy(java.io.File(artifacts, "window.xml"))
+        java.io.File(artifacts, "screen.png").outputStream().use {
+            UiApp.screenshot().compress(Bitmap.CompressFormat.PNG, 100, it)
+        }
+    }
+
+    @Test
+    fun formPreservesEmailAndPassword() {
+        waitFor(By.text("WebView input verified"), 60_000)
+        click("Open sign-in fixture")
+        waitFor(By.hint("Fixture email")).text = "fixture+test@example.invalid"
+        waitFor(By.hint("Fixture password")).text = "aZ9!@#_+-."
+        click("Verify form")
+        expectVisible("Form values preserved")
+        val logs = UiTest.diagnostics.read(0L, Long.MAX_VALUE).logs
+        assertTrue("WebView renderer could not reach the update service",
+            logs.none { it.tag == "WebViewFactory" && "error waiting for relro creation" in it.message })
+    }
+
     @Test
     fun rendersInteractsAndPlaysVideo() {
         // Newer Chromium keeps WebView overlays behind its supported developer

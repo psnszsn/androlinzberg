@@ -3724,6 +3724,10 @@ fn bsRevokeLaunch(env: JNIEnvPtr, cls: jni.jclass, id: jni.jlong) callconv(.c) j
     const call = r.serviceRequest(.revoke_launch, std.mem.asBytes(&wire_id));
     defer r.destroyPending(call);
     if (call.failed) {
+        // Launch grants belong to this broker connection. Disconnect has
+        // already retired them; process-death cleanup may still race here.
+        // Preserve failures such as request exhaustion on a live connection.
+        if (r.disconnected.load(.acquire)) return jni.JNI_FALSE;
         throwRuntime(env, "broker disconnected while revoking launch");
         return jni.JNI_FALSE;
     }

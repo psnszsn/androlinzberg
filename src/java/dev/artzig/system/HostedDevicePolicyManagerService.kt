@@ -22,7 +22,8 @@ import android.os.UserHandle
  * `android.software.device_admin` (no admin can exist): no minimum, no
  * history, and password changes have nothing to update. Blocker for the stock
  * service: DevicePolicyManagerService's closure (its policy engine, KeyChain
- * and provisioning collaborators) is not yet compiled.
+ * and provisioning collaborators) is not yet compiled; its StatsPullAtomService
+ * dependency also reaches unwired KernelCpuBpfTracking JNI and health HIDL APIs.
  */
 class HostedDevicePolicyManagerService :
     IDevicePolicyManager.Stub(),
@@ -55,6 +56,26 @@ class HostedDevicePolicyManagerService :
     override fun isSafeOperation(reason: Int): Boolean = true
     override fun getDrawable(drawableId: String?, drawableStyle: String?, drawableSource: String?): ParcelableResource? = null
     override fun getString(stringId: String?): ParcelableResource? = null
+
+    override fun getRestrictionsProvider(userHandle: Int): ComponentName? {
+        // DevicePolicyManagerService.getRestrictionsProvider: only the system
+        // restrictions service may query the provider. No admin is provisioned.
+        if (!UserHandle.isSameApp(android.os.Binder.getCallingUid(), android.os.Process.SYSTEM_UID))
+            throw SecurityException("Only the system may query the restrictions provider")
+        return null
+    }
+
+    override fun shouldAllowBypassingDevicePolicyManagementRoleQualification(): Boolean {
+        if (android.os.Binder.getCallingPid() != android.os.Process.myPid() &&
+            android.app.ActivityManager.checkComponentPermission(android.Manifest.permission.MANAGE_ROLE_HOLDERS,
+                android.os.Binder.getCallingUid(), -1, true) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+            throw SecurityException("Role qualification requires " + android.Manifest.permission.MANAGE_ROLE_HOLDERS)
+        // DPMS.hasIncompatibleAccountsOnAnyUser treats an uninitialized account
+        // compatibility inventory as incompatible. The hosted policy adapter has
+        // neither that inventory nor a provisioning override, so qualification
+        // must not be bypassed. The full DPMS closure blocker is documented above.
+        return false
+    }
 
     override fun getPasswordMinimumMetrics(userHandle: Int, deviceWideOnly: Boolean): PasswordMetrics {
         require(userHandle >= 0) { "Invalid userId" }

@@ -30,6 +30,23 @@ import java.util.regex.Pattern
  */
 class DesktopLauncherUiTest {
     @Test
+    fun dismissingDialogsRestoresPointerInput() {
+        val increment = label("increment counter")
+        waitFor(increment)
+        repeat(3) { count ->
+            WaylandSeat.tap(waitFor(label("show attached dialog")).visibleCenter)
+            expectVisible("Fixture dialog")
+            WaylandSeat.tap(waitFor(label("close dialog")).visibleCenter)
+            waitUntilGone(By.text("Fixture dialog"))
+            // Wait for the stock surface/input animation barrier, not a fixed
+            // sleep: a still-visible modal dim is allowed to block the activity.
+            checkNotNull(android.view.WindowManagerGlobal.getWindowManagerService()).syncInputTransactions(true)
+            WaylandSeat.tap(waitFor(increment).visibleCenter)
+            expectVisible("Counter: ${count + 1}")
+        }
+    }
+
+    @Test
     fun taskWindowsTakeDesktopInputIndependently() {
         assertTrue(HostSession.joinFromForeignShell("dev.artzig.StockResourcePathSmoke").contains("stock-resource-join: PASS"))
 

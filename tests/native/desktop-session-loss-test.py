@@ -133,6 +133,7 @@ try:
         assert report['session_dir_removed'], 'retired session directory was left behind'
         text = (out / 'app.log').read_text(errors='replace')
         assert 'Desktop session lost:' in text, 'missing explicit service-loss diagnostic'
+        assert 'broker disconnected while revoking launch' not in text, 'grant cleanup threw after broker loss'
         for crash in ('Fatal signal', 'pthread_getattr_np failed', 'Native thread exited without calling DetachCurrentThread', 'panic:'):
             assert crash not in text, crash
         if a.fault != 'presenter':

@@ -153,18 +153,36 @@ pub fn generate(gpa: std.mem.Allocator, io: std.Io, environ: anytype) ?Configura
     family(&out, a, "serif", "serif", &seen) catch return null;
     family(&out, a, "monospace", "monospace", &seen) catch return null;
     family(&out, a, "sans-serif-condensed", "sans-serif:width=condensed", &seen) catch return null;
+    // Preserve the legacy family aliases in pinned AOSP data/fonts/fonts.xml.
+    // WebView uses Arial/Sans as its last-resort family for native form controls;
+    // omitting Arial can leave Blink without any font and abort the renderer.
     out.appendSlice(a,
         \\    <alias name="sans-serif-thin" to="sans-serif" weight="100" />
         \\    <alias name="sans-serif-light" to="sans-serif" weight="300" />
         \\    <alias name="sans-serif-medium" to="sans-serif" weight="500" />
         \\    <alias name="sans-serif-black" to="sans-serif" weight="900" />
+        \\    <alias name="arial" to="sans-serif" />
+        \\    <alias name="helvetica" to="sans-serif" />
+        \\    <alias name="tahoma" to="sans-serif" />
+        \\    <alias name="verdana" to="sans-serif" />
         \\    <alias name="sans-serif-condensed-light" to="sans-serif-condensed" weight="300" />
         \\    <alias name="sans-serif-condensed-medium" to="sans-serif-condensed" weight="500" />
         \\    <alias name="serif-bold" to="serif" weight="700" />
+        \\    <alias name="times" to="serif" />
+        \\    <alias name="times new roman" to="serif" />
+        \\    <alias name="palatino" to="serif" />
+        \\    <alias name="georgia" to="serif" />
+        \\    <alias name="baskerville" to="serif" />
+        \\    <alias name="goudy" to="serif" />
+        \\    <alias name="ITC Stone Serif" to="serif" />
         \\    <alias name="serif-monospace" to="monospace" />
+        \\    <alias name="sans-serif-monospace" to="monospace" />
+        \\    <alias name="monaco" to="monospace" />
+        \\    <alias name="courier" to="serif-monospace" />
+        \\    <alias name="courier new" to="serif-monospace" />
         \\    <alias name="casual" to="sans-serif" />
         \\    <alias name="cursive" to="serif" />
-        \\    <alias name="fantasy" to="sans-serif" />
+        \\    <alias name="fantasy" to="serif" />
         \\
     ) catch return null;
 

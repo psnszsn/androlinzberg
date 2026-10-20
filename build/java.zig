@@ -772,7 +772,19 @@ fn paths(b: *std.Build, files: SourceFiles.Files) []const LazyPath {
 fn systemApps(b: *std.Build, aosp: *std.Build.Dependency, framework: @import("system_apks.zig").Framework,
     download_provider: LazyPath, desktop_transfer_provider: LazyPath) []const @import("system_apks.zig").SystemApp {
     const apps = @import("system_apks.zig");
+    // The stock in-process role controller reads the PermissionController's
+    // original definitions and labels through its installed package resources.
+    const role_resources = b.addWriteFiles();
+    for ([_][]const u8{ "xml/roles.xml", "values/strings.xml", "values/config.xml" }) |file| {
+        _ = role_resources.addCopyFile(aosp.path(b.fmt("packages/modules/Permission/PermissionController/res/{s}", .{file})), file);
+    }
     const list = [_]apps.SystemApp{
+        // The desktop owns launcher presentation. Reuse Android's original
+        // placeholder Activity as its HOME lifecycle target behind task windows.
+        .{ .name = "DesktopHome", .privileged = false, .apk = apps.build(b, aosp, framework, .{
+            .name = "DesktopHome",
+            .manifest = b.path("testdata/desktop-home/AndroidManifest.xml"),
+        }) },
         .{ .name = "ExtShared", .privileged = false, .apk = apps.build(b, aosp, framework, .{
             .name = "ExtShared",
             .manifest = aosp.path("frameworks/base/packages/ExtShared/AndroidManifest.xml"),
@@ -792,6 +804,7 @@ fn systemApps(b: *std.Build, aosp: *std.Build.Dependency, framework: @import("sy
         .{ .name = "PermissionController", .privileged = true, .apk = apps.build(b, aosp, framework, .{
             .name = "PermissionController",
             .manifest = b.path("testdata/permission-controller/AndroidManifest.xml"),
+            .res = role_resources.getDirectory(),
             .kotlin = &.{b.path("src/java/dev/artzig/permissioncontroller/PermissionControllerActivities.kt")},
         }) },
         .{ .name = "Shell", .privileged = true, .apk = apps.build(b, aosp, framework, .{

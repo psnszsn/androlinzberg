@@ -109,7 +109,9 @@ class DesktopDragUiTest {
         }
     }
 
-    private fun tasks() = ActivityTaskManager.getService().getTasks(8, false, false, Display.DEFAULT_DISPLAY).map { it.taskId }
+    private fun tasks() = ActivityTaskManager.getService().getTasks(8, false, false, Display.DEFAULT_DISPLAY)
+        .filter { it.activityType == android.app.WindowConfiguration.ACTIVITY_TYPE_STANDARD }
+        .map { it.taskId }
 
     private fun awaitSecondTask(source: Int): Int {
         val deadline = SystemClock.uptimeMillis() + 30_000

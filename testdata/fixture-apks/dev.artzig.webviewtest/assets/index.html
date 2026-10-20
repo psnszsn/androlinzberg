@@ -1,9 +1,17 @@
 <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Stock Android WebView</title>
 <style>body { font: 24px sans-serif; padding: 24px; background: white; color: #16324f; }
-button { font: inherit; padding: 16px 24px; }</style></head>
+button { font: inherit; padding: 16px 24px; }
+#login { padding-top: 32px; }
+#login input { display: block; padding: 8px; margin-bottom: 12px; }</style></head>
 <body><h1>Stock Android WebView</h1><p>This page is rendered by the bundled Android Chromium provider.</p>
 <button onclick="this.textContent='Count: '+(++count)">Count: 0</button>
+<button onclick="document.getElementById('login').hidden=false; document.getElementById('login').scrollIntoView()">Open sign-in fixture</button>
+<form id="login" hidden onsubmit="event.preventDefault(); document.getElementById('formStatus').textContent = this.email.value === 'fixture+test@example.invalid' &amp;&amp; this.password.value === 'aZ9!@#_+-.' ? 'Form values preserved' : 'Form values changed'">
+<input name="email" type="email" aria-label="Fixture email" autocomplete="off">
+<input name="password" type="password" aria-label="Fixture password" autocomplete="off">
+<button type="submit">Verify form</button><p id="formStatus"></p>
+</form>
 <p><button onclick="startVideo()">Start video</button>
 <button onclick="pauseVideo()">Pause video</button>
 <button onclick="startVideo('i420')">Start I420 video</button>

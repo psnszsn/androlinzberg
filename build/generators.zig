@@ -656,7 +656,19 @@ fn aconfigJava(
         java.setName(b.fmt("generate aconfig Java {s}", .{entry.package}));
         const package_path = std.mem.replaceOwned(u8, b.allocator, entry.package, ".", "/") catch @panic("OOM");
         inline for (.{ "CustomFeatureFlags", "FakeFeatureFlagsImpl", "FeatureFlags", "FeatureFlagsImpl", "Flags" }) |class| {
-            files.append(b.allocator, output.path(b, b.fmt("{s}/{s}.java", .{ package_path, class }))) catch @panic("OOM");
+            const source = output.path(b, b.fmt("{s}/{s}.java", .{ package_path, class }));
+            files.append(b.allocator, source) catch @panic("OOM");
+            if (entry.java_relocation) |relocation| {
+                // RoleParser applies the Permission module's JarJar prefix to
+                // reflective flag lookups. Generated siblings use unqualified
+                // references: relocate their declarations, preserving the
+                // original flag-name string constants and runtime keys.
+                const rewrite = b.addSystemCommand(&.{ "sed", "-e", b.fmt("s/^package .*;$/package {s};/", .{relocation.package}) });
+                rewrite.addFileArg(source);
+                rewrite.addFileInput(aosp.path(relocation.rule));
+                const relocated = rewrite.captureStdOut(.{ .basename = class ++ ".java" });
+                files.append(b.allocator, relocated) catch @panic("OOM");
+            }
         }
         index += 1;
     }

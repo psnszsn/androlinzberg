@@ -27,6 +27,7 @@ pub const sources = [_][]const u8{
     "tests/ui/kotlin/dev/artzig/uitest/host/HostSession.kt",
     "tests/ui/kotlin/dev/artzig/uitest/host/WaylandInputUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/host/WaylandSeat.kt",
+    "tests/ui/kotlin/dev/artzig/uitest/host/WebViewInputUiTest.kt",
 };
 
 /// `Class#method[@WxH]`: the orchestrator's default selection. A size suffix is
@@ -34,8 +35,11 @@ pub const sources = [_][]const u8{
 pub const tests = [_][]const u8{
     "dev.artzig.uitest.BootServicesUiTest#publishesAndroidBootCompletion",
     "dev.artzig.uitest.BootServicesUiTest#applicationLocalesRoundTrip",
+    "dev.artzig.uitest.BootServicesUiTest#roleAndRestrictionsServicesFollowStockContracts",
+    "dev.artzig.uitest.BootServicesUiTest#homeResolvesAndAppCanResume",
     "dev.artzig.uitest.ChatGptUiTest#launchesWelcomeWithoutRuntimeIssues@412x915@chatgpt",
     "dev.artzig.uitest.ChatGptUiTest#sendsGuestMessageWithoutRuntimeIssues@412x915@chatgpt",
+    "dev.artzig.uitest.ChatGptUiTest#opensSignInWithoutRuntimeIssues@412x915@chatgpt",
     "dev.artzig.uitest.SessionDiagnosticsUiTest#unsupportedFrameworkCallIsJournalled",
     "dev.artzig.uitest.LockSettingsUiTest#pinIsEnrolledVerifiedAndCleared",
     "dev.artzig.uitest.WindowFixtureUiTest#launchesAndUpdatesState@412x915",
@@ -56,6 +60,7 @@ pub const tests = [_][]const u8{
     "dev.artzig.uitest.WindowInputUiTest#clickingButtonUpdatesStatus",
     "dev.artzig.uitest.WindowInputUiTest#twoClicksCountTwice",
     "dev.artzig.uitest.WebViewUiTest#rendersInteractsAndPlaysVideo@1280x720@webview",
+    "dev.artzig.uitest.WebViewUiTest#formPreservesEmailAndPassword@1280x720@webview",
     // NewPipe needs network access and the pinned APK (AZK_APK_NEWPIPE_0_29_1).
     "dev.artzig.uitest.NewPipeUiTest#launchesHomeWithoutRuntimeIssues@412x915@newpipe",
     "dev.artzig.uitest.NewPipeUiTest#backHonorsNonCancelableKeepAndroidOpenDialog@412x915@newpipe",

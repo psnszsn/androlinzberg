@@ -55,7 +55,8 @@ class HostedWebViewUpdateService(
                 impl.packageStateChanged(name, state, intent.getIntExtra(Intent.EXTRA_USER_HANDLE, UserHandle.USER_NULL))
             }
         }, filter)
-        android.os.ServiceManager.addService(Context.WEBVIEW_UPDATE_SERVICE, this)
+        // WebViewUpdateService.onStart allows isolated renderer/RELRO callers.
+        android.os.ServiceManager.addService(Context.WEBVIEW_UPDATE_SERVICE, this, true)
         impl.prepareWebViewInSystemServer()
     }
 

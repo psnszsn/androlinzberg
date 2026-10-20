@@ -239,6 +239,13 @@ internal object SystemServices {
         // SystemServer StartLocaleManagerService: reuse ATMS package configuration
         // updates, persistence, broadcasts and the stock locale backup observers.
         manager.startService(com.android.server.locales.LocaleManagerService::class.java)
+        manager.startService(com.android.server.restrictions.RestrictionsManagerService::class.java)
+        // SystemServer StartRoleManagerService, including the platform helper
+        // used by the module's original role controller and persisted state.
+        com.android.server.LocalManagerRegistry.addManager(
+            com.android.server.role.RoleServicePlatformHelper::class.java,
+            com.android.server.policy.role.RoleServicePlatformHelperImpl(context))
+        manager.startService(com.android.role.RoleService::class.java)
         // SystemServer.startOtherServices: LOCK_SETTINGS_SERVICE_CLASS, over
         // gatekeeperd and keystore2.
         manager.startService("com.android.server.locksettings.LockSettingsService\$Lifecycle")

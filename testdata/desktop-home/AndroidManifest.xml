@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The unchanged framework Activity supplies Android's home lifecycle while
+     the host desktop presents application tasks. CATEGORY_DEFAULT is required
+     by ActivityTaskSupervisor's normal HOME intent resolution. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.artzig.home" android:versionCode="1" android:versionName="1">
+    <application android:label="Desktop" android:hasCode="false" android:allowBackup="false">
+        <activity android:name="com.android.internal.app.SystemUserHomeActivity"
+            android:exported="true" android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter android:priority="-100">
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

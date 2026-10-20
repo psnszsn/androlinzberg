@@ -19,6 +19,15 @@
         android:directBootAware="true"
         android:allowBackup="false">
 
+        <!-- Stock RoleControllerManager resolves this even when the Android 16
+             system-server controller is selected. Both use the stock class. -->
+        <service android:name="com.android.role.controller.service.RoleControllerServiceImpl"
+            android:exported="true">
+            <intent-filter android:priority="1">
+                <action android:name="android.app.role.RoleControllerService" />
+            </intent-filter>
+        </service>
+
         <!-- PermissionController GrantPermissionsActivity contract. -->
         <activity android:name="dev.artzig.permissioncontroller.GrantPermissionsActivity"
             android:exported="true"

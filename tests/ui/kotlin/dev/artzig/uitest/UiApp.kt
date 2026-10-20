@@ -24,8 +24,8 @@ object UiApp {
     fun text(value: String): BySelector = By.text(value)
     fun description(value: String): BySelector = By.desc(value)
 
-    fun waitFor(selector: BySelector): UiObject2 =
-        checkNotNull(device.wait(Until.findObject(selector), TIMEOUT)) { "no node matches $selector" }
+    fun waitFor(selector: BySelector, timeoutMillis: Long = TIMEOUT): UiObject2 =
+        checkNotNull(device.wait(Until.findObject(selector), timeoutMillis)) { "no node matches $selector" }
 
     fun expectVisible(text: String): UiObject2 = waitFor(By.text(text))
 

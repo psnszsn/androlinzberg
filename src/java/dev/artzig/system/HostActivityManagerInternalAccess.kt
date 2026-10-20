@@ -42,6 +42,12 @@ class HostActivityManagerInternalAccess internal constructor(
     fun finishBooting() = activities.finishBooting()
     fun setSystemReady() { ready.set(true) }
     fun isSystemReady(): Boolean = ready.get()
+    // AMS.LocalService.shouldDelayHomeLaunch only waits when enable_home_delay
+    // selects SystemUI's ThemeOverlayController. This desktop has no SystemUI
+    // overlay computation: resource configuration is ready before HOME starts.
+    // Stock AMS remains blocked by its ProcessList/zygote graph (see the hosted
+    // activity service's source note), so this local-interface query lives here.
+    fun shouldDelayHomeLaunch(userId: Int): Boolean = false
     fun isTempAllowlistedForFgsWhileInUse(uid: Int): Boolean = false
     fun getInstrumentationSourceUid(uid: Int): Int = Process.INVALID_UID
     // ActivityManagerConstants: read the same hosted Settings/DeviceConfig keys.
