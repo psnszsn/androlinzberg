@@ -289,8 +289,10 @@ zig build -j10 cpp-audit
   it validates the inherited Linux network namespace using `SO_NETNS_COOKIE`,
   clears an existing kernel mark when selecting that routing domain, and rejects
   unsupported Android routing domains, VPN exemptions and BPF accounting. Native libc/libcore hooks share the same
-  process policy. The host resolver supplies synchronous DNS; Android dnsproxyd
-  is absent. This does not add Android netd routing tables or a DNS proxy service.
+  process policy. The host resolver supplies synchronous DNS and, through
+  `network/DnsProxy.cpp`, dnsproxyd's raw-query socket protocol. Stock Android
+  owns asynchronous callbacks and cancellation. This does not add Android netd
+  routing tables or configure Android private DNS.
 - SurfaceComposerClient is original. The hosted IServiceManager waits for service
   replacements while its broker lives. After permanent session loss, previously
   acquired service identities remain available for final cleanup and return

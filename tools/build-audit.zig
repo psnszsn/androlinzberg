@@ -154,6 +154,8 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
         "src/native/input/HostInputDispatcherFactory.cpp",
         "src/native/input/HostInputReaderFactory.cpp",
         "src/native/input/HostUserActivity.cpp",
+        // dnsproxyd's stock socket protocol backed by the Linux resolver.
+        "src/native/network/DnsProxy.cpp",
         "src/native/network/NetworkBackend.cpp",
     };
     if (files.len != expected.len) return error.AuditFailed;

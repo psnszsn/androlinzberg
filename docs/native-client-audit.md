@@ -436,7 +436,7 @@ process, while the separate presenter and SurfaceFlinger own presentation.
 | Libcore and files | [libcore patches](../artzig/patches/libcore/), [`host_paths.zig`](../artzig/src/host_paths.zig), AssetsProvider patch | Native path and authenticated-identity translation runs in the process. Retained as the agreed runtime exception, inventoried separately from stock framework/JNI sources |
 | SystemProperties / SystemClock / Process | Original JNI, Bionic account lookup and libprocessgroup; native properties, authenticated identity/procfs and scheduling adapters | Properties retain hosted state and authorization. Process priority queries return actual kernel values; denied own-thread boosts are best effort for ordinary users. Optional host setup enables boosts |
 | SharedMemory / MemoryFile / ApplicationSharedMemory / MemoryIntArray | Original JNI, compiled against the existing libcutils sealed-memfd backend | Host adaptation is below JNI; original mapping, atomic access and cleanup are retained |
-| NetworkUtils / process networking / TrafficStats | Original JNI and NetdClient; [`NetworkBackend.cpp`](../src/native/network/NetworkBackend.cpp) and native libc hooks | Original per-process network policy reaches Java and Android native sockets/DNS. Host Linux owns routing. The observed network represents the inherited host namespace; its socket identity is checked using SO_NETNS_COOKIE. Other Android network IDs, VPN exemptions and BPF tagging fail explicitly. Android dnsproxyd is absent |
+| NetworkUtils / process networking / TrafficStats | Original JNI and NetdClient; [`NetworkBackend.cpp`](../src/native/network/NetworkBackend.cpp), [`DnsProxy.cpp`](../src/native/network/DnsProxy.cpp) and native libc hooks | Original per-process network policy reaches Java and Android native sockets/DNS. Host Linux owns routing. The observed network represents the inherited host namespace; its socket identity is checked using SO_NETNS_COOKIE. Other Android network IDs, VPN exemptions and BPF tagging fail explicitly. The dnsproxyd raw-query socket protocol uses the host resolver |
 | Trace and Java Perfetto data sources | Original JNI and Perfetto SDK | In-process packet capture works; no system traced daemon is installed |
 | Log / EventLog / SecurityLog | Original JNI and liblog; diagnostics observe Java-originated liblog output | Original host log reader returns no historical events; Android logd is absent |
 | Debug | Original JNI and memory/debugger clients; [`RuntimeDiagnostics.cpp`](../src/native/RuntimeDiagnostics.cpp) | Host allocator ABI and kernel-metadata fallback remain below JNI; missing Android services and allocation walking are explicit |
@@ -800,6 +800,17 @@ owns validation and process state. Native libcore/Bionic dispatch reaches that s
 state for Java and Android native sockets/DNS. The inherited host namespace is
 validated by its kernel cookie; selecting an unrelated Android network fails.
 Real DownloadManager transfers and network validation pass through this path.
+
+Raw `DnsResolver` queries retain stock JNI, NetdClient permission checks and
+result/cancel descriptor ownership. The native DNS adapter supplies dnsproxyd's
+`resnsend` and `getdnsnetid` socket protocol over a socket pair. A bounded worker
+uses glibc's per-query resolver state and the host's configured DNS servers,
+including UDP retries and TCP fallback. It returns DNS packets and rcodes
+(including NXDOMAIN), restores the caller's query ID, and handles cancellation
+without sending SIGPIPE. The adapter has no answer cache; NO_CACHE_STORE and
+NO_CACHE_LOOKUP therefore require no local cache operation, and NO_RETRY limits
+the resolver to one attempt per server. It does not configure Android private
+DNS or create independent Android network routing domains.
 
 The composer regression kills and replaces the actual SF process while keeping
 the broker live. Original clients acquire a new service, create a layer and receive

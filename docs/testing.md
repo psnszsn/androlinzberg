@@ -121,9 +121,13 @@ the message test needs access to ChatGPT's live service. Each case retains
 FairEmail uses the original
 [1.2338a GitHub release](https://github.com/M66B/FairEmail/releases/download/1.2338/FairEmail-v1.2338a-github-release.apk),
 SHA-256 `666b9f4ada53f69199355f1ccc2bed73e01fa23786fc0189cf81cc51932dc5a9`.
-Its tests cover the welcome screen, onboarding, network availability, and
-entering account details in the other-provider wizard. They do not connect to
-a mailbox or send mail. Each case retains `screen.png` and `window.xml` beside
+Its tests cover the welcome screen, onboarding, network availability, entering
+account details, and pressing Check for a reserved `.invalid` domain. Discovery
+must reach the domain error and manual-setup option without native resolver
+transport errors. They do not connect to a mailbox or send mail. Separate
+`DnsResolverUiTest` cases exercise raw SRV packets for `_imaps._tcp.praznet.com`
+and the name-query overload's NXDOMAIN result through stock Android callbacks.
+Each FairEmail case retains `screen.png` and `window.xml` beside
 its logs under `zig-out/test-results/ui/dev.artzig.uitest.FairEmailUiTest.<method>/`.
 Run its cases with:
 

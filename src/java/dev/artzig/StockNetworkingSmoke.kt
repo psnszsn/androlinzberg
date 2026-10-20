@@ -39,6 +39,21 @@ object StockNetworkingSmoke {
         val hostNetwork = dev.artzig.system.HOST_NAMESPACE_NETWORK_ID
         check(Os.android_getaddrinfo("127.0.0.1", hints, hostNetwork).isNotEmpty())
         checkNativeNetworking(0)
+        check(NetworkUtils.getDnsNetwork().netId == hostNetwork)
+        // The stock raw resolver owns and invalidates the descriptor on result
+        // and cancellation. Bad packets and unknown networks fail before DNS I/O.
+        val malformed = NetworkUtils.resNetworkSend(0, byteArrayOf(1, 2, 3), 3, 0)
+        val malformedError = runCatching { NetworkUtils.resNetworkResult(malformed) }.exceptionOrNull()
+        check(malformedError is ErrnoException && malformedError.errno == OsConstants.EINVAL)
+        check(!malformed.valid())
+        val unknown = NetworkUtils.resNetworkQuery(42,
+            "example.com", 1, 1, 0)
+        val unknownError = runCatching { NetworkUtils.resNetworkResult(unknown) }.exceptionOrNull()
+        check(unknownError is ErrnoException && unknownError.errno == OsConstants.ENONET)
+        check(!unknown.valid())
+        val canceled = NetworkUtils.resNetworkSend(0, byteArrayOf(1, 2, 3), 3, 0)
+        NetworkUtils.resNetworkCancel(canceled)
+        check(!canceled.valid())
         val socket = Os.socket(OsConstants.AF_INET, OsConstants.SOCK_DGRAM, 0)
         try {
             check(NetworkUtils.getSocketCookie(socket) > 0)

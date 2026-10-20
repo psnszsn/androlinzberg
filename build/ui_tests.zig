@@ -7,6 +7,7 @@ const std = @import("std");
 const command = @import("command.zig");
 
 pub const sources = [_][]const u8{
+    "tests/ui/kotlin/dev/artzig/uitest/DnsResolverUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/BootServicesUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/ChatGptUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/FDroidUiTest.kt",
@@ -34,6 +35,8 @@ pub const sources = [_][]const u8{
 /// `Class#method[@WxH]`: the orchestrator's default selection. A size suffix is
 /// the launch size and headless output mode of that test's session.
 pub const tests = [_][]const u8{
+    "dev.artzig.uitest.DnsResolverUiTest#rawQueriesReturnDnsPackets",
+    "dev.artzig.uitest.DnsResolverUiTest#nameQueriesPreserveNxDomain",
     "dev.artzig.uitest.BootServicesUiTest#publishesAndroidBootCompletion",
     "dev.artzig.uitest.BootServicesUiTest#applicationLocalesRoundTrip",
     "dev.artzig.uitest.BootServicesUiTest#roleAndRestrictionsServicesFollowStockContracts",
@@ -78,6 +81,7 @@ pub const tests = [_][]const u8{
     "dev.artzig.uitest.FDroidUiTest#installsAnAppThroughThePackageInstaller@412x915@fdroid",
     "dev.artzig.uitest.FairEmailUiTest#launchesWelcomeWithoutRuntimeIssues@412x915@fairemail",
     "dev.artzig.uitest.FairEmailUiTest#opensAccountSetupWithoutRuntimeIssues@412x915@fairemail",
+    "dev.artzig.uitest.FairEmailUiTest#checksUnknownProviderWithoutResolverTransportErrors@412x915@fairemail",
     // Host path: real Wayland input through the presenter and InputDispatcher.
     "dev.artzig.uitest.host.WaylandInputUiTest#tapReachesTheView",
     "dev.artzig.uitest.host.WaylandInputUiTest#wheelScrollsTheView@412x400",

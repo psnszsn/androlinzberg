@@ -121,3 +121,16 @@ extern "C" int android_getaddrinfofornet(const char* host, const char* service,
         const addrinfo* hints, unsigned netid, unsigned mark, addrinfo** result) {
     return azk_netd_getaddrinfofornet(host, service, hints, netid, mark, result);
 }
+
+// dnsproxyd's network context, restricted to the inherited Linux namespace.
+// NetdClient has already selected the process/network DNS override and checked
+// its networking permission before opening the proxy connection.
+extern "C" int azk_netd_dns_network(unsigned netid) {
+    const unsigned selected = netid & ~NETID_USE_LOCAL_NAMESERVERS;
+    if (selected != 0 && selected != hostNamespaceNetworkId) return -ENONET;
+    const int fd = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) return -errno;
+    const int status = checkHostNamespace(fd);
+    close(fd);
+    return status == 0 ? static_cast<int>(hostNamespaceNetworkId) : status;
+}

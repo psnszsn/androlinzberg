@@ -74,6 +74,14 @@ object UiApp {
         }
     }
 
+    /** Check after the action's terminal UI state, so its logs have arrived. */
+    fun assertNoLog(fragment: String) {
+        val journal = UiTest.diagnostics.read(logCursor, Long.MAX_VALUE)
+        logCursor = journal.logCursor
+        for (record in journal.logs) logs += record.tag to record.message
+        assertTrue("unexpected log contains: $fragment", logs.none { fragment in it.second })
+    }
+
     /**
      * SurfaceFlinger's composition of the active window's area, through the
      * stock UiAutomation screenshot path (WindowManager.captureDisplay). The

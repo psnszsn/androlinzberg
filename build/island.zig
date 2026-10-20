@@ -636,7 +636,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "packages/modules/Connectivity/framework/jni"), &.{"android_net_NetworkUtils.cpp"}, network_includes, &android_abi_flags);
     g.add(o.aosp.path(b, "packages/modules/Connectivity/framework-t/jni"), &.{"android_net_TrafficStats.cpp"}, network_includes, &android_abi_flags);
     g.add(o.aosp.path(b, "system/netd/client"), &.{ "NetdClient.cpp", "FwmarkClient.cpp" }, network_includes, &android_abi_flags);
-    g.add(b.path("src/native/network"), &.{"NetworkBackend.cpp"}, network_includes, &android_abi_flags);
+    g.add(b.path("src/native/network"), &.{ "NetworkBackend.cpp", "DnsProxy.cpp" }, network_includes, &android_abi_flags);
     g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{"net.c"}, network_includes, &.{ "-D__LIBC_HIDDEN__=__attribute__((visibility(\"hidden\")))", "-D__INTRODUCED_IN(x)=", "-D__BIONIC_AVAILABILITY_GUARD(x)=1" });
     const process_includes = runtime_includes ++ &[_]std.Build.LazyPath{
         o.aosp.path(b, "system/core/libprocessgroup"),

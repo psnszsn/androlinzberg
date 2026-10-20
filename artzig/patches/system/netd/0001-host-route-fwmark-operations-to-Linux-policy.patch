@@ -26,3 +26,20 @@ Delegate commands below that client to the real Linux socket policy boundary.
      return error;
 +#endif
  }
+
+--- a/client/NetdClient.cpp
++++ b/client/NetdClient.cpp
+@@ -50,1 +50,5 @@
++#ifdef __ANDROID_HOST__
++extern "C" int azk_dns_open_proxy();
++#endif
++
+ namespace {
+@@ -294,4 +298,7 @@
+         errno = EPERM;
+         return -1;
+     }
++#ifdef __ANDROID_HOST__
++    return azk_dns_open_proxy();
++#endif
+     const auto socketFunc = libcSocket ? libcSocket : socket;
