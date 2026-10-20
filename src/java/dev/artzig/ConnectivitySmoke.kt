@@ -22,6 +22,13 @@ internal object ConnectivitySmoke {
     fun main(args: Array<String>) {
         check(args.isEmpty()) { "unexpected arguments" }
 
+        dev.artzig.system.LinuxNetworkSource().snapshot()?.let { active ->
+            check(active.info.isConnected)
+            check(active.capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_FOREGROUND)) {
+                "The host default route must be usable by foreground network requests"
+            }
+        }
+
         check(Network(0).networkHandle == 0L) { "NETID_UNSET handle" }
         val network = Network(42)
         val handle = network.networkHandle

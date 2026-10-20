@@ -10,6 +10,7 @@ pub const sources = [_][]const u8{
     "tests/ui/kotlin/dev/artzig/uitest/BootServicesUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/ChatGptUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/FDroidUiTest.kt",
+    "tests/ui/kotlin/dev/artzig/uitest/FairEmailUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/HostInstrumentation.kt",
     "tests/ui/kotlin/dev/artzig/uitest/LockSettingsUiTest.kt",
     "tests/ui/kotlin/dev/artzig/uitest/NewPipeUiTest.kt",
@@ -75,6 +76,8 @@ pub const tests = [_][]const u8{
     "dev.artzig.uitest.FDroidUiTest#launchesDiscoverWithoutRuntimeIssues@412x915@fdroid",
     "dev.artzig.uitest.FDroidUiTest#searchOpensAppDetails@412x915@fdroid",
     "dev.artzig.uitest.FDroidUiTest#installsAnAppThroughThePackageInstaller@412x915@fdroid",
+    "dev.artzig.uitest.FairEmailUiTest#launchesWelcomeWithoutRuntimeIssues@412x915@fairemail",
+    "dev.artzig.uitest.FairEmailUiTest#opensAccountSetupWithoutRuntimeIssues@412x915@fairemail",
     // Host path: real Wayland input through the presenter and InputDispatcher.
     "dev.artzig.uitest.host.WaylandInputUiTest#tapReachesTheView",
     "dev.artzig.uitest.host.WaylandInputUiTest#wheelScrollsTheView@412x400",
@@ -91,6 +94,7 @@ pub const pinned_apks = [_][]const u8{
     "--pinned-apk", "chatgpt=AZK_APK_CHATGPT_1_2026_279=cd7af30278fcca6b37cb0a7ee77aebc2fd562039b05a2ea4263c6498698e3c8f",
     "--pinned-apk", "newpipe=AZK_APK_NEWPIPE_0_29_1=18447bfb1e06d113edc88df93f471827280de06f6f3d4dc42f56f28b9c1bab79",
     "--pinned-apk", "fdroid=AZK_APK_FDROID_2_0_1=83d3fe522281c3cb89fce3bc05038f81b3c3b32c108536941f184c5f9bb53778",
+    "--pinned-apk", "fairemail=AZK_APK_FAIREMAIL_1_2338=666b9f4ada53f69199355f1ccc2bed73e01fa23786fc0189cf81cc51932dc5a9",
 };
 
 const androidx = "prebuilts/sdk/current/androidx/m2repository/androidx/";

@@ -78,6 +78,10 @@ internal class LinuxNetworkSource : HostedNetworkSource {
             val capabilities = NetworkCapabilities().apply {
                 addTransportType(if (wifi) NetworkCapabilities.TRANSPORT_WIFI else NetworkCapabilities.TRANSPORT_ETHERNET)
                 addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                // ConnectivityService.mixInCapabilities marks the default
+                // network foreground: it serves a foreground default request,
+                // rather than being retained only for background requests.
+                addCapability(NetworkCapabilities.NET_CAPABILITY_FOREGROUND)
                 addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)
                 // EthernetTracker supplies these for non-cellular, non-VCN networks.
                 // Linux discovery here exposes only Ethernet/Wi-Fi and has no Android VCN.

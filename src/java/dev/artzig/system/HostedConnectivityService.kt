@@ -111,6 +111,20 @@ internal class HostedConnectivityService(
         return state()?.let { arrayOf(NC(it.capabilities)) } ?: emptyArray()
     }
     override fun isActiveNetworkMetered(): Boolean = state()?.capabilities?.hasCapability(NC.NET_CAPABILITY_NOT_METERED) != true
+    // Pinned ConnectivityService delegates this query with the caller's UID and
+    // system identity. Its full replacement remains blocked on the unhosted
+    // netd/DnsResolver services and BpfNetMaps' Android UID firewall maps.
+    override fun getRestrictBackgroundStatusByCaller(): Int {
+        access()
+        val uid = Binder.getCallingUid()
+        val token = Binder.clearCallingIdentity()
+        try {
+            return context.getSystemService(android.net.NetworkPolicyManager::class.java)
+                .getRestrictBackgroundStatus(uid)
+        } finally {
+            Binder.restoreCallingIdentity(token)
+        }
+    }
     override fun getDefaultRequest(): NetworkRequest { access(); return NetworkRequest(defaultRequest) }
     override fun getGlobalProxy(): ProxyInfo? = null
     override fun getProxyForNetwork(network: Network?): ProxyInfo? = null

@@ -195,6 +195,7 @@ pub const BionicLoader = struct {
     var lib: ?std.DynLib = null;
     var loader_io: ?std.Io = null;
     var guest_dir: ?[*:0]const u8 = null;
+    var package_guest_dir: ?[*:0]const u8 = null;
     var image_guest_dir: ?[*:0]const u8 = null;
     var host_lib_dir: ?[:0]const u8 = null;
     var host_lib_dir_buf: [4096]u8 = undefined;
@@ -226,6 +227,7 @@ pub const BionicLoader = struct {
             const debug_slot = l.lookup(*?*anyopaque, "_r_debug_ptr") orelse return Error.SymbolNotFound;
             debug_slot.* = host.dlsym(null, "_r_debug") orelse return Error.SymbolNotFound;
             guest_dir = host.getenv("ARTZIG_NATIVE_LIB_DIR");
+            package_guest_dir = host.getenv("ARTZIG_PACKAGE_NATIVE_LIB_DIR");
             image_guest_dir = host.getenv("ARTZIG_IMAGE_NATIVE_LIB_DIR");
             const persistent_dir = std.fmt.bufPrint(host_lib_dir_buf[0 .. host_lib_dir_buf.len - 1], "{s}/lib64", .{root}) catch return Error.OutOfMemory;
             host_lib_dir_buf[persistent_dir.len] = 0;
@@ -262,9 +264,10 @@ pub const BionicLoader = struct {
             }).ptr;
         } else null;
         // ART itself loads host/glibc JNI libraries (libicu_jni, libjavacore,
-        // etc.). Only APK libraries extracted into guest_dir are bionic ELF.
+        // etc.). APK libraries, whether materialized from archive entries or
+        // extracted by PackageManager into its installed cluster, are bionic ELF.
         var is_guest = false;
-        for ([_]?[*:0]const u8{ guest_dir, image_guest_dir }) |root| {
+        for ([_]?[*:0]const u8{ guest_dir, package_guest_dir, image_guest_dir }) |root| {
             const dir = std.mem.span(root orelse continue);
             if (path) |p| {
                 const name = std.mem.span(p);

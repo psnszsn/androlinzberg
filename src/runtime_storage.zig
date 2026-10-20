@@ -6,9 +6,10 @@ extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
 const binder_session = @import("binder/session.zig");
 
 /// Prepare a real filesystem directory for an APK's bionic libraries.  The
-/// Java host extracts lib/x86_64 into it before constructing PathClassLoader;
-/// bionic_translation must see both that directory and its own shim libraries
-/// when its constructor runs during Runtime.create.
+/// APK archive entries are materialized there. Stock PackageManager also
+/// extracts libraries into the installed cluster's lib/<instruction-set>
+/// directory (PackageAbiHelperImpl.deriveNativeLibraryPaths). Both locations
+/// must be admitted by bionic_translation before Runtime.create.
 pub fn configureNativeLibraries(init: std.process.Init, tree: []const u8, runtime_root: []const u8, apk: []const u8) !void {
     const a = init.arena.allocator();
     const native_dir = if (init.minimal.environ.getPosix("ARTZIG_NATIVE_LIB_DIR")) |configured|
@@ -27,13 +28,15 @@ pub fn configureNativeLibraries(init: std.process.Init, tree: []const u8, runtim
 
     _ = setenv("ARTZIG_NATIVE_LIB_DIR", try a.dupeSentinel(u8, native_dir, 0), 1);
     _ = setenv("ARTZIG_IMAGE_NATIVE_LIB_DIR", try std.fs.path.joinZ(a, &.{ tree, "apps", "lib" }), 1);
+    const package_native_dir = try std.fs.path.joinZ(a, &.{ std.fs.path.dirname(apk) orelse return error.InvalidApkPath, "lib", "x86_64" });
+    _ = setenv("ARTZIG_PACKAGE_NATIVE_LIB_DIR", package_native_dir, 1);
     _ = runtime_root;
     // <native>/apk/<archive>/<version> holds libraries materialized from APK
     // entries ("base.apk!/lib/<abi>/...") that Android's linker would map in
     // place; only an archive's current version remains. bionic_translation
     // matches this pattern to admit an absolute path as a bionic library; its
     // bare-name search does not expand it.
-    _ = setenv("BIONIC_LD_LIBRARY_PATH", try std.fmt.allocPrintSentinel(a, "{s}:{s}/apk/*/*:{s}/apps/lib/*", .{ native_dir, native_dir, tree }, 0), 1);
+    _ = setenv("BIONIC_LD_LIBRARY_PATH", try std.fmt.allocPrintSentinel(a, "{s}:{s}:{s}/apk/*/*:{s}/apps/lib/*", .{ package_native_dir, native_dir, native_dir, tree }, 0), 1);
 
     // libdl_bio reads its soname override files from XDG_DATA_DIRS in its ELF
     // constructor, so prepend the mappings installed alongside the launcher.

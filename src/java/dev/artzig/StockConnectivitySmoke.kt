@@ -29,6 +29,9 @@ internal object StockConnectivitySmoke {
     private class CallerContext(base: Context, private val caller: String) : android.content.ContextWrapper(base) {
         var allowed = true
         var internetAllowed = true
+        lateinit var policy: android.net.NetworkPolicyManager
+        override fun getSystemService(name: String): Any? =
+            if (name == Context.NETWORK_POLICY_SERVICE) policy else super.getSystemService(name)
         override fun getPackageName(): String = caller
         override fun getOpPackageName(): String = caller
         override fun enforceCallingOrSelfPermission(name: String, message: String?) {
@@ -44,6 +47,16 @@ internal object StockConnectivitySmoke {
         val caller = if (Binder.getCallingUid() == android.os.Process.SYSTEM_UID) "android" else installed
         check(packages.getPackagesForUid(Binder.getCallingUid())!!.contains(caller))
         val context = CallerContext(base, caller)
+        var policyStatus = ConnectivityManager.RESTRICT_BACKGROUND_STATUS_DISABLED
+        var policyUid: Int? = null
+        var policyFailure = false
+        context.policy = android.net.NetworkPolicyManager(context, object : android.net.INetworkPolicyManager.Default() {
+            override fun getRestrictBackgroundStatus(uid: Int): Int {
+                policyUid = uid
+                if (policyFailure) throw IllegalStateException("policy query failed")
+                return policyStatus
+            }
+        })
         var observed: HostedNetworkSnapshot? = snapshot(100)
         val reports = ArrayList<Pair<Network, Boolean>>()
         val observations = object : HostedNetworkSource {
@@ -62,8 +75,21 @@ internal object StockConnectivitySmoke {
         val manager = ConnectivityManager(context, transport)
         context.allowed = false
         check(runCatching { manager.activeNetwork }.exceptionOrNull() is SecurityException)
+        check(runCatching { manager.restrictBackgroundStatus }.exceptionOrNull() is SecurityException)
+        check(policyUid == null)
         check(runCatching { manager.reportNetworkConnectivity(null, true) }.exceptionOrNull() is SecurityException)
         context.allowed = true
+        val callerUid = Binder.getCallingUid()
+        for (status in intArrayOf(ConnectivityManager.RESTRICT_BACKGROUND_STATUS_DISABLED,
+                ConnectivityManager.RESTRICT_BACKGROUND_STATUS_WHITELISTED,
+                ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED)) {
+            policyStatus = status
+            check(manager.restrictBackgroundStatus == status && policyUid == callerUid)
+        }
+        policyFailure = true
+        check(runCatching { manager.restrictBackgroundStatus }.exceptionOrNull() is IllegalStateException)
+        check(Binder.getCallingUid() == callerUid)
+        policyFailure = false
         context.internetAllowed = false
         check(manager.activeNetwork == Network(100))
         check(runCatching { manager.reportNetworkConnectivity(null, true) }.exceptionOrNull() is SecurityException)
