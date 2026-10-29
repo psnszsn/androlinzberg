@@ -24,6 +24,20 @@ class BootServicesUiTest {
     }
 
     @Test
+    fun audioModeListenersRegisterWithoutACallOwner() {
+        UiApp.expectVisible("Counter: 0")
+        val audio = checkNotNull(UiTest.instrumentation.context.getSystemService(android.media.AudioManager::class.java))
+        val modes = java.util.concurrent.LinkedBlockingQueue<Int>()
+        val listener = android.media.AudioManager.OnModeChangedListener { modes.add(it) }
+        audio.addOnModeChangedListener(Runnable::run, listener)
+        assertEquals(android.media.AudioManager.MODE_NORMAL, audio.mode)
+        audio.removeOnModeChangedListener(listener)
+        assertEquals("No mode owner changes the mode", null, modes.poll())
+        UiApp.click("INCREMENT COUNTER")
+        UiApp.expectVisible("Counter: 1")
+    }
+
+    @Test
     fun roleAndRestrictionsServicesFollowStockContracts() {
         UiApp.expectVisible("Counter: 0")
         // The inspector has Android's shell UID. Restrictions are readable by

@@ -40,6 +40,7 @@ pub const tests = [_][]const u8{
     "dev.artzig.uitest.DnsResolverUiTest#nameQueriesPreserveNxDomain",
     "dev.artzig.uitest.BootServicesUiTest#publishesAndroidBootCompletion",
     "dev.artzig.uitest.BootServicesUiTest#audioModeIsNormalWithoutACallOwner",
+    "dev.artzig.uitest.BootServicesUiTest#audioModeListenersRegisterWithoutACallOwner",
     "dev.artzig.uitest.BootServicesUiTest#applicationLocalesRoundTrip",
     "dev.artzig.uitest.BootServicesUiTest#roleAndRestrictionsServicesFollowStockContracts",
     "dev.artzig.uitest.BootServicesUiTest#homeResolvesAndAppCanResume",

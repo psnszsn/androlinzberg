@@ -59,6 +59,12 @@ internal class HostedAudioService(private val enforcer: PermissionEnforcer, priv
     // JNI/backend, which is not yet vendored or wired (aosp-closure.py).
     override fun getMode(): Int = AudioSystem.MODE_NORMAL
 
+    // Pinned AudioService keeps mode listeners in a RemoteCallbackList and only
+    // broadcasts from onUpdateAudioMode. With no mode owner, none is dispatched.
+    private val modeDispatchers = RemoteCallbackList<IAudioModeDispatcher>()
+    override fun registerModeDispatcher(dispatcher: IAudioModeDispatcher) { modeDispatchers.register(dispatcher) }
+    override fun unregisterModeDispatcher(dispatcher: IAudioModeDispatcher) { modeDispatchers.unregister(dispatcher) }
+
     // Pinned AudioService's navigation/home effect switches start disabled and
     // retain the caller's setting. Its full AudioPolicy/SoundPool service cannot
     // run here; preserve the disabled SOUND_EFFECTS_ENABLED early return before
