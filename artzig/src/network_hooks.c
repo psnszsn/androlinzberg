@@ -25,12 +25,17 @@ int azk_host_getaddrinfofornet(const char* host, const char* service,
         const struct addrinfo* hints, unsigned netid, unsigned mark, struct addrinfo** result) {
     int (*call)(const char*, const char*, const struct addrinfo*, unsigned, unsigned, struct addrinfo**) =
         dlsym(RTLD_DEFAULT, "azk_netd_getaddrinfofornet");
-    if (call) return call(host, service, hints, netid, mark, result);
-    if (netid != 0 || mark != 0) {
+    int status;
+    if (call) status = call(host, service, hints, netid, mark, result);
+    else if (netid != 0 || mark != 0) {
         errno = ENONET;
-        return EAI_SYSTEM;
-    }
-    return getaddrinfo(host, service, hints, result);
+        status = EAI_SYSTEM;
+    } else status = getaddrinfo(host, service, hints, result);
+    // Bionic's android_getaddrinfofornetcontext stores NULL on every failure
+    // after its NULL host/service check; glibc leaves *result untouched, and
+    // Android callers free it without initializing it.
+    if (status != 0 && (host != NULL || service != NULL)) *result = NULL;
+    return status;
 }
 int azk_host_getaddrinfo(const char* host, const char* service,
         const struct addrinfo* hints, struct addrinfo** result) {

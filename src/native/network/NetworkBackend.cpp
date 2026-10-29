@@ -119,7 +119,10 @@ extern "C" int azk_netd_getaddrinfofornet(const char* host, const char* service,
 }
 extern "C" int android_getaddrinfofornet(const char* host, const char* service,
         const addrinfo* hints, unsigned netid, unsigned mark, addrinfo** result) {
-    return azk_netd_getaddrinfofornet(host, service, hints, netid, mark, result);
+    const int status = azk_netd_getaddrinfofornet(host, service, hints, netid, mark, result);
+    // Bionic stores NULL on every failure after its NULL host/service check.
+    if (status != 0 && (host != nullptr || service != nullptr)) *result = nullptr;
+    return status;
 }
 
 // dnsproxyd's network context, restricted to the inherited Linux namespace.

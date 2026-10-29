@@ -191,6 +191,15 @@ pub fn build(b: *std.Build) void {
     b.addNamedLazyPath("bionic-loader-test-bin", bionic_loader_test.getEmittedBin());
     b.step("bionic-loader-test", "Verify native process handles, global exports and explicit DSO scope")
         .dependOn(&b.addRunArtifact(bionic_loader_test).step);
+    const bionic_libc_test = b.addExecutable(.{ .name = "bionic-libc-test", .root_module = b.createModule(.{
+        .root_source_file = b.path("src/bionic_libc_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    }) });
+    bionic_libc_test.root_module.linkLibrary(bionic.c_bio);
+    b.step("bionic-libc-test", "Verify Bionic libc result contracts at the translation boundary")
+        .dependOn(&b.addRunArtifact(bionic_libc_test).step);
     const bionic_step = b.step("bionic", "Build bionic_translation (libdl_bio, libc_bio, ...)");
     inline for (.{ bionic.dl_bio, bionic.pthread_bio, bionic.c_bio, bionic.stdcpp_bio }) |a| {
         bionic_step.dependOn(&b.addInstallArtifact(a, .{ .dest_dir = .{ .override = .{ .custom = "dist/art/lib64" } } }).step);
