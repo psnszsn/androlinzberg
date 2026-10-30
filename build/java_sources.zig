@@ -3061,6 +3061,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/app/ContextImpl.java");
     try c.file("$CJ/android/app/Application.java");
     try c.file("$CJ/android/app/Service.java");
+    try c.file("$CJ/android/app/IntentService.java");
     try c.file("$CJ/android/app/SharedPreferencesImpl.java");
     try c.file("$CJ/android/app/BroadcastOptions.java");
     try c.file("$CJ/android/app/ComponentOptions.java");

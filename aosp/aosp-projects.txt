@@ -99,6 +99,7 @@ platform/external/piex
 platform/external/protobuf
 platform/external/python/cpython3
 platform/external/python/six
+platform/external/roboto-fonts
 platform/external/rust/android-crates-io
 platform/external/rust/crates/openssl
 platform/external/rust/cxx

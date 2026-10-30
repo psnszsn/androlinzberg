@@ -68,6 +68,25 @@ class WindowFixtureUiTest {
     }
 
     @Test
+    fun intentServiceHandlesStartsInOrderAndStopsItself() {
+        click("SHOW INTENTSERVICE")
+        expectVisible("IntentService ready")
+        click("CHECK INTENTSERVICE")
+        expectVisible("IntentService contracts verified")
+        assertLog("IntentServiceFixture", "stock IntentService: ordered starts on one worker, then stopSelf and destroy")
+        assertColorArea(CYAN, 5_000)
+    }
+
+    @Test
+    fun defaultFontIsStockRobotoWithHostFallback() {
+        click("SHOW DEFAULT FONT")
+        expectVisible("Default font ready")
+        click("CHECK DEFAULT FONT")
+        expectVisible("Default font contracts verified")
+        assertColorArea(CYAN, 5_000)
+    }
+
+    @Test
     fun appKeysUseAndroidKeyStore() {
         click("SHOW KEYSTORE")
         expectVisible("Keystore ready")

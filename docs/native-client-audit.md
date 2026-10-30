@@ -688,11 +688,12 @@ and installed outputs are current.
 
 Original PdfEditor Java/JNI and PdfUtils now use the pinned PDFium implementation.
 The complete original HWUI graphics registrar replaces the copied registration
-table. Font discovery uses a bounded directory of links to fontconfig-selected
-host fonts; native file and FreeType entry points resolve Android font paths there.
-This avoids treating the whole host filesystem as `/system/fonts` and retains the
-same font files, face indices and fallback selection. Font configuration is
-published atomically through `std.Io`.
+table. Font discovery uses a bounded directory of links to the pinned Roboto, which
+is `sans-serif` as in stock `data/fonts/fonts.xml`, and to fontconfig-selected host
+fonts for the other families and the fallback chain; native file and FreeType entry
+points resolve Android font paths there. This avoids treating the whole host
+filesystem as `/system/fonts` and retains the same font files, face indices and
+fallback selection. Font configuration is published atomically through `std.Io`.
 
 The framework regression verifies page deletion, media/crop boxes, transformation,
 save/reopen, descriptor ownership, closed-object errors and malformed/nonseekable

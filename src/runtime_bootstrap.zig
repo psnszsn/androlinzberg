@@ -58,15 +58,15 @@ fn registerBinderJni(arena: std.mem.Allocator, tree: []const u8, env: *anyopaque
 /// fonts, and no bionic loader: enough for framework Java (Binder, Looper,
 /// AssetManager, PackageParser) in the system process and test peers.
 /// System fonts: unless the user points ARTZIG_FONT_FALLBACK_XML at a
-/// hand-made config, generate one from fontconfig (must precede ART boot:
+/// hand-made config, generate one (must precede ART boot:
 /// SystemFonts reads the env at class init). Every ART process needs it, the
 /// headless ones included: the real Context's theme resolves a Typeface as
 /// soon as a TextView is inflated.
-fn configureFonts(init: std.process.Init) void {
+fn configureFonts(init: std.process.Init, tree: []const u8) void {
     if (init.minimal.environ.getPosix("ARTZIG_FONT_FALLBACK_XML") != null) return;
     const t0 = monotonicMs(init.io);
     defer std.debug.print("azk: fonts: fontconfig query took {d} ms\n", .{monotonicMs(init.io) - t0});
-    if (fonts.generate(init.gpa, init.io, init.minimal.environ)) |config| {
+    if (fonts.generate(init.gpa, init.io, init.minimal.environ, tree)) |config| {
         defer config.deinit(init.gpa);
         _ = setenv("ARTZIG_FONT_FALLBACK_XML", config.xml, 1);
         _ = setenv("ARTZIG_FONTS_XML", config.xml, 1);
@@ -116,7 +116,7 @@ pub fn bootHeadless(init: std.process.Init, role: runtime_identity.Role) !Headle
     if (init.minimal.environ.getPosix("ARTZIG_FRAMEWORK_RES") == null) {
         _ = setenv("ARTZIG_FRAMEWORK_RES", try std.fs.path.joinZ(arena, &.{ tree, "res", "framework-res.apk" }), 1);
     }
-    configureFonts(init);
+    configureFonts(init, tree);
     // Stock runtime libart and default library search path: the overlay
     // libart in lib/art has no sibling JNI libraries (libicu_jni.so, ...), and
     // without the bionic loader there is no <root>/lib64 fallback.
@@ -182,7 +182,7 @@ pub fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8, role: runtim
     const looper_poll = lib.lookup(host_natives.LooperPollStateFn, "azk_looper_poll_state") orelse return error.SymbolNotFound;
 
     const identity = try runtime_identity.prepare(init, &lib, role, apk_abs);
-    configureFonts(init);
+    configureFonts(init, tree);
     // Android processes (init, zygote and its children) run with "/" as their
     // working directory, and libcore fixes user.dir from it at VM creation;
     // framework code such as InstallPackageHelper's makeDirRecursive resolves

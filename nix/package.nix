@@ -83,7 +83,7 @@ stdenv.mkDerivation {
         libexec/androlinzberg/azk-standalone libexec/androlinzberg/azk-system-server \
         libexec/androlinzberg/azk-desktop-controller libexec/androlinzberg/azk-app-process libexec/androlinzberg/azk-metadata libexec/androlinzberg/azk-jvm-test \
         bin/azk-media-service bin/azk-ndk-system-client bin/art/bin/dalvikvm64 bin/art/lib64/libart.so \
-        lib/libandroid_platform.so framework/framework.jar res/framework-res.apk share/androlinzberg/dexopt-apk.sh; do
+        lib/libandroid_platform.so framework/framework.jar res/framework-res.apk fonts/Roboto-Regular.ttf share/androlinzberg/dexopt-apk.sh; do
       [ -e "$out/$f" ] || { echo "missing $f in the install tree" >&2; exit 1; }
     done
   '';

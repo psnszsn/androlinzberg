@@ -1222,6 +1222,7 @@ pub fn build(b: *std.Build) void {
         .webview_provider = webview_dep.path("webview.apk"),
         .aosp_platform_data = aosp.path(b, "frameworks/base/data/etc"),
         .aosp_keyboards = aosp.path(b, "frameworks/base/data/keyboards"),
+        .aosp_roboto = aosp.path(b, "external/roboto-fonts"),
         .system_apps = java.system_apps,
     });
     b.getInstallStep().dependOn(&b.addInstallDirectory(.{

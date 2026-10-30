@@ -54,6 +54,8 @@ pub const tests = [_][]const u8{
     "dev.artzig.uitest.WindowFixtureUiTest#dialogLifecycleRestoresStateAndPreservesCallbackOrder@412x915",
     "dev.artzig.uitest.WindowFixtureUiTest#sharedBackCallbackRemainsScopedToEachDialogWindow@412x915",
     "dev.artzig.uitest.WindowFixtureUiTest#activityPendingIntentsLaunchAndDeliverResults@412x915",
+    "dev.artzig.uitest.WindowFixtureUiTest#intentServiceHandlesStartsInOrderAndStopsItself@412x915",
+    "dev.artzig.uitest.WindowFixtureUiTest#defaultFontIsStockRobotoWithHostFallback@412x915",
     "dev.artzig.uitest.WindowFixtureUiTest#visibleActivityReceivesAudioFocusCallbacks@412x915",
     "dev.artzig.uitest.WindowFixtureUiTest#appKeysUseAndroidKeyStore@412x915",
     "dev.artzig.uitest.WindowFixtureUiTest#recreationRestoresSavedCounter@412x915",

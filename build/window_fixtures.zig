@@ -27,6 +27,8 @@ pub fn build(b: *std.Build, aosp: *std.Build.Dependency, framework: @import("jav
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/DialogFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/AudioFocusFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/PendingIntentFixtureActivity.kt"));
+    kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/IntentServiceFixtureActivity.kt"));
+    kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/FontFixtureActivity.kt"));
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/KeyStoreFixtureActivity.kt"));
     const d8 = b.addSystemCommand(&.{ "java", "-Xmx512M", "-cp" });
     d8.addFileArg(aosp.path("prebuilts/r8/r8.jar"));

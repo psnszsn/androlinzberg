@@ -38,6 +38,8 @@ pub const Options = struct {
     aosp_platform_data: LazyPath,
     /// Pinned frameworks/base/data/keyboards key layouts and character maps.
     aosp_keyboards: LazyPath,
+    /// Pinned external/roboto-fonts, Android's default sans-serif family.
+    aosp_roboto: LazyPath,
     /// System-partition APKs, laid out as Soong installs them.
     system_apps: []const @import("system_apks.zig").SystemApp,
 };
@@ -122,6 +124,9 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     // SystemConfig reads ANDROID_ROOT/etc/permissions: AOSP platform data plus host features.
     inline for (.{ "platform.xml", "privapp-permissions-platform.xml", "preinstalled-packages-platform.xml" }) |name| {
         _ = tree.addCopyFile(options.aosp_platform_data.path(b, name), "etc/permissions/" ++ name);
+    }
+    inline for (.{ "Roboto-Regular.ttf", "NOTICE" }) |name| {
+        _ = tree.addCopyFile(options.aosp_roboto.path(b, name), "fonts/" ++ name);
     }
     _ = tree.addCopyDirectory(b.path("src/system-image/etc"), "etc", .{});
     // The software KeyMint service's `required` vendor feature file.

@@ -23,6 +23,9 @@
         <activity android:name=".InputRoutingFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".PendingIntentFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".PendingIntentTargetActivity" android:resizeableActivity="true" />
+        <activity android:name=".IntentServiceFixtureActivity" android:resizeableActivity="true" />
+        <service android:name=".FixtureIntentService" android:exported="false" />
+        <activity android:name=".FontFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".AudioFocusFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".KeyStoreFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".DialogFixtureActivity" android:resizeableActivity="true"
