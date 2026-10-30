@@ -109,8 +109,9 @@ pub fn build(b: *std.Build, o: Options) Artifacts {
         }),
         .flags = &(c_common ++ [_][]const u8{"-DPAGESIZE=4096"}),
     });
-    c_bio.root_module.addCSourceFile(.{ .file = o.src.path(b, "libc/libc.c"), .flags = &(c_common ++ .{ "-DPAGESIZE=4096", "-Dgetaddrinfo=azk_host_getaddrinfo" }) });
+    c_bio.root_module.addCSourceFile(.{ .file = o.src.path(b, "libc/libc.c"), .flags = &(c_common ++ .{ "-DPAGESIZE=4096", "-Dgetaddrinfo=azk_bionic_getaddrinfo" }) });
     c_bio.root_module.addCSourceFile(.{ .file = b.path("src/network_hooks.c"), .flags = &.{ "-std=gnu11", "-D_GNU_SOURCE" } });
+    c_bio.root_module.addCSourceFile(.{ .file = b.path("src/bionic_netdb.c"), .flags = &.{ "-std=gnu11", "-D_GNU_SOURCE" } });
     c_bio.root_module.linkSystemLibrary("m", .{ .needed = true });
     linkByPath(b, c_bio.root_module, "libunwind-generic", &.{ "libunwind.so", "libunwind-x86_64.so" });
     // nix's libbsd.so is an ld script referencing -lmd, and zig does not forward -L

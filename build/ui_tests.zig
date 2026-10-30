@@ -85,6 +85,7 @@ pub const tests = [_][]const u8{
     "dev.artzig.uitest.FairEmailUiTest#launchesWelcomeWithoutRuntimeIssues@412x915@fairemail",
     "dev.artzig.uitest.FairEmailUiTest#opensAccountSetupWithoutRuntimeIssues@412x915@fairemail",
     "dev.artzig.uitest.FairEmailUiTest#checksUnknownProviderWithoutResolverTransportErrors@412x915@fairemail",
+    "dev.artzig.uitest.FairEmailUiTest#synchronizesAnImapInbox@412x915@fairemail",
     // Host path: real Wayland input through the presenter and InputDispatcher.
     "dev.artzig.uitest.host.WaylandInputUiTest#tapReachesTheView",
     "dev.artzig.uitest.host.WaylandInputUiTest#wheelScrollsTheView@412x400",
