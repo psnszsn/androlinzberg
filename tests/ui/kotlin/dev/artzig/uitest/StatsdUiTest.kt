@@ -35,6 +35,29 @@ class StatsdUiTest {
     }
 
     @Test
+    fun hostCommandInspectsARunningSession() {
+        UiApp.expectVisible("Counter: 0")
+        val uids = host("print-uid-map")
+        assertTrue(uids, uids.contains(FIXTURE))
+        host("config", "update", CONFIG.toString(), input = config())
+        val report = host("dump")
+        assertTrue(report, report.contains("Config ID: $CONFIG,"))
+        assertTrue(report, PUSHED_ATOM.containsMatchIn(report))
+    }
+
+    /** `androlinzberg stats`, as a person at the desktop runs it. */
+    private fun host(vararg arguments: String, input: ByteArray = ByteArray(0)): String {
+        val launcher = checkNotNull(System.getenv("AZK_TEST_LAUNCHER"))
+        val session = checkNotNull(System.getenv("AZK_TEST_SESSION_DIR"))
+        val process = ProcessBuilder(listOf(launcher, "stats", "--join", session) + arguments).start()
+        process.outputStream.use { it.write(input) }
+        val error = CompletableFuture.supplyAsync { process.errorStream.readBytes().decodeToString() }
+        val output = process.inputStream.readBytes().decodeToString()
+        assertEquals(error.get(), 0, process.waitFor())
+        return output
+    }
+
+    @Test
     fun decodedImagesAreCountedByNativeClients() {
         UiApp.expectVisible("Counter: 0")
         val stats = ServiceManager.waitForService("stats")

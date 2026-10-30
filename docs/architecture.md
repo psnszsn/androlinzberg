@@ -220,6 +220,18 @@ from `AZK_BINDER_SESSION_DIR`. `src/native/stats/data_paths.c` maps its fixed
 the host uid, so `StatsPullAtomService` atoms are absent and an atom's logging uid
 is not the Android uid; explicit uid fields are unaffected.
 
+`androlinzberg stats <command>` runs `cmd stats <command>` against the running
+session, and `androlinzberg stats dump` runs `dumpsys stats --metadata`. It joins as
+the broker's inspector, Android's shell uid, which every session admits from its
+own user namespace. statsd keeps atom values only for an installed configuration:
+
+```sh
+protoc --proto_path="$AOSP" --encode=android.os.statsd.StatsdConfig \
+  "$AOSP/packages/modules/StatsD/statsd/src/statsd_config.proto" < config.txtpb |
+  androlinzberg stats config update 1
+androlinzberg stats dump-report 1 --proto > report.pb
+```
+
 ### Hosted services
 
 The system process uses AOSP's `SystemServiceManager` and `LocalServices`

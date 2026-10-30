@@ -108,8 +108,8 @@ pub const Options = struct {
     socket_path: []const u8,
     cookie: []const u8,
     system_cookie: []const u8,
-    /// Present only when the session was started for inspection. A peer that
-    /// presents it joins as `inspector`: Android's shell uid, which may look up
+    /// Present when the session admits host tools. A peer that presents it
+    /// joins as `inspector`: Android's shell uid, which may look up
     /// services as `adb shell` can (each service enforces its own permissions
     /// against that uid) but registers none.
     inspector_cookie: ?[]const u8 = null,

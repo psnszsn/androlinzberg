@@ -483,6 +483,17 @@ pub fn build(b: *std.Build) void {
         .ndk = binder_ndk,
         .hidl = hidl,
     });
+    const stats_tool = b.addExecutable(.{
+        .name = "azk-stats",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/stats_main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    stats_tool.root_module.linkLibrary(binder_ndk);
+    for (@import("build/keystore.zig").daemon_rpaths) |rpath| stats_tool.root_module.addRPathSpecial(rpath);
     generated.native.inputflinger.rust.addStepDependencies(b.step("inputflinger-rust", "Build the pinned Rust InputFilter and its AIDL crates"));
     const perfetto_test_mod = b.createModule(.{ .target = target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
     perfetto_build.configure(b, perfetto_test_mod, aosp, generated.native.perfetto);
@@ -1210,6 +1221,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "keystore2", .file = pinnedLoader(b, host_loader, credential_daemons.keystore2, "keystore2") },
         },
         .statsd = pinnedLoader(b, host_loader, statsd, "statsd"),
+        .stats_tool = pinnedLoader(b, host_loader, stats_tool.getEmittedBin(), "azk-stats"),
         .keystore2_key_contexts = aosp.path(b, "system/sepolicy/private/keystore2_key_contexts"),
         .keymint_feature = aosp.path(b, "hardware/interfaces/security/keymint/aidl/default/android.hardware.hardware_keystore.xml"),
         .task_presenter = pinnedLoader(b, host_loader, task_presenter.getEmittedBin(), "azk-task-presenter"),

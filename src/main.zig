@@ -6,8 +6,10 @@ const usage =
     \\androlinzberg — run an Android APK as a Wayland application
     \\
     \\usage: androlinzberg [--standalone] [--join <session-dir>] <app.apk|bundle.apkm|bundle.xapk|apk-directory>
+    \\       androlinzberg stats [--join <session-dir>] <command> [arguments]
     \\  --standalone          use a private single-user Android instance (default)
     \\  --join <session-dir>  launch in an existing private instance
+    \\  stats                 inspect a running session's statsd (`stats --help`)
     \\
     \\The installed runtime is discovered relative to this executable.
     \\ARTZIG_INSTALL_ROOT selects an explicit absolute development image.
@@ -24,6 +26,12 @@ pub fn main(init: std.process.Init) !void {
     if (args.len == 1 or std.mem.eql(u8, args[1], "--help") or std.mem.eql(u8, args[1], "-h")) {
         try std.Io.File.stdout().writeStreamingAll(init.io, usage);
         return;
+    }
+    if (std.mem.eql(u8, args[1], "stats")) {
+        var argv: std.ArrayList([]const u8) = .empty;
+        try argv.append(a, try image.executable(init, "azk-stats"));
+        for (args[2..]) |arg| try argv.append(a, arg);
+        return std.process.replace(init.io, .{ .argv = argv.items });
     }
     var helper: []const u8 = "azk-standalone";
     var join: ?[]const u8 = null;

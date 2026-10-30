@@ -17,7 +17,7 @@ pub const cookie_env = "AZK_BINDER_COOKIE";
 /// Given only to the broker, compositor and session's system process.
 pub const system_cookie_env = "AZK_BINDER_SYSTEM_COOKIE";
 /// Given to the broker, and published in `session.json`, only for a session
-/// started for inspection; a host test tool presents it as `AZK_BINDER_COOKIE`.
+/// started for inspection; a host tool presents it as `AZK_BINDER_COOKIE`.
 pub const inspector_cookie_env = "AZK_BINDER_INSPECTOR_COOKIE";
 /// Admits statsd as the broker's `statsd` role; only the broker and statsd see it.
 const statsd_cookie_env = "AZK_BINDER_STATSD_COOKIE";
@@ -169,7 +169,9 @@ pub const Session = struct {
         credential: ?CredentialDaemons = null,
         /// Stock statsd; its state lives in the same data partition.
         statsd_exe: ?[]const u8 = null,
-        /// Admit host test tools as the broker's `inspector` role.
+        /// Admit host tools as the broker's `inspector` role. The broker takes
+        /// cookies only from the session's user namespace, so its applications
+        /// cannot use this one.
         inspection: bool = false,
     };
 
@@ -632,6 +634,43 @@ fn runtimeDir(gpa: std.mem.Allocator, io: Io, environ: std.process.Environ, nonc
     return std.fmt.allocPrint(gpa, "/tmp/androlinzberg-{d}-{x}", .{ pid, nonce });
 }
 
+/// The owning launcher of a session directory, by its name: both naming
+/// schemes, `binder-<pid>-<nonce>` under XDG_RUNTIME_DIR and
+/// `androlinzberg-<pid>-<nonce>` for the /tmp fallback.
+fn sessionOwner(name: []const u8) ?i32 {
+    const rest = for ([_][]const u8{ "binder-", "androlinzberg-" }) |prefix| {
+        if (std.mem.startsWith(u8, name, prefix)) break name[prefix.len..];
+    } else return null;
+    const dash = std.mem.indexOfScalar(u8, rest, '-') orelse return null;
+    return std.fmt.parseInt(i32, rest[0..dash], 10) catch null;
+}
+
+/// Signal 0 probes existence; ESRCH means the launcher is gone.
+fn ownerIsAlive(pid: i32) bool {
+    return std.os.linux.kill(pid, @fromBackingInt(@intCast(0))) == 0;
+}
+
+/// The session directories whose owning launcher is still running.
+pub fn liveSessions(arena: std.mem.Allocator, io: Io, environ: std.process.Environ) ![]const []const u8 {
+    const parent_path = if (environ.getPosix("XDG_RUNTIME_DIR")) |base|
+        try std.fs.path.join(arena, &.{ base, "androlinzberg" })
+    else
+        "/tmp";
+    var parent = Io.Dir.cwd().openDir(io, parent_path, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return &.{},
+        else => return err,
+    };
+    defer parent.close(io);
+    var sessions: std.ArrayList([]const u8) = .empty;
+    var it = parent.iterate();
+    while (try it.next(io)) |entry| {
+        if (entry.kind != .directory) continue;
+        if (ownerIsAlive(sessionOwner(entry.name) orelse continue))
+            try sessions.append(arena, try std.fs.path.join(arena, &.{ parent_path, entry.name }));
+    }
+    return sessions.items;
+}
+
 /// Removes sibling session directories whose owning launcher is gone. A
 /// launcher killed with SIGKILL (the integration harness does this) cannot
 /// run its own cleanup, and the broker dies with the process group.
@@ -643,16 +682,9 @@ fn sweepDeadSessions(gpa: std.mem.Allocator, io: Io, new_dir: []const u8) void {
     var it = parent.iterate();
     while (it.next(io) catch null) |entry| {
         if (entry.kind != .directory) continue;
-        // Both naming schemes: `binder-<pid>-<nonce>` under XDG_RUNTIME_DIR
-        // and `androlinzberg-<pid>-<nonce>` for the /tmp fallback.
-        const rest = for ([_][]const u8{ "binder-", "androlinzberg-" }) |prefix| {
-            if (std.mem.startsWith(u8, entry.name, prefix)) break entry.name[prefix.len..];
-        } else continue;
+        const pid = sessionOwner(entry.name) orelse continue;
         if (std.mem.eql(u8, entry.name, new_name)) continue;
-        const dash = std.mem.indexOfScalar(u8, rest, '-') orelse continue;
-        const pid = std.fmt.parseInt(i32, rest[0..dash], 10) catch continue;
-        // Signal 0 probes existence; ESRCH means the launcher is gone.
-        if (std.os.linux.kill(pid, @fromBackingInt(@intCast(0))) == 0) continue;
+        if (ownerIsAlive(pid)) continue;
         const name = gpa.dupe(u8, entry.name) catch continue;
         defer gpa.free(name);
         parent.deleteTree(io, name) catch {};

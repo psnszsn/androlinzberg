@@ -53,6 +53,7 @@ pub const tests = [_][]const u8{
     "dev.artzig.uitest.StatsdUiTest#atomsReachStatsdAndAreInspectable",
     "dev.artzig.uitest.StatsdUiTest#decodedImagesAreCountedByNativeClients",
     "dev.artzig.uitest.StatsdUiTest#configuredMetricIsStoredAndReported",
+    "dev.artzig.uitest.StatsdUiTest#hostCommandInspectsARunningSession",
     "dev.artzig.uitest.WindowFixtureUiTest#launchesAndUpdatesState@412x915",
     "dev.artzig.uitest.WindowFixtureUiTest#dialogRemainsAttachedToTheActivity@412x915",
     "dev.artzig.uitest.WindowFixtureUiTest#dialogLifecycleRestoresStateAndPreservesCallbackOrder@412x915",
