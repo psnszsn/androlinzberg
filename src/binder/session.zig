@@ -19,6 +19,10 @@ pub const system_cookie_env = "AZK_BINDER_SYSTEM_COOKIE";
 /// Given to the broker, and published in `session.json`, only for a session
 /// started for inspection; a host test tool presents it as `AZK_BINDER_COOKIE`.
 pub const inspector_cookie_env = "AZK_BINDER_INSPECTOR_COOKIE";
+/// Admits statsd as the broker's `statsd` role; only the broker and statsd see it.
+const statsd_cookie_env = "AZK_BINDER_STATSD_COOKIE";
+/// libcutils and libstatssocket resolve reserved sockets under this directory.
+const session_dir_env = "AZK_BINDER_SESSION_DIR";
 /// Path of the session's read-only property area file (see
 /// `src/binder/prop_area.zig`); exported to every session process.
 pub const prop_area_env = "AZK_PROP_AREA";
@@ -111,6 +115,7 @@ pub const Session = struct {
     child: std.process.Child,
     /// keymint, gatekeeper HAL, keystore2, gatekeeperd.
     credential: [4]?std.process.Child = @splat(null),
+    statsd: ?std.process.Child = null,
     surfaceflinger: ?std.process.Child = null,
     presenter: ?std.process.Child = null,
     system: ?std.process.Child = null,
@@ -129,6 +134,7 @@ pub const Session = struct {
     cookie: []u8,
     system_cookie: []u8,
     inspector_cookie: ?[]u8 = null,
+    statsd_cookie: ?[]u8 = null,
     /// Exclusive ownership of the application data root's package database.
     data_lock: ?Io.File = null,
 
@@ -161,6 +167,8 @@ pub const Session = struct {
         /// Their databases live in the data partition: `storage`, else the
         /// environment's ARTZIG_DATA_DIR.
         credential: ?CredentialDaemons = null,
+        /// Stock statsd; its state lives in the same data partition.
+        statsd_exe: ?[]const u8 = null,
         /// Admit host test tools as the broker's `inspector` role.
         inspection: bool = false,
     };
@@ -178,6 +186,7 @@ pub const Session = struct {
         if (options.surfaceflinger_exe) |exe| try session.startSurfaceFlinger(options, exe);
         if (options.task_presenter_exe) |exe| try session.startTaskPresenter(options, exe);
         if (options.credential) |daemons| try session.startCredentialDaemons(options, daemons);
+        if (options.statsd_exe) |exe| try session.startStatsd(options, exe);
         try session.startSystemProcess(options);
         if (options.media_service_exe) |exe| {
             // init runs mediaserver beside system_server: the system server's
@@ -222,6 +231,9 @@ pub const Session = struct {
         io.random(&random);
         const inspector_cookie = if (options.inspection) try std.fmt.allocPrint(gpa, "{x}", .{&random}) else null;
         errdefer if (inspector_cookie) |value| gpa.free(value);
+        io.random(&random);
+        const statsd_cookie = if (options.statsd_exe != null) try std.fmt.allocPrint(gpa, "{x}", .{&random}) else null;
+        errdefer if (statsd_cookie) |value| gpa.free(value);
         var uid_buf: [16]u8 = undefined;
         const uid_text = try std.fmt.bufPrint(&uid_buf, "{d}", .{options.first_app_uid});
 
@@ -231,6 +243,7 @@ pub const Session = struct {
         try child_env.put(cookie_env, cookie);
         try child_env.put(system_cookie_env, system_cookie);
         if (inspector_cookie) |value| try child_env.put(inspector_cookie_env, value);
+        if (statsd_cookie) |value| try child_env.put(statsd_cookie_env, value);
         var broker_args: std.ArrayList([]const u8) = .empty;
         defer broker_args.deinit(gpa);
         try broker_args.appendSlice(gpa, &.{ options.broker_exe, "--socket", socket_path, "--prop-area", prop_area_path, "--session-dir", dir, "--first-app-uid", uid_text });
@@ -262,6 +275,7 @@ pub const Session = struct {
             .cookie = cookie,
             .system_cookie = system_cookie,
             .inspector_cookie = inspector_cookie,
+            .statsd_cookie = statsd_cookie,
             .ready_timeout = options.ready_timeout,
             .shutdown_timeout = options.shutdown_timeout,
         };
@@ -297,6 +311,7 @@ pub const Session = struct {
         // has no AZK_TASK_WINDOWS. SF and system_server must use that same
         // resolved session mode for their display/input coordinate plane.
         try env.put("AZK_TASK_WINDOWS", if (options.task_presenter_exe != null) "1" else "0");
+        try env.put(session_dir_env, s.dir);
         s.surfaceflinger = try spawnService(s.gpa, s.io, .{
             .argv = &.{exe},
             .environ_map = &env,
@@ -367,6 +382,39 @@ pub const Session = struct {
         }
     }
 
+    /// Starts stock statsd as init does, with the state directories init.rc
+    /// creates. It makes its own `statsdw` socket when init provides none. It
+    /// connects as AID_STATSD, so it never receives the system cookie.
+    fn startStatsd(s: *Session, options: Options, exe: []const u8) !void {
+        const data_root = if (options.storage) |storage| storage.application_data else options.environ.getPosix("ARTZIG_DATA_DIR") orelse
+            return error.StatsdNeedsDataPartition;
+        for ([_][]const u8{ "stats-data", "stats-data/restricted-data", "stats-service", "stats-active-metric", "stats-metadata", "train-info" }) |name| {
+            const dir = try std.fs.path.join(s.gpa, &.{ data_root, "misc", name });
+            defer s.gpa.free(dir);
+            try Io.Dir.cwd().createDirPath(s.io, dir);
+        }
+        const sockets = try std.fs.path.join(s.gpa, &.{ s.dir, "sockets" });
+        defer s.gpa.free(sockets);
+        try Io.Dir.cwd().createDirPath(s.io, sockets);
+        var env = try options.environ.createMap(s.gpa);
+        defer env.deinit();
+        _ = env.swapRemove(system_cookie_env);
+        try env.put(socket_env, s.socket_path);
+        try env.put(cookie_env, s.statsd_cookie.?);
+        try env.put(prop_area_env, s.prop_area_path);
+        try env.put(session_dir_env, s.dir);
+        try env.put("ARTZIG_DATA_DIR", data_root);
+        try env.put("AZK_BINDER_PACKAGE", "android:statsd");
+        try env.put("AZK_BINDER_EXIT_ON_DISCONNECT", "1");
+        s.statsd = try spawnService(s.gpa, s.io, .{
+            .argv = &.{exe},
+            .environ_map = &env,
+            .stdin = .ignore,
+            .stdout = .inherit,
+            .stderr = .inherit,
+        });
+    }
+
     /// Starts the native resource services after their system dependencies.
     fn spawnMediaService(s: *Session, options: Options, exe: []const u8) !void {
         var env = try options.environ.createMap(s.gpa);
@@ -376,6 +424,7 @@ pub const Session = struct {
         try env.put(system_cookie_env, s.system_cookie);
         try env.put(prop_area_env, s.prop_area_path);
         try env.put("AZK_BINDER_PACKAGE", "android:media");
+        try env.put(session_dir_env, s.dir);
         if (options.platform_root) |root| try env.put("ARTZIG_PLATFORM_ROOT", root);
         s.media = try spawnService(s.gpa, s.io, .{
             .argv = &.{exe},
@@ -459,6 +508,9 @@ pub const Session = struct {
         // init stops services with SIGTERM; the stock daemons take its default.
         for (&s.credential) |*slot| if (slot.*) |*daemon| daemon.kill(io);
         s.credential = @splat(null);
+        // SIGTERM makes statsd write its state before it exits.
+        if (s.statsd) |*statsd| stopChild(io, statsd, s.shutdown_timeout);
+        s.statsd = null;
         if (s.presenter) |*presenter| stopChild(io, presenter, s.shutdown_timeout);
         s.presenter = null;
         if (s.surfaceflinger) |*surfaceflinger| stopChild(io, surfaceflinger, s.shutdown_timeout);
@@ -473,6 +525,7 @@ pub const Session = struct {
         s.gpa.free(s.cookie);
         s.gpa.free(s.system_cookie);
         if (s.inspector_cookie) |value| s.gpa.free(value);
+        if (s.statsd_cookie) |value| s.gpa.free(value);
         s.gpa.destroy(s.drain);
         if (s.data_lock) |file| file.close(io);
         s.data_lock = null;
@@ -623,5 +676,5 @@ fn drainPipe(io: Io, pipe: Io.File) void {
 pub fn configureSystemData(gpa: std.mem.Allocator, io: Io, child_env: *std.process.Environ.Map, session_dir: []const u8) !void {
     _ = gpa;
     _ = io;
-    try child_env.put("AZK_BINDER_SESSION_DIR", session_dir);
+    try child_env.put(session_dir_env, session_dir);
 }

@@ -1,0 +1,42 @@
+From: artzig <artzig@localhost>
+Subject: [PATCH] libstatssocket: resolve statsdw in the hosted session
+
+--- a/lib/libstatssocket/statsd_writer.cpp
++++ b/lib/libstatssocket/statsd_writer.cpp
+@@ -74,6 +74,16 @@ void statsd_writer_init_unlock() {
+ }
+ 
+ static int statsdAvailable();
++// Hosted init owns a session-specific reserved socket directory.
++static void statsdSocketPath(char (&path)[sizeof(sockaddr_un::sun_path)]) {
++    const char* session = getenv("AZK_BINDER_SESSION_DIR");
++    if (session == nullptr) {
++        strcpy(path, "/dev/socket/statsdw");
++    } else {
++        snprintf(path, sizeof(path), "%s/sockets/statsdw", session);
++    }
++}
++
+ static int statsdOpen();
+ static void statsdClose();
+ static int statsdWrite(struct timespec* ts, struct iovec* vec, size_t nr);
+@@ -116,7 +126,7 @@ static int statsdOpen() {
+             struct sockaddr_un un;
+             memset(&un, 0, sizeof(struct sockaddr_un));
+             un.sun_family = AF_UNIX;
+-            strcpy(un.sun_path, "/dev/socket/statsdw");
++            statsdSocketPath(un.sun_path);
+ 
+             if (TEMP_FAILURE_RETRY(
+                         connect(sock, (struct sockaddr*)&un, sizeof(struct sockaddr_un))) < 0) {
+@@ -157,7 +167,9 @@ static void statsdClose() {
+ 
+ static int statsdAvailable() {
+     if (atomic_load(&statsdLoggerWrite.sock) < 0) {
+-        if (access("/dev/socket/statsdw", W_OK) == 0) {
++        char path[sizeof(sockaddr_un::sun_path)];
++        statsdSocketPath(path);
++        if (access(path, W_OK) == 0) {
+             return 0;
+         }
+         return -EBADF;

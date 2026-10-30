@@ -205,6 +205,21 @@ that Java and native clients map read-only. Reads use the bionic serial protocol
 writes go through broker authorization, and change notifications trigger client
 callbacks. Read-only properties are write-once.
 
+### Statistics
+
+Each session runs stock statsd from its AOSP main, started before the system
+server as init starts it. It joins the broker with its own cookie as AID_STATSD,
+which stock `StatsCompanion` requires, and may register only `stats`. Stock
+`StatsCompanion.Lifecycle` and `StatsBootstrapAtomService.Lifecycle` run in the
+system server; bootstrap-mode libraries such as HWUI report through the latter.
+
+statsd creates its `statsdw` socket under the session's `sockets` directory, as
+it does when init provides none, and `libstatssocket` resolves that directory
+from `AZK_BINDER_SESSION_DIR`. `src/native/stats/data_paths.c` maps its fixed
+`/data/misc` paths into the session's data partition. A session has no pull-atom service, and socket credentials report
+the host uid, so `StatsPullAtomService` atoms are absent and an atom's logging uid
+is not the Android uid; explicit uid fields are unaffected.
+
 ### Hosted services
 
 The system process uses AOSP's `SystemServiceManager` and `LocalServices`

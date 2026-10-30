@@ -325,7 +325,7 @@ public:
     return fd < 0 ? BAD_VALUE : azk_parcel_writeFd(mParcel, fd, take);
   }
   status_t writeDupFileDescriptor(int fd) {
-    return fd < 0 ? BAD_VALUE : AParcel_writeParcelFileDescriptor(mParcel, fd);
+    return fd < 0 ? BAD_VALUE : azk_parcel_writeDupFd(mParcel, fd);
   }
   int readFileDescriptor() const {
     int fd = -1;

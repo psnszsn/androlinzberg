@@ -471,6 +471,18 @@ pub fn build(b: *std.Build) void {
         .hidl_headers = generated.native.hidl_header_roots,
         .protoc = protobuf.protoc,
     });
+    const statsd = @import("build/statsd.zig").build(b, .{
+        .target = target,
+        .aosp = aosp,
+        .aidl_tool = generated.aidl_tool,
+        .stats_tool = generated.stats_tool,
+        .runner = generated.runner,
+        .protoc = protobuf.protoc,
+        .protobuf = protobuf.library,
+        .binder = binder_cpp,
+        .ndk = binder_ndk,
+        .hidl = hidl,
+    });
     generated.native.inputflinger.rust.addStepDependencies(b.step("inputflinger-rust", "Build the pinned Rust InputFilter and its AIDL crates"));
     const perfetto_test_mod = b.createModule(.{ .target = target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
     perfetto_build.configure(b, perfetto_test_mod, aosp, generated.native.perfetto);
@@ -771,19 +783,22 @@ pub fn build(b: *std.Build) void {
     facade_run.has_side_effects = true;
     b.step("binder-cpp-test", "Test generated graphics Binder and shared Parcel ownership").dependOn(&facade_run.step);
 
-    // Stock StatsLog loads libstats_jni itself. The host has no statsd daemon,
-    // so this tiny JNI library supplies AOSP's Ravenwood-equivalent no-op sink.
+    // Stock StatsLog loads libstats_jni itself; write_buffer_to_statsd resolves
+    // from libstatssocket in the process's global native island.
     const stats_jni = b.addLibrary(.{
         .name = "stats_jni",
         .linkage = .dynamic,
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/platform/stats_log.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{.{ .name = "art", .module = art_mod }},
-        }),
+        .root_module = b.createModule(.{ .target = target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true }),
     });
-    b.step("stats-jni", "Build the hosted StatsLog JNI sink")
+    stats_jni.root_module.addCSourceFile(.{ .file = aosp.path(b, "packages/modules/StatsD/framework/jni/android_util_StatsLog.cpp"), .flags = &.{"-std=gnu++20"} });
+    for ([_][]const u8{
+        "libnativehelper/include_jni",
+        "libnativehelper/header_only_include",
+        "packages/modules/StatsD/lib/libstatssocket/include",
+        "system/logging/liblog/include",
+    }) |path| stats_jni.root_module.addIncludePath(aosp.path(b, path));
+    stats_jni.root_module.linkLibrary(binder_cpp); // liblog
+    b.step("stats-jni", "Build the stock StatsLog JNI library")
         .dependOn(&stats_jni.step);
 
     // --- native island: hwui + JNI + our shims, linked against static Skia
@@ -1194,6 +1209,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "gatekeeperd", .file = pinnedLoader(b, host_loader, credential_daemons.gatekeeperd, "gatekeeperd") },
             .{ .name = "keystore2", .file = pinnedLoader(b, host_loader, credential_daemons.keystore2, "keystore2") },
         },
+        .statsd = pinnedLoader(b, host_loader, statsd, "statsd"),
         .keystore2_key_contexts = aosp.path(b, "system/sepolicy/private/keystore2_key_contexts"),
         .keymint_feature = aosp.path(b, "hardware/interfaces/security/keymint/aidl/default/android.hardware.hardware_keystore.xml"),
         .task_presenter = pinnedLoader(b, host_loader, task_presenter.getEmittedBin(), "azk-task-presenter"),

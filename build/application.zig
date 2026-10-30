@@ -10,6 +10,8 @@ pub const Options = struct {
     media_service: LazyPath,
     /// Stock credential daemons, installed under their Android names.
     credential: [4]NamedLibrary,
+    /// Stock statsd.
+    statsd: LazyPath,
     /// system/sepolicy's keystore2_key_contexts, as plat_keystore2_key_contexts.
     keystore2_key_contexts: LazyPath,
     /// android.hardware.hardware_keystore.xml from the KeyMint service.
@@ -76,6 +78,7 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     _ = tree.addCopyFile(options.surfaceflinger, "bin/azk-surfaceflinger");
     _ = tree.addCopyFile(options.media_service, "bin/azk-media-service");
     for (options.credential) |daemon| _ = tree.addCopyFile(daemon.file, b.pathJoin(&.{ "libexec", "androlinzberg", daemon.name }));
+    _ = tree.addCopyFile(options.statsd, "libexec/androlinzberg/statsd");
     // Soong installs it in /system/etc/selinux; ANDROID_ROOT is bin/art here.
     _ = tree.addCopyFile(options.keystore2_key_contexts, "bin/art/etc/selinux/plat_keystore2_key_contexts");
     _ = tree.addCopyFile(options.task_presenter, "bin/azk-task-presenter");

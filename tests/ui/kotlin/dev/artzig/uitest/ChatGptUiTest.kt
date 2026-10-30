@@ -25,7 +25,8 @@ class ChatGptUiTest {
         openGuestChat()
         UiApp.click("Log in")
         UiApp.waitUntilGone(UiApp.description("Ask ChatGPT"))
-        UiApp.click("Log in another way")
+        // The server selects either sign-in sheet.
+        UiApp.click(By.text(java.util.regex.Pattern.compile("Log in (another way|or sign up)")))
         UiApp.waitFor(By.clazz("android.widget.EditText"), 60_000)
     }
 

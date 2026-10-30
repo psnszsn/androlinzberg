@@ -37,6 +37,7 @@ const void *azk_parcel_readInplace(const AParcel *, size_t);
 bool azk_parcel_allowFds(AParcel *, bool);
 bool azk_parcel_hasFds(const AParcel *);
 int32_t azk_parcel_writeFd(AParcel *, int, bool);
+int32_t azk_parcel_writeDupFd(AParcel *, int);
 int32_t azk_parcel_dupFd(int);
 void azk_parcel_closeFd(int);
 int32_t azk_parcel_readFileDescriptorBorrowed(const AParcel *, int *);

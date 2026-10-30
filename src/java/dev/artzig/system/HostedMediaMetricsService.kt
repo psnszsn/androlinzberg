@@ -16,8 +16,7 @@ import java.security.SecureRandom
  *
  * Source note: `com.android.server.media.metrics.MediaMetricsManagerService`:
  * session ids are random 16-character Base64 strings, and every reported
- * metric is logged (there it is a statsd atom; here it is a log line, since
- * no statsd exists in a hosted session).
+ * metric is logged (there it is a statsd atom; here it is a log line).
  */
 class HostedMediaMetricsService : android.media.metrics.IMediaMetricsManager.Stub(), android.media.metrics.IMediaMetricsManager by unsupported<android.media.metrics.IMediaMetricsManager>() {
     override fun asBinder(): android.os.IBinder = this

@@ -235,6 +235,8 @@ fn runTest(init: std.process.Init, options: Options, class: []const u8, method: 
     // A host-path test may start a further process that joins the session.
     try runner_env.put("AZK_TEST_LAUNCHER", try Io.Dir.cwd().realPathFileAlloc(io, options.launcher, arena));
     try runner_env.put("AZK_TEST_SESSION_DIR", session_dir);
+    // A session process reaches reserved sockets, such as statsdw, through this.
+    try runner_env.put("AZK_BINDER_SESSION_DIR", session_dir);
     // The APK the session launched, for a host-path test's joined launcher.
     try runner_env.put("AZK_TEST_SESSION_APK", try Io.Dir.cwd().realPathFileAlloc(io, options.apk, arena));
     try runner_env.put("AZK_TEST_ARTIFACTS", try Io.Dir.cwd().realPathFileAlloc(io, directory, arena));

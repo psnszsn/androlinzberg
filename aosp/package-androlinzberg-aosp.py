@@ -72,6 +72,7 @@ packager.PATCH_SERIES = framework_patches + (
     ("frameworks/native", patch_root / "frameworks-native/0012-sensorservice-initialize-mode-without-HAL.patch"),
     ("system/core/libcutils", patch_root / "system/libcutils/0001-use-stock-memfd-operations-for-host-ndk-shared-memory.patch"),
     ("system/core/libcutils", patch_root / "system/libcutils/0002-session-reserved-socket-directory.patch"),
+    ("packages/modules/StatsD", patch_root / "packages-modules-StatsD/0001-resolve-statsdw-in-hosted-session.patch"),
     ("bionic", patch_root / "bionic/0001-reuse-missing-fortify-entry-points-on-host.patch"),
     (
         "frameworks/av",

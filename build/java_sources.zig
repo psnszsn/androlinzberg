@@ -303,6 +303,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/os/StatsServiceManager.java");
     try c.file("$FB/services/core/java/com/android/server/IoThread.java");
     try c.file("$FB/services/core/java/com/android/server/stats/StatsHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/stats/bootstrap/StatsBootstrapAtomService.java");
     try c.file("$FB/services/core/java/com/android/server/uri/GrantUri.java");
     try c.file("$FB/services/core/java/com/android/server/uri/NeededUriGrants.java");
     try c.file("$FB/services/core/java/com/android/server/uri/UriGrantsManagerInternal.java");

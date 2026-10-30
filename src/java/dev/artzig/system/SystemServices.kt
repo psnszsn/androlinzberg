@@ -115,8 +115,6 @@ internal object SystemServices {
         // Observer registry and the settings provider, registered before any
         // service that reads settings during startup.
         android.os.ServiceManager.addService("content", HostedContentService())
-        // Stock stats-manager caches pull callbacks while the native statsd daemon is absent.
-        android.os.ServiceManager.addService("statsmanager", com.android.server.stats.StatsManagerService(context))
         val settingsInfo = android.content.pm.ProviderInfo()
         settingsInfo.packageName = "android"
         settingsInfo.name = SettingsProvider::class.java.name
@@ -149,6 +147,11 @@ internal object SystemServices {
         val alarms = HostedAlarmManagerService(context)
         alarms.packageService = packageManager
         android.os.ServiceManager.addService(Context.ALARM_SERVICE, alarms)
+        // SystemServer "StartStatsCompanion": statscompanion and statsmanager,
+        // whose collaborators are the alarm service and the session's statsd.
+        manager.startService(com.android.server.stats.StatsCompanion.Lifecycle::class.java)
+        // HWUI reports its atoms through this service, as bootstrap-mode libraries do.
+        manager.startService(com.android.server.stats.bootstrap.StatsBootstrapAtomService.Lifecycle::class.java)
         val jobs = HostedJobSchedulerService(context)
         jobs.packageService = packageManager
         jobs.notificationService = notifications

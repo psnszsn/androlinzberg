@@ -1937,6 +1937,7 @@ export fn AParcel_readString(parcel: *const AParcel, string_data: ?*anyopaque, a
     }
     return STATUS_OK;
 }
+const STATUS_PERMISSION_DENIED: i32 = -@as(i32, @intCast(@backingInt(E.PERM)));
 const STATUS_FDS_NOT_ALLOWED: i32 = std.math.minInt(i32) + 7;
 const STATUS_NO_MEMORY: i32 = -@as(i32, @intCast(@backingInt(E.NOMEM)));
 const AParcel_stringAllocator = *const fn (?*anyopaque, i32, ?*?[*]u8) callconv(.c) bool;
@@ -1983,13 +1984,43 @@ export fn AParcel_readStrongBinder(parcel: *const AParcel, binder: *?*AIBinder) 
     return STATUS_BAD_TYPE;
 }
 
+/// Pinned AParcel_writeParcelFileDescriptor: a nullable ParcelFileDescriptor
+/// parcelable, as Java's and libbinder's readers expect it. It has no reliable
+/// communication channel.
 export fn AParcel_writeParcelFileDescriptor(parcel: *AParcel, fd: i32) callconv(.c) i32 {
-    if (!parcel.allow_fds) return STATUS_FDS_NOT_ALLOWED;
-    const off: u32 = @intCast(parcel.pos);
     if (fd < 0) {
+        if (fd != -1) return STATUS_UNKNOWN_ERROR;
         parcel.writeI32(0);
         return parcel.err;
     }
+    if (!parcel.allow_fds) return STATUS_FDS_NOT_ALLOWED;
+    parcel.writeI32(1);
+    parcel.writeI32(0);
+    if (parcel.err != STATUS_OK) return parcel.err;
+    return azk_parcel_writeDupFd(parcel, fd);
+}
+/// Pinned AParcel_readParcelFileDescriptor; the returned descriptor is the
+/// caller's. A reliable channel the sender attached is detached, as
+/// Parcel::readParcelFileDescriptor does.
+export fn AParcel_readParcelFileDescriptor(parcel: *const AParcel, fd: *i32) callconv(.c) i32 {
+    const p = @constCast(parcel);
+    const has = p.readI32() orelse return STATUS_NOT_ENOUGH_DATA;
+    fd.* = -1;
+    if (has == 0) return STATUS_OK;
+    const reliable = p.readI32() orelse return STATUS_NOT_ENOUGH_DATA;
+    const status = readDupFd(p, fd);
+    if (status != STATUS_OK or reliable == 0) return status;
+    var channel: i32 = -1;
+    const channel_status = azk_parcel_readFileDescriptorBorrowed(parcel, &channel);
+    if (channel_status == STATUS_OK and azk_parcel_detachParcelFileDescriptor(channel) == STATUS_OK) return STATUS_OK;
+    if (fd.* >= 0) closeFd(fd.*);
+    fd.* = -1;
+    return STATUS_BAD_TYPE;
+}
+/// One raw descriptor slot, duplicated: Parcel::writeDupFileDescriptor.
+export fn azk_parcel_writeDupFd(parcel: *AParcel, fd: i32) callconv(.c) i32 {
+    if (!parcel.allow_fds) return STATUS_FDS_NOT_ALLOWED;
+    const off: u32 = @intCast(parcel.pos);
     const dup = dupFd(fd);
     if (dup < 0) return STATUS_BAD_VALUE;
     parcel.writeI32(1);
@@ -2000,8 +2031,7 @@ export fn AParcel_writeParcelFileDescriptor(parcel: *AParcel, fd: i32) callconv(
     parcel.entries.append(alloc, .{ .offset = off, .kind = .file_descriptor, .value = 0, .fd = dup }) catch @panic("oom");
     return parcel.err;
 }
-export fn AParcel_readParcelFileDescriptor(parcel: *const AParcel, fd: *i32) callconv(.c) i32 {
-    const p = @constCast(parcel);
+fn readDupFd(p: *AParcel, fd: *i32) i32 {
     const off: u32 = @intCast(p.pos);
     const has = p.readI32() orelse return STATUS_NOT_ENOUGH_DATA;
     if (has == 0) {
@@ -3424,35 +3454,91 @@ const INTERFACE_TRANSACTION: u32 = ('_' << 24) | ('N' << 16) | ('T' << 8) | 'F';
 const PING_TRANSACTION: u32 = ('_' << 24) | ('P' << 16) | ('N' << 8) | 'G';
 const DUMP_TRANSACTION: u32 = ('_' << 24) | ('D' << 16) | ('M' << 8) | 'P';
 const EXTENSION_TRANSACTION: u32 = ('_' << 24) | ('E' << 16) | ('X' << 8) | 'T';
+const SHELL_COMMAND_TRANSACTION: u32 = ('_' << 24) | ('C' << 16) | ('M' << 8) | 'D';
+/// IResultReceiver::OP_SEND, the interface's first call.
+const RESULT_RECEIVER_SEND: u32 = FIRST_CALL_TRANSACTION;
+const AIBinder_handleShellCommand = *const fn (*AIBinder, i32, i32, i32, [*]const [*:0]const u8, u32) callconv(.c) i32;
 
-/// BBinder::onTransact and ABBinder::dump decode the reserved dump operation
-/// before the generated AIDL dispatcher. Run under the ordinary caller identity.
+/// The argument vector of a dump or shell command, as NUL-terminated UTF-8.
+const Arguments = struct {
+    strings: std.ArrayList([:0]u8) = .empty,
+    pointers: []const [*:0]const u8 = &.{},
+
+    fn read(input: *AParcel) error{ BadValue, NoMemory }!Arguments {
+        var result: Arguments = .{};
+        errdefer result.deinit();
+        const count = input.readI32() orelse return error.BadValue;
+        var i: i32 = 0;
+        while (i < count and input.pos < input.data.items.len) : (i += 1) {
+            const text = input.readString() catch return error.BadValue;
+            defer alloc.free(text);
+            const terminated = alloc.dupeSentinel(u8, text, 0) catch return error.NoMemory;
+            result.strings.append(alloc, terminated) catch {
+                alloc.free(terminated);
+                return error.NoMemory;
+            };
+        }
+        const pointers = alloc.alloc([*:0]const u8, result.strings.items.len) catch return error.NoMemory;
+        for (result.strings.items, pointers) |text, *ptr| ptr.* = text.ptr;
+        result.pointers = pointers;
+        return result;
+    }
+    fn deinit(self: *Arguments) void {
+        alloc.free(self.pointers);
+        for (self.strings.items) |s| alloc.free(s);
+        self.strings.deinit(alloc);
+    }
+};
+
+fn sendShellResult(receiver: ?*AIBinder, status: i32) void {
+    const target = receiver orelse return;
+    const data = AParcel.create();
+    defer data.destroy();
+    data.writeInterfaceToken("com.android.internal.os.IResultReceiver");
+    data.writeI32(status);
+    _ = azk_binder_transact(target, RESULT_RECEIVER_SEND, data, null, FLAG_ONEWAY);
+}
+
+/// Pinned ABBinder::onTransact: shell commands are reserved for adb, and the
+/// result receiver hears every outcome.
+fn invokeShellCommand(target: *AIBinder, callback: AIBinder_handleShellCommand, input: *AParcel) i32 {
+    var descriptors: [3]i32 = undefined;
+    for (&descriptors) |*fd| {
+        if (azk_parcel_readFileDescriptorBorrowed(input, fd) != STATUS_OK or fd.* < 0) return STATUS_BAD_VALUE;
+    }
+    var arguments = Arguments.read(input) catch |err| return if (err == error.NoMemory) STATUS_NO_MEMORY else STATUS_BAD_VALUE;
+    defer arguments.deinit();
+    var shell_callback: ?*AIBinder = null;
+    var receiver: ?*AIBinder = null;
+    _ = AParcel_readStrongBinder(input, &shell_callback);
+    _ = AParcel_readStrongBinder(input, &receiver);
+    defer if (shell_callback) |binder| AIBinder_decStrong(binder);
+    defer if (receiver) |binder| AIBinder_decStrong(binder);
+    const uid = AIBinder_getCallingUid();
+    if (uid != 0 and uid != 2000) {
+        sendShellResult(receiver, -1);
+        return STATUS_PERMISSION_DENIED;
+    }
+    const status = callback(target, descriptors[0], descriptors[1], descriptors[2], arguments.pointers.ptr, @intCast(arguments.pointers.len));
+    sendShellResult(receiver, status);
+    return status;
+}
+
+/// BBinder::onTransact and ABBinder decode the reserved dump and shell command
+/// operations before the generated AIDL dispatcher. Run under the ordinary
+/// caller identity.
 fn invokeTransaction(target: *AIBinder, code: u32, input: *AParcel, output: *AParcel) i32 {
     const class = target.class.?;
+    if (code == SHELL_COMMAND_TRANSACTION) {
+        if (class.shell_cmd) |callback| return invokeShellCommand(target, @ptrCast(callback), input);
+    }
     if (code != DUMP_TRANSACTION) return class.on_transact.?(target, code, input, output);
     var fd: i32 = -1;
     if (azk_parcel_readFileDescriptorBorrowed(input, &fd) != STATUS_OK or fd < 0) return STATUS_BAD_VALUE;
-    const count = input.readI32() orelse return STATUS_BAD_VALUE;
-    var strings: std.ArrayList([:0]u8) = .empty;
-    defer {
-        for (strings.items) |s| alloc.free(s);
-        strings.deinit(alloc);
-    }
-    var i: i32 = 0;
-    while (i < count and input.pos < input.data.items.len) : (i += 1) {
-        const text = input.readString() catch return STATUS_BAD_VALUE;
-        defer alloc.free(text);
-        const terminated = alloc.dupeSentinel(u8, text, 0) catch return STATUS_NO_MEMORY;
-        strings.append(alloc, terminated) catch {
-            alloc.free(terminated);
-            return STATUS_NO_MEMORY;
-        };
-    }
+    var arguments = Arguments.read(input) catch |err| return if (err == error.NoMemory) STATUS_NO_MEMORY else STATUS_BAD_VALUE;
+    defer arguments.deinit();
     const callback = class.on_dump orelse return STATUS_OK;
-    const pointers = alloc.alloc([*:0]const u8, strings.items.len) catch return STATUS_NO_MEMORY;
-    defer alloc.free(pointers);
-    for (strings.items, pointers) |text, *ptr| ptr.* = text.ptr;
-    return callback(target, fd, pointers.ptr, @intCast(pointers.len));
+    return callback(target, fd, arguments.pointers.ptr, @intCast(arguments.pointers.len));
 }
 
 /// Pinned BBinder::transact answers ping before onTransact, including for
@@ -3838,7 +3924,7 @@ export fn azk_parcel_hasFds(p: *const AParcel) callconv(.c) bool {
 }
 export fn azk_parcel_writeFd(p: *AParcel, fd: i32, take: bool) callconv(.c) i32 {
     // Pinned C++ Parcel::writeFileDescriptor retains the supplied descriptor.
-    // NDK/Java duplicate writes continue through AParcel_writeParcelFileDescriptor.
+    // NDK/Java duplicate writes continue through azk_parcel_writeDupFd.
     if (!p.allow_fds) return STATUS_FDS_NOT_ALLOWED;
     if (fd < 0) return STATUS_BAD_VALUE;
     p.entries.ensureUnusedCapacity(alloc, 1) catch return STATUS_NO_MEMORY;

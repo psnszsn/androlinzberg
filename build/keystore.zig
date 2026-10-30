@@ -428,10 +428,10 @@ fn liblog(b: *std.Build, o: Options) LazyPath {
 }
 
 /// Installed in libexec/androlinzberg beside the system processes.
-const daemon_rpaths = [_][]const u8{ "$ORIGIN/../../lib/art", "$ORIGIN/../../lib" };
+pub const daemon_rpaths = [_][]const u8{ "$ORIGIN/../../lib/art", "$ORIGIN/../../lib" };
 
 /// Bionic headers the property bindings parse on a glibc host.
-const bionic_header_defines = [_][]const u8{ "-D__BIONIC_AVAILABILITY_GUARD(x)=1", "-D__INTRODUCED_IN(x)=", "-D__unused=__attribute__((__unused__))" };
+pub const bionic_header_defines = [_][]const u8{ "-D__BIONIC_AVAILABILITY_GUARD(x)=1", "-D__INTRODUCED_IN(x)=", "-D__unused=__attribute__((__unused__))" };
 
 pub fn build(b: *std.Build, o: Options) Daemons {
     const aosp = o.aosp;
@@ -522,7 +522,7 @@ fn keymintTest(b: *std.Build, o: Options, service: LazyPath) void {
 }
 
 /// NDK Binder headers for generated AIDL clients.
-const ndk_includes = [_][]const u8{
+pub const ndk_includes = [_][]const u8{
     "frameworks/native/libs/binder/ndk/include_cpp",
     "frameworks/native/libs/binder/ndk/include_ndk",
     "frameworks/native/libs/binder/ndk/include_platform",
@@ -531,7 +531,7 @@ const ndk_includes = [_][]const u8{
 };
 
 /// C++ flags for the stock daemons' sources on the glibc host.
-fn cppFlags(b: *std.Build) []const []const u8 {
+pub fn cppFlags(b: *std.Build) []const []const u8 {
     return b.allocator.dupe([]const u8, &.{ "-std=gnu++23", "-fno-exceptions", "-fno-rtti", "-D_GNU_SOURCE", "-D__ANDROID_HOST__", "-DNDEBUG", "-D__INTRODUCED_IN(x)=", "-DBINDER_STABILITY_SUPPORT", "-DARTZIG_SHARED_PROPERTIES", "-include", b.pathResolve(&.{"src/native/credential/bionic_compat.h"}), "-Wno-deprecated-declarations", "-Wno-nontrivial-memcall", "-Wno-unused-parameter", "-include", b.pathResolve(&.{"src/native/azk_prelude.h"}) }) catch @panic("oom");
 }
 

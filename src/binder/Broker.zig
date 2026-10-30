@@ -49,6 +49,7 @@ cookie: []const u8,
 system_cookie: []const u8,
 /// Presented by host test tools; null unless the session permits inspection.
 inspector_cookie: ?[]const u8,
+statsd_cookie: ?[]const u8,
 /// Package name -> Android uid for this session; uids are never reused.
 packages: std.StringHashMapUnmanaged(u32) = .empty,
 /// Session-wide system property area; the broker is the only writer
@@ -112,6 +113,10 @@ pub const Options = struct {
     /// services as `adb shell` can (each service enforces its own permissions
     /// against that uid) but registers none.
     inspector_cookie: ?[]const u8 = null,
+    /// Present when the session runs statsd. A peer that presents it joins as
+    /// `statsd`: Android's AID_STATSD, which stock StatsCompanion requires of
+    /// its daemon. It may register only the daemon's own service.
+    statsd_cookie: ?[]const u8 = null,
     /// File every session process maps read-only for `SystemProperties`.
     prop_area_path: []const u8,
     first_app_uid: u32 = Client.default_app_uid,
@@ -260,6 +265,8 @@ pub fn init(gpa: Allocator, io: Io, options: Options) !*Broker {
     errdefer gpa.free(system_cookie);
     const inspector_cookie = if (options.inspector_cookie) |value| try gpa.dupe(u8, value) else null;
     errdefer if (inspector_cookie) |value| gpa.free(value);
+    const statsd_cookie = if (options.statsd_cookie) |value| try gpa.dupe(u8, value) else null;
+    errdefer if (statsd_cookie) |value| gpa.free(value);
     var declared_services: std.StringHashMapUnmanaged(void) = .empty;
     errdefer {
         var names = declared_services.keyIterator();
@@ -294,6 +301,7 @@ pub fn init(gpa: Allocator, io: Io, options: Options) !*Broker {
         .cookie = cookie,
         .system_cookie = system_cookie,
         .inspector_cookie = inspector_cookie,
+        .statsd_cookie = statsd_cookie,
         .declared_services = declared_services,
         .props = props,
         .delivery_limits = options.delivery_limits,
@@ -490,6 +498,7 @@ pub fn deinit(b: *Broker) void {
     gpa.free(b.cookie);
     gpa.free(b.system_cookie);
     if (b.inspector_cookie) |value| gpa.free(value);
+    if (b.statsd_cookie) |value| gpa.free(value);
     gpa.destroy(b);
 }
 
@@ -783,6 +792,10 @@ fn handleHello(peer: *Peer, header: Client.Message.Header, body: []const u8) Ser
             peer.role = .inspector;
             peer.android_uid = shell_uid;
             peer.package = try gpa.dupe(u8, "com.android.shell");
+        } else if (b.statsd_cookie != null and std.mem.eql(u8, cookie, b.statsd_cookie.?)) {
+            peer.role = .statsd;
+            peer.android_uid = statsd_uid;
+            peer.package = try gpa.dupe(u8, "android:statsd");
         } else if (std.mem.eql(u8, cookie, b.cookie)) {
             if (package.len == 0) return protocolError(peer, "app peer without a package name");
             peer.role = .app;
@@ -1008,11 +1021,15 @@ fn handleRevokeLaunch(peer: *Peer, header: Client.Message.Header, body: []const 
 /// android.os.Process.SHELL_UID.
 const shell_uid: u32 = 2000;
 
+/// system/core/libcutils AID_STATSD.
+const statsd_uid: u32 = 1066;
+
 /// Registry policy: the system process may claim any name; an app may only
 /// claim its own package name or names beneath it.
 fn mayRegister(peer: *const Peer, name: []const u8) bool {
     if (isIsolated(peer.android_uid)) return false;
     if (peer.role == .inspector) return false;
+    if (peer.role == .statsd) return std.mem.eql(u8, name, "stats");
     if (peer.role == .system) return true;
     if (!namespacePrefix(peer.package, name)) return false;
     // A dotted-prefix package must not squat inside a longer known package's

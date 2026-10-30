@@ -89,6 +89,8 @@ pub const Message = struct {
             /// A host test tool with Android's shell identity. It looks up
             /// services like any client and may register none.
             inspector = 3,
+            /// Stock statsd, with Android's AID_STATSD.
+            statsd = 4,
             _,
         };
     };

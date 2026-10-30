@@ -22,6 +22,8 @@ pub const Options = struct {
 pub const Result = struct {
     /// The pinned AIDL compiler with the Zig backend (build/aidl.zig).
     aidl_tool: *std.Build.Step.Compile,
+    stats_tool: *std.Build.Step.Compile,
+    runner: *std.Build.Step.Compile,
     jvm: GeneratedJvm,
     native: GeneratedNative,
     resources: FrameworkResources,
@@ -1445,6 +1447,8 @@ pub fn build(b: *std.Build, o: Options) Result {
 
     return .{
         .aidl_tool = aidl_tool,
+        .stats_tool = stats_tool,
+        .runner = runner,
         .jvm = .{
             .sources = java_files.toOwnedSlice(b.allocator) catch @panic("OOM"),
             .cronet_sources = cronet_java,
