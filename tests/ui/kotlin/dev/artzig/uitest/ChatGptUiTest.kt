@@ -32,7 +32,7 @@ class ChatGptUiTest {
     private fun openGuestChat() {
         expectVisible("Welcome to ChatGPT")
         // The server selects either sign-in onboarding or the guest terms sheet.
-        UiApp.click(By.text(java.util.regex.Pattern.compile("Skip|Continue")))
+        UiApp.click(By.text(java.util.regex.Pattern.compile("Skip|Continue( without logging in)?")))
         UiApp.waitUntilGone(UiApp.text("Welcome to ChatGPT"))
         // Some server-selected onboarding flows insert a notification prompt
         // before guest chat. Dismiss the visible prompt through the same UI.
