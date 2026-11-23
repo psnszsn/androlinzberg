@@ -1,4 +1,6 @@
+device/generic/art
 platform/art
+platform/bionic
 platform/build
 platform/build/bazel
 platform/build/bazel_common_rules
@@ -45,6 +47,7 @@ platform/external/gson
 platform/external/guava
 platform/external/guice
 platform/external/hamcrest
+platform/external/icu
 platform/external/image_io
 platform/external/jacoco
 platform/external/jakarta.inject
@@ -200,6 +203,7 @@ platform/system/libsysprop
 platform/system/libvintf
 platform/system/libziparchive
 platform/system/logging
+platform/system/media
 platform/system/memory/libdmabufheap
 platform/system/memory/libion
 platform/system/memory/libmeminfo
@@ -211,6 +215,7 @@ platform/system/security
 platform/system/sepolicy
 platform/system/server_configurable_flags
 platform/system/testing/gtest_extras
+platform/system/timezone
 platform/system/tools/aidl
 platform/system/tools/hidl
 platform/system/tools/sysprop
@@ -223,8 +228,5 @@ platform/tools/apksig
 platform/tools/dexter
 platform/tools/metalava
 platform/tools/tradefederation
-device/generic/art
-external/icu
-system/timezone
 toolchain/pgo-profiles
 tools/platform-compat
