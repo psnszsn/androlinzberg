@@ -124,11 +124,18 @@ mkdir -p "$aosp_root"
 		--partial-clone \
 		--clone-filter=blob:none
 	# An interrupted earlier run can leave patches applied or patch-created
-	# files behind; the packagers refuse a dirty checkout.
+	# files behind. A project whose checkout failed may not reset; the sync
+	# below repairs it, and the packagers still refuse a dirty checkout.
 	if [[ -f .repo/project.list ]]; then
-		repo forall -c 'git reset -q --hard HEAD && git clean -fdq'
+		repo forall -c 'git reset -q --hard HEAD && git clean -fdq' || true
 	fi
-	repo sync -c -j"${REPO_SYNC_JOBS:-8}" --force-sync "${projects[@]}"
+	# googlesource throttles heavy anonymous traffic, and repo resumes where
+	# it stopped. The last attempt runs serially and verbosely so a lasting
+	# failure shows git's own error instead of repo's summary.
+	sync() { repo sync -c --force-sync "$@" "${projects[@]}"; }
+	sync -j"${REPO_SYNC_JOBS:-8}" ||
+		sync -j"${REPO_SYNC_JOBS:-8}" ||
+		sync -j1 --fail-fast --verbose
 	rm -f ./*-aosp-*.tar.gz
 )
 
