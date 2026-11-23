@@ -1,0 +1,51 @@
+# Builds the pinned AOSP source archives (aosp/README.md) and publishes them
+# as a release of the public GitHub mirror, where build.zig.zon fetches them.
+# tools/aosp-release.sh does the work and documents the release layout.
+#
+# Runs when the packagers' inputs change on main, or by hand. A run whose
+# input set is already released exits early.
+#
+# The Repo checkout persists on the runner under $HOME/aosp-cache, so only
+# the first run pays for the full sync.
+#
+# Needs the repo secret GH_RELEASE_TOKEN: a fine-grained GitHub token for
+# psnszsn/androlinzberg with Contents read and write. The release tag is
+# pushed to this repo and reaches GitHub through the push mirror.
+on:
+  push:
+    branches: [main]
+    paths:
+      - aosp/*.txt
+      - aosp/*.py
+      - artzig/patches/**
+      - tools/aosp-release.sh
+      - .forgejo/workflows/aosp-tarballs.yml
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild and replace an existing release
+        type: boolean
+        default: false
+
+jobs:
+  publish:
+    runs-on: native
+    timeout-minutes: 360
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v4
+
+      - name: Build and publish
+        env:
+          GH_TOKEN: ${{ secrets.GH_RELEASE_TOKEN }}
+          GH_REPO: psnszsn/androlinzberg
+          FORGEJO_URL: ${{ github.server_url }}
+          FORGEJO_REPO: ${{ github.repository }}
+          FORGEJO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ inputs.force && '1' || '0' }}
+        run: |
+          git config user.name 'Forgejo Actions'
+          git config user.email 'actions@git.praznet.com'
+          nix shell --inputs-from ./artzig \
+            nixpkgs#git nixpkgs#git-repo nixpkgs#python3 nixpkgs#jq \
+            nixpkgs#util-linux nixpkgs#curl ./artzig#zig \
+            -c tools/aosp-release.sh

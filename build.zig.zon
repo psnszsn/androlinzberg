@@ -5,11 +5,11 @@
     .minimum_zig_version = "0.17.0-dev.1884+841dd0eb8",
     .dependencies = .{
         .aosp = .{
-            .url = "file:aosp/androlinzberg-aosp-android-16.0.0_r1.tar.gz",
+            .url = "https://github.com/psnszsn/androlinzberg/releases/download/aosp-16.0.0_r1-fe0cfb807d76/androlinzberg-aosp-android-16.0.0_r1.tar.gz",
             .hash = "N-V-__8AAACvV0uEY_2TK3qAS8fq-DD0KJ5fTAGmJp0UtKoE",
         },
         .webview = .{
-            .url = "file:aosp/androlinzberg-webview-140.0.7339.15.tar.gz",
+            .url = "https://github.com/psnszsn/androlinzberg/releases/download/aosp-16.0.0_r1-fe0cfb807d76/androlinzberg-webview-140.0.7339.15.tar.gz",
             .hash = "N-V-__8AAF1whxNdNKACWB1dSoSDGefcMMlNxw5Ttc9ZdbzL",
         },
         .artzig = .{ .path = "artzig" },

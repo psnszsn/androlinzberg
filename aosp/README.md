@@ -198,6 +198,30 @@ frame intervals before calculating frame-rate hints, fixing the invalid infinite
 hint sent by the formerly bundled provider. Original SurfaceComposerClient
 validation remains intact. See [acceptance testing](../docs/acceptance.md).
 
+## Published archives
+
+`build.zig.zon` and `artzig/build.zig.zon` fetch the three archives from
+releases of the public GitHub mirror, `psnszsn/androlinzberg`. The Forgejo
+workflow `.forgejo/workflows/aosp-tarballs.yml` runs `tools/aosp-release.sh`
+whenever a file manifest, packager or patch under `artzig/patches` changes on
+`main`, and can be started by hand. It syncs this checkout on the runner, runs
+the three packagers, and publishes one release whose tag is derived from those
+inputs:
+
+```sh
+tools/aosp-release.sh --print-tag
+```
+
+The release notes carry the `build.zig.zon` entries (URL and Zig package hash)
+for each archive and say whether each hash matches the current pin. After
+changing the packagers' inputs, wait for the workflow and copy those entries
+into both manifests. The tag is pushed to Forgejo and reaches GitHub through the
+repository's push mirror; do not create release tags on GitHub, because the
+mirror deletes refs that Forgejo lacks.
+
+The job needs the Forgejo secret `GH_RELEASE_TOKEN`, a fine-grained GitHub
+token with Contents read and write on the mirror.
+
 ## Refresh the Zig package hashes
 
 The SDK-sandbox client/interface closure comes from
@@ -212,8 +236,10 @@ After regenerating a tarball, update its `.aosp` dependency hash:
 - Artzig archive: `artzig/build.zig.zon`
 - Androlinzberg archive: `build.zig.zon`
 
-Temporarily replace the corresponding `.hash` with a known incorrect but
-well-formed Zig package hash, then run the normal build:
+To check a locally regenerated archive before publishing, point the `.url` at
+it (`file:aosp/<archive>` in `build.zig.zon`, `file:../aosp/<archive>` in
+`artzig/build.zig.zon`), temporarily replace the corresponding `.hash` with a
+known incorrect but well-formed Zig package hash, then run the normal build:
 
 ```sh
 nix develop ./artzig -c zig build -j5

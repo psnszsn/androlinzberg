@@ -148,8 +148,8 @@ pub fn build(b: *std.Build) void {
     scanner.generate("zwp_virtual_keyboard_manager_v1", 1);
     // --- embedded artzig runtime (ART) module
     // The root AOSP archive supplies framework/native/Skia/generator sources. Its
-    // current Android 16 r1 local URL is content-addressed by build.zig.zon's
-    // package hash, which changes whenever the selected source closure changes.
+    // Android 16 r1 release URL is content-addressed by build.zig.zon's package
+    // hash, which changes whenever the selected source closure changes.
     const aosp_dep = b.dependency("aosp", .{});
     const aosp = aosp_dep.path("");
     const webview_dep = b.dependency("webview", .{});
